@@ -1,8 +1,10 @@
 //! nudgec — the Nudge compiler driver (MVP day 1–3).
 //!   nudgec lex   <file.ndg>   dump token stream
 //!   nudgec parse <file.ndg>   dump AST
+//!   nudgec build <file.ndg>   emit Python to out/<name>.py
 
 mod ast;
+mod codegen;
 mod lexer;
 mod parser;
 
@@ -13,6 +15,7 @@ fn usage() -> ! {
     eprintln!("usage:");
     eprintln!("  nudgec lex   <file.ndg>   dump token stream");
     eprintln!("  nudgec parse <file.ndg>   dump AST");
+    eprintln!("  nudgec build <file.ndg>   emit Python to out/<name>.py");
     process::exit(64);
 }
 
@@ -48,6 +51,31 @@ fn main() {
                     println!("{item:#?}");
                 }
                 eprintln!("-- parsed {} item(s) OK", items.len());
+            }
+            Err(msg) => {
+                eprintln!("error[E0002]: {msg}");
+                process::exit(1);
+            }
+        },
+        "build" => match lexer::lex(&src).map_err(|e| e.msg).and_then(|t| parser::parse(t).map_err(|e| e.msg)) {
+            Ok(items) => {
+                let py = codegen::emit(&items);
+                let stem = std::path::Path::new(&args[2])
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("out");
+                if let Err(e) = fs::create_dir_all("out") {
+                    eprintln!("error: cannot create out/: {e}");
+                    process::exit(1);
+                }
+                let path = std::path::Path::new("out").join(format!("{stem}.py"));
+                match fs::write(&path, py) {
+                    Ok(()) => println!("wrote {}", path.display()),
+                    Err(e) => {
+                        eprintln!("error: cannot write {}: {e}", path.display());
+                        process::exit(1);
+                    }
+                }
             }
             Err(msg) => {
                 eprintln!("error[E0002]: {msg}");
