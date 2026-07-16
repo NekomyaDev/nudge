@@ -1,9 +1,11 @@
-//! nudgec — the Nudge compiler driver (MVP day 1–3).
+//! nudgec — the Nudge compiler driver.
 //!   nudgec lex   <file.ndg>   dump token stream
 //!   nudgec parse <file.ndg>   dump AST
-//!   nudgec build <file.ndg>   emit Python to out/<name>.py
+//!   nudgec check <file.ndg>   type-check (E0101/E0201/E0202)
+//!   nudgec build <file.ndg>   check, then emit Python to out/<name>.py
 
 mod ast;
+mod check;
 mod codegen;
 mod lexer;
 mod parser;
@@ -15,7 +17,8 @@ fn usage() -> ! {
     eprintln!("usage:");
     eprintln!("  nudgec lex   <file.ndg>   dump token stream");
     eprintln!("  nudgec parse <file.ndg>   dump AST");
-    eprintln!("  nudgec build <file.ndg>   emit Python to out/<name>.py");
+    eprintln!("  nudgec check <file.ndg>   type-check (E0101/E0201/E0202)");
+    eprintln!("  nudgec build <file.ndg>   check, then emit Python to out/<name>.py");
     process::exit(64);
 }
 
@@ -33,6 +36,10 @@ fn main() {
     }
     let src = read_src(&args[2]);
 
+    let compile = |src: &str| -> Result<Vec<ast::Item>, String> {
+        lexer::lex(src).map_err(|e| e.msg).and_then(|t| parser::parse(t).map_err(|e| e.msg))
+    };
+
     match args[1].as_str() {
         "lex" => match lexer::lex(&src) {
             Ok(tokens) => {
@@ -45,7 +52,7 @@ fn main() {
                 process::exit(1);
             }
         },
-        "parse" => match lexer::lex(&src).map_err(|e| e.msg).and_then(|t| parser::parse(t).map_err(|e| e.msg)) {
+        "parse" => match compile(&src) {
             Ok(items) => {
                 for item in &items {
                     println!("{item:#?}");
@@ -57,8 +64,32 @@ fn main() {
                 process::exit(1);
             }
         },
-        "build" => match lexer::lex(&src).map_err(|e| e.msg).and_then(|t| parser::parse(t).map_err(|e| e.msg)) {
+        "check" => match compile(&src) {
             Ok(items) => {
+                let errs = check::check(&items);
+                if errs.is_empty() {
+                    eprintln!("-- checked {} item(s): OK", items.len());
+                } else {
+                    for e in &errs {
+                        eprintln!("error[{}]: {}", e.code, e.msg);
+                    }
+                    process::exit(1);
+                }
+            }
+            Err(msg) => {
+                eprintln!("error[E0002]: {msg}");
+                process::exit(1);
+            }
+        },
+        "build" => match compile(&src) {
+            Ok(items) => {
+                let errs = check::check(&items);
+                if !errs.is_empty() {
+                    for e in &errs {
+                        eprintln!("error[{}]: {}", e.code, e.msg);
+                    }
+                    process::exit(1);
+                }
                 let py = codegen::emit(&items);
                 let stem = std::path::Path::new(&args[2])
                     .file_stem()

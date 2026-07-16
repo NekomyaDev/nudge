@@ -1,9 +1,13 @@
-// Nudge example — the self-testing research agent (design doc §16)
-// This file is the v0.1 acceptance target: it must compile, run, and
-// pass its own replay test with zero tokens burned in CI.
+// Nudge — the self-testing research agent (design doc §16).
+// v0.1 acceptance target: <30 lines, zero manual JSON parsing, replayable in CI.
+
+type Url = string @format(url)
 
 type Finding = { claim: string, source: Url, confidence: float @range(0, 1) }
-type Report  = { title: string, findings: [Finding], gaps: [string] }
+
+type SearchResult = { title: string, url: Url, snippet: string }
+
+type Report = { title: string, findings: [Finding], gaps: [string] }
 
 tool web_search(q: string) -> [SearchResult] {
     impl: mcp("search").web(q)
@@ -19,11 +23,10 @@ fn analyze(q: string, hits: [SearchResult]) -> [Finding] uses LLM {
 fn run(question: string) -> Report uses LLM, Tool {
     let angles: [string] = llm"""3 search angles for: {question}"""
         with { schema: [string], budget: 0.005 USD }
-
-    let hits  = par map angles |a| -> web_search(a)
+    let hits = par map angles |a| -> web_search(a)
     let found = par map(angles zip hits, concurrency = 3) |(a, h)| -> analyze(a, h)
 
-    llm"""Merge findings, list remaining gaps. Question: {question}"""
+    llm"""Merge these findings: {found}. Question: {question}. List remaining gaps."""
     with { schema: Report, model: "anthropic:sonnet-4.6",
            budget: 0.04 USD, retry: 3 with repair }
 }
