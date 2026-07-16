@@ -367,7 +367,7 @@ impl Parser {
             Tok::Int(v) => { self.bump(); Ok(Expr::Int(v)) }
             Tok::Float(v) => { self.bump(); Ok(Expr::Float(v)) }
             Tok::Str(s) => { self.bump(); Ok(Expr::Str(s)) }
-            Tok::Money(v) => { self.bump(); Ok(Expr::Money(v)) }
+            Tok::Money(v, u) => { let (v, u) = (v, u.clone()); self.bump(); Ok(Expr::Money(v, u)) }
             Tok::True => { self.bump(); Ok(Expr::Bool(true)) }
             Tok::False => { self.bump(); Ok(Expr::Bool(false)) }
             Tok::None => { self.bump(); Ok(Expr::None) }
@@ -601,13 +601,14 @@ test "budget" {
     fn full_research_agent_example_parses() {
         let src = include_str!("../../../examples/research_agent.ndg");
         let items = parse_str(src);
-        // 2 type aliases, 1 tool, 2 fns, 1 test
-        assert_eq!(items.len(), 6);
+        // 4 type aliases (Url, Finding, SearchResult, Report), 1 tool, 2 fns, 1 test
+        assert_eq!(items.len(), 8);
         assert!(matches!(items[0], Item::TypeAlias { .. }));
-        assert!(matches!(items[2], Item::Tool { .. }));
-        assert!(matches!(items[3], Item::Fn { .. }));
-        assert!(matches!(items[4], Item::Fn { .. }));
-        assert!(matches!(items[5], Item::Test { .. }));
+        assert!(matches!(items[3], Item::TypeAlias { .. }));
+        assert!(matches!(items[4], Item::Tool { .. }));
+        assert!(matches!(items[5], Item::Fn { .. }));
+        assert!(matches!(items[6], Item::Fn { .. }));
+        assert!(matches!(items[7], Item::Test { .. }));
     }
 
     #[test]
