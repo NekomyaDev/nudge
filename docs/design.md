@@ -1,8 +1,10 @@
 # Nudge — Language Design
 
-**Version:** 1.1 (2026-07-16) · **Status:** Frozen for MVP implementation
+**Version:** 1.2 (2026-07-16) · **Status:** Frozen for MVP implementation
 **Audience:** compiler implementers, language designers, early adopters
 
+> **Changelog v1.2:** §12 keyword set split into **reserved** and **contextual** keywords. Option names (`schema`, `model`, `retry`, …), tool fields (`impl`, `side_effects`), and builtin names (`replay`, …) now lex as ordinary identifiers and are recognized by the parser only in their grammatical positions — so they remain usable as variable and record-field names. No surface-syntax change; this is an implementation-honesty fix discovered by the MVP parser test suite.
+>
 > **Changelog v1.1:** language renamed Niyet → **Nudge** (extension `.ndg`, CLI `nudge`, runtime `nudge_runtime`, store `~/.nudge/`); §10 toolchain line corrected to the actual zero-dependency implementation; §11 gained the E00xx lex/parse range. No semantic changes.
 
 ---
@@ -296,7 +298,9 @@ Compile-time diagnostics use stable codes; messages are English-first and locali
 
 ## 12. Grammar Summary (informative)
 
-Keywords: `fn let type tool agent state uses with schema model retry repair budget cache tags par map all race stream for in if else return test assert replay export use impl side_effects fallback route when otherwise and or true false none`
+**Reserved keywords** (never usable as identifiers): `fn let type tool agent state uses with par map all race for in if else return test assert export use and or true false none`
+
+**Contextual keywords** (keyword meaning only in specific grammatical positions; lex as ordinary identifiers and remain usable as variable/field names): `schema model retry repair budget cache tags stream` (with-block options) · `impl side_effects` (tool fields) · `replay` (builtin) · `fallback route when otherwise` (routing, lands with the type checker)
 
 Operators by precedence (high → low):
 
