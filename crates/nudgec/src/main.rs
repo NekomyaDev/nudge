@@ -1,8 +1,9 @@
 //! nudgec — the Nudge compiler driver.
 //!   nudgec lex   <file.ndg>   dump token stream
 //!   nudgec parse <file.ndg>   dump AST
-//!   nudgec check <file.ndg>   type-check (E0101/E0201/E0202)
+//!   nudgec check <file.ndg>   type-check (E0101–E0302)
 //!   nudgec build <file.ndg>   check, then emit Python to out/<name>.py
+//!   nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn
 
 mod ast;
 mod check;
@@ -17,8 +18,9 @@ fn usage() -> ! {
     eprintln!("usage:");
     eprintln!("  nudgec lex   <file.ndg>   dump token stream");
     eprintln!("  nudgec parse <file.ndg>   dump AST");
-    eprintln!("  nudgec check <file.ndg>   type-check (E0101/E0201/E0202)");
+    eprintln!("  nudgec check <file.ndg>   type-check (E0101–E0302)");
     eprintln!("  nudgec build <file.ndg>   check, then emit Python to out/<name>.py");
+    eprintln!("  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn");
     process::exit(64);
 }
 
@@ -104,6 +106,60 @@ fn main() {
                     Ok(()) => println!("wrote {}", path.display()),
                     Err(e) => {
                         eprintln!("error: cannot write {}: {e}", path.display());
+                        process::exit(1);
+                    }
+                }
+            }
+            Err(msg) => {
+                eprintln!("error[E0002]: {msg}");
+                process::exit(1);
+            }
+        },
+        "test" => match compile(&src) {
+            Ok(items) => {
+                let errs = check::check(&items);
+                if !errs.is_empty() {
+                    for e in &errs {
+                        eprintln!("error[{}]: {}", e.code, e.msg);
+                    }
+                    process::exit(1);
+                }
+                let py = codegen::emit(&items);
+                let stem = std::path::Path::new(&args[2])
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("out");
+                if let Err(e) = fs::create_dir_all("out") {
+                    eprintln!("error: cannot create out/: {e}");
+                    process::exit(1);
+                }
+                let path = std::path::Path::new("out").join(format!("{stem}.py"));
+                if let Err(e) = fs::write(&path, &py) {
+                    eprintln!("error: cannot write {}: {e}", path.display());
+                    process::exit(1);
+                }
+                let abs = match path.canonicalize() {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("error: cannot resolve {}: {e}", path.display());
+                        process::exit(1);
+                    }
+                };
+                let driver = std::path::Path::new("out").join(format!("{stem}_nudge_tests.py"));
+                let driver_src = format!(
+                    "import importlib.util, sys, traceback\nspec = importlib.util.spec_from_file_location(\"nudge_mod\", {:?})\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfns = [getattr(m, n) for n in sorted(dir(m)) if n.startswith(\"nudge_test_\")]\nfailed = 0\nfor f in fns:\n    try:\n        f()\n        print(\"PASS\", f.__name__)\n    except Exception:\n        failed += 1\n        print(\"FAIL\", f.__name__)\n        traceback.print_exc()\nprint(f\"{{len(fns) - failed}}/{{len(fns)}} tests passed\")\nsys.exit(1 if failed else 0)\n",
+                    abs.to_string_lossy()
+                );
+                if let Err(e) = fs::write(&driver, driver_src) {
+                    eprintln!("error: cannot write {}: {e}", driver.display());
+                    process::exit(1);
+                }
+                // cwd stays the user's: relative trace paths in tests resolve
+                // exactly like they will under `nudge test`
+                match process::Command::new("python3").arg(&driver).status() {
+                    Ok(status) => process::exit(status.code().unwrap_or(1)),
+                    Err(e) => {
+                        eprintln!("error: cannot run python3: {e}");
                         process::exit(1);
                     }
                 }
