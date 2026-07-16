@@ -1,8 +1,10 @@
 # Nudge — Language Design
 
-**Version:** 1.3 (2026-07-16) · **Status:** Frozen for MVP implementation
+**Version:** 1.4 (2026-07-17) · **Status:** Frozen for MVP implementation
 **Audience:** compiler implementers, language designers, early adopters
 
+> **Changelog v1.4:** effect inference landed (roadmap day 7–8). §3.2/§11 clarified: **E0301** = a function performs an effect but has no `uses` clause at all; **E0302** = a `uses` clause exists but omits an inferred effect (annotation too narrow). MVP effect sources: `llm"""` → `LLM`; calling a declared `tool` or `mcp(...)` → `Tool`; `replay(...)` / `python(...)` → `IO`. Effects propagate transitively through user-function calls (fixpoint over the call graph). `test` blocks are exempt — they exist to exercise effectful code. E0101 also covers unknown effect names in `uses` clauses.
+>
 > **Changelog v1.3:** type checker landed (roadmap day 4–6). §11: E0101 now also covers unknown type names; E0201 generalizes to *type mismatch* (schema ↔ return, let annotations, call arguments). §14 concrete MVP lowering: type aliases → `rt.schema({...})` JSON-Schema literals; record values are plain dicts validated at runtime (dataclasses post-MVP); tool bodies → `rt.tool_stub` until the MCP client lands (day 8–10). §15: the fake provider is schema-driven — it synthesizes conforming values, and `NUDGE_FAKE_FAIL_FIRST=k` forces k initial schema violations so the repair loop is testable at zero token cost. Trace records gain additive `repair_round` and `outcome` fields (v1-compatible: consumers must ignore unknown fields).
 >
 > **Changelog v1.2:** §12 keyword set split into **reserved** and **contextual** keywords. Option names (`schema`, `model`, `retry`, …), tool fields (`impl`, `side_effects`), and builtin names (`replay`, …) now lex as ordinary identifiers and are recognized by the parser only in their grammatical positions — so they remain usable as variable and record-field names. No surface-syntax change; this is an implementation-honesty fix discovered by the MVP parser test suite.
@@ -67,7 +69,9 @@ fn research(q: string) -> Report uses LLM, Tool { ... } // effectful — visible
 fn save(r: Report, path: string) -> () uses IO { ... }
 ```
 
-The effect set is **inferred**: if the user writes it, the compiler verifies; if omitted, the compiler fills it in. Calling an LLM inside a function that does not declare `uses LLM` is a **compile error** (E0301). This is the static answer to "can this function inflate my bill tonight?"
+The effect set is **inferred**: if the user writes it, the compiler verifies; if omitted, the compiler fills it in. Calling an LLM inside a function that does not declare `uses LLM` is a **compile error**. This is the static answer to "can this function inflate my bill tonight?"
+
+Verification rule (v1.4): a function that performs an effect with **no** `uses` clause at all is **E0301**; a `uses` clause that omits an inferred effect is **E0302** (annotation too narrow). Effects propagate transitively through user-function calls. `test` blocks are exempt.
 
 | Effect | Meaning | Replay behavior |
 |---|---|---|
@@ -293,8 +297,8 @@ Compile-time diagnostics use stable codes; messages are English-first and locali
 | E0101 | unknown identifier or type name | `{qusetion}` typo; `x: Strnig` |
 | E0201 | type mismatch (schema ↔ return, let annotation, call argument) | `schema: Plan` vs `-> Report` |
 | E0202 | refinement malformed | `@range(1)` |
-| E0301 | undeclared effect | LLM call without `uses LLM` |
-| E0302 | effect annotation too narrow | function body uses IO, signature omits it |
+| E0301 | effect used with no `uses` clause at all | LLM call in a plain `fn` |
+| E0302 | `uses` clause omits an inferred effect | body calls a tool, signature says only `uses LLM` |
 | E0401 | `par` branch captures mutable outer state | writing outer `let` |
 | E0402 | two branches write same state field without reducer | both write `state.round` |
 | E0501 | budget unit unknown | `budget: 5 EUR` (v0.1) |
