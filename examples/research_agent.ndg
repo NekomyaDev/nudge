@@ -1,0 +1,35 @@
+// Nudge example — the self-testing research agent (design doc §16)
+// This file is the v0.1 acceptance target: it must compile, run, and
+// pass its own replay test with zero tokens burned in CI.
+
+type Finding = { claim: string, source: Url, confidence: float @range(0, 1) }
+type Report  = { title: string, findings: [Finding], gaps: [string] }
+
+tool web_search(q: string) -> [SearchResult] {
+    impl: mcp("search").web(q)
+    side_effects: none
+}
+
+fn analyze(q: string, hits: [SearchResult]) -> [Finding] uses LLM {
+    llm"""Extract verifiable findings about {q} from: {hits}"""
+    with { schema: [Finding], model: "anthropic:sonnet-4.6",
+           budget: 0.03 USD, retry: 2 with repair }
+}
+
+fn run(question: string) -> Report uses LLM, Tool {
+    let angles: [string] = llm"""3 search angles for: {question}"""
+        with { schema: [string], budget: 0.005 USD }
+
+    let hits  = par map angles |a| -> web_search(a)
+    let found = par map(angles zip hits, concurrency = 3) |(a, h)| -> analyze(a, h)
+
+    llm"""Merge findings, list remaining gaps. Question: {question}"""
+    with { schema: Report, model: "anthropic:sonnet-4.6",
+           budget: 0.04 USD, retry: 3 with repair }
+}
+
+test "run stays within budget on recorded trace" {
+    let t = replay("traces/demo_run.jsonl")
+    assert t.cost_usd < 0.25
+    assert len(t.output.findings) >= 3
+}

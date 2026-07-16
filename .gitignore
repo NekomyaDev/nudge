@@ -1,0 +1,8 @@
+/target
+**/*.rs.bk
+Cargo.lock
+.nudge/store/
+traces/local/
+__pycache__/
+*.pyc
+.DS_Store
