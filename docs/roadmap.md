@@ -1,14 +1,14 @@
 # Nudge — Roadmap
 
-Design v1.2 is frozen ([design.md](design.md)). This file tracks implementation.
+Design v1.3 is frozen ([design.md](design.md)). This file tracks implementation.
 
 ## MVP — v0.1 (2-week plan)
 
 | Days | Deliverable | Status |
 |---|---|---|
 | 1–3 | Lexer + parser + AST; end-to-end `hello llm` (no schema, fixed model) | ✅ done — `nudgec build examples/hello_llm.ndg` → Python, fake provider, trace record (22 tests) |
-| 4–6 | Type checker core (records, lists, refinements); runtime schema validation + repair loop | ⬜ next |
-| 7–8 | Effect inference + signature verification | ⬜ |
+| 4–6 | Type checker core (records, lists, refinements); runtime schema validation + repair loop | ✅ done — E0101/E0201/E0202, `nudgec check`, `rt.schema` + repair loop; research_agent runs e2e (37 tests) |
+| 7–8 | Effect inference + signature verification | ⬜ next |
 | 9–10 | Trace store + `replay` mode + `test` blocks | ⬜ |
 | 11–12 | `par map` + budget enforcement + Python codegen polish | ⬜ |
 | 13–14 | `examples/research_agent.ndg` end-to-end + docs + `v0.1` tag | ⬜ |
