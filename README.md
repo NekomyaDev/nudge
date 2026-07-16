@@ -61,7 +61,7 @@ The compiler proves the schema matches, infers effects, and computes a static co
 
 ## Status
 
-Pre-alpha. The language design is complete ([docs/design.md](docs/design.md), v1.1); the compiler is under active development ([docs/roadmap.md](docs/roadmap.md)). Currently at **day 1–3 of the MVP plan**: lexer and parser done, `hello llm` codegen next.
+Pre-alpha. The language design is complete ([docs/design.md](docs/design.md), v1.2); the compiler is under active development ([docs/roadmap.md](docs/roadmap.md)). Currently at **day 1–3 of the MVP plan**: lexer and parser done, `hello llm` codegen next.
 
 ## The name
 

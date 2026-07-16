@@ -14,11 +14,13 @@ pub enum Tok {
     Prompt(String),       // llm""" ... """ — raw body, interpolation parsed later
     Money(f64),           // 0.02 USD
 
-    // keywords
-    Fn, Let, Type, Tool, Agent, State, Uses, With, Schema, Model, Retry, Repair,
-    Budget, Cache, Tags, Par, Map, All, Race, Stream, For, In, If, Else, Return,
-    Test, Assert, Replay, Export, Use, Impl, SideEffects, Fallback, Route, When,
-    Otherwise, And, Or, True, False, None,
+    // reserved keywords (design §12: contextual keywords like `schema`, `retry`,
+    // `impl`, `replay` intentionally lex as Ident — the parser recognizes them
+    // by string in their grammatical positions, so they stay usable as names)
+    Fn, Let, Type, Tool, Agent, State, Uses, With,
+    Par, Map, All, Race, For, In, If, Else, Return,
+    Test, Assert, Export, Use,
+    And, Or, True, False, None,
 
     // punctuation & operators
     LParen, RParen, LBrace, RBrace, LBracket, RBracket,
@@ -49,15 +51,11 @@ pub struct LexError {
 const KEYWORDS: &[(&str, Tok)] = &[
     ("fn", Tok::Fn), ("let", Tok::Let), ("type", Tok::Type), ("tool", Tok::Tool),
     ("agent", Tok::Agent), ("state", Tok::State), ("uses", Tok::Uses), ("with", Tok::With),
-    ("schema", Tok::Schema), ("model", Tok::Model), ("retry", Tok::Retry),
-    ("repair", Tok::Repair), ("budget", Tok::Budget), ("cache", Tok::Cache),
-    ("tags", Tok::Tags), ("par", Tok::Par), ("map", Tok::Map), ("all", Tok::All),
-    ("race", Tok::Race), ("stream", Tok::Stream), ("for", Tok::For), ("in", Tok::In),
+    ("par", Tok::Par), ("map", Tok::Map), ("all", Tok::All),
+    ("race", Tok::Race), ("for", Tok::For), ("in", Tok::In),
     ("if", Tok::If), ("else", Tok::Else), ("return", Tok::Return), ("test", Tok::Test),
-    ("assert", Tok::Assert), ("replay", Tok::Replay), ("export", Tok::Export),
-    ("use", Tok::Use), ("impl", Tok::Impl), ("side_effects", Tok::SideEffects),
-    ("fallback", Tok::Fallback), ("route", Tok::Route), ("when", Tok::When),
-    ("otherwise", Tok::Otherwise), ("and", Tok::And), ("or", Tok::Or),
+    ("assert", Tok::Assert), ("export", Tok::Export), ("use", Tok::Use),
+    ("and", Tok::And), ("or", Tok::Or),
     ("true", Tok::True), ("false", Tok::False), ("none", Tok::None),
 ];
 
@@ -208,7 +206,7 @@ mod tests {
     #[test]
     fn money_literal() {
         let t = toks("budget: 0.02 USD");
-        assert_eq!(t, vec![Tok::Budget, Tok::Colon, Tok::Money(0.02), Tok::Eof]);
+        assert_eq!(t, vec![Tok::Ident("budget".into()), Tok::Colon, Tok::Money(0.02), Tok::Eof]);
     }
 
     #[test]
@@ -222,7 +220,10 @@ mod tests {
     fn refinement_and_repair() {
         let t = toks("float @range(0, 1) retry: 2 with repair");
         assert!(t.contains(&Tok::At));
-        assert!(t.contains(&Tok::Repair));
+        assert!(t.contains(&Tok::With));
+        // contextual keywords lex as plain identifiers (design §12)
+        assert!(t.contains(&Tok::Ident("retry".into())));
+        assert!(t.contains(&Tok::Ident("repair".into())));
     }
 
     #[test]
