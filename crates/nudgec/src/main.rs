@@ -146,10 +146,8 @@ fn main() {
                     }
                 };
                 let driver = std::path::Path::new("out").join(format!("{stem}_nudge_tests.py"));
-                let driver_src = format!(
-                    "import importlib.util, sys, traceback\nspec = importlib.util.spec_from_file_location(\"nudge_mod\", {:?})\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\nfns = [getattr(m, n) for n in sorted(dir(m)) if n.startswith(\"nudge_test_\")]\nfailed = 0\nfor f in fns:\n    try:\n        f()\n        print(\"PASS\", f.__name__)\n    except Exception:\n        failed += 1\n        print(\"FAIL\", f.__name__)\n        traceback.print_exc()\nprint(f\"{{len(fns) - failed}}/{{len(fns)}} tests passed\")\nsys.exit(1 if failed else 0)\n",
-                    abs.to_string_lossy()
-                );
+                let driver_src =
+                    codegen::TEST_DRIVER_PY.replace("__MODULE__", &abs.to_string_lossy());
                 if let Err(e) = fs::write(&driver, driver_src) {
                     eprintln!("error: cannot write {}: {e}", driver.display());
                     process::exit(1);

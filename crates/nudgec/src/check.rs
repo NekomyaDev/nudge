@@ -279,7 +279,17 @@ fn schema_expr_ty(e: &Expr, g: &Globals, errs: &mut Vec<CheckError>) -> Ty {
 fn check_expr(e: &Expr, locals: &HashMap<String, Ty>, g: &Globals, errs: &mut Vec<CheckError>) -> Ty {
     match e {
         Expr::Int(_) => Ty::Int,
-        Expr::Float(_) | Expr::Money(_) => Ty::Float, // USD literals are numeric budgets
+        Expr::Float(_) => Ty::Float,
+        Expr::Money(_, unit) => {
+            // v0.1 speaks USD only (design §4.3)
+            if unit != "USD" {
+                errs.push(CheckError {
+                    code: "E0501",
+                    msg: format!("unknown budget unit '{unit}' (v0.1 supports USD only)"),
+                });
+            }
+            Ty::Float
+        }
         Expr::Str(_) | Expr::Prompt { .. } => Ty::Str,
         Expr::Bool(_) => Ty::Bool,
         Expr::None => Ty::None_,
@@ -733,6 +743,18 @@ mod tests {
     #[test]
     fn test_blocks_are_exempt_from_effect_rules() {
         let errs = check_src("test \"t\" { let x = replay(\"t.jsonl\")\nassert true }");
+        assert_eq!(errs, vec![]);
+    }
+
+    #[test]
+    fn non_usd_budget_is_e0501() {
+        let errs = check_src("fn f() -> string uses LLM { llm\"\"\"x\"\"\" with { budget: 5 EUR } }");
+        assert!(errs.iter().any(|e| e.code == "E0501" && e.msg.contains("EUR")), "got {errs:?}");
+    }
+
+    #[test]
+    fn usd_budget_is_clean() {
+        let errs = check_src("fn f() -> string uses LLM { llm\"\"\"x\"\"\" with { budget: 0.02 USD } }");
         assert_eq!(errs, vec![]);
     }
 }
