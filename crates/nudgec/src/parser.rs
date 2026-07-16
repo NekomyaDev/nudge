@@ -7,6 +7,10 @@
 //!
 //! MVP infix rule: the identifier `zip` between two expressions parses as an
 //! infix call (`a zip b` → `zip(a, b)`). Whitelisted, not general.
+//!
+//! Contextual keywords (design §12): `schema`, `retry`, `repair`, `impl`,
+//! `replay`, … lex as ordinary identifiers; the parser matches them by string
+//! where the grammar expects them, so they remain usable as names.
 
 use crate::ast::*;
 use crate::lexer::{Spanned, Tok};
@@ -398,8 +402,8 @@ impl Parser {
                         self.expect(&Tok::Colon, "':' in with-block")?;
                         let val = self.parse_expr()?;
                         options.push((key, val));
-                        // `retry: N with repair`
-                        if self.at(&Tok::With) && self.peek2() == &Tok::Repair {
+                        // `retry: N with repair` — `repair` is a contextual keyword (design §12)
+                        if self.at(&Tok::With) && matches!(self.peek2(), Tok::Ident(s) if s == "repair") {
                             self.bump(); self.bump();
                             repair = true;
                         }
@@ -539,7 +543,7 @@ fn analyze(q: string) -> [Finding] uses LLM {
                 }
                 other => panic!("expected par map, got {other:?}"),
             },
-            other => panic!(),
+            _ => panic!("expected fn"),
         }
         // paren form with zip infix + kwargs + tuple params
         let items = parse_str(
@@ -554,7 +558,7 @@ fn analyze(q: string) -> [Finding] uses LLM {
                 }
                 other => panic!("expected par map, got {other:?}"),
             },
-            other => panic!(),
+            _ => panic!("expected fn"),
         }
     }
 
