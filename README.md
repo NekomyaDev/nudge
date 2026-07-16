@@ -61,7 +61,7 @@ The compiler proves the schema matches, infers effects, and computes a static co
 
 ## Status
 
-Pre-alpha. The language design is complete ([docs/design.md](docs/design.md), v1.2); the compiler is under active development ([docs/roadmap.md](docs/roadmap.md)). Currently at **day 1–3 of the MVP plan**: lexer and parser done, `hello llm` codegen next.
+Pre-alpha. The language design is complete ([docs/design.md](docs/design.md), v1.2); the compiler is under active development ([docs/roadmap.md](docs/roadmap.md)). **Day 1–3 of the MVP is done**: lexer, parser, and `hello llm` codegen — `nudgec build examples/hello_llm.ndg` emits Python that runs under the fake provider at zero token cost (22 tests green). Next up: the type checker (day 4–6).
 
 ## The name
 
