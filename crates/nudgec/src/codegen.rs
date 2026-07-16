@@ -5,9 +5,10 @@
 //!   type alias  → `Name = rt.schema({...})` JSON-Schema literal (records are
 //!                 plain dicts validated at runtime; dataclasses post-MVP)
 //!   tool        → `def name(...): return rt.tool_stub("name")` (real MCP
-//!                 wiring lands day 8–10)
+//!                 wiring lands post-MVP)
 //!   llm call    → `rt.llm_call(prompt=…, schema=rt.schema(…), model=…, …)`
-//!   test block  → comment (the `nudge test` runner lands day 9–10)
+//!   test block  → `def nudge_test_<slug>():` (design §6.3; run via
+//!                 `nudgec test`) with `replay` → `rt.replay`
 //!
 //! Determinism (design §14 rule d): identical AST ⇒ byte-identical output.
 
@@ -48,8 +49,9 @@ pub fn emit(items: &[Item]) -> String {
                 let ps = params.iter().map(|p| p.name.clone()).collect::<Vec<_>>().join(", ");
                 out.push_str(&format!("def {name}({ps}):\n    return rt.tool_stub(\"{name}\")\n"));
             }
-            Item::Test { name, .. } => {
-                out.push_str(&format!("# test \"{name}\" — the `nudge test` runner lands day 9–10"));
+            Item::Test { name, body } => {
+                out.push_str(&format!("def nudge_test_{}():\n", slug(name)));
+                out.push_str(&emit_test_body(body, &aliases));
             }
         }
     }
@@ -84,6 +86,48 @@ fn emit_body(body: &[Stmt], aliases: &HashSet<String>) -> String {
         out.push('\n');
     }
     out
+}
+
+/// Test bodies (design §6.3): no implicit return — asserts do the work.
+fn emit_test_body(body: &[Stmt], aliases: &HashSet<String>) -> String {
+    if body.is_empty() {
+        return "    pass\n".into();
+    }
+    let mut out = String::new();
+    for st in body {
+        let line = match st {
+            Stmt::Let { name, value, .. } => format!("{name} = {}", py(value, aliases)),
+            Stmt::Assert(e) => format!("assert {}", py(e, aliases)),
+            Stmt::ExprStmt(e) => py(e, aliases),
+        };
+        out.push_str("    ");
+        out.push_str(&line);
+        out.push('\n');
+    }
+    out
+}
+
+/// `test "run stays within budget"` → `run_stays_within_budget`.
+fn slug(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut last_us = true; // collapse separators, trim leading
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            last_us = false;
+        } else if !last_us {
+            out.push('_');
+            last_us = true;
+        }
+    }
+    while out.ends_with('_') {
+        out.pop();
+    }
+    if out.is_empty() {
+        "unnamed".into()
+    } else {
+        out
+    }
 }
 
 fn is_builtin_type(n: &str) -> bool {
@@ -187,7 +231,15 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
         Expr::Call { func, args, kwargs } => {
             let mut parts: Vec<String> = args.iter().map(|a| py(a, aliases)).collect();
             parts.extend(kwargs.iter().map(|(k, v)| format!("{k}={}", py(v, aliases))));
-            format!("{}({})", py(func, aliases), parts.join(", "))
+            // runtime-provided builtins get the rt. prefix; len/zip are
+            // real Python builtins and pass through verbatim
+            let f = match func.as_ref() {
+                Expr::Ident(n) if matches!(n.as_str(), "replay" | "python" | "mcp") => {
+                    format!("rt.{n}")
+                }
+                other => py(other, aliases),
+            };
+            format!("{}({})", f, parts.join(", "))
         }
         Expr::Field { obj, name } => format!("{}.{name}", py(obj, aliases)),
         // always parenthesized: precedence is decided by the Nudge parser,
@@ -282,6 +334,27 @@ fn py_str(s: &str) -> String {
     out.push('"');
     out
 }
+
+/// Shared `nudgec test`-style driver: load a generated module by path and
+/// run every `nudge_test_*` function, reporting PASS/FAIL per test.
+#[cfg(test)]
+const TEST_DRIVER: &str = r#"import importlib.util, sys, traceback
+spec = importlib.util.spec_from_file_location("nudge_mod", "__MODULE__")
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+fns = [getattr(m, n) for n in sorted(dir(m)) if n.startswith("nudge_test_")]
+failed = 0
+for f in fns:
+    try:
+        f()
+        print("PASS", f.__name__)
+    except Exception:
+        failed += 1
+        print("FAIL", f.__name__)
+        traceback.print_exc()
+print(f"{len(fns) - failed}/{len(fns)} tests passed")
+sys.exit(1 if failed else 0)
+"#;
 
 // ── tests ────────────────────────────────────────────────────────────
 #[cfg(test)]
@@ -441,5 +514,105 @@ mod tests {
         let output = run_py(&e, &out_py, &[("NUDGE_FAKE_FAIL_FIRST", "99")]);
         assert!(!output.status.success(), "expected failure, stdout: {}", String::from_utf8_lossy(&output.stdout));
         assert!(String::from_utf8_lossy(&output.stderr).contains("SchemaFailure"), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    // ── day 9–10: test blocks + replay ─────────────────────────────
+
+    #[test]
+    fn test_block_lowers_to_runnable_fn() {
+        let src = "test \"stays within budget!\" { let t = replay(\"traces/x.jsonl\")\nassert t.cost_usd < 0.25 }";
+        let out = gen(src);
+        assert!(out.contains("def nudge_test_stays_within_budget():"), "got:\n{out}");
+        assert!(out.contains("t = rt.replay(\"traces/x.jsonl\")"), "got:\n{out}");
+        assert!(out.contains("assert (t.cost_usd < 0.25)"), "got:\n{out}");
+    }
+
+    #[test]
+    fn slug_edge_cases() {
+        assert_eq!(slug("run stays within budget on recorded trace"), "run_stays_within_budget_on_recorded_trace");
+        assert_eq!(slug("!!weird — NA ME!!"), "weird_na_me");
+        assert_eq!(slug(""), "unnamed");
+    }
+
+    #[test]
+    fn test_block_runs_against_recorded_trace() {
+        let Some(e) = e2e("testrun") else { return };
+        // research_agent.ndg's own test block replays traces/demo_run.jsonl
+        let py = gen(include_str!("../../../examples/research_agent.ndg"));
+        let out_py = e.dir.join("research_agent.py");
+        std::fs::write(&out_py, py).unwrap();
+        std::fs::create_dir_all(e.dir.join("traces")).unwrap();
+
+        // 1. record a real run into traces/demo_run.jsonl
+        let rec = e.dir.join("record.py");
+        std::fs::write(
+            &rec,
+            format!("import sys\nsys.path.insert(0, {:?})\nimport research_agent as r\nr.run(\"urban heat islands\")\n", e.dir.to_string_lossy()),
+        )
+        .unwrap();
+        let trace_path = e.dir.join("traces/demo_run.jsonl");
+        let output = run_py(&e, &rec, &[("NUDGE_TRACE", trace_path.to_str().unwrap())]);
+        assert!(output.status.success(), "record stderr: {}", String::from_utf8_lossy(&output.stderr));
+        let log = std::fs::read_to_string(&trace_path).unwrap();
+        assert!(log.contains("\"fn.return\""), "trace needs a fn.return record: {log}");
+
+        // 2. run the generated nudge_test_* functions with cwd = e.dir
+        //    (so the relative trace path in the test block resolves)
+        let driver = e.dir.join("run_tests.py");
+        std::fs::write(&driver, TEST_DRIVER.replace("__MODULE__", &out_py.to_string_lossy())).unwrap();
+        let output = std::process::Command::new("python3")
+            .arg(&driver)
+            .current_dir(&e.dir)
+            .env("PYTHONPATH", &e.runtime)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("PASS nudge_test_run_stays_within_budget_on_recorded_trace"), "stdout: {stdout}");
+    }
+
+    #[test]
+    fn replay_mode_reproduces_outputs_without_provider() {
+        let Some(e) = e2e("replay") else { return };
+        let py = gen(include_str!("../../../examples/research_agent.ndg"));
+        let out_py = e.dir.join("research_agent.py");
+        std::fs::write(&out_py, py).unwrap();
+        let driver = e.dir.join("drive.py");
+        std::fs::write(
+            &driver,
+            format!("import sys, json\nsys.path.insert(0, {:?})\nimport research_agent as r\nprint(json.dumps(r.run(\"urban heat islands\"), sort_keys=True))\n", e.dir.to_string_lossy()),
+        )
+        .unwrap();
+        // live run
+        let trace1 = e.dir.join("t1.jsonl");
+        let out1 = run_py(&e, &driver, &[("NUDGE_TRACE", trace1.to_str().unwrap())]);
+        assert!(out1.status.success(), "stderr: {}", String::from_utf8_lossy(&out1.stderr));
+        // full replay of that trace: zero provider calls, zero new llm.call records
+        let trace2 = e.dir.join("t2.jsonl");
+        let out2 = run_py(
+            &e,
+            &driver,
+            &[("NUDGE_TRACE", trace2.to_str().unwrap()), ("NUDGE_REPLAY", trace1.to_str().unwrap())],
+        );
+        assert!(out2.status.success(), "stderr: {}", String::from_utf8_lossy(&out2.stderr));
+        assert_eq!(out1.stdout, out2.stdout, "replay must reproduce the live result");
+        let log2 = std::fs::read_to_string(&trace2).unwrap_or_default();
+        assert!(!log2.contains("\"llm.call\""), "replay must not call any provider: {log2}");
+    }
+
+    #[test]
+    fn replay_version_mismatch_raises() {
+        let Some(e) = e2e("version") else { return };
+        let bad = e.dir.join("bad.jsonl");
+        std::fs::write(&bad, "{\"v\": 99, \"seq\": 1, \"kind\": \"llm.call\"}\n").unwrap();
+        let driver = e.dir.join("drive_v.py");
+        std::fs::write(&driver, format!("import nudge_runtime as rt\nrt.replay({:?})\n", bad.to_string_lossy())).unwrap();
+        let output = std::process::Command::new("python3")
+            .arg(&driver)
+            .env("PYTHONPATH", &e.runtime)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "expected failure");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("ReplayMismatch"), "stderr: {}", String::from_utf8_lossy(&output.stderr));
     }
 }
