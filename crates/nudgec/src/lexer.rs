@@ -14,11 +14,13 @@ pub enum Tok {
     Prompt(String),       // llm""" ... """ — raw body, interpolation parsed later
     Money(f64, String),   // 0.02 USD — unit kept for E0501 (USD only in v0.1)
 
-    // keywords
-    Fn, Let, Type, Tool, Agent, State, Uses, With, Schema, Model, Retry, Repair,
-    Budget, Cache, Tags, Par, Map, All, Race, Stream, For, In, If, Else, Return,
-    Test, Assert, Replay, Export, Use, Impl, SideEffects, Fallback, Route, When,
-    Otherwise, And, Or, True, False, None,
+    // reserved keywords (design §12: contextual keywords like `schema`, `retry`,
+    // `impl`, `replay` intentionally lex as Ident — the parser recognizes them
+    // by string in their grammatical positions, so they stay usable as names)
+    Fn, Let, Type, Tool, Agent, State, Uses, With,
+    Par, Map, All, Race, For, In, If, Else, Return,
+    Test, Assert, Export, Use,
+    And, Or, True, False, None,
 
     // punctuation & operators
     LParen, RParen, LBrace, RBrace, LBracket, RBracket,
