@@ -61,7 +61,7 @@ The compiler proves the schema matches, infers effects, and computes a static co
 
 ## Status
 
-Pre-alpha. The language design is complete ([docs/design.md](docs/design.md), v1.3); the compiler is under active development ([docs/roadmap.md](docs/roadmap.md)). **Days 1–6 of the MVP are done**: lexer → parser → **type checker** → Python codegen, plus the `nudge_runtime` with schema validation and the repair loop. `nudgec build examples/research_agent.ndg` type-checks (E0101/E0201/E0202), emits Python, and the emitted agent runs end-to-end under the fake provider at zero token cost (37 tests green). Next up: effect inference (day 7–8).
+Pre-alpha. The language design is complete ([docs/design.md](docs/design.md), v1.4); the compiler is under active development ([docs/roadmap.md](docs/roadmap.md)). **Days 1–8 of the MVP are done**: lexer → parser → **type checker** (E0101–E0202) → **effect inference** (E0301/E0302) → Python codegen, plus the `nudge_runtime` with schema validation and the repair loop. `nudgec build examples/research_agent.ndg` type-checks, verifies its `uses LLM, Tool` signatures, emits Python, and the emitted agent runs end-to-end under the fake provider at zero token cost (44 tests green). Next up: trace store + `replay` mode (day 9–10).
 
 ## The name
 
