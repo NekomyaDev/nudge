@@ -1,8 +1,10 @@
 # Nudge — Language Design
 
-**Version:** 1.4 (2026-07-17) · **Status:** Frozen for MVP implementation
+**Version:** 1.5 (2026-07-17) · **Status:** Frozen for MVP implementation
 **Audience:** compiler implementers, language designers, early adopters
 
+> **Changelog v1.5:** trace store + replay + test blocks landed (roadmap day 9–10). §6.1: `llm.call` records carry inline `input`/`output` at MVP — the content-addressed payload store is deferred post-MVP (v1-compatible additive fields). New `fn.return` record (`fn`, `output`), emitted by every effectful fn; `Trace.output` is the last `fn.return` value. §6.3 concrete MVP semantics: `replay(path)` returns a `Trace` (`.cost_usd` = Σ llm.call cost; `.output` dot-accessible); unsupported record versions raise `ReplayMismatch`. §6.2: full replay runs with `NUDGE_REPLAY=<trace>` — `llm_call` consumes recorded outputs in order (repair rounds replayed faithfully, zero provider calls, no new `llm.call` records). Test blocks lower to `nudge_test_<slug>()` and run via `nudgec test`.
+>
 > **Changelog v1.4:** effect inference landed (roadmap day 7–8). §3.2/§11 clarified: **E0301** = a function performs an effect but has no `uses` clause at all; **E0302** = a `uses` clause exists but omits an inferred effect (annotation too narrow). MVP effect sources: `llm"""` → `LLM`; calling a declared `tool` or `mcp(...)` → `Tool`; `replay(...)` / `python(...)` → `IO`. Effects propagate transitively through user-function calls (fixpoint over the call graph). `test` blocks are exempt — they exist to exercise effectful code. E0101 also covers unknown effect names in `uses` clauses.
 >
 > **Changelog v1.3:** type checker landed (roadmap day 4–6). §11: E0101 now also covers unknown type names; E0201 generalizes to *type mismatch* (schema ↔ return, let annotations, call arguments). §14 concrete MVP lowering: type aliases → `rt.schema({...})` JSON-Schema literals; record values are plain dicts validated at runtime (dataclasses post-MVP); tool bodies → `rt.tool_stub` until the MCP client lands (day 8–10). §15: the fake provider is schema-driven — it synthesizes conforming values, and `NUDGE_FAKE_FAIL_FIRST=k` forces k initial schema violations so the repair loop is testable at zero token cost. Trace records gain additive `repair_round` and `outcome` fields (v1-compatible: consumers must ignore unknown fields).
@@ -163,7 +165,10 @@ Every run emits an append-only trace (JSON Lines). Payloads live in a content-ad
  "input_hash": "9aa2…", "output_hash": "c41d…", "tokens": {"in": 812, "out": 341},
  "cost_usd": 0.0075, "dur_ms": 2310, "repair_round": 1, "outcome": "ok"}
 {"v": 1, "seq": 13, "kind": "tool.call", "tool": "web.search", "input_hash": "…", "output_hash": "…"}
+{"v": 1, "seq": 14, "kind": "fn.return", "fn": "research", "output": {"title": "…", "findings": […]}}
 ```
+
+**Payloads at MVP (v1.5):** `llm.call` records carry `input`/`output` inline; the content-addressed payload store above is deferred post-MVP. Every effectful fn also emits a `fn.return` record — `Trace.output` (§6.3) reads the last one.
 
 **Additive fields (v1.3):** `llm.call` records carry `repair_round` (0-based attempt) and `outcome` (`ok` / `schema_violation`). Consumers of v1 traces must ignore unknown fields.
 
@@ -179,6 +184,8 @@ nudge run main.ndg --replay=llm       // hybrid: LLM from trace, Tools live
 
 Full replay sends **zero** requests to any model API → free regression tests in CI. Hybrid mode answers "did tool behavior drift?"
 
+MVP mechanism (v1.5): `NUDGE_REPLAY=<trace.jsonl>` puts the runtime in full-replay mode — `llm_call` consumes recorded outputs in order (each repair round consumes its own record), no provider is called, and no new `llm.call` records are written. Running out of records raises `ReplayMismatch`.
+
 ### 6.3 Traces as Tests
 
 ```
@@ -190,6 +197,8 @@ test "research agent handles empty web results" {
 ```
 
 Any trace is automatically a property-test input. Snapshot update: `nudge test --accept`.
+
+MVP lowering (v1.5): test blocks compile to `nudge_test_<slug>()` Python functions; `nudgec test <file.ndg>` type-checks, emits, and runs them (the `nudge test` runner follows at v0.1). `replay(path)` returns a `Trace`: `.cost_usd` sums `llm.call` costs, `.output` is the last `fn.return` value with dot access (`t.output.findings`). Unsupported record versions raise `ReplayMismatch`.
 
 ## 7. Agent State and Checkpoints
 
