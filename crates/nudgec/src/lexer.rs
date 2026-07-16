@@ -114,9 +114,11 @@ pub fn lex(src: &str) -> Result<Vec<Spanned>, LexError> {
                     let v: f64 = text.parse().map_err(|_| LexError { msg: "bad money literal".into(), at: start })?;
                     out.push(Spanned { tok: Tok::Money(v), start, end: i });
                 } else if is_float {
-                    out.push(Spanned { tok: Tok::Float(text.parse().unwrap()), start, end: i });
+                    let v: f64 = text.parse().map_err(|_| LexError { msg: "bad float literal".into(), at: start })?;
+                    out.push(Spanned { tok: Tok::Float(v), start, end: i });
                 } else {
-                    out.push(Spanned { tok: Tok::Int(text.parse().unwrap()), start, end: i });
+                    let v: i64 = text.parse().map_err(|_| LexError { msg: "integer literal out of range".into(), at: start })?;
+                    out.push(Spanned { tok: Tok::Int(v), start, end: i });
                 }
             }
             '"' => {
