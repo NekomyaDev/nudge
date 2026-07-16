@@ -219,7 +219,7 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
         Expr::Int(v) => v.to_string(),
         Expr::Float(v) => v.to_string(),
         Expr::Str(s) => py_str(s),
-        Expr::Money(v) => format!("rt.USD(\"{v}\")"),
+        Expr::Money(v, _unit) => format!("rt.USD(\"{v}\")"), // unit pre-checked (E0501)
         Expr::Bool(b) => if *b { "True".into() } else { "False".into() },
         Expr::None => "None".into(),
         Expr::Ident(n) => n.clone(),
@@ -335,10 +335,10 @@ fn py_str(s: &str) -> String {
     out
 }
 
-/// Shared `nudgec test`-style driver: load a generated module by path and
-/// run every `nudge_test_*` function, reporting PASS/FAIL per test.
-#[cfg(test)]
-const TEST_DRIVER: &str = r#"import importlib.util, sys, traceback
+/// Shared `nudgec test` driver: load a generated module by path and run
+/// every `nudge_test_*` function, reporting PASS/FAIL per test. Used by both
+/// the `test` subcommand (main.rs) and the e2e tests below.
+pub const TEST_DRIVER_PY: &str = r#"import importlib.util, sys, traceback
 spec = importlib.util.spec_from_file_location("nudge_mod", "__MODULE__")
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
@@ -559,7 +559,7 @@ mod tests {
         // 2. run the generated nudge_test_* functions with cwd = e.dir
         //    (so the relative trace path in the test block resolves)
         let driver = e.dir.join("run_tests.py");
-        std::fs::write(&driver, TEST_DRIVER.replace("__MODULE__", &out_py.to_string_lossy())).unwrap();
+        std::fs::write(&driver, TEST_DRIVER_PY.replace("__MODULE__", &out_py.to_string_lossy())).unwrap();
         let output = std::process::Command::new("python3")
             .arg(&driver)
             .current_dir(&e.dir)
@@ -614,5 +614,77 @@ mod tests {
             .unwrap();
         assert!(!output.status.success(), "expected failure");
         assert!(String::from_utf8_lossy(&output.stderr).contains("ReplayMismatch"), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    // ── day 11–12: budget + parallel scheduler ─────────────────────
+
+    #[test]
+    fn run_budget_wall_stops_the_run() {
+        let Some(e) = e2e("budget") else { return };
+        // research agent makes 3 llm calls × $0.001 fake price; $0.0025
+        // covers exactly two, so the third hits the run-level wall
+        let py = gen(include_str!("../../../examples/research_agent.ndg"));
+        let out_py = e.dir.join("research_agent.py");
+        std::fs::write(&out_py, py).unwrap();
+        let driver = e.dir.join("drive_b.py");
+        std::fs::write(
+            &driver,
+            format!("import sys\nsys.path.insert(0, {:?})\nimport research_agent as r\nr.run(\"urban heat islands\")\n", e.dir.to_string_lossy()),
+        )
+        .unwrap();
+        let output = run_py(&e, &driver, &[("NUDGE_BUDGET", "0.0025")]);
+        assert!(!output.status.success(), "expected BudgetExceeded, stdout: {}", String::from_utf8_lossy(&output.stdout));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("BudgetExceeded"), "stderr: {stderr}");
+        // the trace is complete up to the crash point (design §11)
+        let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
+        let calls = log.lines().filter(|l| l.contains("\"llm.call\"")).count();
+        assert!((2..=3).contains(&calls), "expected 2–3 llm.call records before the wall, trace: {log}");
+    }
+
+    #[test]
+    fn per_call_budget_wall() {
+        let Some(e) = e2e("callbudget") else { return };
+        let src = "fn main() -> string uses LLM {\n    llm\"\"\"hi\"\"\" with { model: \"m\", budget: 0.0005 USD }\n}";
+        let out_py = e.dir.join("call_budget.py");
+        std::fs::write(&out_py, gen(src)).unwrap();
+        let output = run_py(&e, &out_py, &[]);
+        assert!(!output.status.success(), "expected BudgetExceeded");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("BudgetExceeded"), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+        // an ample per-call budget passes
+        let src2 = "fn main() -> string uses LLM {\n    llm\"\"\"hi\"\"\" with { model: \"m\", budget: 0.01 USD }\n}";
+        let out_py2 = e.dir.join("call_budget_ok.py");
+        std::fs::write(&out_py2, gen(src2)).unwrap();
+        let output2 = run_py(&e, &out_py2, &[]);
+        assert!(output2.status.success(), "stderr: {}", String::from_utf8_lossy(&output2.stderr));
+    }
+
+    #[test]
+    fn par_map_is_concurrent_and_order_preserving() {
+        let Some(e) = e2e("par") else { return };
+        let driver = e.dir.join("drive_par.py");
+        std::fs::write(
+            &driver,
+            "import time\nimport nudge_runtime as rt\nstart = time.time()\ndef slow(x):\n    time.sleep(0.05)\n    return x * 10\nout = rt.par_map(range(6), slow, concurrency=3)\nelapsed = time.time() - start\nassert out == [0, 10, 20, 30, 40, 50], out\nassert elapsed < 0.15, f\"not concurrent: {elapsed}\"\n# pair-unpacking still works through the pool\npairs = rt.par_map(zip([1, 2], [3, 4]), lambda a, b: a + b)\nassert pairs == [4, 6], pairs\n# race returns a result\nwinner = rt.par_race([lambda: 'a', lambda: 'b'])\nassert winner in ('a', 'b')\nprint(\"PAR OK\")\n",
+        )
+        .unwrap();
+        let output = run_py(&e, &driver, &[]);
+        assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("PAR OK"));
+    }
+
+    #[test]
+    fn par_branches_share_the_run_budget() {
+        let Some(e) = e2e("parbudget") else { return };
+        // 4 parallel llm calls × $0.001 against a $0.0025 run budget
+        let driver = e.dir.join("drive_pb.py");
+        std::fs::write(
+            &driver,
+            "import nudge_runtime as rt\nrt.par_map(range(4), lambda i: rt.llm_call(prompt=f\"q{i}\", model=\"m\"), concurrency=4)\n",
+        )
+        .unwrap();
+        let output = run_py(&e, &driver, &[("NUDGE_BUDGET", "0.0025")]);
+        assert!(!output.status.success(), "expected BudgetExceeded from an in-flight branch");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("BudgetExceeded"), "stderr: {}", String::from_utf8_lossy(&output.stderr));
     }
 }
