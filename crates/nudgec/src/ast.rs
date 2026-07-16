@@ -24,7 +24,7 @@ pub enum Expr {
     Int(i64),
     Float(f64),
     Str(String),
-    Money(f64),
+    Money(f64, String),
     Bool(bool),
     None,
     Ident(String),
