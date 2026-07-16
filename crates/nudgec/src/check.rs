@@ -5,13 +5,16 @@
 //! assignability. `Unknown` is the dynamic escape hatch: it is assignable to
 //! and from everything, so MCP/Python interop never false-alarms.
 //!
-//! Diagnostics (design §11, v1.3): E0101 unknown identifier or type name,
-//! E0201 type mismatch, E0202 malformed refinement / alias cycle / bad schema.
+//! Diagnostics (design §11, v1.4): E0101 unknown identifier / type / effect
+//! name, E0201 type mismatch, E0202 malformed refinement / alias cycle / bad
+//! schema, E0301 effect used with no `uses` clause, E0302 `uses` clause too
+//! narrow. Effects propagate transitively through user-fn calls (fixpoint);
+//! `test` blocks are exempt (they exist to exercise effectful code).
 //!
-//! Deferred: effect inference (day 7–8), optional/union types, flow analysis.
+//! Deferred: optional/union types, flow analysis.
 
 use crate::ast::*;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -164,6 +167,89 @@ fn elem_of(t: &Ty) -> Ty {
     match t {
         Ty::List(e) => (**e).clone(),
         _ => Ty::Unknown,
+    }
+}
+
+// ── effect inference (design §3.2, v1.4) ──────────────────────────
+
+const KNOWN_EFFECTS: [&str; 3] = ["LLM", "Tool", "IO"];
+
+/// Collect the direct (non-transitive) effects of an expression, plus the
+/// names of user fns it calls (call-graph edges for the fixpoint).
+fn direct_effects(
+    e: &Expr,
+    g: &Globals,
+    effects: &mut BTreeSet<String>,
+    calls: &mut BTreeSet<String>,
+) {
+    match e {
+        Expr::LlmCall { options, .. } => {
+            effects.insert("LLM".into());
+            for (_, v) in options {
+                direct_effects(v, g, effects, calls);
+            }
+        }
+        Expr::Call { func, args, kwargs } => {
+            if let Expr::Ident(name) = func.as_ref() {
+                match name.as_str() {
+                    "replay" | "python" => {
+                        effects.insert("IO".into());
+                    }
+                    "mcp" => {
+                        effects.insert("Tool".into());
+                    }
+                    "len" | "zip" => {}
+                    _ => {
+                        if g.tools.contains_key(name) {
+                            effects.insert("Tool".into());
+                        } else if g.fns.contains_key(name) {
+                            calls.insert(name.clone());
+                        }
+                    }
+                }
+            } else {
+                direct_effects(func, g, effects, calls);
+            }
+            for a in args {
+                direct_effects(a, g, effects, calls);
+            }
+            for (_, v) in kwargs {
+                direct_effects(v, g, effects, calls);
+            }
+        }
+        Expr::ListLit(xs) | Expr::ParAll(xs) | Expr::ParRace(xs) => {
+            for x in xs {
+                direct_effects(x, g, effects, calls);
+            }
+        }
+        Expr::Field { obj, .. } => direct_effects(obj, g, effects, calls),
+        Expr::Binary { l, r, .. } => {
+            direct_effects(l, g, effects, calls);
+            direct_effects(r, g, effects, calls);
+        }
+        Expr::Unary { x, .. } => direct_effects(x, g, effects, calls),
+        Expr::ParMap { coll, kwargs, body, .. } => {
+            direct_effects(coll, g, effects, calls);
+            for (_, v) in kwargs {
+                direct_effects(v, g, effects, calls);
+            }
+            direct_effects(body, g, effects, calls);
+        }
+        _ => {}
+    }
+}
+
+fn body_effects(
+    body: &[Stmt],
+    g: &Globals,
+    effects: &mut BTreeSet<String>,
+    calls: &mut BTreeSet<String>,
+) {
+    for st in body {
+        match st {
+            Stmt::Let { value, .. } => direct_effects(value, g, effects, calls),
+            Stmt::Assert(e) | Stmt::ExprStmt(e) => direct_effects(e, g, effects, calls),
+        }
     }
 }
 
@@ -440,6 +526,78 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
             Item::TypeAlias { .. } => {}
         }
     }
+
+    // ── effect inference + signature verification (design §3.2) ────
+    let mut direct: HashMap<String, BTreeSet<String>> = HashMap::new();
+    let mut edges: HashMap<String, BTreeSet<String>> = HashMap::new();
+    for item in items {
+        if let Item::Fn { name, body, .. } = item {
+            let mut eff = BTreeSet::new();
+            let mut calls = BTreeSet::new();
+            body_effects(body, &g, &mut eff, &mut calls);
+            direct.insert(name.clone(), eff);
+            edges.insert(name.clone(), calls);
+        }
+    }
+    // propagate effects along the call graph to a fixpoint (cycles converge:
+    // sets are bounded by the 3 known effects)
+    let mut inferred = direct;
+    loop {
+        let mut changed = false;
+        for (name, callees) in &edges {
+            let mut add = BTreeSet::new();
+            for c in callees {
+                if let Some(eff) = inferred.get(c) {
+                    add.extend(eff.iter().cloned());
+                }
+            }
+            let entry = inferred.get_mut(name).unwrap();
+            for e in add {
+                if entry.insert(e) {
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    for item in items {
+        if let Item::Fn { name, effects: declared, .. } = item {
+            for d in declared {
+                if !KNOWN_EFFECTS.contains(&d.as_str()) {
+                    errs.push(CheckError {
+                        code: "E0101",
+                        msg: format!("unknown effect '{d}' in fn '{name}' (known: LLM, Tool, IO)"),
+                    });
+                }
+            }
+            let want = &inferred[name];
+            let missing: Vec<&String> =
+                want.iter().filter(|e| !declared.iter().any(|d| d == *e)).collect();
+            if missing.is_empty() {
+                continue;
+            }
+            let list = missing.iter().map(|e| e.as_str()).collect::<Vec<_>>().join(", ");
+            if declared.is_empty() {
+                errs.push(CheckError {
+                    code: "E0301",
+                    msg: format!(
+                        "fn '{name}' uses {list} but has no `uses` clause — add `uses {list}` to its signature"
+                    ),
+                });
+            } else {
+                errs.push(CheckError {
+                    code: "E0302",
+                    msg: format!(
+                        "fn '{name}' declares `uses {}` but its body also uses {list} — annotation too narrow",
+                        declared.join(", ")
+                    ),
+                });
+            }
+        }
+    }
     errs
 }
 
@@ -527,5 +685,54 @@ mod tests {
         // mirrors the research agent's fan-out shape
         let src = "type R = { t: string }\ntool web(q: string) -> [R] { impl: mcp(\"s\").web(q) }\nfn a(q: string, h: [R]) -> string uses LLM { llm\"\"\"{q} {h}\"\"\" with { model: \"m\" } }\nfn run(qs: [string]) -> [string] uses LLM, Tool {\n    let hits = par map qs |q| -> web(q)\n    par map(qs zip hits) |(q, h)| -> a(q, h)\n}";
         assert_eq!(check_src(src), vec![]);
+    }
+
+    // ── effect inference (design §3.2, v1.4) ───────────────────────
+
+    #[test]
+    fn llm_call_without_uses_is_e0301() {
+        let errs = check_src("fn f() -> string { llm\"\"\"x\"\"\" with { model: \"m\" } }");
+        assert!(errs.iter().any(|e| e.code == "E0301" && e.msg.contains("LLM") && e.msg.contains("f")), "got {errs:?}");
+    }
+
+    #[test]
+    fn narrow_annotation_is_e0302() {
+        let src = "type R = { t: string }\ntool web(q: string) -> [R] { impl: mcp(\"s\").web(q) }\nfn f(q: string) -> [R] uses LLM { web(q) }";
+        let errs = check_src(src);
+        assert!(errs.iter().any(|e| e.code == "E0302" && e.msg.contains("Tool") && e.msg.contains("too narrow")), "got {errs:?}");
+    }
+
+    #[test]
+    fn effects_propagate_through_user_fn_calls() {
+        let src = "fn a() -> string uses LLM { llm\"\"\"x\"\"\" with { model: \"m\" } }\nfn b() -> string { a() }";
+        let errs = check_src(src);
+        assert_eq!(errs.len(), 1, "got {errs:?}");
+        assert!(errs[0].code == "E0301" && errs[0].msg.contains("'b'"), "got {errs:?}");
+    }
+
+    #[test]
+    fn replay_and_python_are_io() {
+        let errs = check_src("fn f(p: string) -> string { replay(p) }");
+        assert!(errs.iter().any(|e| e.code == "E0301" && e.msg.contains("IO")), "got {errs:?}");
+        let errs2 = check_src("fn f(p: string) -> string uses IO { replay(p) }");
+        assert_eq!(errs2, vec![]);
+    }
+
+    #[test]
+    fn tool_call_declared_is_clean() {
+        let src = "type R = { t: string }\ntool web(q: string) -> [R] { impl: mcp(\"s\").web(q) }\nfn f(q: string) -> [R] uses Tool { web(q) }";
+        assert_eq!(check_src(src), vec![]);
+    }
+
+    #[test]
+    fn unknown_effect_name_is_e0101() {
+        let errs = check_src("fn f() -> int uses Magic { 1 }");
+        assert!(errs.iter().any(|e| e.code == "E0101" && e.msg.contains("Magic")), "got {errs:?}");
+    }
+
+    #[test]
+    fn test_blocks_are_exempt_from_effect_rules() {
+        let errs = check_src("test \"t\" { let x = replay(\"t.jsonl\")\nassert true }");
+        assert_eq!(errs, vec![]);
     }
 }
