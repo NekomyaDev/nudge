@@ -1,6 +1,6 @@
 # Nudge — Roadmap
 
-Design v1.5 is frozen ([design.md](design.md)). This file tracks implementation.
+Design v1.6 is frozen ([design.md](design.md)). This file tracks implementation.
 
 ## MVP — v0.1 (2-week plan)
 
@@ -10,8 +10,8 @@ Design v1.5 is frozen ([design.md](design.md)). This file tracks implementation.
 | 4–6 | Type checker core (records, lists, refinements); runtime schema validation + repair loop | ✅ done — E0101/E0201/E0202, `nudgec check`, `rt.schema` + repair loop; research_agent runs e2e (37 tests) |
 | 7–8 | Effect inference + signature verification | ✅ done — E0301/E0302, transitive fixpoint over the call graph, test blocks exempt (44 tests) |
 | 9–10 | Trace store + `replay` mode + `test` blocks | ✅ done — `fn.return` records, `Trace`/`replay`, `NUDGE_REPLAY` full replay, `nudgec test` runs `nudge_test_*` (49 tests) |
-| 11–12 | `par map` + budget enforcement + Python codegen polish | ⬜ next |
-| 13–14 | `examples/research_agent.ndg` end-to-end + docs + `v0.1` tag | ⬜ |
+| 11–12 | `par map` + budget enforcement + Python codegen polish | ✅ done — thread-pool `par_map`/`par_all`/`par_race` (order-preserving), flat $0.001 fake pricing, `NUDGE_BUDGET` run budget shared across `par` branches, per-call walls, E0501 non-USD budgets (56 tests) |
+| 13–14 | `examples/research_agent.ndg` end-to-end + docs + `v0.1` tag | ⬜ next |
 
 **v0.1 acceptance:** the research agent (i) under 30 lines, (ii) zero manual JSON parsing, (iii) replay test passing in CI at zero token cost.
 
