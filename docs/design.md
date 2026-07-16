@@ -1,8 +1,10 @@
 # Nudge — Language Design
 
-**Version:** 1.2 (2026-07-16) · **Status:** Frozen for MVP implementation
+**Version:** 1.3 (2026-07-16) · **Status:** Frozen for MVP implementation
 **Audience:** compiler implementers, language designers, early adopters
 
+> **Changelog v1.3:** type checker landed (roadmap day 4–6). §11: E0101 now also covers unknown type names; E0201 generalizes to *type mismatch* (schema ↔ return, let annotations, call arguments). §14 concrete MVP lowering: type aliases → `rt.schema({...})` JSON-Schema literals; record values are plain dicts validated at runtime (dataclasses post-MVP); tool bodies → `rt.tool_stub` until the MCP client lands (day 8–10). §15: the fake provider is schema-driven — it synthesizes conforming values, and `NUDGE_FAKE_FAIL_FIRST=k` forces k initial schema violations so the repair loop is testable at zero token cost. Trace records gain additive `repair_round` and `outcome` fields (v1-compatible: consumers must ignore unknown fields).
+>
 > **Changelog v1.2:** §12 keyword set split into **reserved** and **contextual** keywords. Option names (`schema`, `model`, `retry`, …), tool fields (`impl`, `side_effects`), and builtin names (`replay`, …) now lex as ordinary identifiers and are recognized by the parser only in their grammatical positions — so they remain usable as variable and record-field names. No surface-syntax change; this is an implementation-honesty fix discovered by the MVP parser test suite.
 >
 > **Changelog v1.1:** language renamed Niyet → **Nudge** (extension `.ndg`, CLI `nudge`, runtime `nudge_runtime`, store `~/.nudge/`); §10 toolchain line corrected to the actual zero-dependency implementation; §11 gained the E00xx lex/parse range. No semantic changes.
@@ -99,7 +101,7 @@ The compiler proves: (a) `schema` is compatible with the declared return type; (
 On schema violation, the runtime:
 
 1. Sends the model's raw output **plus** the JSON Schema validation error back to the same model: *"Your previous output failed validation. Errors: <list>. Emit corrected output only."*
-2. Repeats up to `retry` times; every round is a separate trace record with `repair_rounds: n`.
+2. Repeats up to `retry` times; every round is a separate trace record with `repair_round: n` and `outcome` (§6.1).
 3. If exhausted, raises `SchemaFailure` carrying all raw outputs. The program may catch it, or the call may declare `fallback: <model>` to degrade to a cheaper/stronger model instead.
 
 ### 4.3 Budget Inheritance and Semantics
@@ -155,9 +157,11 @@ Every run emits an append-only trace (JSON Lines). Payloads live in a content-ad
 {"v": 1, "seq": 12, "kind": "llm.call", "fn": "research", "prompt_hash": "b3f1…",
  "model": "anthropic:sonnet-4.6", "params": {"temperature": 0},
  "input_hash": "9aa2…", "output_hash": "c41d…", "tokens": {"in": 812, "out": 341},
- "cost_usd": 0.0075, "dur_ms": 2310, "repair_rounds": 1}
+ "cost_usd": 0.0075, "dur_ms": 2310, "repair_round": 1, "outcome": "ok"}
 {"v": 1, "seq": 13, "kind": "tool.call", "tool": "web.search", "input_hash": "…", "output_hash": "…"}
 ```
+
+**Additive fields (v1.3):** `llm.call` records carry `repair_round` (0-based attempt) and `outcome` (`ok` / `schema_violation`). Consumers of v1 traces must ignore unknown fields.
 
 **Versioning:** every record carries `v` (record schema version). `nudge trace migrate` upgrades old traces. The v1 record schema is frozen with the MVP.
 
@@ -286,8 +290,8 @@ Compile-time diagnostics use stable codes; messages are English-first and locali
 | Code | Meaning | Example trigger |
 |---|---|---|
 | E00xx | lex/parse errors (reserved range) | E0001 unexpected character, unterminated literal |
-| E0101 | unknown identifier in interpolation | `{qusetion}` typo |
-| E0201 | schema not assignable to return type | `schema: Plan` vs `-> Report` |
+| E0101 | unknown identifier or type name | `{qusetion}` typo; `x: Strnig` |
+| E0201 | type mismatch (schema ↔ return, let annotation, call argument) | `schema: Plan` vs `-> Report` |
 | E0202 | refinement malformed | `@range(1)` |
 | E0301 | undeclared effect | LLM call without `uses LLM` |
 | E0302 | effect annotation too narrow | function body uses IO, signature omits it |
@@ -349,7 +353,7 @@ fn f(x: T) -> U uses LLM          →     @rt.effectful(effects={"LLM"})
 
 let p: Plan = llm"""..."""        →     p = rt.llm_call(
     with {schema: Plan, ...}              prompt=rt.render(tmpl_hash, {"question": q}),
-                                          schema=Plan_.__schema__, retry=3, repair=True,
+                                          schema=rt.schema({...}), retry=3, repair=True,
                                           budget=USD("0.02"), cache="content_addressed",
                                           tags=("planner","v3"))
 
@@ -360,14 +364,14 @@ state.x += v                      →     rt.state_update(run, "x", rt.ADD, v)  
 replay("t.jsonl")                 →     rt.replay(Path("t.jsonl"), mode=rt.Mode.FULL)
 ```
 
-Rules: (a) generated code imports only stdlib + `nudge_runtime`; (b) every Nudge type generates a dataclass + JSON Schema; (c) no reflection over user code at runtime — all checks resolved at compile time; (d) the emitted file is deterministic for identical input (enables codegen golden tests).
+Rules: (a) generated code imports only stdlib + `nudge_runtime`; (b) type aliases lower to `rt.schema({...})` JSON-Schema literals — record values are plain dicts validated at runtime (dataclasses land post-MVP), and tool bodies lower to `rt.tool_stub` until the MCP client lands (day 8–10); (c) no reflection over user code at runtime — all checks resolved at compile time; (d) the emitted file is deterministic for identical input (enables codegen golden tests).
 
 ## 15. Conformance and Testing Strategy
 
 - **Lexer/parser:** golden token streams and AST snapshots per fixture in `conformance/syntax/`.
 - **Type/effect checker:** positive + negative fixtures; every E-code must have at least one triggering fixture (§11).
 - **Codegen:** golden-output tests — identical `.ndg` input must emit byte-identical Python.
-- **Runtime:** fake-provider harness (deterministic mock model) drives repair, budget, cache, and checkpoint tests without network.
+- **Runtime:** fake-provider harness (deterministic mock model) drives repair, budget, cache, and checkpoint tests without network. The fake provider is schema-driven — it synthesizes conforming values; `NUDGE_FAKE_FAIL_FIRST=k` forces k initial schema violations so the repair loop is testable at zero token cost.
 - **End-to-end:** `examples/research_agent.ndg` is the v0.1 acceptance test (§16).
 - **CI:** `cargo test` + fixture suite + e2e with fake provider on every PR.
 
