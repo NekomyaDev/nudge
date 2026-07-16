@@ -1,0 +1,613 @@
+//! Nudge parser — recursive descent, zero dependencies (design §12 grammar).
+//! Day 1–3 MVP scope: everything needed to parse `examples/research_agent.ndg`.
+//!
+//! Intentionally deferred (with the type checker, day 4–6):
+//!   optional types (T?), union types, record literals, pipe operator,
+//!   agent/state blocks, spans on AST nodes.
+//!
+//! MVP infix rule: the identifier `zip` between two expressions parses as an
+//! infix call (`a zip b` → `zip(a, b)`). Whitelisted, not general.
+
+use crate::ast::*;
+use crate::lexer::{Spanned, Tok};
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParseError {
+    pub msg: String,
+    pub at: usize,
+}
+
+pub struct Parser {
+    t: Vec<Spanned>,
+    i: usize,
+}
+
+type PResult<T> = Result<T, ParseError>;
+
+impl Parser {
+    pub fn new(tokens: Vec<Spanned>) -> Self {
+        Parser { t: tokens, i: 0 }
+    }
+
+    // ── cursor helpers ──────────────────────────────────────────────
+    fn peek(&self) -> &Tok { &self.t[self.i].tok }
+    fn peek2(&self) -> &Tok { self.t.get(self.i + 1).map(|s| &s.tok).unwrap_or(&Tok::Eof) }
+    fn pos(&self) -> usize { self.t[self.i].start }
+    fn bump(&mut self) { if self.i + 1 < self.t.len() { self.i += 1; } }
+
+    fn err<T>(&self, msg: impl Into<String>) -> PResult<T> {
+        Err(ParseError { msg: msg.into(), at: self.pos() })
+    }
+
+    fn at(&self, t: &Tok) -> bool { self.peek() == t }
+
+    fn eat(&mut self, t: &Tok) -> bool {
+        if self.at(t) { self.bump(); true } else { false }
+    }
+
+    fn expect(&mut self, t: &Tok, what: &str) -> PResult<()> {
+        if self.eat(t) { Ok(()) } else { self.err(format!("expected {what}, found {:?}", self.peek())) }
+    }
+
+    fn ident(&mut self) -> PResult<String> {
+        match self.peek().clone() {
+            Tok::Ident(s) => { self.bump(); Ok(s) }
+            other => self.err(format!("expected identifier, found {other:?}")),
+        }
+    }
+
+    // ── program ─────────────────────────────────────────────────────
+    pub fn parse_program(&mut self) -> PResult<Vec<Item>> {
+        let mut items = Vec::new();
+        while !self.at(&Tok::Eof) {
+            items.push(self.parse_item()?);
+        }
+        Ok(items)
+    }
+
+    fn parse_item(&mut self) -> PResult<Item> {
+        match self.peek().clone() {
+            Tok::Type => self.parse_type_alias(),
+            Tok::Fn => self.parse_fn(),
+            Tok::Tool => self.parse_tool(),
+            Tok::Test => self.parse_test(),
+            other => self.err(format!("expected item (type/fn/tool/test), found {other:?}")),
+        }
+    }
+
+    // ── items ───────────────────────────────────────────────────────
+    fn parse_type_alias(&mut self) -> PResult<Item> {
+        self.bump(); // type
+        let name = self.ident()?;
+        self.expect(&Tok::Assign, "'=' in type alias")?;
+        let ty = self.parse_type()?;
+        Ok(Item::TypeAlias { name, ty })
+    }
+
+    fn parse_params(&mut self) -> PResult<Vec<Param>> {
+        self.expect(&Tok::LParen, "'('")?;
+        let mut ps = Vec::new();
+        while !self.at(&Tok::RParen) {
+            let name = self.ident()?;
+            self.expect(&Tok::Colon, "':' after parameter name")?;
+            let ty = self.parse_type()?;
+            ps.push(Param { name, ty });
+            self.eat(&Tok::Comma);
+        }
+        self.expect(&Tok::RParen, "')'")?;
+        Ok(ps)
+    }
+
+    fn parse_effects(&mut self) -> PResult<Vec<String>> {
+        let mut effs = Vec::new();
+        if self.eat(&Tok::Uses) {
+            loop {
+                effs.push(self.ident()?);
+                if !self.eat(&Tok::Comma) { break; }
+            }
+        }
+        Ok(effs)
+    }
+
+    fn parse_fn(&mut self) -> PResult<Item> {
+        self.bump(); // fn
+        let name = self.ident()?;
+        let params = self.parse_params()?;
+        self.expect(&Tok::Arrow, "'->' before return type")?;
+        let ret = self.parse_type()?;
+        let effects = self.parse_effects()?;
+        let body = self.parse_block()?;
+        Ok(Item::Fn { name, params, ret, effects, body })
+    }
+
+    fn parse_tool(&mut self) -> PResult<Item> {
+        self.bump(); // tool
+        let name = self.ident()?;
+        let params = self.parse_params()?;
+        self.expect(&Tok::Arrow, "'->' before return type")?;
+        let ret = self.parse_type()?;
+        self.expect(&Tok::LBrace, "'{' before tool body")?;
+        // fields may be comma-separated or newline-separated
+        let mut fields = Vec::new();
+        while !self.at(&Tok::RBrace) {
+            let fname = self.ident()?;
+            self.expect(&Tok::Colon, "':' in tool field")?;
+            let val = self.parse_expr()?;
+            fields.push((fname, val));
+            self.eat(&Tok::Comma);
+        }
+        self.expect(&Tok::RBrace, "'}'")?;
+        Ok(Item::Tool { name, params, ret, fields })
+    }
+
+    fn parse_test(&mut self) -> PResult<Item> {
+        self.bump(); // test
+        let name = match self.peek().clone() {
+            Tok::Str(s) => { self.bump(); s }
+            other => return self.err(format!("expected test name string, found {other:?}")),
+        };
+        let body = self.parse_block()?;
+        Ok(Item::Test { name, body })
+    }
+
+    fn parse_block(&mut self) -> PResult<Vec<Stmt>> {
+        self.expect(&Tok::LBrace, "'{'")?;
+        let mut stmts = Vec::new();
+        while !self.at(&Tok::RBrace) {
+            if self.at(&Tok::Eof) { return self.err("unexpected end of file inside block"); }
+            stmts.push(self.parse_stmt()?);
+        }
+        self.expect(&Tok::RBrace, "'}'")?;
+        Ok(stmts)
+    }
+
+    fn parse_stmt(&mut self) -> PResult<Stmt> {
+        match self.peek().clone() {
+            Tok::Let => {
+                self.bump();
+                let name = self.ident()?;
+                let ty = if self.eat(&Tok::Colon) { Some(self.parse_type()?) } else { None };
+                self.expect(&Tok::Assign, "'=' in let binding")?;
+                let value = self.parse_expr()?;
+                Ok(Stmt::Let { name, ty, value })
+            }
+            Tok::Assert => { self.bump(); Ok(Stmt::Assert(self.parse_expr()?)) }
+            _ => Ok(Stmt::ExprStmt(self.parse_expr()?)),
+        }
+    }
+
+    // ── types ───────────────────────────────────────────────────────
+    fn parse_type(&mut self) -> PResult<TypeExpr> {
+        let mut ty = match self.peek().clone() {
+            Tok::Ident(name) => { self.bump(); TypeExpr::Named(name) }
+            Tok::LBracket => {
+                self.bump();
+                let inner = self.parse_type()?;
+                self.expect(&Tok::RBracket, "']' in list type")?;
+                TypeExpr::List(Box::new(inner))
+            }
+            Tok::LBrace => {
+                self.bump();
+                let mut fields = Vec::new();
+                while !self.at(&Tok::RBrace) {
+                    let fname = self.ident()?;
+                    self.expect(&Tok::Colon, "':' in record type")?;
+                    fields.push((fname, self.parse_type()?));
+                    self.eat(&Tok::Comma);
+                }
+                self.expect(&Tok::RBrace, "'}' in record type")?;
+                TypeExpr::Record(fields)
+            }
+            Tok::LParen => { self.bump(); self.expect(&Tok::RParen, "unit type '()'")?; TypeExpr::Named("()".into()) }
+            other => return self.err(format!("expected type, found {other:?}")),
+        };
+        // refinement: @name(args)
+        if self.eat(&Tok::At) {
+            let rname = self.ident()?;
+            self.expect(&Tok::LParen, "'(' after refinement name")?;
+            let mut args = Vec::new();
+            while !self.at(&Tok::RParen) {
+                args.push(self.parse_expr()?);
+                self.eat(&Tok::Comma);
+            }
+            self.expect(&Tok::RParen, "')'")?;
+            ty = TypeExpr::Refine(Box::new(ty), rname, args);
+        }
+        Ok(ty)
+    }
+
+    // ── expressions (precedence low → high, design §12) ─────────────
+    pub fn parse_expr(&mut self) -> PResult<Expr> { self.parse_or() }
+
+    fn parse_or(&mut self) -> PResult<Expr> {
+        let mut l = self.parse_and()?;
+        while self.eat(&Tok::Or) {
+            let r = self.parse_and()?;
+            l = Expr::Binary { op: BinOp::Or, l: Box::new(l), r: Box::new(r) };
+        }
+        Ok(l)
+    }
+
+    fn parse_and(&mut self) -> PResult<Expr> {
+        let mut l = self.parse_cmp()?;
+        while self.eat(&Tok::And) {
+            let r = self.parse_cmp()?;
+            l = Expr::Binary { op: BinOp::And, l: Box::new(l), r: Box::new(r) };
+        }
+        Ok(l)
+    }
+
+    fn parse_cmp(&mut self) -> PResult<Expr> {
+        let mut l = self.parse_add()?;
+        loop {
+            let op = match self.peek() {
+                Tok::EqEq => Some(BinOp::Eq), Tok::NotEq => Some(BinOp::NotEq),
+                Tok::Lt => Some(BinOp::Lt), Tok::LtEq => Some(BinOp::LtEq),
+                Tok::Gt => Some(BinOp::Gt), Tok::GtEq => Some(BinOp::GtEq),
+                _ => None,
+            };
+            if let Some(op) = op {
+                self.bump();
+                let r = self.parse_add()?;
+                l = Expr::Binary { op, l: Box::new(l), r: Box::new(r) };
+                continue;
+            }
+            // MVP infix rule: `a zip b` → zip(a, b)
+            if matches!(self.peek(), Tok::Ident(s) if s == "zip") {
+                self.bump();
+                let r = self.parse_add()?;
+                l = Expr::Call {
+                    func: Box::new(Expr::Ident("zip".into())),
+                    args: vec![l, r],
+                    kwargs: vec![],
+                };
+                continue;
+            }
+            break;
+        }
+        Ok(l)
+    }
+
+    fn parse_add(&mut self) -> PResult<Expr> {
+        let mut l = self.parse_mul()?;
+        loop {
+            let op = match self.peek() {
+                Tok::Plus => BinOp::Add, Tok::Minus => BinOp::Sub, _ => break,
+            };
+            self.bump();
+            let r = self.parse_mul()?;
+            l = Expr::Binary { op, l: Box::new(l), r: Box::new(r) };
+        }
+        Ok(l)
+    }
+
+    fn parse_mul(&mut self) -> PResult<Expr> {
+        let mut l = self.parse_unary()?;
+        loop {
+            let op = match self.peek() {
+                Tok::Star => BinOp::Mul, Tok::Slash => BinOp::Div, Tok::Percent => BinOp::Mod,
+                _ => break,
+            };
+            self.bump();
+            let r = self.parse_unary()?;
+            l = Expr::Binary { op, l: Box::new(l), r: Box::new(r) };
+        }
+        Ok(l)
+    }
+
+    fn parse_unary(&mut self) -> PResult<Expr> {
+        match self.peek() {
+            Tok::Minus => { self.bump(); Ok(Expr::Unary { op: BinOp::Sub, x: Box::new(self.parse_unary()?) }) }
+            Tok::Bang => { self.bump(); Ok(Expr::Unary { op: BinOp::Not, x: Box::new(self.parse_unary()?) }) }
+            _ => self.parse_postfix(),
+        }
+    }
+
+    fn parse_postfix(&mut self) -> PResult<Expr> {
+        let mut e = self.parse_primary()?;
+        loop {
+            match self.peek().clone() {
+                Tok::Dot => {
+                    self.bump();
+                    let name = self.ident()?;
+                    e = Expr::Field { obj: Box::new(e), name };
+                }
+                Tok::LParen => {
+                    let (args, kwargs) = self.parse_call_args()?;
+                    e = Expr::Call { func: Box::new(e), args, kwargs };
+                }
+                _ => break,
+            }
+        }
+        Ok(e)
+    }
+
+    fn parse_call_args(&mut self) -> PResult<(Vec<Expr>, Vec<(String, Expr)>)> {
+        self.expect(&Tok::LParen, "'('")?;
+        let mut args = Vec::new();
+        let mut kwargs = Vec::new();
+        while !self.at(&Tok::RParen) {
+            if let (Tok::Ident(name), Tok::Assign) = (self.peek().clone(), self.peek2().clone()) {
+                self.bump(); self.bump();
+                kwargs.push((name, self.parse_expr()?));
+            } else {
+                args.push(self.parse_expr()?);
+            }
+            self.eat(&Tok::Comma);
+        }
+        self.expect(&Tok::RParen, "')'")?;
+        Ok((args, kwargs))
+    }
+
+    fn parse_lambda(&mut self) -> PResult<(Vec<String>, Expr)> {
+        self.expect(&Tok::Bar, "'|' to start lambda parameters")?;
+        let params = if self.eat(&Tok::LParen) {
+            let mut ps = Vec::new();
+            while !self.at(&Tok::RParen) {
+                ps.push(self.ident()?);
+                self.eat(&Tok::Comma);
+            }
+            self.expect(&Tok::RParen, "')'")?;
+            ps
+        } else {
+            vec![self.ident()?]
+        };
+        self.expect(&Tok::Bar, "closing '|'")?;
+        self.expect(&Tok::Arrow, "'->' before lambda body")?;
+        let body = self.parse_expr()?;
+        Ok((params, body))
+    }
+
+    fn parse_primary(&mut self) -> PResult<Expr> {
+        match self.peek().clone() {
+            Tok::Int(v) => { self.bump(); Ok(Expr::Int(v)) }
+            Tok::Float(v) => { self.bump(); Ok(Expr::Float(v)) }
+            Tok::Str(s) => { self.bump(); Ok(Expr::Str(s)) }
+            Tok::Money(v) => { self.bump(); Ok(Expr::Money(v)) }
+            Tok::True => { self.bump(); Ok(Expr::Bool(true)) }
+            Tok::False => { self.bump(); Ok(Expr::Bool(false)) }
+            Tok::None => { self.bump(); Ok(Expr::None) }
+            Tok::Ident(name) => { self.bump(); Ok(Expr::Ident(name)) }
+            Tok::LBracket => {
+                self.bump();
+                let mut xs = Vec::new();
+                while !self.at(&Tok::RBracket) {
+                    xs.push(self.parse_expr()?);
+                    self.eat(&Tok::Comma);
+                }
+                self.expect(&Tok::RBracket, "']'")?;
+                Ok(Expr::ListLit(xs))
+            }
+            Tok::LParen => {
+                self.bump();
+                let e = self.parse_expr()?;
+                self.expect(&Tok::RParen, "')'")?;
+                Ok(e)
+            }
+            Tok::Prompt(body) => {
+                self.bump();
+                let prompt = Expr::Prompt { interpolations: scan_interpolations(&body), body };
+                // optional with-block turns it into an LlmCall
+                if self.at(&Tok::With) && self.peek2() == &Tok::LBrace {
+                    self.bump(); // with
+                    self.expect(&Tok::LBrace, "'{'")?;
+                    let mut options = Vec::new();
+                    let mut repair = false;
+                    while !self.at(&Tok::RBrace) {
+                        let key = self.ident()?;
+                        self.expect(&Tok::Colon, "':' in with-block")?;
+                        let val = self.parse_expr()?;
+                        options.push((key, val));
+                        // `retry: N with repair`
+                        if self.at(&Tok::With) && self.peek2() == &Tok::Repair {
+                            self.bump(); self.bump();
+                            repair = true;
+                        }
+                        self.eat(&Tok::Comma);
+                    }
+                    self.expect(&Tok::RBrace, "'}'")?;
+                    Ok(Expr::LlmCall { prompt: Box::new(prompt), options, repair })
+                } else {
+                    Ok(prompt)
+                }
+            }
+            Tok::Par => {
+                self.bump();
+                match self.peek().clone() {
+                    Tok::Map => {
+                        self.bump();
+                        let (coll, kwargs) = if self.at(&Tok::LParen) {
+                            let (args, kwargs) = self.parse_call_args()?;
+                            if args.len() != 1 {
+                                return self.err("par map takes exactly one positional collection");
+                            }
+                            (args.into_iter().next().unwrap(), kwargs)
+                        } else {
+                            (self.parse_add()?, Vec::new())
+                        };
+                        let (params, body) = self.parse_lambda()?;
+                        Ok(Expr::ParMap { coll: Box::new(coll), kwargs, params, body: Box::new(body) })
+                    }
+                    Tok::All => {
+                        self.bump();
+                        let (args, _) = self.parse_call_args()?;
+                        Ok(Expr::ParAll(args))
+                    }
+                    Tok::Race => {
+                        self.bump();
+                        match self.parse_primary()? {
+                            Expr::ListLit(xs) => Ok(Expr::ParRace(xs)),
+                            _ => self.err("par race expects a list of callables"),
+                        }
+                    }
+                    other => self.err(format!("expected map/all/race after par, found {other:?}")),
+                }
+            }
+            other => self.err(format!("unexpected token {other:?}")),
+        }
+    }
+}
+
+/// Pull `{name}` / `{path.to.value}` interpolations out of a prompt body.
+pub fn scan_interpolations(body: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = body;
+    while let Some(open) = rest.find('{') {
+        match rest[open..].find('}') {
+            Some(close) => {
+                out.push(rest[open + 1..open + close].trim().to_string());
+                rest = &rest[open + close + 1..];
+            }
+            None => break,
+        }
+    }
+    out
+}
+
+/// Convenience entry: tokens → program.
+pub fn parse(tokens: Vec<Spanned>) -> PResult<Vec<Item>> {
+    Parser::new(tokens).parse_program()
+}
+
+// ── tests ────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::lex;
+
+    fn parse_str(src: &str) -> Vec<Item> {
+        parse(lex(src).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn type_alias_with_record_and_refinement() {
+        let items = parse_str("type Finding = { claim: string, confidence: float @range(0, 1) }");
+        match &items[0] {
+            Item::TypeAlias { name, ty } => {
+                assert_eq!(name, "Finding");
+                match ty {
+                    TypeExpr::Record(fields) => {
+                        assert_eq!(fields.len(), 2);
+                        assert!(matches!(fields[1].1, TypeExpr::Refine(_, ref r, _) if r == "range"));
+                    }
+                    other => panic!("expected record type, got {other:?}"),
+                }
+            }
+            other => panic!("expected type alias, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fn_with_llm_call_options_and_repair() {
+        let src = r#"
+fn analyze(q: string) -> [Finding] uses LLM {
+    llm"""Extract findings about {q}"""
+    with { schema: [Finding], model: "m", budget: 0.03 USD, retry: 2 with repair }
+}"#;
+        let items = parse_str(src);
+        match &items[0] {
+            Item::Fn { name, effects, body, .. } => {
+                assert_eq!(name, "analyze");
+                assert_eq!(effects, &vec!["LLM".to_string()]);
+                match &body[0] {
+                    Stmt::ExprStmt(Expr::LlmCall { prompt, options, repair }) => {
+                        assert!(repair);
+                        assert_eq!(options.len(), 4);
+                        match prompt.as_ref() {
+                            Expr::Prompt { interpolations, .. } => {
+                                assert_eq!(interpolations, &vec!["q".to_string()]);
+                            }
+                            other => panic!("expected prompt, got {other:?}"),
+                        }
+                    }
+                    other => panic!("expected llm call, got {other:?}"),
+                }
+            }
+            other => panic!("expected fn, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn par_map_both_forms() {
+        // bare collection form
+        let items = parse_str("fn f() -> () { let h = par map angles |a| -> search(a) }");
+        match &items[0] {
+            Item::Fn { body, .. } => match &body[0] {
+                Stmt::Let { value: Expr::ParMap { params, kwargs, .. }, .. } => {
+                    assert_eq!(params, &vec!["a".to_string()]);
+                    assert!(kwargs.is_empty());
+                }
+                other => panic!("expected par map, got {other:?}"),
+            },
+            other => panic!(),
+        }
+        // paren form with zip infix + kwargs + tuple params
+        let items = parse_str(
+            "fn f() -> () { let f2 = par map(angles zip hits, concurrency = 3) |(a, h)| -> analyze(a, h) }",
+        );
+        match &items[0] {
+            Item::Fn { body, .. } => match &body[0] {
+                Stmt::Let { value: Expr::ParMap { coll, params, kwargs, .. }, .. } => {
+                    assert_eq!(params, &vec!["a".to_string(), "h".to_string()]);
+                    assert_eq!(kwargs.len(), 1);
+                    assert!(matches!(coll.as_ref(), Expr::Call { .. })); // zip(angles, hits)
+                }
+                other => panic!("expected par map, got {other:?}"),
+            },
+            other => panic!(),
+        }
+    }
+
+    #[test]
+    fn test_block_with_asserts() {
+        let src = r#"
+test "budget" {
+    let t = replay("traces/demo.jsonl")
+    assert t.cost_usd < 0.25
+    assert len(t.output.findings) >= 3
+}"#;
+        let items = parse_str(src);
+        match &items[0] {
+            Item::Test { name, body } => {
+                assert_eq!(name, "budget");
+                assert_eq!(body.len(), 3);
+                assert!(matches!(body[1], Stmt::Assert(Expr::Binary { op: BinOp::Lt, .. })));
+                assert!(matches!(body[2], Stmt::Assert(Expr::Binary { op: BinOp::GtEq, .. })));
+            }
+            other => panic!("expected test, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tool_fields_without_commas() {
+        let src = "tool web_search(q: string) -> [SearchResult] { impl: mcp(\"search\").web(q) side_effects: none }";
+        let items = parse_str(src);
+        match &items[0] {
+            Item::Tool { fields, .. } => {
+                assert_eq!(fields.len(), 2);
+                assert_eq!(fields[0].0, "impl");
+                assert_eq!(fields[1].0, "side_effects");
+                assert!(matches!(fields[1].1, Expr::None));
+            }
+            other => panic!("expected tool, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn full_research_agent_example_parses() {
+        let src = include_str!("../../../examples/research_agent.ndg");
+        let items = parse_str(src);
+        // 2 type aliases, 1 tool, 2 fns, 1 test
+        assert_eq!(items.len(), 6);
+        assert!(matches!(items[0], Item::TypeAlias { .. }));
+        assert!(matches!(items[2], Item::Tool { .. }));
+        assert!(matches!(items[3], Item::Fn { .. }));
+        assert!(matches!(items[4], Item::Fn { .. }));
+        assert!(matches!(items[5], Item::Test { .. }));
+    }
+
+    #[test]
+    fn parse_error_is_clean_not_panic() {
+        assert!(parse(lex("fn broken(").unwrap()).is_err());
+    }
+}
