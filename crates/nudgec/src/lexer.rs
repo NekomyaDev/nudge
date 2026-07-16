@@ -12,7 +12,7 @@ pub enum Tok {
     Float(f64),
     Str(String),          // "..." — no interpolation
     Prompt(String),       // llm""" ... """ — raw body, interpolation parsed later
-    Money(f64),           // 0.02 USD
+    Money(f64, String),   // 0.02 USD — unit kept for E0501 (USD only in v0.1)
 
     // reserved keywords (design §12: contextual keywords like `schema`, `retry`,
     // `impl`, `replay` intentionally lex as Ident — the parser recognizes them
@@ -106,11 +106,17 @@ pub fn lex(src: &str) -> Result<Vec<Spanned>, LexError> {
                     while i < b.len() && b[i].is_ascii_digit() { i += 1; }
                 }
                 let text = &src[start..i];
-                // money literal: <number> USD
-                if src[i..].starts_with(" USD") {
-                    i += 4;
+                // money literal: <number> <UPPERCASE-UNIT> — the checker
+                // validates the unit itself (E0501; USD only in v0.1)
+                let rest = &src[i..];
+                let unit_len = rest.strip_prefix(' ')
+                    .map(|r| r.bytes().take_while(|c| c.is_ascii_uppercase()).count())
+                    .unwrap_or(0);
+                if unit_len >= 2 {
+                    let unit = &src[i + 1..i + 1 + unit_len];
+                    i += 1 + unit_len;
                     let v: f64 = text.parse().map_err(|_| LexError { msg: "bad money literal".into(), at: start })?;
-                    out.push(Spanned { tok: Tok::Money(v), start, end: i });
+                    out.push(Spanned { tok: Tok::Money(v, unit.to_string()), start, end: i });
                 } else if is_float {
                     let v: f64 = text.parse().map_err(|_| LexError { msg: "bad float literal".into(), at: start })?;
                     out.push(Spanned { tok: Tok::Float(v), start, end: i });
@@ -206,7 +212,16 @@ mod tests {
     #[test]
     fn money_literal() {
         let t = toks("budget: 0.02 USD");
-        assert_eq!(t, vec![Tok::Ident("budget".into()), Tok::Colon, Tok::Money(0.02), Tok::Eof]);
+        assert_eq!(t, vec![Tok::Ident("budget".into()), Tok::Colon, Tok::Money(0.02, "USD".into()), Tok::Eof]);
+    }
+
+    #[test]
+    fn money_keeps_any_unit_for_e0501() {
+        let t = lex("5 EUR").unwrap().into_iter().map(|s| s.tok).collect::<Vec<_>>();
+        assert_eq!(t, vec![Tok::Money(5.0, "EUR".into()), Tok::Eof]);
+        // a lone lowercase suffix is not money
+        let t = lex("5 apples").unwrap().into_iter().map(|s| s.tok).collect::<Vec<_>>();
+        assert_eq!(t, vec![Tok::Int(5), Tok::Ident("apples".into()), Tok::Eof]);
     }
 
     #[test]

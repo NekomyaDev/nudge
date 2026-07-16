@@ -19,15 +19,21 @@ Ships today:
   replay burns zero tokens (design §6.2). Repair rounds are replayed
   faithfully (each attempt consumes its record). Running out of records
   raises ``ReplayMismatch``.
+- budget enforcement (design §4.3) — fake pricing is a flat $0.001/call
+  (deterministic, not a model price); per-call walls via ``budget=`` and the
+  run-level counter via ``NUDGE_BUDGET`` (shared by all ``par`` branches);
+  overruns raise ``BudgetExceeded`` and the trace stays complete
 - fake provider — deterministic, schema-driven (synthesizes conforming
   values), zero tokens. ``NUDGE_FAKE_FAIL_FIRST=k`` forces k initial schema
-  violations so repair paths are testable in CI.
-- ``render``, ``USD``, ``effectful``, ``tool_stub``, ``AttrDict``, sequential
-  ``par_map`` / ``par_all`` / ``par_race`` stubs.
+  violations so repair paths are testable in CI
+- ``render``, ``USD``, ``effectful``, ``tool_stub``, ``AttrDict``,
+  thread-pooled ``par_map`` / ``par_all`` / ``par_race`` (order-preserving,
+  shared budget counter)
 
 Env: ``NUDGE_PROVIDER=fake`` (default; real providers land post-MVP),
 ``NUDGE_TRACE`` (trace path, default ``trace.jsonl``), ``NUDGE_REPLAY``
-(trace to replay from instead of calling a provider).
+(trace to replay from instead of calling a provider), ``NUDGE_BUDGET``
+(run-level USD budget, §4.3).
 """
 
 from __future__ import annotations
@@ -35,6 +41,9 @@ from __future__ import annotations
 import functools
 import json
 import os
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 __version__ = "0.1.0"
@@ -159,7 +168,10 @@ class SchemaFailure(Exception):
 
 
 class BudgetExceeded(Exception):
-    """Reserved for day 11–12 budget enforcement."""
+    """The budget wall was hit (design §4.3): either a single call cost more
+    than its own ``budget``, or the run-level counter (``NUDGE_BUDGET``,
+    shared by all ``par`` branches) ran out. The trace is complete up to the
+    crash point."""
 
 
 class ReplayMismatch(Exception):
@@ -272,7 +284,7 @@ def _trace_call(model, prompt, out, repair_round, outcome):
         "input": str(prompt),
         "output": _jsonable(out),
         "tokens": {"in": len(str(prompt).split()), "out": len(str(out).split())},
-        "cost_usd": 0.0,
+        "cost_usd": FAKE_CALL_COST,
         "repair_round": repair_round,
         "outcome": outcome,
         "provider": "fake",
@@ -330,6 +342,49 @@ def _replay_outputs():
     return _REPLAY_STATE["outputs"]
 
 
+# ── budget (design §4.3) ─────────────────────────────────────────────
+
+# Fake-provider pricing: flat $0.001 per call. Deterministic, NOT a model
+# price — it exists so budget walls are testable at zero token cost.
+FAKE_CALL_COST = 0.001
+
+_BUDGET_STATE = {"spent": 0.0, "lock": threading.Lock()}
+
+
+def _budget_limit():
+    raw = os.environ.get("NUDGE_BUDGET")
+    return float(raw) if raw else None
+
+
+def _budget_precheck():
+    """A call whose inherited budget is already gone never starts."""
+    limit = _budget_limit()
+    if limit is not None:
+        with _BUDGET_STATE["lock"]:
+            spent = _BUDGET_STATE["spent"]
+        if spent >= limit:
+            raise BudgetExceeded(
+                f"run budget exhausted: ${spent:.4f} spent of ${limit:.4f}"
+            )
+
+
+def _budget_charge(cost, call_budget):
+    """Charge one call: per-call wall first, then the shared run counter."""
+    if call_budget is not None and cost > float(call_budget):
+        raise BudgetExceeded(
+            f"call cost ${cost:.4f} exceeds its declared budget ${float(call_budget):.4f}"
+        )
+    limit = _budget_limit()
+    if limit is not None:
+        with _BUDGET_STATE["lock"]:
+            _BUDGET_STATE["spent"] += cost
+            spent = _BUDGET_STATE["spent"]
+        if spent > limit:
+            raise BudgetExceeded(
+                f"run budget exceeded: ${spent:.4f} spent of ${limit:.4f}"
+            )
+
+
 # ── the LLM call ─────────────────────────────────────────────────────
 
 _FAKE_STATE = {"fail_left": int(os.environ.get("NUDGE_FAKE_FAIL_FIRST", "0"))}
@@ -369,6 +424,8 @@ def llm_call(prompt, model=None, schema=None, retry=0, repair=False,
 
     attempts = 1 + (retry if repair and schema is not None else 0)
     last_errors, last_raw = [], None
+    if provider != "replay":
+        _budget_precheck()
     for round_no in range(attempts):
         if provider == "replay":
             outputs = _replay_outputs()
@@ -384,46 +441,72 @@ def llm_call(prompt, model=None, schema=None, retry=0, repair=False,
         if schema is None:
             if provider != "replay":
                 _trace_call(model, prompt, out, 0, "ok")
+                _budget_charge(FAKE_CALL_COST, budget)
             return out
         errors = validate(schema, out)
         if not errors:
             if provider != "replay":
                 _trace_call(model, prompt, out, round_no, "ok")
+                _budget_charge(FAKE_CALL_COST, budget)
             return out
         last_errors, last_raw = errors, out
         if provider != "replay":
             _trace_call(model, prompt, out, round_no, "schema_violation")
+            _budget_charge(FAKE_CALL_COST, budget)
         # design §4.2 step 1: feed raw output errors back to the model
         prompt = _REPAIR_HINT.format(errors="; ".join(errors)) + "\n" + str(prompt)
     raise SchemaFailure(last_errors, last_raw)
 
 
-# ── parallelism (sequential stubs; real scheduler lands day 11–12) ───
+# ── parallelism (design §5) ──────────────────────────────────────────
+
+
+def _call_unpacked(fn, x):
+    """Nudge's pair-unpacking: when the lambda takes more than one parameter
+    and the element is a tuple of that arity (e.g. produced by ``zip``), it
+    is spread across the parameters — ``|(a, h)| -> f(a, h)``."""
+    try:
+        argc = fn.__code__.co_argcount
+    except AttributeError:
+        argc = 1
+    if argc > 1 and isinstance(x, tuple) and len(x) == argc:
+        return fn(*x)
+    return fn(x)
+
 
 def par_map(coll, fn, concurrency=None):
-    """Sequential stub (real scheduler lands day 11–12).
-
-    Honors Nudge's pair-unpacking: when the lambda takes more than one
-    parameter and the element is a tuple of that arity (e.g. produced by
-    ``zip``), it is spread across the parameters — ``|(a, h)| -> f(a, h)``.
-    """
-    def call(x):
-        try:
-            argc = fn.__code__.co_argcount
-        except AttributeError:
-            argc = 1
-        if argc > 1 and isinstance(x, tuple) and len(x) == argc:
-            return fn(*x)
-        return fn(x)
-    return [call(x) for x in coll]
+    """Thread-pool fan-out. Results keep input order (map semantics); the
+    budget counter is shared across branches, so a wall hit surfaces as
+    ``BudgetExceeded`` from an in-flight branch (design §4.3/§5)."""
+    items = list(coll)
+    if not items:
+        return []
+    workers = concurrency or min(32, len(items))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(lambda x: _call_unpacked(fn, x), items))
 
 
 def par_all(items):
-    return list(items)
+    """Barrier: run all branches concurrently, return results in order."""
+    items = list(items)
+    if not items:
+        return []
+    with ThreadPoolExecutor(max_workers=len(items)) as pool:
+        return list(pool.map(lambda f: f() if callable(f) else f, items))
 
 
 def par_race(items):
+    """First completed branch wins; losers are cancelled best-effort
+    (a call already in flight keeps its spend — design §5 budget refund
+    is post-MVP)."""
     items = list(items)
     if not items:
         raise ValueError("par race needs at least one candidate")
-    return items[0]
+    with ThreadPoolExecutor(max_workers=len(items)) as pool:
+        futures = [pool.submit(lambda f: f() if callable(f) else f, it) for it in items]
+        for done in as_completed(futures):
+            for other in futures:
+                if other is not done:
+                    other.cancel()
+            return done.result()
+    raise ValueError("par race found no result")

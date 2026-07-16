@@ -61,7 +61,7 @@ The compiler proves the schema matches, infers effects, and computes a static co
 
 ## Status
 
-Pre-alpha. The language design is complete ([docs/design.md](docs/design.md), v1.5); the compiler is under active development ([docs/roadmap.md](docs/roadmap.md)). **Days 1–10 of the MVP are done**: lexer → parser → **type checker** (E0101–E0202) → **effect inference** (E0301/E0302) → Python codegen → **trace store + replay**, plus the `nudge_runtime` with schema validation and the repair loop. The research agent's own `test` block replays a recorded trace and passes at zero token cost; `NUDGE_REPLAY=<trace>` re-runs a whole program with no provider calls (49 tests green). Next up: `par map` scheduling + budget enforcement (day 11–12).
+Pre-alpha. The language design is complete ([docs/design.md](docs/design.md), v1.6); the compiler is under active development ([docs/roadmap.md](docs/roadmap.md)). **Days 1–12 of the MVP are done**: lexer → parser → **type checker** (E0101–E0202) → **effect inference** (E0301/E0302) → Python codegen → **trace store + replay** → **budget enforcement + parallel scheduler**, plus the `nudge_runtime` with schema validation and the repair loop. `par map` fans out on a thread pool with order-preserving results; every fake call is priced at a flat $0.001, so `NUDGE_BUDGET=<usd>` and per-call `budget:` walls raise `BudgetExceeded` deterministically at zero token cost (56 tests green). Next up: research-agent v0.1 acceptance + the `v0.1` tag (day 13–14).
 
 ## The name
 

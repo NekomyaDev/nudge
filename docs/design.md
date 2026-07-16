@@ -1,8 +1,10 @@
 # Nudge — Language Design
 
-**Version:** 1.5 (2026-07-17) · **Status:** Frozen for MVP implementation
+**Version:** 1.6 (2026-07-17) · **Status:** Frozen for MVP implementation
 **Audience:** compiler implementers, language designers, early adopters
 
+> **Changelog v1.6:** budget enforcement + the parallel scheduler landed (roadmap day 11–12). §4.3 concrete MVP semantics: the fake provider charges a flat, deterministic **$0.001 per call** (every repair round charges; replay charges nothing); `NUDGE_BUDGET=<usd>` is the env form of `nudge run --budget` and arms a run-level counter shared by all `par` branches — a precheck refuses to start a call whose inherited budget is already gone, and a post-call charge raises `BudgetExceeded` when spent crosses the limit (the trace stays complete up to the crash point). Money literals now keep their unit through the compiler, so a non-USD budget is **E0501** (USD only in v0.1). §5 MVP scheduler: `par map` runs on a thread pool (`concurrency` or `min(32, n)` workers), results keep input order, and zip pair-unpacking spreads tuple elements across multi-parameter lambdas; `par race` takes the first completed branch and cancels the losers best-effort (budget refunds post-MVP).
+>
 > **Changelog v1.5:** trace store + replay + test blocks landed (roadmap day 9–10). §6.1: `llm.call` records carry inline `input`/`output` at MVP — the content-addressed payload store is deferred post-MVP (v1-compatible additive fields). New `fn.return` record (`fn`, `output`), emitted by every effectful fn; `Trace.output` is the last `fn.return` value. §6.3 concrete MVP semantics: `replay(path)` returns a `Trace` (`.cost_usd` = Σ llm.call cost; `.output` dot-accessible); unsupported record versions raise `ReplayMismatch`. §6.2: full replay runs with `NUDGE_REPLAY=<trace>` — `llm_call` consumes recorded outputs in order (repair rounds replayed faithfully, zero provider calls, no new `llm.call` records). Test blocks lower to `nudge_test_<slug>()` and run via `nudgec test`.
 >
 > **Changelog v1.4:** effect inference landed (roadmap day 7–8). §3.2/§11 clarified: **E0301** = a function performs an effect but has no `uses` clause at all; **E0302** = a `uses` clause exists but omits an inferred effect (annotation too narrow). MVP effect sources: `llm"""` → `LLM`; calling a declared `tool` or `mcp(...)` → `Tool`; `replay(...)` / `python(...)` → `IO`. Effects propagate transitively through user-function calls (fixpoint over the call graph). `test` blocks are exempt — they exist to exercise effectful code. E0101 also covers unknown effect names in `uses` clauses.
@@ -118,6 +120,8 @@ On schema violation, the runtime:
 - `par` branches split the remaining budget dynamically: the runtime tracks a shared counter; when it hits zero, all in-flight branches receive `BudgetExceeded`.
 - Static analysis: the compiler sums literal budgets along each path and reports worst-case and expected (with cache-hit probability annotation) cost per function. Non-literal budgets are reported as `dynamic`.
 
+MVP mechanism (v1.6): the fake provider prices every call at a flat **$0.001** (deterministic, not a model price — it exists so budget walls are testable at zero token cost; every repair round charges, replay charges nothing). `NUDGE_BUDGET=<usd>` arms the run-level counter, which is shared across `par` branches under a lock. A call whose inherited budget is already exhausted never starts (`_budget_precheck`); after each call the counter is charged (`_budget_charge`: per-call `budget:` wall first, then the run counter) and crossing the limit raises `BudgetExceeded`. Static cost reporting is deferred — the checker only validates the budget unit (non-USD → **E0501**).
+
 ### 4.4 Model Routing
 
 ```
@@ -152,6 +156,8 @@ let done    = par map(tasks, concurrency = 8) |t| -> run(t)
 ```
 
 Compiler guarantee: no shared mutable state inside `par` (mutable state exists only in `state` blocks, §7). Two parallel branches writing the same `state` field is error E0402 unless that field declares a `merge` reducer.
+
+MVP scheduler (v1.6): `par map` runs on a thread pool with `concurrency` workers (default `min(32, n)`), and results keep input order. A lambda with more than one parameter spreads tuple elements (e.g. from `zip`) across its parameters. `par all` is a barrier over thunks; `par race` returns the first completed branch and cancels the losers best-effort — a call already in flight keeps its spend (budget refunds are post-MVP). All branches share the run budget counter (§4.3), so a wall hit surfaces as `BudgetExceeded` from an in-flight branch. The E0402 shared-state check is deferred (no `state` blocks at MVP).
 
 ## 6. Deterministic Replay and Traces
 
