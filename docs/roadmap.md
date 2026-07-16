@@ -6,7 +6,7 @@ Design v1.1 is frozen ([design.md](design.md)). This file tracks implementation.
 
 | Days | Deliverable | Status |
 |---|---|---|
-| 1–3 | Lexer + parser + AST; end-to-end `hello llm` (no schema, fixed model) | 🔨 lexer landed (unicode-safe, unit-tested) — parser next |
+| 1–3 | Lexer + parser + AST; end-to-end `hello llm` (no schema, fixed model) | ✅ lexer + parser landed (unicode-safe, unit-tested) — `hello llm` codegen next |
 | 4–6 | Type checker core (records, lists, refinements); runtime schema validation + repair loop | ⬜ |
 | 7–8 | Effect inference + signature verification | ⬜ |
 | 9–10 | Trace store + `replay` mode + `test` blocks | ⬜ |
