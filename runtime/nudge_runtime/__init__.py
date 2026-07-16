@@ -209,7 +209,7 @@ def python(module):
 
 
 def mcp(server):
-    """`mcp(\"server\")` tool implementations — land with the MCP client."""
+    """`mcp("server")` tool implementations — land with the MCP client."""
     raise NotImplementedError("mcp() lands with the MCP client (post-MVP)")
 
 
