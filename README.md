@@ -59,9 +59,22 @@ The compiler proves the schema matches, infers effects, and computes a static co
 - **Native parallelism** — `par map`, `par race`, `par all` with compile-time race safety.
 - **MCP & Python interop** — consume MCP servers as typed tools; escape to any pip package.
 
+## Quickstart
+
+```sh
+cargo build                              # the nudgec compiler
+export PYTHONPATH=$PWD/runtime           # emitted code imports nudge_runtime (absolute: survives cd)
+
+nudgec check examples/research_agent.ndg # type + effect verification
+nudgec build examples/research_agent.ndg # emit Python to out/
+cd examples && nudgec test research_agent.ndg   # replay the committed trace — zero tokens
+```
+
+Everything runs against the deterministic fake provider by default: no API key, no token spend. See [examples/README.md](examples/README.md) for the full walkthrough (live runs, full replay, budget walls).
+
 ## Status
 
-Pre-alpha. The language design is complete ([docs/design.md](docs/design.md), v1.6); the compiler is under active development ([docs/roadmap.md](docs/roadmap.md)). **Days 1–12 of the MVP are done**: lexer → parser → **type checker** (E0101–E0202) → **effect inference** (E0301/E0302) → Python codegen → **trace store + replay** → **budget enforcement + parallel scheduler**, plus the `nudge_runtime` with schema validation and the repair loop. `par map` fans out on a thread pool with order-preserving results; every fake call is priced at a flat $0.001, so `NUDGE_BUDGET=<usd>` and per-call `budget:` walls raise `BudgetExceeded` deterministically at zero token cost (56 tests green). Next up: research-agent v0.1 acceptance + the `v0.1` tag (day 13–14).
+Pre-alpha, **v0.1 MVP complete**. The language design is frozen ([docs/design.md](docs/design.md), v1.6) and the full 14-day MVP plan is done ([docs/roadmap.md](docs/roadmap.md)): lexer → parser → **type checker** (E0101–E0202) → **effect inference** (E0301/E0302) → Python codegen → **trace store + replay** → **budget enforcement + parallel scheduler** → **self-testing research agent**. The v0.1 acceptance criteria all pass: the agent is 29 lines, does zero manual JSON parsing, and its replay test passes at zero token cost (56 tests green).
 
 ## The name
 
