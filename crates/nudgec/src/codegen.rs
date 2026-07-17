@@ -488,7 +488,8 @@ mod tests {
         assert!(stdout.contains("OK") && stdout.contains("findings"), "stdout: {stdout}");
         let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
         let calls = log.lines().filter(|l| l.contains("\"llm.call\"")).count();
-        assert_eq!(calls, 3, "expected 3 llm.call records, trace: {log}");
+        // fake provider plans 3 angles: 1 plan + 3 analyze + 1 merge
+        assert_eq!(calls, 5, "expected 5 llm.call records, trace: {log}");
     }
 
     #[test]
@@ -621,7 +622,7 @@ mod tests {
     #[test]
     fn run_budget_wall_stops_the_run() {
         let Some(e) = e2e("budget") else { return };
-        // research agent makes 3 llm calls × $0.001 fake price; $0.0025
+        // research agent makes 5 llm calls × $0.001 fake price; $0.0025
         // covers exactly two, so the third hits the run-level wall
         let py = gen(include_str!("../../../examples/research_agent.ndg"));
         let out_py = e.dir.join("research_agent.py");
@@ -636,10 +637,12 @@ mod tests {
         assert!(!output.status.success(), "expected BudgetExceeded, stdout: {}", String::from_utf8_lossy(&output.stdout));
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("BudgetExceeded"), "stderr: {stderr}");
-        // the trace is complete up to the crash point (design §11)
+        // the trace is complete up to the crash point (design §11). The 3
+        // analyze calls fan out concurrently, so 2–3 of them start (and are
+        // traced) before the shared counter crosses the wall
         let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
         let calls = log.lines().filter(|l| l.contains("\"llm.call\"")).count();
-        assert!((2..=3).contains(&calls), "expected 2–3 llm.call records before the wall, trace: {log}");
+        assert!((3..=4).contains(&calls), "expected 3–4 llm.call records before the wall, trace: {log}");
     }
 
     #[test]
