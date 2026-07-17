@@ -129,7 +129,9 @@ def _synth(sch):
     if t == "object":
         return {k: _synth(s) for k, s in sch.get("properties", {}).items()}
     if t == "array":
-        return [_synth(sch.get("items", {}))]
+        # 3 items: enough for fan-out shapes (par map over model-planned
+        # subtasks) to actually exercise their cardinality in tests
+        return [_synth(sch.get("items", {})) for _ in range(3)]
     if t == "string":
         if sch.get("format") == "uri":
             return "https://example.com/fake"

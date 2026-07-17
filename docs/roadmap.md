@@ -11,9 +11,9 @@ Design v1.6 is frozen ([design.md](design.md)). This file tracks implementation.
 | 7–8 | Effect inference + signature verification | ✅ done — E0301/E0302, transitive fixpoint over the call graph, test blocks exempt (44 tests) |
 | 9–10 | Trace store + `replay` mode + `test` blocks | ✅ done — `fn.return` records, `Trace`/`replay`, `NUDGE_REPLAY` full replay, `nudgec test` runs `nudge_test_*` (49 tests) |
 | 11–12 | `par map` + budget enforcement + Python codegen polish | ✅ done — thread-pool `par_map`/`par_all`/`par_race` (order-preserving), flat $0.001 fake pricing, `NUDGE_BUDGET` run budget shared across `par` branches, per-call walls, E0501 non-USD budgets (56 tests) |
-| 13–14 | `examples/research_agent.ndg` end-to-end + docs + `v0.1` tag | ⬜ next |
+| 13–14 | `examples/research_agent.ndg` end-to-end + docs + `v0.1` tag | ✅ done — 29 lines, zero JSON parsing, committed demo trace replays green (5 llm.calls, $0.005), [examples/README.md](../examples/README.md) walkthrough |
 
-**v0.1 acceptance:** the research agent (i) under 30 lines, (ii) zero manual JSON parsing, (iii) replay test passing in CI at zero token cost.
+**v0.1 acceptance:** the research agent (i) under 30 lines ✅ 29, (ii) zero manual JSON parsing ✅, (iii) replay test passing at zero token cost ✅. **MVP COMPLETE.**
 
 ## After MVP
 
