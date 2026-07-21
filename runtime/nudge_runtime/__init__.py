@@ -118,7 +118,7 @@ def validate(sch, value, path="$"):
             return [f"{path}: expected boolean, got {_kind(value)}"]
     elif t == "null":
         if value is not None:
-            return [f"{path}: expected null, got {_kind(value)}"]
+            errs.append(f"{path}: expected null, got {_kind(value)}")
     return errs
 
 
