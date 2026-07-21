@@ -18,7 +18,12 @@ Ships today:
   outputs from the trace in order instead of calling any provider: full
   replay burns zero tokens (design §6.2). Repair rounds are replayed
   faithfully (each attempt consumes its record). Running out of records
-  raises ``ReplayMismatch``.
+  raises ``ReplayMismatch``. Default mode ``all`` also mocks tool calls
+  from the trace; ``NUDGE_REPLAY_MODE=llm`` is the hybrid mode — LLM from
+  the trace, tools executed live (and traced, so drift is visible).
+- tool calls — ``tool_stub`` executes the stub and emits ``tool.call``
+  trace records in live/hybrid runs (design §6.1/§8); real MCP wiring
+  lands post-MVP.
 - budget enforcement (design §4.3) — fake pricing is a flat $0.001/call
   (deterministic, not a model price); per-call walls via ``budget=`` and the
   run-level counter via ``NUDGE_BUDGET`` (shared by all ``par`` branches);
@@ -113,7 +118,7 @@ def validate(sch, value, path="$"):
             return [f"{path}: expected boolean, got {_kind(value)}"]
     elif t == "null":
         if value is not None:
-            errs.append(f"{path}: expected null, got {_kind(value)}")
+            return [f"{path}: expected null, got {_kind(value)}"]
     return errs
 
 
@@ -212,9 +217,52 @@ def effectful(effects):
     return deco
 
 
-def tool_stub(name):
-    """Fake tool result while the MCP client is unbuilt."""
+def _replay_mode():
+    """None (live), ``"all"`` (full replay) or ``"llm"`` (hybrid: LLM from
+    the trace, tools live) — design §6.2 run modes."""
+    if not os.environ.get("NUDGE_REPLAY"):
+        return None
+    return os.environ.get("NUDGE_REPLAY_MODE", "all")
+
+
+_REPLAY_TOOL_STATE = {"outputs": None, "idx": {}}
+
+
+def _replay_tool_output(name):
+    """Full-replay tool mock: the recorded output for this tool's next call,
+    or ``[]`` when the trace holds none (design §6.2 mock default)."""
+    if _REPLAY_TOOL_STATE["outputs"] is None:
+        trace = Trace(os.environ["NUDGE_REPLAY"])
+        by_tool = {}
+        for r in trace.tool_calls():
+            by_tool.setdefault(r.get("tool"), []).append(r.get("output"))
+        _REPLAY_TOOL_STATE["outputs"] = by_tool
+    outputs = _REPLAY_TOOL_STATE["outputs"]
+    idx = _REPLAY_TOOL_STATE["idx"].get(name, 0)
+    recorded = outputs.get(name, [])
+    if idx < len(recorded):
+        _REPLAY_TOOL_STATE["idx"][name] = idx + 1
+        return recorded[idx]
     return []
+
+
+def tool_stub(name, args=None):
+    """Tool call while the MCP client is unbuilt (design §8).
+
+    Live + hybrid replay: executes (stub result ``[]``) and records a
+    ``tool.call`` trace record. Full replay: mocked from the trace — the
+    recorded output for this tool's next call, no record written.
+    """
+    if _replay_mode() == "all":
+        return _replay_tool_output(name)
+    result = []
+    _emit_trace({
+        "kind": "tool.call",
+        "tool": name,
+        "input": _jsonable(list(args) if args is not None else []),
+        "output": _jsonable(result),
+    })
+    return result
 
 
 def python(module):
@@ -266,14 +314,19 @@ def _trace_path() -> Path:
     return Path(os.environ.get("NUDGE_TRACE", "trace.jsonl"))
 
 
+_TRACE_LOCK = threading.Lock()
+
+
 def _emit_trace(record: dict) -> None:
     path = _trace_path()
-    seq = 1
-    if path.exists():
-        seq += sum(1 for _ in path.open("r", encoding="utf-8"))
-    line = {"v": 1, "seq": seq, **record}
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(line, ensure_ascii=False) + "\n")
+    # serialized: par branches emit concurrently and seq must stay unique
+    with _TRACE_LOCK:
+        seq = 1
+        if path.exists():
+            seq += sum(1 for _ in path.open("r", encoding="utf-8"))
+        line = {"v": 1, "seq": seq, **record}
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
 def _trace_call(model, prompt, out, repair_round, outcome):
@@ -327,6 +380,9 @@ class Trace:
 
     def llm_calls(self):
         return [r for r in self.records if r.get("kind") == "llm.call"]
+
+    def tool_calls(self):
+        return [r for r in self.records if r.get("kind") == "tool.call"]
 
 
 def replay(path):
