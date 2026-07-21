@@ -680,7 +680,7 @@ mod tests {
     #[test]
     fn par_branches_share_the_run_budget() {
         let Some(e) = e2e("parbudget") else { return };
-        // 4 parallel llm calls × $0.001 fake price against a $0.0025 run budget
+        // 4 parallel llm calls × $0.001 against a $0.0025 run budget
         let driver = e.dir.join("drive_pb.py");
         std::fs::write(
             &driver,
