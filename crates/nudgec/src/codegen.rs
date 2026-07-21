@@ -1,11 +1,11 @@
-//! Nudge Python codegen (design §14 contract, v1.3) — day 4–6 scope.
+//! Nudge Python codegen (design §14 contract, v1.7) — day 4–6 scope.
 //!
 //! Lowers the AST to a single deterministic Python file importing only
 //! stdlib + `nudge_runtime`:
 //!   type alias  → `Name = rt.schema({...})` JSON-Schema literal (records are
 //!                 plain dicts validated at runtime; dataclasses post-MVP)
-//!   tool        → `def name(...): return rt.tool_stub("name")` (real MCP
-//!                 wiring lands post-MVP)
+//!   tool        → `def name(...): return rt.tool_stub("name", [args])` (real
+//!                 MCP wiring lands post-MVP; traced as `tool.call` records)
 //!   llm call    → `rt.llm_call(prompt=…, schema=rt.schema(…), model=…, …)`
 //!   test block  → `def nudge_test_<slug>():` (design §6.3; run via
 //!                 `nudgec test`) with `replay` → `rt.replay`
@@ -47,7 +47,8 @@ pub fn emit(items: &[Item]) -> String {
             }
             Item::Tool { name, params, .. } => {
                 let ps = params.iter().map(|p| p.name.clone()).collect::<Vec<_>>().join(", ");
-                out.push_str(&format!("def {name}({ps}):\n    return rt.tool_stub(\"{name}\")\n"));
+                let arg_list = params.iter().map(|p| p.name.clone()).collect::<Vec<_>>().join(", ");
+                out.push_str(&format!("def {name}({ps}):\n    return rt.tool_stub(\"{name}\", [{arg_list}])\n"));
             }
             Item::Test { name, body } => {
                 out.push_str(&format!("def nudge_test_{}():\n", slug(name)));
@@ -407,7 +408,7 @@ mod tests {
     fn tool_lowers_to_stub_fn() {
         let src = "tool web_search(q: string) -> [R] { impl: mcp(\"s\").web(q) side_effects: none }";
         let out = gen(src);
-        assert!(out.contains("def web_search(q):\n    return rt.tool_stub(\"web_search\")"), "got:\n{out}");
+        assert!(out.contains("def web_search(q):\n    return rt.tool_stub(\"web_search\", [q])"), "got:\n{out}");
     }
 
     #[test]
@@ -689,5 +690,98 @@ mod tests {
         let output = run_py(&e, &driver, &[("NUDGE_BUDGET", "0.0025")]);
         assert!(!output.status.success(), "expected BudgetExceeded from an in-flight branch");
         assert!(String::from_utf8_lossy(&output.stderr).contains("BudgetExceeded"), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    // ── v0.2: hybrid replay (design §6.2) ──────────────────────────
+
+    #[test]
+    fn live_run_traces_tool_calls() {
+        let Some(e) = e2e("tooltrace") else { return };
+        let py = gen(include_str!("../../../examples/research_agent.ndg"));
+        let out_py = e.dir.join("research_agent.py");
+        std::fs::write(&out_py, py).unwrap();
+        let driver = e.dir.join("drive_t.py");
+        std::fs::write(
+            &driver,
+            format!("import sys\nsys.path.insert(0, {:?})\nimport research_agent as r\nr.run(\"urban heat islands\")\n", e.dir.to_string_lossy()),
+        )
+        .unwrap();
+        let output = run_py(&e, &driver, &[]);
+        assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+        let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
+        let tools = log.lines().filter(|l| l.contains("\"tool.call\"")).count();
+        assert_eq!(tools, 3, "expected 3 tool.call records (one per angle), trace: {log}");
+        assert!(log.contains("\"tool\": \"web_search\""), "trace: {log}");
+        // seq stays unique even though tool calls fan out on a thread pool
+        let mut seqs: Vec<u64> = log
+            .lines()
+            .filter_map(|l| l.split("\"seq\": ").nth(1)?.split(',').next()?.trim().parse().ok())
+            .collect();
+        seqs.sort_unstable();
+        seqs.dedup();
+        assert_eq!(seqs.len(), log.lines().count(), "duplicate seq in trace: {log}");
+    }
+
+    #[test]
+    fn hybrid_replay_runs_tools_live_but_not_llm() {
+        let Some(e) = e2e("hybrid") else { return };
+        let py = gen(include_str!("../../../examples/research_agent.ndg"));
+        let out_py = e.dir.join("research_agent.py");
+        std::fs::write(&out_py, py).unwrap();
+        let driver = e.dir.join("drive_h.py");
+        std::fs::write(
+            &driver,
+            format!("import sys, json\nsys.path.insert(0, {:?})\nimport research_agent as r\nprint(json.dumps(r.run(\"urban heat islands\"), sort_keys=True))\n", e.dir.to_string_lossy()),
+        )
+        .unwrap();
+        // 1. record a live run
+        let t1 = e.dir.join("t1.jsonl");
+        let out1 = run_py(&e, &driver, &[("NUDGE_TRACE", t1.to_str().unwrap())]);
+        assert!(out1.status.success(), "stderr: {}", String::from_utf8_lossy(&out1.stderr));
+        // 2. hybrid replay: llm from trace, tools live
+        let t2 = e.dir.join("t2.jsonl");
+        let out2 = run_py(
+            &e,
+            &driver,
+            &[
+                ("NUDGE_TRACE", t2.to_str().unwrap()),
+                ("NUDGE_REPLAY", t1.to_str().unwrap()),
+                ("NUDGE_REPLAY_MODE", "llm"),
+            ],
+        );
+        assert!(out2.status.success(), "stderr: {}", String::from_utf8_lossy(&out2.stderr));
+        assert_eq!(out1.stdout, out2.stdout, "hybrid replay must reproduce the result");
+        let log2 = std::fs::read_to_string(&t2).unwrap();
+        assert!(!log2.contains("\"llm.call\""), "llm must come from the trace: {log2}");
+        let tools = log2.lines().filter(|l| l.contains("\"tool.call\"")).count();
+        assert_eq!(tools, 3, "tools run live in hybrid mode: {log2}");
+    }
+
+    #[test]
+    fn full_replay_mocks_tools_from_the_trace() {
+        let Some(e) = e2e("fullmock") else { return };
+        let py = gen(include_str!("../../../examples/research_agent.ndg"));
+        let out_py = e.dir.join("research_agent.py");
+        std::fs::write(&out_py, py).unwrap();
+        let driver = e.dir.join("drive_f.py");
+        std::fs::write(
+            &driver,
+            format!("import sys, json\nsys.path.insert(0, {:?})\nimport research_agent as r\nprint(json.dumps(r.run(\"urban heat islands\"), sort_keys=True))\n", e.dir.to_string_lossy()),
+        )
+        .unwrap();
+        let t1 = e.dir.join("t1.jsonl");
+        let out1 = run_py(&e, &driver, &[("NUDGE_TRACE", t1.to_str().unwrap())]);
+        assert!(out1.status.success(), "stderr: {}", String::from_utf8_lossy(&out1.stderr));
+        // full replay (default mode): nothing executes, nothing new is recorded
+        let t2 = e.dir.join("t2.jsonl");
+        let out2 = run_py(
+            &e,
+            &driver,
+            &[("NUDGE_TRACE", t2.to_str().unwrap()), ("NUDGE_REPLAY", t1.to_str().unwrap())],
+        );
+        assert!(out2.status.success(), "stderr: {}", String::from_utf8_lossy(&out2.stderr));
+        assert_eq!(out1.stdout, out2.stdout);
+        let log2 = std::fs::read_to_string(&t2).unwrap_or_default();
+        assert!(!log2.contains("\"llm.call\"") && !log2.contains("\"tool.call\""), "full replay must not execute anything: {log2}");
     }
 }
