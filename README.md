@@ -74,7 +74,7 @@ Everything runs against the deterministic fake provider by default: no API key, 
 
 ## Status
 
-Pre-alpha, **v0.1 MVP complete**. The language design is frozen ([docs/design.md](docs/design.md), v1.6) and the full 14-day MVP plan is done ([docs/roadmap.md](docs/roadmap.md)): lexer → parser → **type checker** (E0101–E0202) → **effect inference** (E0301/E0302) → Python codegen → **trace store + replay** → **budget enforcement + parallel scheduler** → **self-testing research agent**. The v0.1 acceptance criteria all pass: the agent is 29 lines, does zero manual JSON parsing, and its replay test passes at zero token cost (56 tests green).
+Pre-alpha, **v0.1 MVP complete**, v0.2 in progress. The language design is frozen ([docs/design.md](docs/design.md), v1.7) and the full 14-day MVP plan is done ([docs/roadmap.md](docs/roadmap.md)): lexer → parser → **type checker** (E0101–E0202) → **effect inference** (E0301/E0302) → Python codegen → **trace store + replay** → **budget enforcement + parallel scheduler** → **self-testing research agent**. The v0.1 acceptance criteria all pass: the agent is 29 lines, does zero manual JSON parsing, and its replay test passes at zero token cost (59 tests green). **v0.2a hybrid replay landed:** `NUDGE_REPLAY_MODE=llm` replays the LLM from a trace while tools run live; traces now carry `tool.call` records.
 
 ## The name
 

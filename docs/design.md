@@ -1,8 +1,10 @@
 # Nudge — Language Design
 
-**Version:** 1.6 (2026-07-17) · **Status:** Frozen for MVP implementation
+**Version:** 1.7 (2026-07-21) · **Status:** Frozen for MVP implementation
 **Audience:** compiler implementers, language designers, early adopters
 
+> **Changelog v1.7:** hybrid replay landed (v0.2 first item). §6.2 concrete MVP mechanism: `NUDGE_REPLAY_MODE=all` (default, full replay) now also **mocks tool calls from the trace** — per-tool recorded outputs, `[]` when the trace holds none; `NUDGE_REPLAY_MODE=llm` is the hybrid mode — LLM calls replay, tools execute live and are traced, so tool drift is visible by diffing traces. §6.1: `tool.call` records (`tool`, `input`, `output`) are now emitted in live and hybrid runs; trace emission is serialized under a lock so `par` branches can never interleave records or duplicate `seq` numbers. Codegen: tool stubs now receive their argument list (`rt.tool_stub("name", [args])`) so `tool.call` records carry real inputs.
+>
 > **Changelog v1.6:** budget enforcement + the parallel scheduler landed (roadmap day 11–12). §4.3 concrete MVP semantics: the fake provider charges a flat, deterministic **$0.001 per call** (every repair round charges; replay charges nothing); `NUDGE_BUDGET=<usd>` is the env form of `nudge run --budget` and arms a run-level counter shared by all `par` branches — a precheck refuses to start a call whose inherited budget is already gone, and a post-call charge raises `BudgetExceeded` when spent crosses the limit (the trace stays complete up to the crash point). Money literals now keep their unit through the compiler, so a non-USD budget is **E0501** (USD only in v0.1). §5 MVP scheduler: `par map` runs on a thread pool (`concurrency` or `min(32, n)` workers), results keep input order, and zip pair-unpacking spreads tuple elements across multi-parameter lambdas; `par race` takes the first completed branch and cancels the losers best-effort (budget refunds post-MVP).
 >
 > **Changelog v1.5:** trace store + replay + test blocks landed (roadmap day 9–10). §6.1: `llm.call` records carry inline `input`/`output` at MVP — the content-addressed payload store is deferred post-MVP (v1-compatible additive fields). New `fn.return` record (`fn`, `output`), emitted by every effectful fn; `Trace.output` is the last `fn.return` value. §6.3 concrete MVP semantics: `replay(path)` returns a `Trace` (`.cost_usd` = Σ llm.call cost; `.output` dot-accessible); unsupported record versions raise `ReplayMismatch`. §6.2: full replay runs with `NUDGE_REPLAY=<trace>` — `llm_call` consumes recorded outputs in order (repair rounds replayed faithfully, zero provider calls, no new `llm.call` records). Test blocks lower to `nudge_test_<slug>()` and run via `nudgec test`.
@@ -176,6 +178,8 @@ Every run emits an append-only trace (JSON Lines). Payloads live in a content-ad
 
 **Payloads at MVP (v1.5):** `llm.call` records carry `input`/`output` inline; the content-addressed payload store above is deferred post-MVP. Every effectful fn also emits a `fn.return` record — `Trace.output` (§6.3) reads the last one.
 
+**Tool records (v1.7):** `tool.call` records (`tool`, `input`, `output`) are emitted in live and hybrid runs (never in full replay — tools are mocked there, §6.2). Trace emission is serialized under a lock, so `par` branches cannot interleave records or duplicate `seq` numbers.
+
 **Additive fields (v1.3):** `llm.call` records carry `repair_round` (0-based attempt) and `outcome` (`ok` / `schema_violation`). Consumers of v1 traces must ignore unknown fields.
 
 **Versioning:** every record carries `v` (record schema version). `nudge trace migrate` upgrades old traces. The v1 record schema is frozen with the MVP.
@@ -191,6 +195,8 @@ nudge run main.ndg --replay=llm       // hybrid: LLM from trace, Tools live
 Full replay sends **zero** requests to any model API → free regression tests in CI. Hybrid mode answers "did tool behavior drift?"
 
 MVP mechanism (v1.5): `NUDGE_REPLAY=<trace.jsonl>` puts the runtime in full-replay mode — `llm_call` consumes recorded outputs in order (each repair round consumes its own record), no provider is called, and no new `llm.call` records are written. Running out of records raises `ReplayMismatch`.
+
+Hybrid mode (v1.7): `NUDGE_REPLAY_MODE=all` (default) additionally mocks tool calls from the trace — per-tool recorded outputs in call order, `[]` when the trace holds none — and writes no `tool.call` records. `NUDGE_REPLAY_MODE=llm` is the hybrid: LLM calls replay as above while tools execute live and emit fresh `tool.call` records, so tool drift shows up as a trace diff. Live runs (no `NUDGE_REPLAY`) record both `llm.call` and `tool.call`.
 
 ### 6.3 Traces as Tests
 
@@ -274,8 +280,10 @@ export agent Researcher at a2a://agents.example.com/researcher   // emits an Age
    │
    ▼
 Lexer + Parser (hand-rolled, zero dependencies at MVP)
+   │
    ▼
 AST → HIR (desugar: llm""" """ → llm_call node)
+   │
    ▼
 Type checker ── refinement/schema validation ── effect inference
    │
