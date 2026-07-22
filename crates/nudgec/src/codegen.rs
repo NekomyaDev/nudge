@@ -1,4 +1,4 @@
-//! Nudge Python codegen (design §14 contract, v1.7) — day 4–6 scope.
+//! Nudge Python codegen (design §14 contract, v1.8) — day 4–6 scope.
 //!
 //! Lowers the AST to a single deterministic Python file importing only
 //! stdlib + `nudge_runtime`:
@@ -7,6 +7,8 @@
 //!   tool        → `def name(...): return rt.tool_stub("name", [args])` (real
 //!                 MCP wiring lands post-MVP; traced as `tool.call` records)
 //!   llm call    → `rt.llm_call(prompt=…, schema=rt.schema(…), model=…, …)`
+//!   stream let  → `rt.llm_stream(…)` (design §4.5: incremental schema
+//!                 validation, early abort on unsatisfiable prefixes)
 //!   test block  → `def nudge_test_<slug>():` (design §6.3; run via
 //!                 `nudgec test`) with `replay` → `rt.replay`
 //!
@@ -76,7 +78,19 @@ fn emit_body(body: &[Stmt], aliases: &HashSet<String>) -> String {
     let last = body.len() - 1;
     for (i, st) in body.iter().enumerate() {
         let line = match st {
-            Stmt::Let { name, value, .. } => format!("{name} = {}", py(value, aliases)),
+            Stmt::Let { name, value, stream, .. } => {
+                if *stream {
+                    match value {
+                        // design §4.5: stream let lowers to the incremental-validating stream call
+                        Expr::LlmCall { prompt, options, repair } => {
+                            format!("{name} = {}", llm_py(true, prompt, options, *repair, aliases))
+                        }
+                        _ => format!("{name} = {}  # warning: stream ignored on non-llm binding", py(value, aliases)),
+                    }
+                } else {
+                    format!("{name} = {}", py(value, aliases))
+                }
+            }
             Stmt::Assert(e) => format!("assert {}", py(e, aliases)),
             // MVP return rule: the fn's final expression is its return value.
             Stmt::ExprStmt(e) if i == last => format!("return {}", py(e, aliases)),
@@ -97,7 +111,19 @@ fn emit_test_body(body: &[Stmt], aliases: &HashSet<String>) -> String {
     let mut out = String::new();
     for st in body {
         let line = match st {
-            Stmt::Let { name, value, .. } => format!("{name} = {}", py(value, aliases)),
+            Stmt::Let { name, value, stream, .. } => {
+                if *stream {
+                    match value {
+                        // design §4.5: stream let lowers to the incremental-validating stream call
+                        Expr::LlmCall { prompt, options, repair } => {
+                            format!("{name} = {}", llm_py(true, prompt, options, *repair, aliases))
+                        }
+                        _ => format!("{name} = {}  # warning: stream ignored on non-llm binding", py(value, aliases)),
+                    }
+                } else {
+                    format!("{name} = {}", py(value, aliases))
+                }
+            }
             Stmt::Assert(e) => format!("assert {}", py(e, aliases)),
             Stmt::ExprStmt(e) => py(e, aliases),
         };
@@ -228,7 +254,7 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
             format!("[{}]", xs.iter().map(|x| py(x, aliases)).collect::<Vec<_>>().join(", "))
         }
         Expr::Prompt { body, interpolations } => prompt_py(body, interpolations),
-        Expr::LlmCall { prompt, options, repair } => llm_py(prompt, options, *repair, aliases),
+        Expr::LlmCall { prompt, options, repair } => llm_py(false, prompt, options, *repair, aliases),
         Expr::Call { func, args, kwargs } => {
             let mut parts: Vec<String> = args.iter().map(|a| py(a, aliases)).collect();
             parts.extend(kwargs.iter().map(|(k, v)| format!("{k}={}", py(v, aliases))));
@@ -285,7 +311,7 @@ fn prompt_py(body: &str, interps: &[String]) -> String {
     }
 }
 
-fn llm_py(prompt: &Expr, options: &[(String, Expr)], repair: bool, aliases: &HashSet<String>) -> String {
+fn llm_py(stream: bool, prompt: &Expr, options: &[(String, Expr)], repair: bool, aliases: &HashSet<String>) -> String {
     // NOTE: continuation lines are indented 8 spaces, assuming the call sits
     // directly under a single-depth body line (`return ...` / `x = ...`).
     let mut parts = vec![format!("prompt={}", py(prompt, aliases))];
@@ -306,7 +332,7 @@ fn llm_py(prompt: &Expr, options: &[(String, Expr)], repair: bool, aliases: &Has
     if repair {
         parts.push("repair=True".into());
     }
-    format!("rt.llm_call(\n        {},\n    )", parts.join(",\n        "))
+    format!("rt.{}(\n        {},\n    )", if stream { "llm_stream" } else { "llm_call" }, parts.join(",\n        "))
 }
 
 fn op_str(op: &BinOp) -> &'static str {
@@ -409,6 +435,18 @@ mod tests {
         let src = "tool web_search(q: string) -> [R] { impl: mcp(\"s\").web(q) side_effects: none }";
         let out = gen(src);
         assert!(out.contains("def web_search(q):\n    return rt.tool_stub(\"web_search\", [q])"), "got:\n{out}");
+    }
+
+    #[test]
+    fn stream_let_lowers_to_llm_stream() {
+        let src = "fn f() -> string uses LLM { stream let t: string = llm\"\"\"x\"\"\" with { model: \"m\" }\n    t }";
+        let out = gen(src);
+        assert!(out.contains("t = rt.llm_stream("), "got:\n{out}");
+        assert!(!out.contains("t = rt.llm_call("), "got:\n{out}");
+        // stream on a non-llm binding degrades to a plain let with a warning
+        let src2 = "fn f() -> int { stream let n = 3\n    n }";
+        let out2 = gen(src2);
+        assert!(out2.contains("n = 3  # warning: stream ignored on non-llm binding"), "got:\n{out2}");
     }
 
     #[test]
@@ -783,5 +821,64 @@ mod tests {
         assert_eq!(out1.stdout, out2.stdout);
         let log2 = std::fs::read_to_string(&t2).unwrap_or_default();
         assert!(!log2.contains("\"llm.call\"") && !log2.contains("\"tool.call\""), "full replay must not execute anything: {log2}");
+    }
+
+    // ── v0.2: streaming (design §4.5) ──────────────────────────────
+
+    #[test]
+    fn stream_let_runs_and_traces_chunks() {
+        let Some(e) = e2e("streamrun") else { return };
+        let src = "type T = { title: string }\nfn main() -> T uses LLM {\n    stream let t: T = llm\"\"\"give me a title\"\"\" with { schema: T, model: \"m\" }\n    t\n}";
+        let out_py = e.dir.join("stream_demo.py");
+        std::fs::write(&out_py, gen(src)).unwrap();
+        let output = run_py(&e, &out_py, &[]);
+        assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("title"), "stdout: {output:?}");
+        let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
+        assert!(log.contains("\"streamed\": true"), "trace: {log}");
+        let chunks: u64 = log
+            .lines()
+            .filter_map(|l| l.split("\"chunks\": ").nth(1)?.split('}').next()?.trim().parse::<u64>().ok())
+            .sum();
+        assert!(chunks >= 2, "a 16-char payload should stream in >= 2 chunks, trace: {log}");
+    }
+
+    #[test]
+    fn stream_aborts_early_on_unsatisfiable_prefix_then_repairs() {
+        let Some(e) = e2e("streamabort") else { return };
+        // schema expects a string; the fake failure value is an object, so the
+        // very first chunk already violates the schema -> early abort (chunk 1)
+        let src = "fn main() -> string uses LLM {\n    stream let t: string = llm\"\"\"x\"\"\" with { schema: string, model: \"m\", retry: 2 with repair }\n    t\n}";
+        let out_py = e.dir.join("stream_abort.py");
+        std::fs::write(&out_py, gen(src)).unwrap();
+        let output = run_py(&e, &out_py, &[("NUDGE_FAKE_FAIL_FIRST", "1")]);
+        assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+        let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
+        assert!(log.contains("\"early_abort\": true"), "trace: {log}");
+        assert!(log.contains("\"outcome\": \"schema_violation\""), "trace: {log}");
+        assert!(log.contains("\"repair_round\": 1"), "trace: {log}");
+        // the abort happened on the first chunk — tokens beyond it were saved
+        let first = log.lines().next().unwrap();
+        assert!(first.contains("\"chunks\": 1"), "expected abort on chunk 1, record: {first}");
+    }
+
+    #[test]
+    fn stream_replay_consumes_the_recorded_value() {
+        let Some(e) = e2e("streamreplay") else { return };
+        let src = "type T = { title: string }\nfn main() -> T uses LLM {\n    stream let t: T = llm\"\"\"give me a title\"\"\" with { schema: T, model: \"m\" }\n    t\n}";
+        let out_py = e.dir.join("stream_replay.py");
+        std::fs::write(&out_py, gen(src)).unwrap();
+        // 1. live streamed run
+        let t1 = e.dir.join("t1.jsonl");
+        let out1 = run_py(&e, &out_py, &[("NUDGE_TRACE", t1.to_str().unwrap())]);
+        assert!(out1.status.success(), "stderr: {}", String::from_utf8_lossy(&out1.stderr));
+        assert!(std::fs::read_to_string(&t1).unwrap().contains("\"streamed\": true"));
+        // 2. replay: consumes the recorded final value, no streaming, no new records
+        let t2 = e.dir.join("t2.jsonl");
+        let out2 = run_py(&e, &out_py, &[("NUDGE_TRACE", t2.to_str().unwrap()), ("NUDGE_REPLAY", t1.to_str().unwrap())]);
+        assert!(out2.status.success(), "stderr: {}", String::from_utf8_lossy(&out2.stderr));
+        assert_eq!(out1.stdout, out2.stdout, "replay must reproduce the streamed result");
+        let log2 = std::fs::read_to_string(&t2).unwrap_or_default();
+        assert!(!log2.contains("\"llm.call\""), "replay must not call any provider: {log2}");
     }
 }

@@ -1,8 +1,10 @@
 # Nudge — Language Design
 
-**Version:** 1.7 (2026-07-21) · **Status:** Frozen for MVP implementation
+**Version:** 1.8 (2026-07-21) · **Status:** Frozen for MVP implementation
 **Audience:** compiler implementers, language designers, early adopters
 
+> **Changelog v1.8:** streaming landed (v0.2 second item). §4.5 concrete MVP mechanism: `stream let` lowers to `rt.llm_stream` — the provider answer streams in deterministic chunks and every prefix is validated **incrementally** (`_PrefixValidator`): a literal of the wrong type starting, a number completing outside `minimum`/`maximum` or non-integral under `integer`, an invalid `format: uri` string, an object closing without a `required` key, or malformed JSON aborts the stream at that chunk and counts as a schema violation, so the §4.2 repair loop applies unchanged. §6.1: `llm.call` records gain additive `streamed` / `chunks` / `early_abort` fields. Chunk-by-chunk consumption (`for chunk in report.chunks()`) lands with `for` loops post-MVP — today's binding yields the final validated value; replay consumes the recorded final value like a plain call.
+>
 > **Changelog v1.7:** hybrid replay landed (v0.2 first item). §6.2 concrete MVP mechanism: `NUDGE_REPLAY_MODE=all` (default, full replay) now also **mocks tool calls from the trace** — per-tool recorded outputs, `[]` when the trace holds none; `NUDGE_REPLAY_MODE=llm` is the hybrid mode — LLM calls replay, tools execute live and are traced, so tool drift is visible by diffing traces. §6.1: `tool.call` records (`tool`, `input`, `output`) are now emitted in live and hybrid runs; trace emission is serialized under a lock so `par` branches can never interleave records or duplicate `seq` numbers. Codegen: tool stubs now receive their argument list (`rt.tool_stub("name", [args])`) so `tool.call` records carry real inputs.
 >
 > **Changelog v1.6:** budget enforcement + the parallel scheduler landed (roadmap day 11–12). §4.3 concrete MVP semantics: the fake provider charges a flat, deterministic **$0.001 per call** (every repair round charges; replay charges nothing); `NUDGE_BUDGET=<usd>` is the env form of `nudge run --budget` and arms a run-level counter shared by all `par` branches — a precheck refuses to start a call whose inherited budget is already gone, and a post-call charge raises `BudgetExceeded` when spent crosses the limit (the trace stays complete up to the crash point). Money literals now keep their unit through the compiler, so a non-USD budget is **E0501** (USD only in v0.1). §5 MVP scheduler: `par map` runs on a thread pool (`concurrency` or `min(32, n)` workers), results keep input order, and zip pair-unpacking spreads tuple elements across multi-parameter lambdas; `par race` takes the first completed branch and cancels the losers best-effort (budget refunds post-MVP).
@@ -144,6 +146,8 @@ for chunk in report.chunks() { ui.render(chunk) }   // chunk: Partial[Report]
 
 Schema validation runs **incrementally** over partial JSON; a prefix that can no longer satisfy the schema aborts the stream early and triggers repair.
 
+MVP mechanism (v1.8): `stream let` lowers to `rt.llm_stream`. The fake provider streams its answer in deterministic 14-character chunks; each prefix is checked by `_PrefixValidator` (wrong-type literal start, number out of range, invalid `uri`, object closing without a `required` key, malformed JSON ⇒ `_PrefixImpossible`). An abort counts as a schema violation — the §4.2 repair loop applies unchanged — and is traced with `early_abort: true` plus the consumed `chunks` count. `stream` is a contextual keyword (§12): only special directly before `let`, and `stream let` on a non-LLM binding degrades to a plain `let` with a codegen warning. `for chunk in report.chunks()` lands with `for` loops post-MVP.
+
 ---
 
 ## 5. Parallelism
@@ -179,6 +183,8 @@ Every run emits an append-only trace (JSON Lines). Payloads live in a content-ad
 **Payloads at MVP (v1.5):** `llm.call` records carry `input`/`output` inline; the content-addressed payload store above is deferred post-MVP. Every effectful fn also emits a `fn.return` record — `Trace.output` (§6.3) reads the last one.
 
 **Tool records (v1.7):** `tool.call` records (`tool`, `input`, `output`) are emitted in live and hybrid runs (never in full replay — tools are mocked there, §6.2). Trace emission is serialized under a lock, so `par` branches cannot interleave records or duplicate `seq` numbers.
+
+**Additive fields (v1.8):** streamed `llm.call` records carry `streamed: true`, `chunks` (consumed chunk count), and `early_abort: true` on attempts aborted by incremental validation (§4.5).
 
 **Additive fields (v1.3):** `llm.call` records carry `repair_round` (0-based attempt) and `outcome` (`ok` / `schema_violation`). Consumers of v1 traces must ignore unknown fields.
 
@@ -385,6 +391,9 @@ let p: Plan = llm"""..."""        →     p = rt.llm_call(
                                           tags=("planner","v3"))
 
 par map xs |x| -> g(x)            →     rt.par_map(xs, g, concurrency=None)
+
+stream let p: Plan = llm"""...""" →     p = rt.llm_stream(prompt=…, schema=…)
+                                        # chunks validated incrementally (§4.5)
 
 state.x += v                      →     rt.state_update(run, "x", rt.ADD, v)   # checkpointed
 

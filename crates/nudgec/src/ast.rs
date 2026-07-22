@@ -54,7 +54,9 @@ pub struct Param {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
-    Let { name: String, ty: Option<TypeExpr>, value: Expr },
+    /// `stream` is true for `stream let` (design §4.5): the bound LLM call
+    /// is consumed incrementally; codegen lowers it to `rt.llm_stream`.
+    Let { name: String, ty: Option<TypeExpr>, value: Expr, stream: bool },
     Assert(Expr),
     ExprStmt(Expr),
 }

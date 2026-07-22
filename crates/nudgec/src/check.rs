@@ -476,7 +476,7 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                 let mut last_ty = Ty::None_;
                 for st in body {
                     match st {
-                        Stmt::Let { name: n, ty, value } => {
+                        Stmt::Let { name: n, ty, value, .. } => {
                             let vt = check_expr(value, &locals, &g, &mut errs);
                             let bound = match ty {
                                 Some(ann) => {
