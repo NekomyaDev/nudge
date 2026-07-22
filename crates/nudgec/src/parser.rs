@@ -173,7 +173,18 @@ impl Parser {
                 let ty = if self.eat(&Tok::Colon) { Some(self.parse_type()?) } else { None };
                 self.expect(&Tok::Assign, "'=' in let binding")?;
                 let value = self.parse_expr()?;
-                Ok(Stmt::Let { name, ty, value })
+                Ok(Stmt::Let { name, ty, value, stream: false })
+            }
+            // `stream let x: T = llm"""..."""` (design §4.5) — `stream` is a
+            // contextual keyword: only special when directly followed by `let`
+            Tok::Ident(s) if s == "stream" && self.peek2() == &Tok::Let => {
+                self.bump(); // stream
+                self.bump(); // let
+                let name = self.ident()?;
+                let ty = if self.eat(&Tok::Colon) { Some(self.parse_type()?) } else { None };
+                self.expect(&Tok::Assign, "'=' in stream let binding")?;
+                let value = self.parse_expr()?;
+                Ok(Stmt::Let { name, ty, value, stream: true })
             }
             Tok::Assert => { self.bump(); Ok(Stmt::Assert(self.parse_expr()?)) }
             _ => Ok(Stmt::ExprStmt(self.parse_expr()?)),
@@ -609,6 +620,35 @@ test "budget" {
         assert!(matches!(items[5], Item::Fn { .. }));
         assert!(matches!(items[6], Item::Fn { .. }));
         assert!(matches!(items[7], Item::Test { .. }));
+    }
+
+    #[test]
+    fn stream_let_parses_and_stream_stays_an_identifier() {
+        let src = "fn f() -> string uses LLM { stream let t: string = llm\"\"\"x\"\"\" with { model: \"m\" }\n    t }";
+        let items = parse_str(src);
+        match &items[0] {
+            Item::Fn { body, .. } => match &body[0] {
+                Stmt::Let { name, stream, value, .. } => {
+                    assert_eq!(name, "t");
+                    assert!(stream);
+                    assert!(matches!(value, Expr::LlmCall { .. }));
+                }
+                other => panic!("expected stream let, got {other:?}"),
+            },
+            _ => panic!("expected fn"),
+        }
+        // contextual keyword: `stream` remains usable as a variable name
+        let items = parse_str("fn f() -> int { let stream = 3\n    stream }");
+        match &items[0] {
+            Item::Fn { body, .. } => match &body[0] {
+                Stmt::Let { name, stream, .. } => {
+                    assert_eq!(name, "stream");
+                    assert!(!stream);
+                }
+                other => panic!("expected plain let, got {other:?}"),
+            },
+            _ => panic!("expected fn"),
+        }
     }
 
     #[test]
