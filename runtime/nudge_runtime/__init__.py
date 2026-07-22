@@ -24,6 +24,11 @@ Ships today:
 - tool calls — ``tool_stub`` executes the stub and emits ``tool.call``
   trace records in live/hybrid runs (design §6.1/§8); real MCP wiring
   lands post-MVP.
+- streaming (design §4.5) — ``llm_stream`` feeds provider chunks through an
+  incremental schema validator; a prefix that can no longer satisfy the
+  schema aborts the stream early (tokens saved) and counts as a schema
+  violation, so the §4.2 repair loop applies. Trace records gain additive
+  ``streamed`` / ``chunks`` / ``early_abort`` fields.
 - budget enforcement (design §4.3) — fake pricing is a flat $0.001/call
   (deterministic, not a model price); per-call walls via ``budget=`` and the
   run-level counter via ``NUDGE_BUDGET`` (shared by all ``par`` branches);
@@ -329,10 +334,10 @@ def _emit_trace(record: dict) -> None:
             f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
-def _trace_call(model, prompt, out, repair_round, outcome):
+def _trace_call(model, prompt, out, repair_round, outcome, extra=None):
     # MVP: input/output are inline (design §6.1 content-addressed payload
     # store lands post-MVP — v1-compatible additive fields)
-    _emit_trace({
+    record = {
         "kind": "llm.call",
         "model": model or "default",
         "params": {"temperature": 0},
@@ -343,7 +348,11 @@ def _trace_call(model, prompt, out, repair_round, outcome):
         "repair_round": repair_round,
         "outcome": outcome,
         "provider": "fake",
-    })
+    }
+    if extra:
+        # additive v1 fields (design §6.1): streamed / chunks / early_abort
+        record.update(extra)
+    _emit_trace(record)
 
 
 # ── replay (design §6.2, §6.3) ──────────────────────────────────────
@@ -441,6 +450,273 @@ def _budget_charge(cost, call_budget):
             raise BudgetExceeded(
                 f"run budget exceeded: ${spent:.4f} spent of ${limit:.4f}"
             )
+
+
+# ── streaming (design §4.5) ──────────────────────────────────────────
+
+class _PrefixImpossible(Exception):
+    """The streamed prefix can no longer satisfy the schema (design §4.5)."""
+
+
+class _PrefixValidator:
+    """Incremental JSON-stream viability checker (design §4.5).
+
+    Chunks are fed as they arrive; :meth:`feed` raises
+    :class:`_PrefixImpossible` the moment *no* completion of the prefix can
+    satisfy the schema, so the runtime can abort the stream early (tokens
+    not yet spent are saved). Abort conditions: a literal of the wrong type
+    starts, a number completes outside ``minimum``/``maximum`` or non-
+    integral under ``integer``, a ``format: uri`` string completes invalid,
+    an object closes with a ``required`` key missing, or the JSON itself
+    malforms. Unknown object keys are allowed (JSON-Schema default) and a
+    ``{}`` schema accepts anything.
+    """
+
+    def __init__(self, sch):
+        self.sch = sch if isinstance(sch, dict) else {}
+        self.stack = []    # open object/array frames
+        self.scalar = None # in-progress string/key/number/literal
+        self.done = False  # root value completed
+
+    def feed(self, text):
+        for ch in text:
+            self._feed_char(ch)
+
+    # ── schema helpers ────────────────────────────────────────────
+    @staticmethod
+    def _type_of(sch):
+        return sch.get("type") if isinstance(sch, dict) else None
+
+    def _check_start(self, ch, sch):
+        t = self._type_of(sch)
+        if t is None:
+            return
+        ok = {
+            "object": ch == "{",
+            "array": ch == "[",
+            "string": ch == '"',
+            "number": ch == "-" or ch.isdigit(),
+            "integer": ch == "-" or ch.isdigit(),
+            "boolean": ch in "tf",
+            "null": ch == "n",
+        }.get(t)
+        if ok is False:
+            raise _PrefixImpossible(f"expected {t}, value starts with {ch!r}")
+
+    # ── char machine ──────────────────────────────────────────────
+    def _feed_char(self, ch):
+        if self.done:
+            if not ch.isspace():
+                raise _PrefixImpossible("trailing data after complete document")
+            return
+        if self.scalar is not None:
+            self._feed_scalar(ch)
+            return
+        if ch.isspace():
+            return
+        if not self.stack:
+            self._start_value(ch, self.sch)
+            return
+        f = self.stack[-1]
+        if f["kind"] == "obj":
+            st = f["state"]
+            if st == "key":
+                if ch == '"':
+                    self.scalar = {"kind": "key", "buf": "", "esc": False}
+                elif ch == "}":
+                    self._close_obj(f)
+                else:
+                    raise _PrefixImpossible(f"object expects a key or '}}', got {ch!r}")
+            elif st == "colon":
+                if ch == ":":
+                    f["state"] = "value"
+                else:
+                    raise _PrefixImpossible(f"expected ':', got {ch!r}")
+            elif st == "value":
+                f["state"] = "comma"
+                subsch = {}
+                if isinstance(f["sch"], dict):
+                    subsch = f["sch"].get("properties", {}).get(f["key"], {})
+                self._start_value(ch, subsch)
+            else:  # comma
+                if ch == ",":
+                    f["state"] = "key"
+                elif ch == "}":
+                    self._close_obj(f)
+                else:
+                    raise _PrefixImpossible(f"object expects ',' or '}}', got {ch!r}")
+        else:  # arr
+            if f["state"] == "value":
+                if ch == "]":
+                    self.stack.pop()
+                    self._after_value()
+                else:
+                    f["state"] = "comma"
+                    subsch = f["sch"].get("items", {}) if isinstance(f["sch"], dict) else {}
+                    self._start_value(ch, subsch)
+            else:  # comma
+                if ch == ",":
+                    f["state"] = "value"
+                elif ch == "]":
+                    self.stack.pop()
+                    self._after_value()
+                else:
+                    raise _PrefixImpossible(f"array expects ',' or ']', got {ch!r}")
+
+    def _start_value(self, ch, sch):
+        self._check_start(ch, sch)
+        if ch == "{":
+            self.stack.append({"kind": "obj", "sch": sch, "state": "key",
+                               "key": None, "seen": set()})
+        elif ch == "[":
+            self.stack.append({"kind": "arr", "sch": sch, "state": "value"})
+        elif ch == '"':
+            self.scalar = {"kind": "string", "sch": sch, "buf": "", "esc": False}
+        elif ch == "-" or ch.isdigit():
+            self.scalar = {"kind": "number", "sch": sch, "buf": ch}
+        else:
+            self.scalar = {"kind": "literal", "sch": sch, "buf": ch}
+
+    def _feed_scalar(self, ch):
+        s = self.scalar
+        if s["kind"] in ("string", "key"):
+            if s["esc"]:
+                s["esc"] = False
+                s["buf"] += ch
+            elif ch == "\\":
+                s["esc"] = True
+            elif ch == '"':
+                self.scalar = None
+                if s["kind"] == "key":
+                    f = self.stack[-1]
+                    f["key"] = s["buf"]
+                    f["seen"].add(s["buf"])
+                    f["state"] = "colon"
+                else:
+                    sch = s["sch"]
+                    if isinstance(sch, dict) and sch.get("format") == "uri":
+                        from urllib.parse import urlparse
+                        parsed = urlparse(s["buf"])
+                        if not (parsed.scheme and parsed.netloc):
+                            raise _PrefixImpossible(f"not a valid uri: {s['buf']!r}")
+                    self._after_value()
+            else:
+                s["buf"] += ch
+        elif s["kind"] == "number":
+            if ch in "0123456789+-.eE":
+                s["buf"] += ch
+            else:
+                self.scalar = None
+                try:
+                    num = float(s["buf"])
+                except ValueError:
+                    raise _PrefixImpossible(f"malformed number {s['buf']!r}")
+                sch = s["sch"]
+                if isinstance(sch, dict):
+                    if sch.get("type") == "integer" and num != int(num):
+                        raise _PrefixImpossible(f"{s['buf']} is not an integer")
+                    if "minimum" in sch and num < sch["minimum"]:
+                        raise _PrefixImpossible(f"{num} < minimum {sch['minimum']}")
+                    if "maximum" in sch and num > sch["maximum"]:
+                        raise _PrefixImpossible(f"{num} > maximum {sch['maximum']}")
+                self._after_value()
+                self._feed_char(ch)  # the delimiter belongs to the parent
+        else:  # literal: true / false / null
+            s["buf"] += ch
+            buf = s["buf"]
+            if not any(w.startswith(buf) for w in ("true", "false", "null")):
+                raise _PrefixImpossible(f"malformed literal {buf!r}")
+            if buf in ("true", "false", "null"):
+                self.scalar = None
+                sch = s["sch"]
+                t = self._type_of(sch)
+                if t == "boolean" and buf == "null":
+                    raise _PrefixImpossible("expected boolean, got null")
+                if t == "null" and buf != "null":
+                    raise _PrefixImpossible(f"expected null, got {buf}")
+                self._after_value()
+
+    def _close_obj(self, f):
+        if isinstance(f["sch"], dict):
+            missing = [k for k in f["sch"].get("required", []) if k not in f["seen"]]
+            if missing:
+                raise _PrefixImpossible(f"object closed missing required {missing[0]!r}")
+        self.stack.pop()
+        self._after_value()
+
+    def _after_value(self):
+        if not self.stack:
+            self.done = True
+
+
+def llm_stream(prompt, model=None, schema=None, retry=0, repair=False,
+               budget=None, cache=None, tags=None, chunk_size=14):
+    """One streaming typed LLM call (design §4.5).
+
+    The answer arrives in chunks; with ``schema`` set, every prefix is
+    validated incrementally (:class:`_PrefixValidator`) and a prefix that
+    can no longer satisfy the schema aborts the stream early — the abort
+    counts as a schema violation, so the §4.2 repair loop applies. Trace
+    records carry additive ``streamed``/``chunks``/``early_abort`` fields
+    (§6.1). MVP: the fake provider chunks deterministically (``chunk_size``
+    characters); replay consumes the recorded final value like
+    :func:`llm_call` (§6.2 — stream flags stay in the old trace).
+    """
+    if os.environ.get("NUDGE_REPLAY"):
+        return llm_call(prompt, model=model, schema=schema, retry=retry,
+                        repair=repair, budget=budget, cache=cache, tags=tags)
+    provider = os.environ.get("NUDGE_PROVIDER", "fake")
+    if provider != "fake":
+        raise RuntimeError(
+            "nudge_runtime MVP ships the fake provider only; set NUDGE_PROVIDER=fake"
+        )
+
+    attempts = 1 + (retry if repair and schema is not None else 0)
+    last_errors, last_raw = [], None
+    _budget_precheck()
+    for round_no in range(attempts):
+        out = _fake_answer(prompt, model, schema)
+        if schema is not None:
+            text = json.dumps(_jsonable(out), ensure_ascii=False)
+        else:
+            text = str(out)
+        chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)] or [""]
+        validator = _PrefixValidator(schema) if schema is not None else None
+        aborted, consumed = None, 0
+        for chunk in chunks:
+            consumed += 1
+            if validator is not None:
+                try:
+                    validator.feed(chunk)
+                except _PrefixImpossible as e:
+                    aborted = str(e)
+                    break
+        if aborted is not None:
+            last_errors, last_raw = [f"stream aborted: {aborted}"], out
+            _trace_call(model, prompt, out, round_no, "schema_violation",
+                        extra={"streamed": True, "chunks": consumed, "early_abort": True})
+            _budget_charge(FAKE_CALL_COST, budget)
+            # design §4.5: an unsatisfiable prefix aborts early and triggers repair
+            prompt = _REPAIR_HINT.format(errors="stream aborted: " + aborted) + "\n" + str(prompt)
+            continue
+        if schema is None:
+            _trace_call(model, prompt, out, 0, "ok",
+                        extra={"streamed": True, "chunks": consumed})
+            _budget_charge(FAKE_CALL_COST, budget)
+            return out
+        errors = validate(schema, out)
+        if not errors:
+            _trace_call(model, prompt, out, round_no, "ok",
+                        extra={"streamed": True, "chunks": consumed})
+            _budget_charge(FAKE_CALL_COST, budget)
+            return out
+        last_errors, last_raw = errors, out
+        _trace_call(model, prompt, out, round_no, "schema_violation",
+                    extra={"streamed": True, "chunks": consumed})
+        _budget_charge(FAKE_CALL_COST, budget)
+        # design §4.2 step 1: feed raw output errors back to the model
+        prompt = _REPAIR_HINT.format(errors="; ".join(errors)) + "\n" + str(prompt)
+    raise SchemaFailure(last_errors, last_raw)
 
 
 # ── the LLM call ─────────────────────────────────────────────────────
