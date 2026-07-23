@@ -283,7 +283,21 @@ impl Parser {
     }
 
     // ── expressions (precedence low → high, design §12) ─────────────
-    pub fn parse_expr(&mut self) -> PResult<Expr> { self.parse_or() }
+    pub fn parse_expr(&mut self) -> PResult<Expr> { self.parse_merge() }
+
+    /// `l | merge r` (design §7): reducer join — `merge` is a contextual
+    /// keyword, only special directly after `|` (so `|a|` lambdas and a
+    /// variable named `merge` are unaffected).
+    fn parse_merge(&mut self) -> PResult<Expr> {
+        let mut l = self.parse_or()?;
+        while self.at(&Tok::Bar) && matches!(self.peek2(), Tok::Ident(s) if s == "merge") {
+            self.bump(); // |
+            self.bump(); // merge
+            let r = self.parse_or()?;
+            l = Expr::Merge { l: Box::new(l), r: Box::new(r) };
+        }
+        Ok(l)
+    }
 
     fn parse_or(&mut self) -> PResult<Expr> {
         let mut l = self.parse_and()?;
@@ -725,6 +739,27 @@ test "budget" {
                 }
             }
             other => panic!("expected agent, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn merge_infix_parses_and_merge_stays_an_identifier() {
+        // `l | merge r` is a reducer join (design §7)
+        let items = parse(lex("fn f(x: [int]) -> [int] { x | merge x }").unwrap()).unwrap();
+        match &items[0] {
+            Item::Fn { body, .. } => match &body[0] {
+                Stmt::ExprStmt(Expr::Merge { .. }) => {}
+                other => panic!("expected merge expr, got {other:?}"),
+            },
+            _ => panic!("expected fn"),
+        }
+        // `merge` alone is an ordinary identifier
+        let items = parse(lex("fn f() -> int { let merge = 3\n    merge }").unwrap()).unwrap();
+        match &items[0] {
+            Item::Fn { body, .. } => {
+                assert!(matches!(&body[0], Stmt::Let { name, .. } if name == "merge"));
+            }
+            _ => panic!("expected fn"),
         }
     }
 
