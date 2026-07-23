@@ -98,6 +98,52 @@ spend. Real providers land post-MVP.
 | zero manual JSON parsing | ✅ schemas do all the work |
 | replay test passing at zero token cost | ✅ `nudgec test` replays the committed trace |
 
+## `checkpoint_agent.ndg` — agent state that survives crashes (v0.2c)
+
+An `agent` block declares typed `state` with defaults; every `state.x = v` /
+`state.x += v` write is an **automatic checkpoint** to
+`.nudge/runs/<run_id>/checkpoint.json`. After a crash, `nudge resume <run_id>`
+re-executes the program replaying the recorded trace prefix (zero tokens for
+work already done), then continues live — and the replayed state writes are
+suppressed, so nothing is applied twice (design §7).
+
+```ndg
+agent Researcher {
+    state {
+        notes: [string] = [],
+        round: int = 0,
+    }
+
+    fn step(q: string) -> string uses LLM {
+        let note = llm"""One short research note about: {q}""" with { model: "anthropic:sonnet-4.6", budget: 0.01 USD }
+        state.notes += [note]
+        state.round += 1
+        note
+    }
+
+    fn main() -> [string] uses LLM {
+        step("urban heat islands")
+        step("green roofs")
+        state.notes
+    }
+}
+```
+
+### Try it
+
+```sh
+nudgec check examples/checkpoint_agent.ndg     # state writes verified (E0701 outside an agent)
+nudgec build examples/checkpoint_agent.ndg
+
+# a run that crashes mid-way: 2 calls × $0.001 fake price vs a $0.0015 budget
+cd examples
+NUDGE_RUN_ID=demo-1 NUDGE_BUDGET=0.0015 PYTHONPATH=../runtime python3 ../out/checkpoint_agent.py
+# → BudgetExceeded; .nudge/runs/demo-1/checkpoint.json holds round: 1
+
+# resume: replays the recorded call, then goes live — round ends at exactly 2
+nudgec resume demo-1
+```
+
 ## `hello_llm.ndg` — the smallest possible program
 
 ```ndg
