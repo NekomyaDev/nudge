@@ -44,6 +44,10 @@ pub enum Expr {
     ParMap { coll: Box<Expr>, kwargs: Vec<(String, Expr)>, params: Vec<String>, body: Box<Expr> },
     ParAll(Vec<Expr>),
     ParRace(Vec<Expr>),
+
+    /// `l | merge r` (design §7): CRDT-style join used by state reducer
+    /// writes — dicts union (right wins), lists append-dedup.
+    Merge { l: Box<Expr>, r: Box<Expr> },
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -35,7 +35,8 @@ Ships today:
   the program replaying the recorded prefix (``NUDGE_RESUME=1``): replayed
   state writes are suppressed (the checkpoint already reflects them), and
   once the recorded llm/tool records run out, calls go live and append to
-  the same trace.
+  the same trace. Reducer writes use ``merge``: dicts union (right wins),
+  lists append-dedup.
 - budget enforcement (design §4.3) — fake pricing is a flat $0.001/call
   (deterministic, not a model price); per-call walls via ``budget=`` and the
   run-level counter via ``NUDGE_BUDGET`` (shared by all ``par`` branches);
@@ -542,6 +543,24 @@ class AgentState:
         (self._dir / "checkpoint.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
+
+
+# ── merge reducer (design §7) ────────────────────────────────────────
+
+def merge(l, r):
+    """CRDT-style join behind `l | merge r` (design §7): dicts union
+    (right side wins on key conflicts), lists append items the left side
+    does not already hold (grow-only set), and anything else is
+    overwritten by the right side."""
+    if isinstance(l, dict) and isinstance(r, dict):
+        return {**l, **r}
+    if isinstance(l, list) and isinstance(r, list):
+        out = list(l)
+        for x in r:
+            if x not in out:
+                out.append(x)
+        return out
+    return r
 
 
 # ── streaming (design §4.5) ──────────────────────────────────────────

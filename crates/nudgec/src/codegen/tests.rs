@@ -73,6 +73,13 @@ fn agent_lowers_to_checkpointed_state() {
 }
 
 #[test]
+fn merge_lowers_to_rt_merge() {
+    let src = "agent A {\n    state {\n        found: [string] = [],\n    }\n    fn step(s: string) -> [string] {\n        state.found = state.found | merge [s]\n        state.found\n    }\n}";
+    let out = gen(src);
+    assert!(out.contains("_state_A.found = rt.merge(_state_A.found, [s])"), "got:\n{out}");
+}
+
+#[test]
 fn par_map_lowers_to_runtime_call() {
     let src = "fn f(angles: [string]) -> [string] { let h = par map angles |a| -> search(a) }";
     assert!(gen(src).contains("h = rt.par_map(angles, lambda a: search(a))"));
@@ -558,4 +565,35 @@ fn resume_continues_from_checkpoint_without_double_apply() {
     let log = std::fs::read_to_string(&trace).unwrap();
     let calls = log.lines().filter(|l| l.contains("\"llm.call\"")).count();
     assert_eq!(calls, 2, "expected one recorded + one live call, trace: {log}");
+}
+
+// ── v0.3: merge reducer (design §7) ────────────────────────────
+
+#[test]
+fn merge_reducer_write_dedups_and_checkpoints() {
+    let Some(e) = e2e("merge") else { return };
+    // the fake provider returns the same deterministic value for both
+    // calls, so the merge reducer keeps exactly one copy
+    let src = "type F = { claim: string }\nagent A {\n    state {\n        found: [F] = [],\n    }\n    fn main() -> int uses LLM {\n        let a = llm\"\"\"c\"\"\" with { schema: F, model: \"m\" }\n        state.found = state.found | merge [a]\n        let b = llm\"\"\"c\"\"\" with { schema: F, model: \"m\" }\n        state.found = state.found | merge [b]\n        len(state.found)\n    }\n}";
+    let out_py = e.dir.join("merge_demo.py");
+    std::fs::write(&out_py, gen(src)).unwrap();
+    let output = run_py(&e, &out_py, &[("NUDGE_RUN_ID", "run-merge-1")]);
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1", "merge must dedup the identical findings");
+    let ck = std::fs::read_to_string(e.dir.join(".nudge/runs/run-merge-1/checkpoint.json")).unwrap();
+    assert!(ck.contains("\"found\": ["), "checkpoint: {ck}");
+}
+
+#[test]
+fn merge_runtime_semantics() {
+    let Some(e) = e2e("mergert") else { return };
+    let driver = e.dir.join("drive_merge.py");
+    std::fs::write(
+        &driver,
+        "import nudge_runtime as rt\n# dicts union, right wins\nassert rt.merge({\"a\": 1, \"b\": 1}, {\"b\": 2, \"c\": 3}) == {\"a\": 1, \"b\": 2, \"c\": 3}\n# lists append-dedup\nassert rt.merge([1, 2], [2, 3]) == [1, 2, 3]\nassert rt.merge([], [{\"x\": 1}, {\"x\": 1}]) == [{\"x\": 1}]\n# scalars: right overwrites\nassert rt.merge(1, 2) == 2\nprint(\"MERGE OK\")\n",
+    )
+    .unwrap();
+    let output = run_py(&e, &driver, &[]);
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("MERGE OK"));
 }

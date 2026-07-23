@@ -1,4 +1,4 @@
-//! Nudge Python codegen (design §14 contract, v1.9) — day 4–6 scope.
+//! Nudge Python codegen (design §14 contract, v1.10) — day 4–6 scope.
 //!
 //! Lowers the AST to a single deterministic Python file importing only
 //! stdlib + `nudge_runtime`:
@@ -11,6 +11,7 @@
 //!                 validation, early abort on unsatisfiable prefixes)
 //!   agent state → `_state_<A> = rt.AgentState("A", {defaults})`; `state.x`
 //!                 reads re-root to it, writes checkpoint on every store (§7)
+//!   merge       → `rt.merge(l, r)` (design §7: dict union / list dedup)
 //!   test block  → `def nudge_test_<slug>():` (design §6.3; run via
 //!                 `nudgec test`) with `replay` → `rt.replay`
 //!
@@ -245,6 +246,10 @@ fn bind_state_expr(e: &Expr, agent: &str) -> Expr {
         },
         Expr::ParAll(xs) => Expr::ParAll(xs.iter().map(|x| bind_state_expr(x, agent)).collect()),
         Expr::ParRace(xs) => Expr::ParRace(xs.iter().map(|x| bind_state_expr(x, agent)).collect()),
+        Expr::Merge { l, r } => Expr::Merge {
+            l: Box::new(bind_state_expr(l, agent)),
+            r: Box::new(bind_state_expr(r, agent)),
+        },
         leaf => leaf.clone(),
     }
 }
@@ -412,6 +417,8 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
         Expr::ParRace(xs) => {
             format!("rt.par_race([{}])", xs.iter().map(|x| py(x, aliases)).collect::<Vec<_>>().join(", "))
         }
+        // design §7: reducer join (dict union / list append-dedup at runtime)
+        Expr::Merge { l, r } => format!("rt.merge({}, {})", py(l, aliases), py(r, aliases)),
     }
 }
 
