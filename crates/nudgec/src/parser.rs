@@ -75,6 +75,7 @@ impl Parser {
             Tok::Fn => self.parse_fn(),
             Tok::Tool => self.parse_tool(),
             Tok::Test => self.parse_test(),
+            Tok::Agent => self.parse_agent(),
             other => self.err(format!("expected item (type/fn/tool/test), found {other:?}")),
         }
     }
@@ -154,6 +155,38 @@ impl Parser {
         Ok(Item::Test { name, body })
     }
 
+    /// `agent Name { state { ... } fn ... }` (design §7, v0.2c MVP).
+    fn parse_agent(&mut self) -> PResult<Item> {
+        self.bump(); // agent
+        let name = self.ident()?;
+        self.expect(&Tok::LBrace, "'{' before agent body")?;
+        let mut state = Vec::new();
+        let mut fns = Vec::new();
+        while !self.at(&Tok::RBrace) {
+            if self.at(&Tok::Eof) { return self.err("unexpected end of file inside agent"); }
+            match self.peek() {
+                Tok::State => {
+                    self.bump(); // state
+                    self.expect(&Tok::LBrace, "'{' before state block")?;
+                    while !self.at(&Tok::RBrace) {
+                        let fname = self.ident()?;
+                        self.expect(&Tok::Colon, "':' in state field")?;
+                        let ty = self.parse_type()?;
+                        self.expect(&Tok::Assign, "'=' before state default")?;
+                        let default = self.parse_expr()?;
+                        state.push((fname, ty, default));
+                        self.eat(&Tok::Comma);
+                    }
+                    self.expect(&Tok::RBrace, "'}' after state block")?;
+                }
+                Tok::Fn => fns.push(self.parse_fn()?),
+                other => return self.err(format!("expected `state` or `fn` inside agent, found {other:?}")),
+            }
+        }
+        self.expect(&Tok::RBrace, "'}' after agent body")?;
+        Ok(Item::Agent { name, state, fns })
+    }
+
     fn parse_block(&mut self) -> PResult<Vec<Stmt>> {
         self.expect(&Tok::LBrace, "'{'")?;
         let mut stmts = Vec::new();
@@ -187,6 +220,24 @@ impl Parser {
                 Ok(Stmt::Let { name, ty, value, stream: true })
             }
             Tok::Assert => { self.bump(); Ok(Stmt::Assert(self.parse_expr()?)) }
+            // `state.x = v` / `state.x += v` (design §7) — only valid inside
+            // an agent block; the checker enforces that (E0701). Lookahead
+            // past `state . field` keeps a bare `state.x` read an expression.
+            Tok::State if self.peek2() == &Tok::Dot
+                && matches!(self.t.get(self.i + 2).map(|s| &s.tok), Some(Tok::Ident(_)))
+                && matches!(self.t.get(self.i + 3).map(|s| &s.tok), Some(Tok::Assign) | Some(Tok::PlusEq)) => {
+                self.bump(); // state
+                self.bump(); // .
+                let field = self.ident()?;
+                let aug = if self.eat(&Tok::PlusEq) {
+                    true
+                } else {
+                    self.expect(&Tok::Assign, "'=' or '+=' in state write")?;
+                    false
+                };
+                let value = self.parse_expr()?;
+                Ok(Stmt::StateWrite { field, aug, value })
+            }
             _ => Ok(Stmt::ExprStmt(self.parse_expr()?)),
         }
     }
@@ -382,6 +433,9 @@ impl Parser {
             Tok::True => { self.bump(); Ok(Expr::Bool(true)) }
             Tok::False => { self.bump(); Ok(Expr::Bool(false)) }
             Tok::None => { self.bump(); Ok(Expr::None) }
+            // `state` reads (`state.round`) inside agent fns (design §7);
+            // codegen binds it to the agent's checkpointed state object
+            Tok::State => { self.bump(); Ok(Expr::Ident("state".into())) }
             Tok::Ident(name) => { self.bump(); Ok(Expr::Ident(name)) }
             Tok::LBracket => {
                 self.bump();
@@ -648,6 +702,29 @@ test "budget" {
                 other => panic!("expected plain let, got {other:?}"),
             },
             _ => panic!("expected fn"),
+        }
+    }
+
+    #[test]
+    fn agent_state_block_parses() {
+        let src = "agent Researcher {\n    state {\n        notes: [string] = [],\n        round: int = 0,\n    }\n    fn step(q: string) -> int uses LLM {\n        let r = llm\"\"\"next: {q}\"\"\" with { model: \"m\" }\n        state.notes += [r]\n        state.round = state.round + 1\n        state.round\n    }\n}";
+        let items = parse(lex(src).unwrap()).unwrap();
+        match &items[0] {
+            Item::Agent { name, state, fns } => {
+                assert_eq!(name, "Researcher");
+                assert_eq!(state.len(), 2);
+                assert_eq!(state[0].0, "notes");
+                assert_eq!(state[1].0, "round");
+                assert_eq!(fns.len(), 1);
+                match &fns[0] {
+                    Item::Fn { body, .. } => {
+                        assert!(matches!(&body[1], Stmt::StateWrite { field, aug: true, .. } if field == "notes"));
+                        assert!(matches!(&body[2], Stmt::StateWrite { field, aug: false, .. } if field == "round"));
+                    }
+                    other => panic!("expected fn inside agent, got {other:?}"),
+                }
+            }
+            other => panic!("expected agent, got {other:?}"),
         }
     }
 
