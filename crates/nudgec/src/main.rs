@@ -4,6 +4,7 @@
 //!   nudgec check <file.ndg>   type-check (E0101–E0302)
 //!   nudgec build <file.ndg>   check, then emit Python to out/<name>.py
 //!   nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn
+//!   nudgec resume <run_id>    continue a crashed run from its last checkpoint (design §7)
 
 mod ast;
 mod check;
@@ -21,6 +22,7 @@ fn usage() -> ! {
     eprintln!("  nudgec check <file.ndg>   type-check (E0101–E0302)");
     eprintln!("  nudgec build <file.ndg>   check, then emit Python to out/<name>.py");
     eprintln!("  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn");
+    eprintln!("  nudgec resume <run_id>    continue a crashed run from its last checkpoint");
     process::exit(64);
 }
 
@@ -36,7 +38,8 @@ fn main() {
     if args.len() != 3 {
         usage();
     }
-    let src = read_src(&args[2]);
+    // `resume` takes a run_id, not a source file
+    let src = if args[1] == "resume" { String::new() } else { read_src(&args[2]) };
 
     let compile = |src: &str| -> Result<Vec<ast::Item>, String> {
         lexer::lex(src).map_err(|e| e.msg).and_then(|t| parser::parse(t).map_err(|e| e.msg))
@@ -167,6 +170,40 @@ fn main() {
                 process::exit(1);
             }
         },
+        // design §7: re-execute the registered program replaying the run's
+        // recorded trace; once the recorded prefix is exhausted the runtime
+        // goes live and appends to the same trace. State writes from the
+        // replayed prefix are suppressed — the checkpoint reflects them.
+        "resume" => {
+            let run = &args[2];
+            let dir = std::path::Path::new(".nudge").join("runs").join(run);
+            let read = |name: &str| -> String {
+                match fs::read_to_string(dir.join(name)) {
+                    Ok(s) => s,
+                    Err(_) => {
+                        eprintln!("error: unknown run_id '{run}' (no {} in {})", name, dir.display());
+                        process::exit(1);
+                    }
+                }
+            };
+            let program = read("program");
+            let trace = read("trace");
+            match process::Command::new("python3")
+                .arg(program.trim())
+                .env("NUDGE_PROVIDER", "fake")
+                .env("NUDGE_RUN_ID", run)
+                .env("NUDGE_REPLAY", trace.trim())
+                .env("NUDGE_RESUME", "1")
+                .env("NUDGE_TRACE", trace.trim())
+                .status()
+            {
+                Ok(status) => process::exit(status.code().unwrap_or(1)),
+                Err(e) => {
+                    eprintln!("error: cannot run python3: {e}");
+                    process::exit(1);
+                }
+            }
+        }
         _ => usage(),
     }
 }
