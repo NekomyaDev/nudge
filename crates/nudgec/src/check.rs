@@ -223,7 +223,7 @@ fn direct_effects(
             }
         }
         Expr::Field { obj, .. } => direct_effects(obj, g, effects, calls),
-        Expr::Binary { l, r, .. } => {
+        Expr::Binary { l, r, .. } | Expr::Merge { l, r } => {
             direct_effects(l, g, effects, calls);
             direct_effects(r, g, effects, calls);
         }
@@ -542,6 +542,32 @@ fn check_expr(e: &Expr, locals: &HashMap<String, Ty>, g: &Globals, errs: &mut Ve
                 check_expr(x, locals, g, errs);
             }
             t
+        }
+        // design §7 reducer join: two records (dict union) or two lists
+        // (append-dedup); anything else is a type error
+        Expr::Merge { l, r } => {
+            let lt = check_expr(l, locals, g, errs);
+            let rt_ = check_expr(r, locals, g, errs);
+            match (&lt, &rt_) {
+                (Ty::Record(_), Ty::Record(_)) => lt,
+                (Ty::List(a), Ty::List(b)) => {
+                    if !assignable(b, a) {
+                        errs.push(CheckError {
+                            code: "E0201",
+                            msg: format!("merge list element mismatch: {lt} vs {rt_}"),
+                        });
+                    }
+                    lt
+                }
+                (Ty::Unknown, t) | (t, Ty::Unknown) => t.clone(),
+                _ => {
+                    errs.push(CheckError {
+                        code: "E0201",
+                        msg: format!("merge expects two records or two lists, got {lt} | merge {rt_}"),
+                    });
+                    Ty::Unknown
+                }
+            }
         }
     }
 }
@@ -866,6 +892,18 @@ mod tests {
         assert!(errs.iter().any(|e| e.code == "E0701" && e.msg.contains("no field 'missing'")), "got {errs:?}");
         // E0201: `=` write with a mismatched type
         let errs = check_src("agent C {\n    state {\n        round: int = 0,\n    }\n    fn step() -> int { state.round = \"oops\"\n        0\n    }\n}");
+        assert!(errs.iter().any(|e| e.code == "E0201"), "got {errs:?}");
+    }
+
+    #[test]
+    fn merge_reducer_checks_operands() {
+        // clean: list append-dedup and record union
+        assert_eq!(check_src("fn f(x: [int]) -> [int] { x | merge x }"), vec![]);
+        assert_eq!(check_src("type R = { a: int }\nfn f(x: R) -> R { x | merge x }"), vec![]);
+        // E0201: mismatched / scalar operands
+        let errs = check_src("fn f(x: int) -> int { x | merge x }");
+        assert!(errs.iter().any(|e| e.code == "E0201" && e.msg.contains("merge expects")), "got {errs:?}");
+        let errs = check_src("fn f(x: [int], s: string) -> [int] { x | merge s }");
         assert!(errs.iter().any(|e| e.code == "E0201"), "got {errs:?}");
     }
 }
