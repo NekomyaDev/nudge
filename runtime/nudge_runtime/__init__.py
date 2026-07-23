@@ -29,6 +29,13 @@ Ships today:
   schema aborts the stream early (tokens saved) and counts as a schema
   violation, so the §4.2 repair loop applies. Trace records gain additive
   ``streamed`` / ``chunks`` / ``early_abort`` fields.
+- agent state + checkpoints (design §7) — ``AgentState`` persists every
+  state write to ``.nudge/runs/<run_id>/checkpoint.json`` and registers
+  ``program``/``trace`` for the run. ``nudge resume <run_id>`` re-executes
+  the program replaying the recorded prefix (``NUDGE_RESUME=1``): replayed
+  state writes are suppressed (the checkpoint already reflects them), and
+  once the recorded llm/tool records run out, calls go live and append to
+  the same trace.
 - budget enforcement (design §4.3) — fake pricing is a flat $0.001/call
   (deterministic, not a model price); per-call walls via ``budget=`` and the
   run-level counter via ``NUDGE_BUDGET`` (shared by all ``par`` branches);
@@ -43,7 +50,9 @@ Ships today:
 Env: ``NUDGE_PROVIDER=fake`` (default; real providers land post-MVP),
 ``NUDGE_TRACE`` (trace path, default ``trace.jsonl``), ``NUDGE_REPLAY``
 (trace to replay from instead of calling a provider), ``NUDGE_BUDGET``
-(run-level USD budget, §4.3).
+(run-level USD budget, §4.3), ``NUDGE_RUN_ID`` (checkpoint store key,
+§7), ``NUDGE_RESUME`` (with ``NUDGE_REPLAY``: continue past the recorded
+prefix instead of raising ``ReplayMismatch``).
 """
 
 from __future__ import annotations
@@ -51,6 +60,7 @@ from __future__ import annotations
 import functools
 import json
 import os
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -233,16 +243,20 @@ def _replay_mode():
 _REPLAY_TOOL_STATE = {"outputs": None, "idx": {}}
 
 
-def _replay_tool_output(name):
-    """Full-replay tool mock: the recorded output for this tool's next call,
-    or ``[]`` when the trace holds none (design §6.2 mock default)."""
+def _replay_tool_outputs():
     if _REPLAY_TOOL_STATE["outputs"] is None:
         trace = Trace(os.environ["NUDGE_REPLAY"])
         by_tool = {}
         for r in trace.tool_calls():
             by_tool.setdefault(r.get("tool"), []).append(r.get("output"))
         _REPLAY_TOOL_STATE["outputs"] = by_tool
-    outputs = _REPLAY_TOOL_STATE["outputs"]
+    return _REPLAY_TOOL_STATE["outputs"]
+
+
+def _replay_tool_output(name):
+    """Full-replay tool mock: the recorded output for this tool's next call,
+    or ``[]`` when the trace holds none (design §6.2 mock default)."""
+    outputs = _replay_tool_outputs()
     idx = _REPLAY_TOOL_STATE["idx"].get(name, 0)
     recorded = outputs.get(name, [])
     if idx < len(recorded):
@@ -251,15 +265,26 @@ def _replay_tool_output(name):
     return []
 
 
+def _replay_tool_available(name):
+    """True while the trace still holds an unconsumed output for this tool."""
+    recorded = _replay_tool_outputs().get(name, [])
+    return _REPLAY_TOOL_STATE["idx"].get(name, 0) < len(recorded)
+
+
 def tool_stub(name, args=None):
     """Tool call while the MCP client is unbuilt (design §8).
 
     Live + hybrid replay: executes (stub result ``[]``) and records a
     ``tool.call`` trace record. Full replay: mocked from the trace — the
-    recorded output for this tool's next call, no record written.
+    recorded output for this tool's next call, no record written. Resume
+    (design §7): consumes the recorded prefix, then runs live and records.
     """
     if _replay_mode() == "all":
-        return _replay_tool_output(name)
+        if not os.environ.get("NUDGE_RESUME"):
+            return _replay_tool_output(name)
+        if _replay_tool_available(name):
+            return _replay_tool_output(name)
+        # resume past the recorded prefix: fall through to a live call
     result = []
     _emit_trace({
         "kind": "tool.call",
@@ -450,6 +475,73 @@ def _budget_charge(cost, call_budget):
             raise BudgetExceeded(
                 f"run budget exceeded: ${spent:.4f} spent of ${limit:.4f}"
             )
+
+
+# ── agent state + checkpoints (design §7) ──────────────────────────
+
+class AgentState:
+    """Checkpointed agent state (design §7, v0.2c MVP).
+
+    Every attribute write persists the full state to
+    ``.nudge/runs/<run_id>/checkpoint.json`` (SQLite/Postgres stores are
+    post-MVP). The run directory also registers ``program`` (the emitted
+    entry file) and ``trace`` so ``nudge resume <run_id>`` can re-execute.
+
+    Resume semantics: with ``NUDGE_RESUME`` set, the checkpoint is loaded
+    and the first ``writes`` state writes of the re-execution are
+    suppressed — deterministic replay of the recorded prefix reproduces
+    exactly those writes, and the checkpoint already reflects them. Writes
+    past the crash point go live and checkpoint as usual.
+    """
+
+    def __init__(self, agent, defaults):
+        object.__setattr__(self, "_agent", agent)
+        run = os.environ.get("NUDGE_RUN_ID") or f"run-{os.getpid()}"
+        run_dir = Path(".nudge") / "runs" / run
+        run_dir.mkdir(parents=True, exist_ok=True)
+        object.__setattr__(self, "_dir", run_dir)
+        values, writes = dict(defaults), 0
+        ckpt = run_dir / "checkpoint.json"
+        if os.environ.get("NUDGE_RESUME") and ckpt.exists():
+            saved = json.loads(ckpt.read_text(encoding="utf-8"))
+            values.update(saved.get("values", {}))
+            writes = saved.get("writes", 0)
+        object.__setattr__(self, "_values", values)
+        object.__setattr__(self, "_writes", writes)
+        object.__setattr__(self, "_suppress", writes if os.environ.get("NUDGE_RESUME") else 0)
+        (run_dir / "program").write_text(os.path.abspath(sys.argv[0]), encoding="utf-8")
+        trace = os.environ.get("NUDGE_TRACE")
+        if trace:
+            (run_dir / "trace").write_text(os.path.abspath(trace), encoding="utf-8")
+        self._checkpoint()
+
+    def __getattr__(self, name):
+        try:
+            return object.__getattribute__(self, "_values")[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+    def __setattr__(self, name, value):
+        if self._suppress > 0:
+            # replayed-prefix write — the checkpoint already reflects it
+            object.__setattr__(self, "_suppress", self._suppress - 1)
+            return
+        self._values[name] = value
+        object.__setattr__(self, "_writes", self._writes + 1)
+        self._checkpoint()
+
+    def __repr__(self):
+        return f"AgentState({self._agent!r}, {self._values!r})"
+
+    def _checkpoint(self):
+        payload = {
+            "agent": self._agent,
+            "values": _jsonable(self._values),
+            "writes": self._writes,
+        }
+        (self._dir / "checkpoint.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
 
 
 # ── streaming (design §4.5) ──────────────────────────────────────────
@@ -764,12 +856,18 @@ def llm_call(prompt, model=None, schema=None, retry=0, repair=False,
         if provider == "replay":
             outputs = _replay_outputs()
             if _REPLAY_STATE["idx"] >= len(outputs):
-                raise ReplayMismatch(
-                    "program made more llm calls than the trace holds "
-                    f"({len(outputs)} records)"
-                )
-            out = outputs[_REPLAY_STATE["idx"]]
-            _REPLAY_STATE["idx"] += 1
+                if not os.environ.get("NUDGE_RESUME"):
+                    raise ReplayMismatch(
+                        "program made more llm calls than the trace holds "
+                        f"({len(outputs)} records)"
+                    )
+                # resume (design §7): the recorded prefix is exhausted —
+                # continue live against the fake provider and trace it
+                provider = "fake"
+                out = _fake_answer(prompt, model, schema)
+            else:
+                out = outputs[_REPLAY_STATE["idx"]]
+                _REPLAY_STATE["idx"] += 1
         else:
             out = _fake_answer(prompt, model, schema)
         if schema is None:

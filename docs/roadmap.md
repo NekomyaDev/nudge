@@ -1,6 +1,6 @@
 # Nudge — Roadmap
 
-Design v1.8 is frozen ([design.md](design.md)). This file tracks implementation.
+Design v1.9 is frozen ([design.md](design.md)). This file tracks implementation.
 
 ## MVP — v0.1 (2-week plan)
 
@@ -19,7 +19,7 @@ Design v1.8 is frozen ([design.md](design.md)). This file tracks implementation.
 
 - **v0.2a** — hybrid replay ✅ done — `NUDGE_REPLAY_MODE=llm` (LLM from trace, tools live), `tool.call` trace records, full-replay tool mocking, serialized trace emission (59 tests)
 - **v0.2b** — streaming (`stream let`, incremental schema validation) ✅ done — `rt.llm_stream` + `_PrefixValidator` early-abort on unsatisfiable prefixes, `streamed`/`chunks`/`early_abort` trace fields, stream-replay parity (64 tests)
-- **v0.2c** — checkpoint/resume (`agent`/`state` blocks, `nudge resume`) ⬜
+- **v0.2c** — checkpoint/resume (`agent`/`state` blocks, `nudge resume`) ✅ done — `rt.AgentState` checkpoints every state write to `.nudge/runs/<run_id>/`, resume replays the recorded prefix then goes live (replayed state writes suppressed via the `writes` counter), E0701 for stray state writes (69 tests)
 - **v0.3** — multi-server MCP, TypeScript backend, reducer state, OTel span export
 - **v0.4** — `nudge cost` static cost report, user-defined routing
 - **v1.0** — A2A export, LSP (VS Code), frozen trace format

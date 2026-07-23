@@ -1,4 +1,4 @@
-//! Nudge Python codegen (design §14 contract, v1.8) — day 4–6 scope.
+//! Nudge Python codegen (design §14 contract, v1.9) — day 4–6 scope.
 //!
 //! Lowers the AST to a single deterministic Python file importing only
 //! stdlib + `nudge_runtime`:
@@ -9,6 +9,8 @@
 //!   llm call    → `rt.llm_call(prompt=…, schema=rt.schema(…), model=…, …)`
 //!   stream let  → `rt.llm_stream(…)` (design §4.5: incremental schema
 //!                 validation, early abort on unsatisfiable prefixes)
+//!   agent state → `_state_<A> = rt.AgentState("A", {defaults})`; `state.x`
+//!                 reads re-root to it, writes checkpoint on every store (§7)
 //!   test block  → `def nudge_test_<slug>():` (design §6.3; run via
 //!                 `nudgec test`) with `replay` → `rt.replay`
 //!
@@ -42,7 +44,7 @@ pub fn emit(items: &[Item]) -> String {
                 }
                 let ps = params.iter().map(|p| p.name.clone()).collect::<Vec<_>>().join(", ");
                 out.push_str(&format!("def {name}({ps}):\n"));
-                out.push_str(&emit_body(body, &aliases));
+                out.push_str(&emit_body(body, &aliases, None));
                 if name == "main" {
                     has_main = true;
                 }
@@ -55,6 +57,31 @@ pub fn emit(items: &[Item]) -> String {
             Item::Test { name, body } => {
                 out.push_str(&format!("def nudge_test_{}():\n", slug(name)));
                 out.push_str(&emit_test_body(body, &aliases));
+            }
+            Item::Agent { name, state, fns } => {
+                // design §7 (v0.2c): state defaults lower to a checkpointed
+                // AgentState object; agent fns are plain module-level defs
+                let defaults = state
+                    .iter()
+                    .map(|(f, _, d)| format!("\"{f}\": {}", py(d, &aliases)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                out.push_str(&format!("_state_{name} = rt.AgentState(\"{name}\", {{{defaults}}})\n"));
+                for f in fns {
+                    if let Item::Fn { name: fn_name, params, effects, body, .. } = f {
+                        if !effects.is_empty() {
+                            let set = effects.iter().map(|e| format!("\"{e}\"")).collect::<Vec<_>>().join(", ");
+                            out.push_str(&format!("@rt.effectful(effects={{{set}}})\n"));
+                        }
+                        let ps = params.iter().map(|p| p.name.clone()).collect::<Vec<_>>().join(", ");
+                        out.push_str(&format!("def {fn_name}({ps}):\n"));
+                        let bound = bind_state(body, name);
+                        out.push_str(&emit_body(&bound, &aliases, Some(name)));
+                        if fn_name == "main" {
+                            has_main = true;
+                        }
+                    }
+                }
             }
         }
     }
@@ -70,7 +97,7 @@ pub fn emit(items: &[Item]) -> String {
     out
 }
 
-fn emit_body(body: &[Stmt], aliases: &HashSet<String>) -> String {
+fn emit_body(body: &[Stmt], aliases: &HashSet<String>, agent: Option<&str>) -> String {
     if body.is_empty() {
         return "    pass\n".into();
     }
@@ -90,6 +117,13 @@ fn emit_body(body: &[Stmt], aliases: &HashSet<String>) -> String {
                 } else {
                     format!("{name} = {}", py(value, aliases))
                 }
+            }
+            // design §7: a state write is a checkpoint — attribute writes on
+            // the AgentState object persist automatically
+            Stmt::StateWrite { field, aug, value } => {
+                let target = agent.expect("codegen: state write outside an agent block (E0701)");
+                let op = if *aug { "+=" } else { "=" };
+                format!("_state_{target}.{field} {op} {}", py(value, aliases))
             }
             Stmt::Assert(e) => format!("assert {}", py(e, aliases)),
             // MVP return rule: the fn's final expression is its return value.
@@ -124,6 +158,9 @@ fn emit_test_body(body: &[Stmt], aliases: &HashSet<String>) -> String {
                     format!("{name} = {}", py(value, aliases))
                 }
             }
+            Stmt::StateWrite { .. } => {
+                panic!("codegen: state write outside an agent block (E0701)")
+            }
             Stmt::Assert(e) => format!("assert {}", py(e, aliases)),
             Stmt::ExprStmt(e) => py(e, aliases),
         };
@@ -132,6 +169,84 @@ fn emit_test_body(body: &[Stmt], aliases: &HashSet<String>) -> String {
         out.push('\n');
     }
     out
+}
+
+/// Bind `state` reads inside an agent fn to its checkpointed state object
+/// (design §7): `state.round` → `_state_<Agent>.round`. State *writes* stay
+/// `Stmt::StateWrite` — emit_body renders them with the same target.
+fn bind_state(body: &[Stmt], agent: &str) -> Vec<Stmt> {
+    body.iter()
+        .map(|st| match st {
+            Stmt::Let { name, ty, value, stream } => Stmt::Let {
+                name: name.clone(),
+                ty: ty.clone(),
+                value: bind_state_expr(value, agent),
+                stream: *stream,
+            },
+            Stmt::StateWrite { field, aug, value } => Stmt::StateWrite {
+                field: field.clone(),
+                aug: *aug,
+                value: bind_state_expr(value, agent),
+            },
+            Stmt::Assert(e) => Stmt::Assert(bind_state_expr(e, agent)),
+            Stmt::ExprStmt(e) => Stmt::ExprStmt(bind_state_expr(e, agent)),
+        })
+        .collect()
+}
+
+fn bind_state_expr(e: &Expr, agent: &str) -> Expr {
+    match e {
+        Expr::Ident(n) if n == "state" => Expr::Ident(format!("_state_{agent}")),
+        Expr::ListLit(xs) => Expr::ListLit(xs.iter().map(|x| bind_state_expr(x, agent)).collect()),
+        Expr::Prompt { body, interpolations } => {
+            // interpolation keys double as Python expressions in the emitted
+            // render mapping, so state references must be re-rooted in BOTH
+            // the template body and the key list (they must stay in sync)
+            let mut body = body.clone();
+            let mut interps = Vec::with_capacity(interpolations.len());
+            for k in interpolations {
+                if k == "state" {
+                    body = body.replace("{state}", &format!("{{_state_{agent}}}"));
+                    interps.push(format!("_state_{agent}"));
+                } else if let Some(rest) = k.strip_prefix("state.") {
+                    body = body.replace(&format!("{{state.{rest}}}"), &format!("{{_state_{agent}.{rest}}}"));
+                    interps.push(format!("_state_{agent}.{rest}"));
+                } else {
+                    interps.push(k.clone());
+                }
+            }
+            Expr::Prompt { body, interpolations: interps }
+        }
+        Expr::LlmCall { prompt, options, repair } => Expr::LlmCall {
+            prompt: Box::new(bind_state_expr(prompt, agent)),
+            options: options.iter().map(|(k, v)| (k.clone(), bind_state_expr(v, agent))).collect(),
+            repair: *repair,
+        },
+        Expr::Call { func, args, kwargs } => Expr::Call {
+            func: Box::new(bind_state_expr(func, agent)),
+            args: args.iter().map(|a| bind_state_expr(a, agent)).collect(),
+            kwargs: kwargs.iter().map(|(k, v)| (k.clone(), bind_state_expr(v, agent))).collect(),
+        },
+        Expr::Field { obj, name } => Expr::Field {
+            obj: Box::new(bind_state_expr(obj, agent)),
+            name: name.clone(),
+        },
+        Expr::Binary { op, l, r } => Expr::Binary {
+            op: op.clone(),
+            l: Box::new(bind_state_expr(l, agent)),
+            r: Box::new(bind_state_expr(r, agent)),
+        },
+        Expr::Unary { op, x } => Expr::Unary { op: op.clone(), x: Box::new(bind_state_expr(x, agent)) },
+        Expr::ParMap { coll, kwargs, params, body } => Expr::ParMap {
+            coll: Box::new(bind_state_expr(coll, agent)),
+            kwargs: kwargs.iter().map(|(k, v)| (k.clone(), bind_state_expr(v, agent))).collect(),
+            params: params.clone(),
+            body: Box::new(bind_state_expr(body, agent)),
+        },
+        Expr::ParAll(xs) => Expr::ParAll(xs.iter().map(|x| bind_state_expr(x, agent)).collect()),
+        Expr::ParRace(xs) => Expr::ParRace(xs.iter().map(|x| bind_state_expr(x, agent)).collect()),
+        leaf => leaf.clone(),
+    }
 }
 
 /// `test "run stays within budget"` → `run_stays_within_budget`.
@@ -383,502 +498,5 @@ print(f"{len(fns) - failed}/{len(fns)} tests passed")
 sys.exit(1 if failed else 0)
 "#;
 
-// ── tests ────────────────────────────────────────────────────────────
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::lexer::lex;
-    use crate::parser::parse;
-
-    fn gen(src: &str) -> String {
-        emit(&parse(lex(src).unwrap()).unwrap())
-    }
-
-    #[test]
-    fn hello_llm_golden() {
-        let src = include_str!("../../../examples/hello_llm.ndg");
-        let expected = "\"\"\"Generated by nudgec 0.1.0 — do not edit.\"\"\"\nimport nudge_runtime as rt\n\n\n@rt.effectful(effects={\"LLM\"})\ndef main():\n    return rt.llm_call(\n        prompt=\"Say hello to the Nudge language in one short sentence.\",\n        model=\"anthropic:sonnet-4.6\",\n        budget=rt.USD(\"0.01\"),\n    )\n\n\nif __name__ == \"__main__\":\n    _result = main()\n    if _result is not None:\n        print(_result)\n";
-        assert_eq!(gen(src), expected);
-    }
-
-    #[test]
-    fn llm_options_and_interpolation() {
-        let src = "fn f(q: string) -> string uses LLM {\n    llm\"\"\"hi {q}\"\"\"\n    with { model: \"m\", retry: 2 with repair, cache: content_addressed, tags: [\"a\", \"b\"] }\n}";
-        let out = gen(src);
-        assert!(out.contains("prompt=rt.render(\"hi {q}\", {\"q\": q}),"), "got:\n{out}");
-        assert!(out.contains("retry=2,"), "got:\n{out}");
-        assert!(out.contains("repair=True,"), "got:\n{out}");
-        assert!(out.contains("cache=\"content_addressed\","), "got:\n{out}");
-        assert!(out.contains("tags=[\"a\", \"b\"],"), "got:\n{out}");
-    }
-
-    #[test]
-    fn type_alias_lowers_to_schema_literal() {
-        let src = "type Url = string @format(url)\ntype Finding = { claim: string, confidence: float @range(0, 1) }";
-        let out = gen(src);
-        assert!(out.contains("Url = rt.schema({\"type\": \"string\", \"format\": \"uri\"})"), "got:\n{out}");
-        assert!(
-            out.contains("Finding = rt.schema({\"type\": \"object\", \"properties\": {\"claim\": {\"type\": \"string\"}, \"confidence\": {\"type\": \"number\", \"minimum\": 0, \"maximum\": 1}}, \"required\": [\"claim\", \"confidence\"]})"),
-            "got:\n{out}"
-        );
-    }
-
-    #[test]
-    fn schema_option_lowers_to_rt_schema() {
-        let src = "type Finding = { claim: string }\nfn f() -> [Finding] uses LLM { llm\"\"\"x\"\"\" with { schema: [Finding] } }";
-        let out = gen(src);
-        assert!(out.contains("schema=rt.schema({\"type\": \"array\", \"items\": Finding})"), "got:\n{out}");
-    }
-
-    #[test]
-    fn tool_lowers_to_stub_fn() {
-        let src = "tool web_search(q: string) -> [R] { impl: mcp(\"s\").web(q) side_effects: none }";
-        let out = gen(src);
-        assert!(out.contains("def web_search(q):\n    return rt.tool_stub(\"web_search\", [q])"), "got:\n{out}");
-    }
-
-    #[test]
-    fn stream_let_lowers_to_llm_stream() {
-        let src = "fn f() -> string uses LLM { stream let t: string = llm\"\"\"x\"\"\" with { model: \"m\" }\n    t }";
-        let out = gen(src);
-        assert!(out.contains("t = rt.llm_stream("), "got:\n{out}");
-        assert!(!out.contains("t = rt.llm_call("), "got:\n{out}");
-        // stream on a non-llm binding degrades to a plain let with a warning
-        let src2 = "fn f() -> int { stream let n = 3\n    n }";
-        let out2 = gen(src2);
-        assert!(out2.contains("n = 3  # warning: stream ignored on non-llm binding"), "got:\n{out2}");
-    }
-
-    #[test]
-    fn par_map_lowers_to_runtime_call() {
-        let src = "fn f(angles: [string]) -> [string] { let h = par map angles |a| -> search(a) }";
-        assert!(gen(src).contains("h = rt.par_map(angles, lambda a: search(a))"));
-        let src = "fn f(angles: [string], hits: [string]) -> [string] { let f2 = par map(angles zip hits, concurrency = 3) |(a, h)| -> analyze(a, h) }";
-        assert!(gen(src).contains("rt.par_map(zip(angles, hits), lambda a, h: analyze(a, h), concurrency=3)"));
-    }
-
-    // ── end-to-end (skipped without python3 / runtime checkout) ──────
-
-    struct E2e {
-        dir: std::path::PathBuf,
-        runtime: std::path::PathBuf,
-    }
-
-    fn e2e(name: &str) -> Option<E2e> {
-        use std::process::Command;
-        if Command::new("python3").arg("--version").output().is_err() {
-            return None;
-        }
-        let runtime = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
-        if !runtime.exists() {
-            return None;
-        }
-        // unique dir per test: `cargo test` runs them in parallel threads
-        let dir = std::env::temp_dir().join(format!("nudge_e2e_{}_{}", std::process::id(), name));
-        std::fs::create_dir_all(&dir).unwrap();
-        Some(E2e { dir, runtime })
-    }
-
-    fn run_py(e: &E2e, file: &std::path::Path, extra: &[(&str, &str)]) -> std::process::Output {
-        use std::process::Command;
-        let mut cmd = Command::new("python3");
-        cmd.arg(file)
-            .env("NUDGE_PROVIDER", "fake")
-            .env("NUDGE_TRACE", e.dir.join("trace.jsonl"))
-            .env("PYTHONPATH", &e.runtime);
-        for (k, v) in extra {
-            cmd.env(k, v);
-        }
-        cmd.output().unwrap()
-    }
-
-    #[test]
-    fn hello_llm_runs_under_fake_provider() {
-        let Some(e) = e2e("hello") else { return };
-        let py = gen(include_str!("../../../examples/hello_llm.ndg"));
-        let out_py = e.dir.join("hello_llm.py");
-        std::fs::write(&out_py, py).unwrap();
-        let output = run_py(&e, &out_py, &[]);
-        assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(stdout.contains("[fake:anthropic:sonnet-4.6]"), "stdout: {stdout}");
-        let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
-        assert!(log.contains("\"kind\": \"llm.call\""), "trace: {log}");
-    }
-
-    #[test]
-    fn research_agent_runs_end_to_end() {
-        let Some(e) = e2e("agent") else { return };
-        let py = gen(include_str!("../../../examples/research_agent.ndg"));
-        let out_py = e.dir.join("research_agent.py");
-        std::fs::write(&out_py, py).unwrap();
-        let driver = e.dir.join("drive_agent.py");
-        std::fs::write(
-            &driver,
-            format!(
-                "import sys\nsys.path.insert(0, {:?})\nimport research_agent as r\nresult = r.run(\"urban heat islands\")\nprint(\"OK\", sorted(result.keys()))\n",
-                e.dir.to_string_lossy()
-            ),
-        )
-        .unwrap();
-        let output = run_py(&e, &driver, &[]);
-        assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(stdout.contains("OK") && stdout.contains("findings"), "stdout: {stdout}");
-        let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
-        let calls = log.lines().filter(|l| l.contains("\"llm.call\"")).count();
-        // fake provider plans 3 angles: 1 plan + 3 analyze + 1 merge
-        assert_eq!(calls, 5, "expected 5 llm.call records, trace: {log}");
-    }
-
-    #[test]
-    fn repair_round_recovers_from_schema_violation() {
-        let Some(e) = e2e("repair") else { return };
-        let src = "type T = { title: string }\nfn main() -> T uses LLM {\n    llm\"\"\"give me a title\"\"\" with { schema: T, model: \"m\", retry: 2 with repair }\n}";
-        let out_py = e.dir.join("repair_demo.py");
-        std::fs::write(&out_py, gen(src)).unwrap();
-        let output = run_py(&e, &out_py, &[("NUDGE_FAKE_FAIL_FIRST", "1")]);
-        assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
-        assert!(String::from_utf8_lossy(&output.stdout).contains("title"), "stdout: {output:?}");
-        let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
-        assert!(log.contains("schema_violation"), "trace: {log}");
-        assert!(log.contains("\"repair_round\": 1"), "trace: {log}");
-    }
-
-    #[test]
-    fn exhausted_repairs_raise_schema_failure() {
-        let Some(e) = e2e("fail") else { return };
-        let src = "type T = { title: string }\nfn main() -> T uses LLM {\n    llm\"\"\"give me a title\"\"\" with { schema: T, model: \"m\", retry: 2 with repair }\n}";
-        let out_py = e.dir.join("fail_demo.py");
-        std::fs::write(&out_py, gen(src)).unwrap();
-        let output = run_py(&e, &out_py, &[("NUDGE_FAKE_FAIL_FIRST", "99")]);
-        assert!(!output.status.success(), "expected failure, stdout: {}", String::from_utf8_lossy(&output.stdout));
-        assert!(String::from_utf8_lossy(&output.stderr).contains("SchemaFailure"), "stderr: {}", String::from_utf8_lossy(&output.stderr));
-    }
-
-    // ── day 9–10: test blocks + replay ─────────────────────────────
-
-    #[test]
-    fn test_block_lowers_to_runnable_fn() {
-        let src = "test \"stays within budget!\" { let t = replay(\"traces/x.jsonl\")\nassert t.cost_usd < 0.25 }";
-        let out = gen(src);
-        assert!(out.contains("def nudge_test_stays_within_budget():"), "got:\n{out}");
-        assert!(out.contains("t = rt.replay(\"traces/x.jsonl\")"), "got:\n{out}");
-        assert!(out.contains("assert (t.cost_usd < 0.25)"), "got:\n{out}");
-    }
-
-    #[test]
-    fn slug_edge_cases() {
-        assert_eq!(slug("run stays within budget on recorded trace"), "run_stays_within_budget_on_recorded_trace");
-        assert_eq!(slug("!!weird — NA ME!!"), "weird_na_me");
-        assert_eq!(slug(""), "unnamed");
-    }
-
-    #[test]
-    fn test_block_runs_against_recorded_trace() {
-        let Some(e) = e2e("testrun") else { return };
-        // research_agent.ndg's own test block replays traces/demo_run.jsonl
-        let py = gen(include_str!("../../../examples/research_agent.ndg"));
-        let out_py = e.dir.join("research_agent.py");
-        std::fs::write(&out_py, py).unwrap();
-        std::fs::create_dir_all(e.dir.join("traces")).unwrap();
-
-        // 1. record a real run into traces/demo_run.jsonl
-        let rec = e.dir.join("record.py");
-        std::fs::write(
-            &rec,
-            format!("import sys\nsys.path.insert(0, {:?})\nimport research_agent as r\nr.run(\"urban heat islands\")\n", e.dir.to_string_lossy()),
-        )
-        .unwrap();
-        let trace_path = e.dir.join("traces/demo_run.jsonl");
-        let output = run_py(&e, &rec, &[("NUDGE_TRACE", trace_path.to_str().unwrap())]);
-        assert!(output.status.success(), "record stderr: {}", String::from_utf8_lossy(&output.stderr));
-        let log = std::fs::read_to_string(&trace_path).unwrap();
-        assert!(log.contains("\"fn.return\""), "trace needs a fn.return record: {log}");
-
-        // 2. run the generated nudge_test_* functions with cwd = e.dir
-        //    (so the relative trace path in the test block resolves)
-        let driver = e.dir.join("run_tests.py");
-        std::fs::write(&driver, TEST_DRIVER_PY.replace("__MODULE__", &out_py.to_string_lossy())).unwrap();
-        let output = std::process::Command::new("python3")
-            .arg(&driver)
-            .current_dir(&e.dir)
-            .env("PYTHONPATH", &e.runtime)
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(stdout.contains("PASS nudge_test_run_stays_within_budget_on_recorded_trace"), "stdout: {stdout}");
-    }
-
-    #[test]
-    fn replay_mode_reproduces_outputs_without_provider() {
-        let Some(e) = e2e("replay") else { return };
-        let py = gen(include_str!("../../../examples/research_agent.ndg"));
-        let out_py = e.dir.join("research_agent.py");
-        std::fs::write(&out_py, py).unwrap();
-        let driver = e.dir.join("drive.py");
-        std::fs::write(
-            &driver,
-            format!("import sys, json\nsys.path.insert(0, {:?})\nimport research_agent as r\nprint(json.dumps(r.run(\"urban heat islands\"), sort_keys=True))\n", e.dir.to_string_lossy()),
-        )
-        .unwrap();
-        // live run
-        let trace1 = e.dir.join("t1.jsonl");
-        let out1 = run_py(&e, &driver, &[("NUDGE_TRACE", trace1.to_str().unwrap())]);
-        assert!(out1.status.success(), "stderr: {}", String::from_utf8_lossy(&out1.stderr));
-        // full replay of that trace: zero provider calls, zero new llm.call records
-        let trace2 = e.dir.join("t2.jsonl");
-        let out2 = run_py(
-            &e,
-            &driver,
-            &[("NUDGE_TRACE", trace2.to_str().unwrap()), ("NUDGE_REPLAY", trace1.to_str().unwrap())],
-        );
-        assert!(out2.status.success(), "stderr: {}", String::from_utf8_lossy(&out2.stderr));
-        assert_eq!(out1.stdout, out2.stdout, "replay must reproduce the live result");
-        let log2 = std::fs::read_to_string(&trace2).unwrap_or_default();
-        assert!(!log2.contains("\"llm.call\""), "replay must not call any provider: {log2}");
-    }
-
-    #[test]
-    fn replay_version_mismatch_raises() {
-        let Some(e) = e2e("version") else { return };
-        let bad = e.dir.join("bad.jsonl");
-        std::fs::write(&bad, "{\"v\": 99, \"seq\": 1, \"kind\": \"llm.call\"}\n").unwrap();
-        let driver = e.dir.join("drive_v.py");
-        std::fs::write(&driver, format!("import nudge_runtime as rt\nrt.replay({:?})\n", bad.to_string_lossy())).unwrap();
-        let output = std::process::Command::new("python3")
-            .arg(&driver)
-            .env("PYTHONPATH", &e.runtime)
-            .output()
-            .unwrap();
-        assert!(!output.status.success(), "expected failure");
-        assert!(String::from_utf8_lossy(&output.stderr).contains("ReplayMismatch"), "stderr: {}", String::from_utf8_lossy(&output.stderr));
-    }
-
-    // ── day 11–12: budget + parallel scheduler ─────────────────────
-
-    #[test]
-    fn run_budget_wall_stops_the_run() {
-        let Some(e) = e2e("budget") else { return };
-        // research agent makes 5 llm calls × $0.001 fake price; $0.0025
-        // covers exactly two, so the third hits the run-level wall
-        let py = gen(include_str!("../../../examples/research_agent.ndg"));
-        let out_py = e.dir.join("research_agent.py");
-        std::fs::write(&out_py, py).unwrap();
-        let driver = e.dir.join("drive_b.py");
-        std::fs::write(
-            &driver,
-            format!("import sys\nsys.path.insert(0, {:?})\nimport research_agent as r\nr.run(\"urban heat islands\")\n", e.dir.to_string_lossy()),
-        )
-        .unwrap();
-        let output = run_py(&e, &driver, &[("NUDGE_BUDGET", "0.0025")]);
-        assert!(!output.status.success(), "expected BudgetExceeded, stdout: {}", String::from_utf8_lossy(&output.stdout));
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains("BudgetExceeded"), "stderr: {stderr}");
-        // the trace is complete up to the crash point (design §11). The 3
-        // analyze calls fan out concurrently, so 2–3 of them start (and are
-        // traced) before the shared counter crosses the wall
-        let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
-        let calls = log.lines().filter(|l| l.contains("\"llm.call\"")).count();
-        assert!((3..=4).contains(&calls), "expected 3–4 llm.call records before the wall, trace: {log}");
-    }
-
-    #[test]
-    fn per_call_budget_wall() {
-        let Some(e) = e2e("callbudget") else { return };
-        let src = "fn main() -> string uses LLM {\n    llm\"\"\"hi\"\"\" with { model: \"m\", budget: 0.0005 USD }\n}";
-        let out_py = e.dir.join("call_budget.py");
-        std::fs::write(&out_py, gen(src)).unwrap();
-        let output = run_py(&e, &out_py, &[]);
-        assert!(!output.status.success(), "expected BudgetExceeded");
-        assert!(String::from_utf8_lossy(&output.stderr).contains("BudgetExceeded"), "stderr: {}", String::from_utf8_lossy(&output.stderr));
-        // an ample per-call budget passes
-        let src2 = "fn main() -> string uses LLM {\n    llm\"\"\"hi\"\"\" with { model: \"m\", budget: 0.01 USD }\n}";
-        let out_py2 = e.dir.join("call_budget_ok.py");
-        std::fs::write(&out_py2, gen(src2)).unwrap();
-        let output2 = run_py(&e, &out_py2, &[]);
-        assert!(output2.status.success(), "stderr: {}", String::from_utf8_lossy(&output2.stderr));
-    }
-
-    #[test]
-    fn par_map_is_concurrent_and_order_preserving() {
-        let Some(e) = e2e("par") else { return };
-        let driver = e.dir.join("drive_par.py");
-        std::fs::write(
-            &driver,
-            "import time\nimport nudge_runtime as rt\nstart = time.time()\ndef slow(x):\n    time.sleep(0.05)\n    return x * 10\nout = rt.par_map(range(6), slow, concurrency=3)\nelapsed = time.time() - start\nassert out == [0, 10, 20, 30, 40, 50], out\nassert elapsed < 0.15, f\"not concurrent: {elapsed}\"\n# pair-unpacking still works through the pool\npairs = rt.par_map(zip([1, 2], [3, 4]), lambda a, b: a + b)\nassert pairs == [4, 6], pairs\n# race returns a result\nwinner = rt.par_race([lambda: 'a', lambda: 'b'])\nassert winner in ('a', 'b')\nprint(\"PAR OK\")\n",
-        )
-        .unwrap();
-        let output = run_py(&e, &driver, &[]);
-        assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
-        assert!(String::from_utf8_lossy(&output.stdout).contains("PAR OK"));
-    }
-
-    #[test]
-    fn par_branches_share_the_run_budget() {
-        let Some(e) = e2e("parbudget") else { return };
-        // 4 parallel llm calls × $0.001 against a $0.0025 run budget
-        let driver = e.dir.join("drive_pb.py");
-        std::fs::write(
-            &driver,
-            "import nudge_runtime as rt\nrt.par_map(range(4), lambda i: rt.llm_call(prompt=f\"q{i}\", model=\"m\"), concurrency=4)\n",
-        )
-        .unwrap();
-        let output = run_py(&e, &driver, &[("NUDGE_BUDGET", "0.0025")]);
-        assert!(!output.status.success(), "expected BudgetExceeded from an in-flight branch");
-        assert!(String::from_utf8_lossy(&output.stderr).contains("BudgetExceeded"), "stderr: {}", String::from_utf8_lossy(&output.stderr));
-    }
-
-    // ── v0.2: hybrid replay (design §6.2) ──────────────────────────
-
-    #[test]
-    fn live_run_traces_tool_calls() {
-        let Some(e) = e2e("tooltrace") else { return };
-        let py = gen(include_str!("../../../examples/research_agent.ndg"));
-        let out_py = e.dir.join("research_agent.py");
-        std::fs::write(&out_py, py).unwrap();
-        let driver = e.dir.join("drive_t.py");
-        std::fs::write(
-            &driver,
-            format!("import sys\nsys.path.insert(0, {:?})\nimport research_agent as r\nr.run(\"urban heat islands\")\n", e.dir.to_string_lossy()),
-        )
-        .unwrap();
-        let output = run_py(&e, &driver, &[]);
-        assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
-        let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
-        let tools = log.lines().filter(|l| l.contains("\"tool.call\"")).count();
-        assert_eq!(tools, 3, "expected 3 tool.call records (one per angle), trace: {log}");
-        assert!(log.contains("\"tool\": \"web_search\""), "trace: {log}");
-        // seq stays unique even though tool calls fan out on a thread pool
-        let mut seqs: Vec<u64> = log
-            .lines()
-            .filter_map(|l| l.split("\"seq\": ").nth(1)?.split(',').next()?.trim().parse().ok())
-            .collect();
-        seqs.sort_unstable();
-        seqs.dedup();
-        assert_eq!(seqs.len(), log.lines().count(), "duplicate seq in trace: {log}");
-    }
-
-    #[test]
-    fn hybrid_replay_runs_tools_live_but_not_llm() {
-        let Some(e) = e2e("hybrid") else { return };
-        let py = gen(include_str!("../../../examples/research_agent.ndg"));
-        let out_py = e.dir.join("research_agent.py");
-        std::fs::write(&out_py, py).unwrap();
-        let driver = e.dir.join("drive_h.py");
-        std::fs::write(
-            &driver,
-            format!("import sys, json\nsys.path.insert(0, {:?})\nimport research_agent as r\nprint(json.dumps(r.run(\"urban heat islands\"), sort_keys=True))\n", e.dir.to_string_lossy()),
-        )
-        .unwrap();
-        // 1. record a live run
-        let t1 = e.dir.join("t1.jsonl");
-        let out1 = run_py(&e, &driver, &[("NUDGE_TRACE", t1.to_str().unwrap())]);
-        assert!(out1.status.success(), "stderr: {}", String::from_utf8_lossy(&out1.stderr));
-        // 2. hybrid replay: llm from trace, tools live
-        let t2 = e.dir.join("t2.jsonl");
-        let out2 = run_py(
-            &e,
-            &driver,
-            &[
-                ("NUDGE_TRACE", t2.to_str().unwrap()),
-                ("NUDGE_REPLAY", t1.to_str().unwrap()),
-                ("NUDGE_REPLAY_MODE", "llm"),
-            ],
-        );
-        assert!(out2.status.success(), "stderr: {}", String::from_utf8_lossy(&out2.stderr));
-        assert_eq!(out1.stdout, out2.stdout, "hybrid replay must reproduce the result");
-        let log2 = std::fs::read_to_string(&t2).unwrap();
-        assert!(!log2.contains("\"llm.call\""), "llm must come from the trace: {log2}");
-        let tools = log2.lines().filter(|l| l.contains("\"tool.call\"")).count();
-        assert_eq!(tools, 3, "tools run live in hybrid mode: {log2}");
-    }
-
-    #[test]
-    fn full_replay_mocks_tools_from_the_trace() {
-        let Some(e) = e2e("fullmock") else { return };
-        let py = gen(include_str!("../../../examples/research_agent.ndg"));
-        let out_py = e.dir.join("research_agent.py");
-        std::fs::write(&out_py, py).unwrap();
-        let driver = e.dir.join("drive_f.py");
-        std::fs::write(
-            &driver,
-            format!("import sys, json\nsys.path.insert(0, {:?})\nimport research_agent as r\nprint(json.dumps(r.run(\"urban heat islands\"), sort_keys=True))\n", e.dir.to_string_lossy()),
-        )
-        .unwrap();
-        let t1 = e.dir.join("t1.jsonl");
-        let out1 = run_py(&e, &driver, &[("NUDGE_TRACE", t1.to_str().unwrap())]);
-        assert!(out1.status.success(), "stderr: {}", String::from_utf8_lossy(&out1.stderr));
-        // full replay (default mode): nothing executes, nothing new is recorded
-        let t2 = e.dir.join("t2.jsonl");
-        let out2 = run_py(
-            &e,
-            &driver,
-            &[("NUDGE_TRACE", t2.to_str().unwrap()), ("NUDGE_REPLAY", t1.to_str().unwrap())],
-        );
-        assert!(out2.status.success(), "stderr: {}", String::from_utf8_lossy(&out2.stderr));
-        assert_eq!(out1.stdout, out2.stdout);
-        let log2 = std::fs::read_to_string(&t2).unwrap_or_default();
-        assert!(!log2.contains("\"llm.call\"") && !log2.contains("\"tool.call\""), "full replay must not execute anything: {log2}");
-    }
-
-    // ── v0.2: streaming (design §4.5) ──────────────────────────────
-
-    #[test]
-    fn stream_let_runs_and_traces_chunks() {
-        let Some(e) = e2e("streamrun") else { return };
-        let src = "type T = { title: string }\nfn main() -> T uses LLM {\n    stream let t: T = llm\"\"\"give me a title\"\"\" with { schema: T, model: \"m\" }\n    t\n}";
-        let out_py = e.dir.join("stream_demo.py");
-        std::fs::write(&out_py, gen(src)).unwrap();
-        let output = run_py(&e, &out_py, &[]);
-        assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
-        assert!(String::from_utf8_lossy(&output.stdout).contains("title"), "stdout: {output:?}");
-        let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
-        assert!(log.contains("\"streamed\": true"), "trace: {log}");
-        let chunks: u64 = log
-            .lines()
-            .filter_map(|l| l.split("\"chunks\": ").nth(1)?.split('}').next()?.trim().parse::<u64>().ok())
-            .sum();
-        assert!(chunks >= 2, "a 16-char payload should stream in >= 2 chunks, trace: {log}");
-    }
-
-    #[test]
-    fn stream_aborts_early_on_unsatisfiable_prefix_then_repairs() {
-        let Some(e) = e2e("streamabort") else { return };
-        // schema expects a string; the fake failure value is an object, so the
-        // very first chunk already violates the schema -> early abort (chunk 1)
-        let src = "fn main() -> string uses LLM {\n    stream let t: string = llm\"\"\"x\"\"\" with { schema: string, model: \"m\", retry: 2 with repair }\n    t\n}";
-        let out_py = e.dir.join("stream_abort.py");
-        std::fs::write(&out_py, gen(src)).unwrap();
-        let output = run_py(&e, &out_py, &[("NUDGE_FAKE_FAIL_FIRST", "1")]);
-        assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
-        let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
-        assert!(log.contains("\"early_abort\": true"), "trace: {log}");
-        assert!(log.contains("\"outcome\": \"schema_violation\""), "trace: {log}");
-        assert!(log.contains("\"repair_round\": 1"), "trace: {log}");
-        // the abort happened on the first chunk — tokens beyond it were saved
-        let first = log.lines().next().unwrap();
-        assert!(first.contains("\"chunks\": 1"), "expected abort on chunk 1, record: {first}");
-    }
-
-    #[test]
-    fn stream_replay_consumes_the_recorded_value() {
-        let Some(e) = e2e("streamreplay") else { return };
-        let src = "type T = { title: string }\nfn main() -> T uses LLM {\n    stream let t: T = llm\"\"\"give me a title\"\"\" with { schema: T, model: \"m\" }\n    t\n}";
-        let out_py = e.dir.join("stream_replay.py");
-        std::fs::write(&out_py, gen(src)).unwrap();
-        // 1. live streamed run
-        let t1 = e.dir.join("t1.jsonl");
-        let out1 = run_py(&e, &out_py, &[("NUDGE_TRACE", t1.to_str().unwrap())]);
-        assert!(out1.status.success(), "stderr: {}", String::from_utf8_lossy(&out1.stderr));
-        assert!(std::fs::read_to_string(&t1).unwrap().contains("\"streamed\": true"));
-        // 2. replay: consumes the recorded final value, no streaming, no new records
-        let t2 = e.dir.join("t2.jsonl");
-        let out2 = run_py(&e, &out_py, &[("NUDGE_TRACE", t2.to_str().unwrap()), ("NUDGE_REPLAY", t1.to_str().unwrap())]);
-        assert!(out2.status.success(), "stderr: {}", String::from_utf8_lossy(&out2.stderr));
-        assert_eq!(out1.stdout, out2.stdout, "replay must reproduce the streamed result");
-        let log2 = std::fs::read_to_string(&t2).unwrap_or_default();
-        assert!(!log2.contains("\"llm.call\""), "replay must not call any provider: {log2}");
-    }
-}
+mod tests;

@@ -248,8 +248,117 @@ fn body_effects(
     for st in body {
         match st {
             Stmt::Let { value, .. } => direct_effects(value, g, effects, calls),
+            Stmt::StateWrite { value, .. } => direct_effects(value, g, effects, calls),
             Stmt::Assert(e) | Stmt::ExprStmt(e) => direct_effects(e, g, effects, calls),
         }
+    }
+}
+
+/// All fn items in a program, including fns nested inside `agent` blocks
+/// (design §7) — they share the top-level namespace at MVP.
+fn fn_items(items: &[Item]) -> Vec<&Item> {
+    let mut out = Vec::new();
+    for item in items {
+        match item {
+            Item::Fn { .. } => out.push(item),
+            Item::Agent { fns, .. } => out.extend(fns.iter()),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Check one fn body. `agent_ctx` is `Some((agent_name, state_fields))` when
+/// the fn lives inside an `agent` block: `state` becomes a record local and
+/// state writes are validated against the declared fields. Outside an agent,
+/// a state write is E0701 (design §7).
+fn check_fn_body(
+    name: &str,
+    params: &[Param],
+    ret: &TypeExpr,
+    body: &[Stmt],
+    agent_ctx: Option<(&str, &[(String, TypeExpr, Expr)])>,
+    g: &Globals,
+    errs: &mut Vec<CheckError>,
+) {
+    let mut locals: HashMap<String, Ty> = HashMap::new();
+    for p in params {
+        locals.insert(p.name.clone(), resolve(&p.ty, g, &mut Vec::new(), errs));
+    }
+    if let Some((_, fields)) = agent_ctx {
+        let rec = Ty::Record(
+            fields
+                .iter()
+                .map(|(f, ty, _)| (f.clone(), resolve(ty, g, &mut Vec::new(), errs)))
+                .collect(),
+        );
+        locals.insert("state".into(), rec);
+    }
+    let mut last_ty = Ty::None_;
+    for st in body {
+        match st {
+            Stmt::Let { name: n, ty, value, .. } => {
+                let vt = check_expr(value, &locals, g, errs);
+                let bound = match ty {
+                    Some(ann) => {
+                        let at = resolve(ann, g, &mut Vec::new(), errs);
+                        if !assignable(&vt, &at) {
+                            errs.push(CheckError {
+                                code: "E0201",
+                                msg: format!("let '{n}' is annotated {at} but the value is {vt}"),
+                            });
+                        }
+                        at
+                    }
+                    None => vt,
+                };
+                locals.insert(n.clone(), bound);
+            }
+            Stmt::StateWrite { field, aug, value } => {
+                let vt = check_expr(value, &locals, g, errs);
+                match agent_ctx {
+                    None => errs.push(CheckError {
+                        code: "E0701",
+                        msg: format!("state write 'state.{field}' outside an agent block — state exists only inside `agent` (design §7)"),
+                    }),
+                    Some((_, fields)) => {
+                        match fields.iter().find(|(f, _, _)| f == field) {
+                            None => errs.push(CheckError {
+                                code: "E0701",
+                                msg: format!("agent state has no field '{field}' — declare it in the state block"),
+                            }),
+                            Some((_, fty, _)) => {
+                                // `=`: the value must fit the declared type.
+                                // `+=`: list-concat / numeric add — the runtime
+                                // checkpoint stores whatever the write yields.
+                                if !*aug {
+                                    let want = resolve(fty, g, &mut Vec::new(), errs);
+                                    if !assignable(&vt, &want) {
+                                        errs.push(CheckError {
+                                            code: "E0201",
+                                            msg: format!("state field '{field}' is {want} but the value is {vt}"),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Stmt::Assert(e) => {
+                check_expr(e, &locals, g, errs);
+            }
+            Stmt::ExprStmt(e) => {
+                last_ty = check_expr(e, &locals, g, errs);
+            }
+        }
+    }
+    let want = resolve(ret, g, &mut Vec::new(), errs);
+    if !assignable(&last_ty, &want) {
+        errs.push(CheckError {
+            code: "E0201",
+            msg: format!("fn '{name}' declares -> {want} but its body yields {last_ty}"),
+        });
     }
 }
 
@@ -453,6 +562,13 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
             Item::Tool { name, params, ret, .. } => {
                 g.tools.insert(name.clone(), (params.iter().map(|p| p.ty.clone()).collect(), ret.clone()));
             }
+            Item::Agent { fns, .. } => {
+                for f in fns {
+                    if let Item::Fn { name, params, ret, .. } = f {
+                        g.fns.insert(name.clone(), (params.iter().map(|p| p.ty.clone()).collect(), ret.clone()));
+                    }
+                }
+            }
             Item::Test { .. } => {}
         }
     }
@@ -469,44 +585,17 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
     for item in items {
         match item {
             Item::Fn { name, params, ret, body, .. } => {
-                let mut locals: HashMap<String, Ty> = HashMap::new();
-                for p in params {
-                    locals.insert(p.name.clone(), resolve(&p.ty, &g, &mut Vec::new(), &mut errs));
+                check_fn_body(name, params, ret, body, None, &g, &mut errs);
+            }
+            Item::Agent { name: agent, state, fns } => {
+                // resolve state field types once; unknown types already error
+                for (_, ty, _) in state {
+                    resolve(ty, &g, &mut Vec::new(), &mut errs);
                 }
-                let mut last_ty = Ty::None_;
-                for st in body {
-                    match st {
-                        Stmt::Let { name: n, ty, value, .. } => {
-                            let vt = check_expr(value, &locals, &g, &mut errs);
-                            let bound = match ty {
-                                Some(ann) => {
-                                    let at = resolve(ann, &g, &mut Vec::new(), &mut errs);
-                                    if !assignable(&vt, &at) {
-                                        errs.push(CheckError {
-                                            code: "E0201",
-                                            msg: format!("let '{n}' is annotated {at} but the value is {vt}"),
-                                        });
-                                    }
-                                    at
-                                }
-                                None => vt,
-                            };
-                            locals.insert(n.clone(), bound);
-                        }
-                        Stmt::Assert(e) => {
-                            check_expr(e, &locals, &g, &mut errs);
-                        }
-                        Stmt::ExprStmt(e) => {
-                            last_ty = check_expr(e, &locals, &g, &mut errs);
-                        }
+                for f in fns {
+                    if let Item::Fn { name, params, ret, body, .. } = f {
+                        check_fn_body(name, params, ret, body, Some((agent, state)), &g, &mut errs);
                     }
-                }
-                let want = resolve(ret, &g, &mut Vec::new(), &mut errs);
-                if !assignable(&last_ty, &want) {
-                    errs.push(CheckError {
-                        code: "E0201",
-                        msg: format!("fn '{name}' declares -> {want} but its body yields {last_ty}"),
-                    });
                 }
             }
             Item::Tool { params, ret, fields, .. } => {
@@ -527,6 +616,12 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                             let vt = check_expr(value, &locals, &g, &mut errs);
                             locals.insert(name.clone(), vt);
                         }
+                        Stmt::StateWrite { field, .. } => {
+                            errs.push(CheckError {
+                                code: "E0701",
+                                msg: format!("state write 'state.{field}' outside an agent block — state exists only inside `agent` (design §7)"),
+                            });
+                        }
                         Stmt::Assert(e) | Stmt::ExprStmt(e) => {
                             check_expr(e, &locals, &g, &mut errs);
                         }
@@ -540,7 +635,7 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
     // ── effect inference + signature verification (design §3.2) ────
     let mut direct: HashMap<String, BTreeSet<String>> = HashMap::new();
     let mut edges: HashMap<String, BTreeSet<String>> = HashMap::new();
-    for item in items {
+    for item in fn_items(items) {
         if let Item::Fn { name, body, .. } = item {
             let mut eff = BTreeSet::new();
             let mut calls = BTreeSet::new();
@@ -573,7 +668,7 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
         }
     }
 
-    for item in items {
+    for item in fn_items(items) {
         if let Item::Fn { name, effects: declared, .. } = item {
             for d in declared {
                 if !KNOWN_EFFECTS.contains(&d.as_str()) {
@@ -756,5 +851,21 @@ mod tests {
     fn usd_budget_is_clean() {
         let errs = check_src("fn f() -> string uses LLM { llm\"\"\"x\"\"\" with { budget: 0.02 USD } }");
         assert_eq!(errs, vec![]);
+    }
+
+    #[test]
+    fn agent_state_checks_and_e0701_outside_agent() {
+        // clean: writes hit declared fields, `=` type matches
+        let src = "agent A {\n    state {\n        notes: [string] = [],\n        round: int = 0,\n    }\n    fn step(q: string) -> int uses LLM {\n        let r = llm\"\"\"next: {q}\"\"\" with { model: \"m\" }\n        state.notes += [r]\n        state.round = state.round + 1\n        state.round\n    }\n}";
+        assert_eq!(check_src(src), vec![], "expected zero diagnostics");
+        // E0701: state write in a plain fn
+        let errs = check_src("fn f() -> int { state.round = 1\n    0 }");
+        assert!(errs.iter().any(|e| e.code == "E0701"), "got {errs:?}");
+        // E0701: undeclared state field
+        let errs = check_src("agent B {\n    state {\n        round: int = 0,\n    }\n    fn step() -> int { state.missing = 1\n        0\n    }\n}");
+        assert!(errs.iter().any(|e| e.code == "E0701" && e.msg.contains("no field 'missing'")), "got {errs:?}");
+        // E0201: `=` write with a mismatched type
+        let errs = check_src("agent C {\n    state {\n        round: int = 0,\n    }\n    fn step() -> int { state.round = \"oops\"\n        0\n    }\n}");
+        assert!(errs.iter().any(|e| e.code == "E0201"), "got {errs:?}");
     }
 }
