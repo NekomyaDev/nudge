@@ -1,8 +1,10 @@
 # Nudge — Language Design
 
-**Version:** 1.8 (2026-07-21) · **Status:** Frozen for MVP implementation
+**Version:** 1.9 (2026-07-23) · **Status:** Frozen for MVP implementation
 **Audience:** compiler implementers, language designers, early adopters
 
+> **Changelog v1.9:** agent state + checkpoint/resume landed (v0.2 third item — v0.2 complete). §7 concrete MVP mechanism: `agent` blocks parse with a `state` section (typed fields with defaults) and plain `fn` members; `state.x = v` / `state.x += v` are statements (4-token lookahead keeps bare `state.x` reads expressions), and every write checkpoints the full state to `.nudge/runs/<run_id>/checkpoint.json` (JSON files — the SQLite/Postgres stores are post-MVP). The run directory registers `program` + `trace`, so `nudge resume <run_id>` re-executes the emitted program replaying the recorded trace prefix (`NUDGE_RESUME=1`): LLM and tool calls consume the recorded prefix, then go **live** and append to the same trace (exhaustion without resume still raises `ReplayMismatch`); the first `writes` state writes of the re-execution are suppressed because the checkpoint already reflects them — deterministic re-execution makes the write sequence identical. New diagnostic **E0701** (state write outside an agent block / unknown state field); `=` writes are type-checked against the declared field, `+=` is list-concat/numeric-add. Reducers (`| merge`, E0402) and parallel writes stay deferred.
+>
 > **Changelog v1.8:** streaming landed (v0.2 second item). §4.5 concrete MVP mechanism: `stream let` lowers to `rt.llm_stream` — the provider answer streams in deterministic chunks and every prefix is validated **incrementally** (`_PrefixValidator`): a literal of the wrong type starting, a number completing outside `minimum`/`maximum` or non-integral under `integer`, an invalid `format: uri` string, an object closing without a `required` key, or malformed JSON aborts the stream at that chunk and counts as a schema violation, so the §4.2 repair loop applies unchanged. §6.1: `llm.call` records gain additive `streamed` / `chunks` / `early_abort` fields. Chunk-by-chunk consumption (`for chunk in report.chunks()`) lands with `for` loops post-MVP — today's binding yields the final validated value; replay consumes the recorded final value like a plain call.
 >
 > **Changelog v1.7:** hybrid replay landed (v0.2 first item). §6.2 concrete MVP mechanism: `NUDGE_REPLAY_MODE=all` (default, full replay) now also **mocks tool calls from the trace** — per-tool recorded outputs, `[]` when the trace holds none; `NUDGE_REPLAY_MODE=llm` is the hybrid mode — LLM calls replay, tools execute live and are traced, so tool drift is visible by diffing traces. §6.1: `tool.call` records (`tool`, `input`, `output`) are now emitted in live and hybrid runs; trace emission is serialized under a lock so `par` branches can never interleave records or duplicate `seq` numbers. Codegen: tool stubs now receive their argument list (`rt.tool_stub("name", [args])`) so `tool.call` records carry real inputs.
@@ -241,6 +243,8 @@ agent Researcher {
 - After a crash: `nudge resume <run_id>` continues from the last checkpoint.
 - Fields with a `merge` reducer may be written by parallel branches safely (CRDT-style join).
 
+MVP mechanism (v1.9): an `agent` block holds one `state` section (typed fields with defaults) and plain `fn` members. State writes are the statements `state.x = v` and `state.x += v` (a 4-token parser lookahead keeps bare `state.x` reads expressions); `=` values are type-checked against the declared field and unknown fields are **E0701**, as is any state write outside an `agent` block. Codegen binds each agent's state to `_state_<Agent> = rt.AgentState("<Agent>", {defaults})`; every attribute write persists the full state to `.nudge/runs/<run_id>/checkpoint.json` (JSON — SQLite/Postgres land post-MVP), and the run directory registers `program` (the emitted entry file) and `trace`. `nudge resume <run_id>` re-executes the program with `NUDGE_RESUME=1` replaying the recorded trace: LLM/tool calls consume the recorded prefix, then go live and append to the same trace; the first `writes` state writes of the re-execution are suppressed because the checkpoint already reflects them (deterministic re-execution reproduces the identical write sequence). The `| merge` reducer syntax, the E0402 shared-state check, and parallel state writes remain deferred.
+
 ## 8. Tools and MCP
 
 ```
@@ -332,6 +336,7 @@ Compile-time diagnostics use stable codes; messages are English-first and locali
 | E0402 | two branches write same state field without reducer | both write `state.round` |
 | E0501 | budget unit unknown | `budget: 5 EUR` (v0.1) |
 | E0601 | replay trace version unsupported | v0 trace with v1-only runtime |
+| E0701 | state write outside an agent block / unknown state field | `state.round = 1` in a plain fn |
 
 ## 12. Grammar Summary (informative)
 
@@ -395,7 +400,7 @@ par map xs |x| -> g(x)            →     rt.par_map(xs, g, concurrency=None)
 stream let p: Plan = llm"""...""" →     p = rt.llm_stream(prompt=…, schema=…)
                                         # chunks validated incrementally (§4.5)
 
-state.x += v                      →     rt.state_update(run, "x", rt.ADD, v)   # checkpointed
+state.x += v                      →     _state_<Agent>.x += v   # AgentState store checkpoints (§7)
 
 replay("t.jsonl")                 →     rt.replay(Path("t.jsonl"), mode=rt.Mode.FULL)
 ```
