@@ -57,6 +57,9 @@ pub enum Stmt {
     /// `stream` is true for `stream let` (design §4.5): the bound LLM call
     /// is consumed incrementally; codegen lowers it to `rt.llm_stream`.
     Let { name: String, ty: Option<TypeExpr>, value: Expr, stream: bool },
+    /// `state.x = v` / `state.x += v` inside an `agent` block (design §7):
+    /// every write is an automatic checkpoint. `aug` is true for `+=`.
+    StateWrite { field: String, aug: bool, value: Expr },
     Assert(Expr),
     ExprStmt(Expr),
 }
@@ -67,4 +70,8 @@ pub enum Item {
     Fn { name: String, params: Vec<Param>, ret: TypeExpr, effects: Vec<String>, body: Vec<Stmt> },
     Tool { name: String, params: Vec<Param>, ret: TypeExpr, fields: Vec<(String, Expr)> },
     Test { name: String, body: Vec<Stmt> },
+    /// `agent Name { state { field: Ty = default, ... } fn ... }` (design §7).
+    /// State fields carry their declared type and default value; `fns` are
+    /// plain `Item::Fn`s whose bodies may read `state.x` and use StateWrite.
+    Agent { name: String, state: Vec<(String, TypeExpr, Expr)>, fns: Vec<Item> },
 }
