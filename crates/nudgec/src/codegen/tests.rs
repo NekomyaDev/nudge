@@ -727,7 +727,7 @@ with socketserver.TCPServer(("127.0.0.1", 0), H) as srv:
 
     // a gemini-prefixed model routes through the OpenAI-compatible adapter;
     // the JSON answer is extracted and validated against the schema
-    let src = "fn main() -> string uses LLM {\n    let a = llm\"\"\"give json\"\"\" with { model: \"gemini:gemini-2.5-flash\", schema: {title: string, confidence: float}, budget: 0.05 USD }\n    a.title\n}";
+    let src = "type Smoke = { title: string, confidence: float }\nfn main() -> string uses LLM {\n    let a = llm\"\"\"give json\"\"\" with { model: \"gemini:gemini-2.5-flash\", schema: Smoke, budget: 0.05 USD }\n    a.title\n}";
     let out_py = e.dir.join("openai_provider.py");
     std::fs::write(&out_py, gen(src)).unwrap();
     let base = format!("http://127.0.0.1:{port}/v1");
