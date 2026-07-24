@@ -58,7 +58,11 @@ Ships today:
   thread-pooled ``par_map`` / ``par_all`` / ``par_race`` (order-preserving,
   shared budget counter)
 
-Env: ``NUDGE_PROVIDER=fake`` (default; real providers land post-MVP),
+Env: ``NUDGE_PROVIDER=fake`` (default) or a real provider — the model
+string prefix (``gemini:gemini-2.5-flash``) or the env itself selects one
+of ``openai | gemini | groq | ollama`` (OpenAI-compatible HTTP, design
+§4.6); ``NUDGE_BASE_URL``/``NUDGE_API_KEY`` (+ provider-specific key envs)
+configure it,
 ``NUDGE_TRACE`` (trace path, default ``trace.jsonl``), ``NUDGE_REPLAY``
 (trace to replay from instead of calling a provider), ``NUDGE_BUDGET``
 (run-level USD budget, §4.3), ``NUDGE_RUN_ID`` (checkpoint store key,
@@ -71,6 +75,7 @@ from __future__ import annotations
 import functools
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -429,7 +434,8 @@ def _emit_trace(record: dict) -> None:
     _otel_export(line)
 
 
-def _trace_call(model, prompt, out, repair_round, outcome, extra=None):
+def _trace_call(model, prompt, out, repair_round, outcome, extra=None,
+                provider="fake", tokens=None, cost=None):
     # MVP: input/output are inline (design §6.1 content-addressed payload
     # store lands post-MVP — v1-compatible additive fields)
     record = {
@@ -438,11 +444,11 @@ def _trace_call(model, prompt, out, repair_round, outcome, extra=None):
         "params": {"temperature": 0},
         "input": str(prompt),
         "output": _jsonable(out),
-        "tokens": {"in": len(str(prompt).split()), "out": len(str(out).split())},
-        "cost_usd": FAKE_CALL_COST,
+        "tokens": tokens or {"in": len(str(prompt).split()), "out": len(str(out).split())},
+        "cost_usd": FAKE_CALL_COST if cost is None else cost,
         "repair_round": repair_round,
         "outcome": outcome,
-        "provider": "fake",
+        "provider": provider,
     }
     if extra:
         # additive v1 fields (design §6.1): streamed / chunks / early_abort
@@ -509,6 +515,148 @@ def _replay_outputs():
 # Fake-provider pricing: flat $0.001 per call. Deterministic, NOT a model
 # price — it exists so budget walls are testable at zero token cost.
 FAKE_CALL_COST = 0.001
+
+
+# ── real providers (design §4.6, v1.1a) ─────────────────────────────
+# One OpenAI-compatible HTTP adapter, stdlib-only (urllib). The provider is
+# chosen by the model string prefix (`gemini:gemini-2.5-flash`) or by
+# NUDGE_PROVIDER; NUDGE_BASE_URL overrides the endpoint, and the key comes
+# from NUDGE_API_KEY or the provider-specific env. Local/free-tier models
+# price at $0 — budget walls keep working with real token counts.
+
+_PROVIDER_BASE_URLS = {
+    "openai": "https://api.openai.com/v1",
+    "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "groq": "https://api.groq.com/openai/v1",
+    "ollama": "http://localhost:11434/v1",
+}
+
+_PROVIDER_KEY_ENVS = {
+    "openai": "OPENAI_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    "groq": "GROQ_API_KEY",
+}
+
+# USD per 1M tokens: (input, output). Models absent from the table —
+# including free-tier quotas and local Ollama models — price at $0.
+_MODEL_PRICING = {
+    "gemini-2.5-flash": (0.30, 2.50),
+    "gemini-2.0-flash": (0.10, 0.40),
+    "gpt-4o-mini": (0.15, 0.60),
+    "llama-3.3-70b-versatile": (0.59, 0.79),
+}
+
+
+def _split_model(model):
+    """`gemini:gemini-2.5-flash` -> ("gemini", "gemini-2.5-flash");
+    a bare name -> (None, model)."""
+    if model and ":" in model:
+        prefix, bare = model.split(":", 1)
+        if prefix in _PROVIDER_BASE_URLS:
+            return prefix, bare
+    return None, model
+
+
+def _real_provider_for(model):
+    """(provider, bare_model) when a real provider should handle this call,
+    else None (the fake provider handles it)."""
+    prefix, bare = _split_model(model)
+    if prefix:
+        return prefix, bare
+    env = os.environ.get("NUDGE_PROVIDER", "fake")
+    if env != "fake":
+        if env not in _PROVIDER_BASE_URLS:
+            raise RuntimeError(
+                f"unknown NUDGE_PROVIDER '{env}' "
+                "(openai | gemini | groq | ollama | fake)"
+            )
+        return env, bare
+    return None
+
+
+def _openai_chat(provider, model, prompt):
+    """One non-streaming chat completion against an OpenAI-compatible API.
+    Returns (text, prompt_tokens, completion_tokens)."""
+    import urllib.error
+    import urllib.request
+    base = os.environ.get("NUDGE_BASE_URL", _PROVIDER_BASE_URLS[provider])
+    key_env = _PROVIDER_KEY_ENVS.get(provider)
+    key = os.environ.get("NUDGE_API_KEY") or (os.environ.get(key_env, "") if key_env else "")
+    body = json.dumps({
+        "model": model,
+        "messages": [{"role": "user", "content": str(prompt)}],
+    }).encode()
+    req = urllib.request.Request(
+        base.rstrip("/") + "/chat/completions", data=body,
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")[:500]
+        raise RuntimeError(f"{provider} provider HTTP {e.code}: {detail}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"{provider} provider unreachable: {e.reason}")
+    try:
+        text = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        raise RuntimeError(
+            f"{provider} provider returned an unexpected payload: {str(data)[:500]}"
+        )
+    usage = data.get("usage") or {}
+    return text, int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
+
+
+def _extract_json(text):
+    """Best-effort JSON extraction from a real model's answer: ```json
+    fences first, then the first balanced-looking {...} / [...] span. A
+    failure returns the raw text — schema validation reports it, and the
+    §4.2 repair loop gets its chance."""
+    s = text.strip()
+    if s.startswith("```"):
+        s = re.sub(r"^```(?:json)?\s*", "", s)
+        s = re.sub(r"\s*```$", "", s)
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
+    for i, ch in enumerate(s):
+        if ch in "{[":
+            closer = "}" if ch == "{" else "]"
+            end = s.rfind(closer)
+            if end > i:
+                try:
+                    return json.loads(s[i:end + 1])
+                except json.JSONDecodeError:
+                    pass
+            break
+    return text
+
+
+def _complete(provider, model, prompt, schema):
+    """(output, in_tokens, out_tokens) — one completion on the given
+    provider. Real-provider answers are JSON-extracted when a schema is
+    set; the fake provider synthesizes as before."""
+    if provider == "fake":
+        return _fake_answer(prompt, model, schema), 0, 0
+    bare = _split_model(model)[1]
+    text, in_t, out_t = _openai_chat(provider, bare, prompt)
+    if schema is not None:
+        return _extract_json(text), in_t, out_t
+    return text, in_t, out_t
+
+
+def _call_cost(provider, model, in_t, out_t):
+    """USD cost of one call: flat fake pricing, or the pricing table for
+    real providers (unknown/free/local models → $0)."""
+    if provider == "fake":
+        return FAKE_CALL_COST
+    prices = _MODEL_PRICING.get(_split_model(model)[1])
+    if prices is None:
+        return 0.0
+    return (in_t * prices[0] + out_t * prices[1]) / 1_000_000
+
 
 _BUDGET_STATE = {"spent": 0.0, "lock": threading.Lock()}
 
@@ -877,11 +1025,12 @@ def llm_stream(prompt, model=None, schema=None, retry=0, repair=False,
     if os.environ.get("NUDGE_REPLAY"):
         return llm_call(prompt, model=model, schema=schema, retry=retry,
                         repair=repair, budget=budget, cache=cache, tags=tags)
-    provider = os.environ.get("NUDGE_PROVIDER", "fake")
-    if provider != "fake":
-        raise RuntimeError(
-            "nudge_runtime MVP ships the fake provider only; set NUDGE_PROVIDER=fake"
-        )
+    real = _real_provider_for(model)
+    if real is not None:
+        # v1.1a: real providers run non-streaming for now (token streaming
+        # lands with the SSE adapter) — the call behaves like llm_call
+        return llm_call(prompt, model=model, schema=schema, retry=retry,
+                        repair=repair, budget=budget, cache=cache, tags=tags)
 
     attempts = 1 + (retry if repair and schema is not None else 0)
     last_errors, last_raw = [], None
@@ -966,13 +1115,10 @@ def llm_call(prompt, model=None, schema=None, retry=0, repair=False,
     """
     replaying = os.environ.get("NUDGE_REPLAY")
     if replaying:
-        provider = "replay"
+        provider, real = "replay", None
     else:
-        provider = os.environ.get("NUDGE_PROVIDER", "fake")
-        if provider != "fake":
-            raise RuntimeError(
-                "nudge_runtime MVP ships the fake provider only; set NUDGE_PROVIDER=fake"
-            )
+        real = _real_provider_for(model)
+        provider = real[0] if real else "fake"
 
     attempts = 1 + (retry if repair and schema is not None else 0)
     last_errors, last_raw = [], None
@@ -992,28 +1138,34 @@ def llm_call(prompt, model=None, schema=None, retry=0, repair=False,
                     )
                 # resume (design §7): the recorded prefix is exhausted —
                 # continue live against the fake provider and trace it
-                provider = "fake"
-                out = _fake_answer(prompt, model, schema)
+                provider = real[0] if real else "fake"
+                out, in_t, out_t = _complete(provider, model, prompt, schema)
             else:
                 out = outputs[_REPLAY_STATE["idx"]]
                 _REPLAY_STATE["idx"] += 1
         else:
-            out = _fake_answer(prompt, model, schema)
+            out, in_t, out_t = _complete(provider, model, prompt, schema)
         if schema is None:
             if provider != "replay":
-                _trace_call(model, prompt, out, 0, "ok", extra=route_extra)
-                _budget_charge(FAKE_CALL_COST, budget)
+                _trace_call(model, prompt, out, 0, "ok", extra=route_extra,
+                            provider=provider, tokens={"in": in_t, "out": out_t},
+                            cost=_call_cost(provider, model, in_t, out_t))
+                _budget_charge(_call_cost(provider, model, in_t, out_t), budget)
             return out
         errors = validate(schema, out)
         if not errors:
             if provider != "replay":
-                _trace_call(model, prompt, out, round_no, "ok", extra=route_extra)
-                _budget_charge(FAKE_CALL_COST, budget)
+                _trace_call(model, prompt, out, round_no, "ok", extra=route_extra,
+                            provider=provider, tokens={"in": in_t, "out": out_t},
+                            cost=_call_cost(provider, model, in_t, out_t))
+                _budget_charge(_call_cost(provider, model, in_t, out_t), budget)
             return out
         last_errors, last_raw = errors, out
         if provider != "replay":
-            _trace_call(model, prompt, out, round_no, "schema_violation", extra=route_extra)
-            _budget_charge(FAKE_CALL_COST, budget)
+            _trace_call(model, prompt, out, round_no, "schema_violation", extra=route_extra,
+                        provider=provider, tokens={"in": in_t, "out": out_t},
+                        cost=_call_cost(provider, model, in_t, out_t))
+            _budget_charge(_call_cost(provider, model, in_t, out_t), budget)
         # design §4.2 step 1: feed raw output errors back to the model
         prompt = _REPAIR_HINT.format(errors="; ".join(errors)) + "\n" + str(prompt)
     raise SchemaFailure(last_errors, last_raw)
