@@ -20,7 +20,7 @@ jobs:
       matrix:
         include:
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest, bin: nudgec-linux-x86_64 }
-          - { target: x86_64-apple-darwin, os: macos-13, bin: nudgec-macos-x86_64 }
+          - { target: x86_64-apple-darwin, os: macos-latest, bin: nudgec-macos-x86_64 }
           - { target: aarch64-apple-darwin, os: macos-latest, bin: nudgec-macos-aarch64 }
           - { target: x86_64-pc-windows-msvc, os: windows-latest, bin: nudgec-windows-x86_64.exe }
     runs-on: ${{ matrix.os }}
