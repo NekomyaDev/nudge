@@ -255,6 +255,14 @@ fn bind_state_expr(e: &Expr, agent: &str) -> Expr {
             l: Box::new(bind_state_expr(l, agent)),
             r: Box::new(bind_state_expr(r, agent)),
         },
+        Expr::Route { arms } => Expr::Route {
+            arms: arms
+                .iter()
+                .map(|(label, model, cond)| {
+                    (label.clone(), model.clone(), cond.as_ref().map(|c| bind_state_expr(c, agent)))
+                })
+                .collect(),
+        },
         leaf => leaf.clone(),
     }
 }
@@ -446,6 +454,18 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
         }
         // design §7: reducer join (dict union / list append-dedup at runtime)
         Expr::Merge { l, r } => format!("rt.merge({}, {})", py(l, aliases), py(r, aliases)),
+        // design §4.4: route block — rt.route picks the first true arm
+        Expr::Route { arms } => {
+            let parts = arms
+                .iter()
+                .map(|(label, model, cond)| match cond {
+                    Some(c) => format!("({}, {}, lambda: {})", py_str(label), py_str(model), py(c, aliases)),
+                    None => format!("({}, {}, None)", py_str(label), py_str(model)),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("rt.route({parts})")
+        }
     }
 }
 

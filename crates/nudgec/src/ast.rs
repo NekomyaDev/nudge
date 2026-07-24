@@ -48,6 +48,11 @@ pub enum Expr {
     /// `l | merge r` (design §7): CRDT-style join used by state reducer
     /// writes — dicts union (right wins), lists append-dedup.
     Merge { l: Box<Expr>, r: Box<Expr> },
+
+    /// `route{ cheap: "m1" when cond, strong: "m2" otherwise }` (design §4.4):
+    /// arms evaluated in order; the first true `when` wins, `otherwise` is
+    /// the fallback arm (cond = None). The model option value is a string.
+    Route { arms: Vec<(String, String, Option<Expr>)> },
 }
 
 #[derive(Debug, Clone, PartialEq)]

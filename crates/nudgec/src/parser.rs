@@ -447,6 +447,32 @@ impl Parser {
             Tok::True => { self.bump(); Ok(Expr::Bool(true)) }
             Tok::False => { self.bump(); Ok(Expr::Bool(false)) }
             Tok::None => { self.bump(); Ok(Expr::None) }
+            // `route{ cheap: "m" when cond, strong: "m2" otherwise }` (design
+            // §4.4) — `route` is contextual: only special directly before `{`
+            Tok::Ident(s) if s == "route" && self.peek2() == &Tok::LBrace => {
+                self.bump(); // route
+                self.bump(); // {
+                let mut arms = Vec::new();
+                while !self.at(&Tok::RBrace) {
+                    let label = self.ident()?;
+                    self.expect(&Tok::Colon, "':' in route arm")?;
+                    let model = match self.peek().clone() {
+                        Tok::Str(m) => { self.bump(); m }
+                        other => return self.err(format!("expected model string in route arm, found {other:?}")),
+                    };
+                    let cond = if self.eat(&Tok::Ident("when".into())) {
+                        Some(self.parse_expr()?)
+                    } else if self.eat(&Tok::Ident("otherwise".into())) {
+                        None
+                    } else {
+                        return self.err("expected `when <cond>` or `otherwise` in route arm");
+                    };
+                    arms.push((label, model, cond));
+                    self.eat(&Tok::Comma);
+                }
+                self.expect(&Tok::RBrace, "'}' after route block")?;
+                Ok(Expr::Route { arms })
+            }
             // `state` reads (`state.round`) inside agent fns (design §7);
             // codegen binds it to the agent's checkpointed state object
             Tok::State => { self.bump(); Ok(Expr::Ident("state".into())) }
@@ -739,6 +765,35 @@ test "budget" {
                 }
             }
             other => panic!("expected agent, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn route_block_parses_and_route_stays_an_identifier() {
+        let src = "fn f(cheap_ok: bool) -> string uses LLM { llm\"\"\"x\"\"\" with { model: route{ cheap: \"m1\" when cheap_ok, strong: \"m2\" otherwise } } }";
+        let items = parse(lex(src).unwrap()).unwrap();
+        match &items[0] {
+            Item::Fn { body, .. } => match &body[0] {
+                Stmt::ExprStmt(Expr::LlmCall { options, .. }) => match &options[0].1 {
+                    Expr::Route { arms } => {
+                        assert_eq!(arms.len(), 2);
+                        assert_eq!(arms[0].0, "cheap");
+                        assert_eq!(arms[0].1, "m1");
+                        assert!(arms[0].2.is_some());
+                        assert_eq!(arms[1].0, "strong");
+                        assert!(arms[1].2.is_none());
+                    }
+                    other => panic!("expected route, got {other:?}"),
+                },
+                other => panic!("expected llm call, got {other:?}"),
+            },
+            _ => panic!("expected fn"),
+        }
+        // `route` alone is an ordinary identifier
+        let items = parse(lex("fn f() -> int { let route = 3\n    route }").unwrap()).unwrap();
+        match &items[0] {
+            Item::Fn { body, .. } => assert!(matches!(&body[0], Stmt::Let { name, .. } if name == "route")),
+            _ => panic!("expected fn"),
         }
     }
 

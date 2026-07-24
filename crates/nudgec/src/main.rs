@@ -4,6 +4,7 @@
 //!   nudgec check <file.ndg>   type-check (E0101–E0302)
 //!   nudgec build <file.ndg>   check, then emit Python to out/<name>.py
 //!   nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts (v0.3c)
+//!   nudgec cost  <file.ndg>   static cost report per fn (v0.4, design §13)
 //!   nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn
 //!   nudgec resume <run_id>    continue a crashed run from its last checkpoint (design §7)
 
@@ -11,6 +12,7 @@ mod ast;
 mod check;
 mod codegen;
 mod codegen_ts;
+mod cost;
 mod lexer;
 mod parser;
 
@@ -24,6 +26,7 @@ fn usage() -> ! {
     eprintln!("  nudgec check <file.ndg>   type-check (E0101–E0302)");
     eprintln!("  nudgec build <file.ndg>   check, then emit Python to out/<name>.py");
     eprintln!("  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts");
+    eprintln!("  nudgec cost  <file.ndg>   static cost report per fn");
     eprintln!("  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn");
     eprintln!("  nudgec resume <run_id>    continue a crashed run from its last checkpoint");
     process::exit(64);
@@ -84,6 +87,15 @@ fn main() {
                     process::exit(1);
                 }
             }
+            Err(msg) => {
+                eprintln!("error[E0002]: {msg}");
+                process::exit(1);
+            }
+        },
+        // design §13: static cost report (v0.4) — parse, count llm call
+        // sites per fn under flat fake pricing
+        "cost" => match compile(&src) {
+            Ok(items) => print!("{}", cost::report(&items)),
             Err(msg) => {
                 eprintln!("error[E0002]: {msg}");
                 process::exit(1);

@@ -40,6 +40,15 @@ export function merge(l, r) {
   return r;
 }
 
+// User-defined model routing (design §4.4): arms are [label, model, cond]
+// triples; the first truthy condition wins, `null` is the otherwise arm.
+export function route(...arms) {
+  for (const [label, model, cond] of arms) {
+    if (cond === null || cond()) return model;
+  }
+  throw new Error("route block matched no arm and has no otherwise fallback");
+}
+
 const FAKE_CALL_COST = 0.001;
 let _spent = 0;
 
