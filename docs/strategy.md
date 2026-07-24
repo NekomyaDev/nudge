@@ -69,3 +69,36 @@ long-lived systems fear lock-in. Indispensability compounds.
   the standard and the community built along the way.
 - No SaaS, no token, no lock-in of our own. Nudge wins as a standard and a
   toolchain — MIT, forever.
+
+## North Stars — the giant outcomes (5–10 year)
+
+The doors make Nudge indispensable; these are what indispensability can
+compound into. All six grow from the same root — the frozen trace, the
+proofs, the standard.
+
+1. **The Machine-Verifiable Language** 🤖 — most software will soon be
+   written by AI, and the winning language is the one whose output AI can
+   *prove things about*. Types + effects + capabilities + budget proofs make
+   Nudge the verifiable compilation target of the AI era — the JVM of
+   AI-generated software. Door 3 grown to full scale.
+2. **The agent internet's native tongue** 🌐 — when the A2A/agent-web
+   standards solidify, Nudge agents are native citizens: cards, serving,
+   Hub. The JavaScript of the agent web.
+3. **The certified-agent industry** 📜 — behavioral proofs beyond
+   capabilities ("this agent can never do X") become what insurers and
+   regulators demand. Nudge is the notary: proof format + verifier, the
+   technical reference implementation for AI-Act-style regulation.
+4. **The agent economy** 💸 — budgets are already a language construct;
+   the next step is agents hiring agents with compiler-proven spend limits
+   as escrow. Nudge's budget system becomes the money protocol of the agent
+   economy.
+5. **The classroom** 🎓 — The Nudge Book + playground + open curriculum:
+   a generation of developers learns agents in Nudge first. Permanence's
+   deepest form.
+6. **The foundation** 🏛️ — the endgame: an independent Nudge Foundation,
+   corporate sponsors, NTF on an ISO/W3C standards track. Nudge outgrows
+   its author — the truest definition of success.
+
+*Sequencing honesty: every star hangs on the door chain — trace freeze →
+standard → proofs → economy → foundation. The first link already sits in
+the repo.*
