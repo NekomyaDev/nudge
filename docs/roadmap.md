@@ -1,6 +1,6 @@
 # Nudge — Roadmap
 
-Strategy: [docs/strategy.md](strategy.md) (Six Locked Doors). Design v1.17 is frozen ([design.md](design.md)). This file is the forward
+Strategy: [docs/strategy.md](strategy.md) (Six Locked Doors). Design v1.18 is frozen ([design.md](design.md)). This file is the forward
 plan; shipped history lives at the bottom in condensed form.
 
 ## Where we are
