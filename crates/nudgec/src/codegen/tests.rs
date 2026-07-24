@@ -741,3 +741,63 @@ with socketserver.TCPServer(("127.0.0.1", 0), H) as srv:
     // (12 in * $0.30 + 7 out * $2.50) / 1M from the pricing table
     assert!(log.contains("\"cost_usd\": 2.11e-05"), "trace: {log}");
 }
+
+// ── v1.1d: real MCP stdio transport (design §8) ────────────────────
+
+#[test]
+fn mcp_stdio_transport_e2e_with_mock_server() {
+    let Some(e) = e2e("mcp_stdio") else { return };
+    // mock MCP server: newline-delimited JSON-RPC over stdio, answers
+    // initialize and tools/call; anything else is an error
+    let mock = r#"import json, sys
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    method = msg.get("method")
+    if method == "initialize":
+        assert msg["params"]["clientInfo"]["name"] == "nudge"
+        resp = {"jsonrpc": "2.0", "id": msg["id"],
+                "result": {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}},
+                           "serverInfo": {"name": "mock", "version": "0"}}}
+        sys.stdout.write(json.dumps(resp) + "\n"); sys.stdout.flush()
+    elif method == "notifications/initialized":
+        pass
+    elif method == "tools/call":
+        assert msg["params"]["name"] == "web", msg
+        q = msg["params"]["arguments"]["args"][0]
+        resp = {"jsonrpc": "2.0", "id": msg["id"],
+                "result": {"content": [{"type": "text", "text": "searched: " + q}]}}
+        sys.stdout.write(json.dumps(resp) + "\n"); sys.stdout.flush()
+    else:
+        sys.exit("unexpected method: " + str(method))
+"#;
+    std::fs::write(e.dir.join("mock_mcp.py"), mock).unwrap();
+
+    let src = "tool web(q: string) -> string { impl: mcp(\"search\").web(q)  side_effects: none }\nfn main() -> string uses Tool {\n    web(\"nudge lang\")\n}";
+    let out_py = e.dir.join("mcp_demo.py");
+    std::fs::write(&out_py, gen(src)).unwrap();
+    let registry = format!(
+        "{{\"search\": {{\"command\": \"python3 {}\"}}}}",
+        e.dir.join("mock_mcp.py").display()
+    );
+    let output = run_py(&e, &out_py, &[("NUDGE_MCP_SERVERS", registry.as_str())]);
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
+    assert!(log.contains("\"kind\": \"tool.call\""), "trace: {log}");
+    assert!(log.contains("\"server\": \"search\""), "trace: {log}");
+    // the REAL output from the mock server lands in the trace — not the [] stub
+    assert!(log.contains("searched: nudge lang"), "trace: {log}");
+}
+
+#[test]
+fn mcp_unknown_server_still_fails_fast() {
+    let Some(e) = e2e("mcp_unknown") else { return };
+    let src = "tool web(q: string) -> string { impl: mcp(\"nope\").web(q)  side_effects: none }\nfn main() -> string uses Tool {\n    web(\"x\")\n}";
+    let out_py = e.dir.join("mcp_unknown.py");
+    std::fs::write(&out_py, gen(src)).unwrap();
+    let registry = "{\"search\": {\"tools\": [\"web\"]}}";
+    let output = run_py(&e, &out_py, &[("NUDGE_MCP_SERVERS", registry)]);
+    assert!(!output.status.success(), "should fail on unknown server");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unknown MCP server 'nope'"), "stderr: {stderr}");
+}
