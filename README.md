@@ -6,14 +6,15 @@
 
 <p align="center">
   <strong>Don't parse your agents. Nudge them.</strong><br>
-  A typed, replayable, budget-aware programming language for LLM agents — compiles to Python.
+  A typed, replayable, budget-aware programming language for LLM agents — compiles to Python & TypeScript.
 </p>
 
 <p align="center">
-  <img alt="status" src="https://img.shields.io/badge/status-pre--alpha-orange">
+  <img alt="release" src="https://img.shields.io/badge/release-v1.0.0-brightgreen">
+  <img alt="tests" src="https://img.shields.io/badge/tests-97%20green-brightgreen">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-blue">
-  <img alt="compiler" src="https://img.shields.io/badge/compiler-Rust-red">
-  <img alt="target" src="https://img.shields.io/badge/target-Python%20%7C%20TS%20(later)-green">
+  <img alt="compiler" src="https://img.shields.io/badge/compiler-Rust%20%C2%B7%20zero%20deps-red">
+  <img alt="target" src="https://img.shields.io/badge/target-Python%20%7C%20TypeScript-green">
 </p>
 
 ---
@@ -21,6 +22,8 @@
 ## Why Nudge exists
 
 Production agents in 2026 are still held together with Python glue: prompt chains parsed by hand, tool calls wrapped in try/except, no replay, no cost control, no regression tests. Libraries patch symptoms. **Nudge fixes the layer where the problem actually lives: the language.**
+
+Nudge is an open-source **AI agent programming language** with **deterministic replay** (every run emits a trace; every trace replays as a test at zero token cost), **LLM cost control** (compile-time budgets and a static cost report), typed tool use over **MCP (Model Context Protocol)**, **A2A agent-card export**, an **LSP language server** for editor diagnostics, and **OpenTelemetry** span export — one `.ndg` file in, production-grade agent infrastructure out.
 
 | Pain | Libraries | Nudge |
 |---|---|---|
@@ -76,7 +79,7 @@ Everything runs against the deterministic fake provider by default: no API key, 
 
 ## Status
 
-Pre-alpha, **v0.1 MVP complete**, v0.2 complete, v0.3 complete, v0.4 complete, **v1.0 complete**. The language design is frozen ([docs/design.md](docs/design.md), v1.13) and the full 14-day MVP plan is done ([docs/roadmap.md](docs/roadmap.md)): lexer → parser → **type checker** (E0101–E0202) → **effect inference** (E0301/E0302) → Python codegen → **trace store + replay** → **budget enforcement + parallel scheduler** → **self-testing research agent**. The v0.1 acceptance criteria all pass: the agent is 29 lines, does zero manual JSON parsing, and its replay test passes at zero token cost (97 tests green). **v0.2a hybrid replay landed:** `NUDGE_REPLAY_MODE=llm` replays the LLM from a trace while tools run live; traces now carry `tool.call` records. **v0.2b streaming landed:** `stream let` streams LLM output through an incremental schema validator that aborts unsatisfiable prefixes early (design §4.5). **v0.2c checkpoint/resume landed:** `agent`/`state` blocks checkpoint every state write, and `nudge resume <run_id>` continues a crashed run from its last checkpoint (design §7). **v0.3a reducer state landed:** `l | merge r` joins dicts (union) and lists (append-dedup) for CRDT-style state writes (design §7). **v0.3b–d landed:** multi-server MCP routing via the `NUDGE_MCP_SERVERS` registry (design §8), a TypeScript backend (`nudgec build-ts` + `runtime/nudge_runtime.ts`), and OTel span export (`NUDGE_OTEL`). **v0.4 landed:** `nudgec cost` reports llm call sites statically at flat fake pricing (design §13), and `route{ cheap: "m1" when cond, strong: "m2" otherwise }` picks a model per call, recording the chosen label in the trace (design §4.4). **v1.0 landed:** the v1 trace schema is frozen with a `nudgec trace-check` validator (design §6), `nudgec a2a` exports A2A agent cards (design §9), and `nudgec lsp` serves the Language Server Protocol over stdio for editor diagnostics (design §10).
+**v1.0 — roadmap complete.** v0.1 MVP, v0.2, v0.3, v0.4, and v1.0 all shipped. The language design is frozen ([docs/design.md](docs/design.md), v1.13) and the full 14-day MVP plan is done ([docs/roadmap.md](docs/roadmap.md)): lexer → parser → **type checker** (E0101–E0202) → **effect inference** (E0301/E0302) → Python codegen → **trace store + replay** → **budget enforcement + parallel scheduler** → **self-testing research agent**. The v0.1 acceptance criteria all pass: the agent is 29 lines, does zero manual JSON parsing, and its replay test passes at zero token cost (97 tests green). **v0.2a hybrid replay landed:** `NUDGE_REPLAY_MODE=llm` replays the LLM from a trace while tools run live; traces now carry `tool.call` records. **v0.2b streaming landed:** `stream let` streams LLM output through an incremental schema validator that aborts unsatisfiable prefixes early (design §4.5). **v0.2c checkpoint/resume landed:** `agent`/`state` blocks checkpoint every state write, and `nudge resume <run_id>` continues a crashed run from its last checkpoint (design §7). **v0.3a reducer state landed:** `l | merge r` joins dicts (union) and lists (append-dedup) for CRDT-style state writes (design §7). **v0.3b–d landed:** multi-server MCP routing via the `NUDGE_MCP_SERVERS` registry (design §8), a TypeScript backend (`nudgec build-ts` + `runtime/nudge_runtime.ts`), and OTel span export (`NUDGE_OTEL`). **v0.4 landed:** `nudgec cost` reports llm call sites statically at flat fake pricing (design §13), and `route{ cheap: "m1" when cond, strong: "m2" otherwise }` picks a model per call, recording the chosen label in the trace (design §4.4). **v1.0 landed:** the v1 trace schema is frozen with a `nudgec trace-check` validator (design §6), `nudgec a2a` exports A2A agent cards (design §9), and `nudgec lsp` serves the Language Server Protocol over stdio for editor diagnostics (design §10).
 
 ## The name
 
