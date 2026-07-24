@@ -1,6 +1,6 @@
 # Nudge — Roadmap
 
-Design v1.16 is frozen ([design.md](design.md)). This file is the forward
+Strategy: [docs/strategy.md](strategy.md) (Six Locked Doors). Design v1.16 is frozen ([design.md](design.md)). This file is the forward
 plan; shipped history lives at the bottom in condensed form.
 
 ## Where we are
@@ -16,75 +16,72 @@ editor.
 - Reddit / Show HN / LinkedIn announcement cadence
 - `good first issue` triage for first external contributors
 
-## v1.2 — Depth (make the core airtight)
+## v1.2 — Door 1 close-out: *debuggable* (Depth)
 
-- **Spanned AST** — every node carries its byte span → check diagnostics point
-  at the exact site; LSP underline-precision
-- **SSE/HTTP MCP transport** — remote servers, not just local stdio
-- **TS runtime parity** — provider adapter + agents/`par` pools on async codegen
-- **Provider breadth** — Anthropic + Mistral, real-provider streaming (SSE)
+Finish the "why did my agent do that?" answer beyond doubt.
+- **Spanned AST** — check diagnostics point at the exact site; LSP underline precision
+- **Trace viewer** — local web UI over traces: timeline of calls, retries, budget
+  walls, par branches. Chrome DevTools for agents
+- **DAP groundwork** — Debug Adapter Protocol spike on the replay engine
+  (breakpoints on `llm.call`s, step through a run, time-travel over the trace)
+- **SSE/HTTP MCP transport**, **TS runtime parity**, **provider breadth**
+  (Anthropic/Mistral, real streaming)
 
-## v1.3 — The standard play (category-defining)
+## v1.3 — Door 2: *testable* (create the agent-CI category)
 
-- **Nudge Trace Format (NTF) as an open standard** — spec page + conformance
-  suite; "OTel for LLM agents". Bridges that export LangChain / LangGraph /
-  CrewAI runs into NTF, so the whole ecosystem can diff, replay, and CI on
-  our format
-- **`nudgec trace-diff`** — agent regression testing as a CI primitive:
-  "did this prompt change make the agent worse?" answered mechanically
-- **Trace viewer** — local web UI over traces: timeline of calls, retries,
-  budget walls, par branches. Chrome DevTools for agents; the no-lock-in
-  answer to hosted agent observability
+- **NTF open standard** — spec page + conformance suite; "OTel for LLM agents".
+  Bridges exporting LangChain / LangGraph / CrewAI runs into NTF
+- **`nudgec trace-diff`** — agent regression testing as a CI primitive
+- **Property-based agent tests** — `test ... for_all ... in gen { ... }`:
+  fuzz against injection and garbage input, shrink failing cases
+- **`nudge-ci` GitHub Action** (GitHub Marketplace) — agent regression CI in
+  any repo; a distribution channel disguised as a feature
 - **Web playground** — WASM `nudgec` on GitHub Pages: try in the browser,
   see the trace. The top of the star funnel
 
-## v1.4 — Trust (safety & rigor)
+## v1.4 — Door 3: *safe* (the moat — flagship engineering) 🛡️
 
-- **Property-based agent tests** — `test ... for_all q in gen { ... }`:
-  fuzz agents against injection and garbage input, shrink failing cases
-- **Published eval benchmark** — same agent written in Nudge vs popular
-  frameworks: lines, cost, failure modes; reproducible repo + blog post
-- **Stdlib** — `std/http`, `std/fs`, `std/jsonl`, `std/text` as typed tools
-  with declared effects
-- **RFC process** — `docs/rfc/`: design decisions become public proposals;
-  the governance signal of a serious language
+The language thesis ships: **the language where agents are safe to deploy.**
+- **Capability-based tool security** — tools as capabilities; per-agent grants
+  with attenuation (`fs.read` yes, `fs.write` no); the compiler proves the
+  reachable-tool graph, so injected instructions cannot invoke ungranted calls.
+  Not a prompt-level plea — a proof
+- **Confidence-aware types** — values track `unverified → validated → verified`;
+  `refine x until confidence > 0.8`; gradual verification for LLM output
+- **Refinement types for cost** — `fn f() -> string costs< 0.05 USD`:
+  the checker proves call graphs stay under budget statically
+- Security conformance suite + a threat-model document; possibly a short
+  industry-track paper
 
-## v1.5 — Reach (channels, not features)
+## v1.5 — Doors 4+5: *provable & improving* (enterprise + compounding)
 
-- **DAP debugger** — Debug Adapter Protocol on top of the replay engine:
-  breakpoints on `llm.call`s, step through an agent run, time-travel back
-  over the trace. Few languages on earth ship a time-travel debugger
-- **`nudge-ci` GitHub Action** (GitHub Marketplace) — any repo adds
-  `uses: …/nudge-ci@v1` and gets agent regression CI. A distribution
-  channel disguised as a feature: our name in other people's CI logs
-- **Compliance positioning** — EU AI Act demands logging/transparency for
-  high-risk AI systems; NTF traces are audit evidence out of the box.
-  "Is your agent AI-Act-ready?" — an enterprise door with zero SaaS
-- **Agent Hub** — a community registry of NTF-conformant agents and tools
-  (A2A cards, static, vendor-free — crates.io mechanics for agents)
-- **The Nudge Book** — mdBook-style language book + playground-embedded
-  interactive tutorial. Languages grow on books
+- **Compliance** — `nudgec audit` reports over NTF traces; EU AI Act
+  positioning: traces as audit evidence out of the box
+- **`optimize` block** — budget-bounded, type-safe search over prompts/models,
+  learned from traces (DSPy as a language construct, not a library hack)
+- **Cross-run learning** — budgets, routes, retries tuned from history
+- **Published eval benchmark** — same agent in Nudge vs popular frameworks:
+  lines, cost, failure modes; reproducible
+- **Stdlib** (`std/http`, `std/fs`, `std/jsonl`, `std/text`), **RFC process**
+  (`docs/rfc/`), **The Nudge Book** + interactive tutorial, **Agent Hub**
 
-## v2.0 — The agent runtime (the big thesis)
+## v2.0 — Door 6 + the runtime thesis: *inevitable*
 
 Agent frameworks are libraries; **Nudge is the language + runtime**.
-
 - **Distributed trace store** — traces stream to a local daemon / OTLP
   collector; regression suites run against history
-- **A2A serving** — v1.0 exports agent cards; v2.0 serves them: a compiled
-  Nudge agent is a network-addressable A2A peer out of the box
-- **Cross-run learning** — budgets, routes and retries tuned from historical
-  traces (the v1 trace freeze exists exactly for this)
+- **A2A serving** — a compiled Nudge agent is a network-addressable A2A peer
+  out of the box
 - **Self-hosting milestone** — parts of the runtime rewritten in Nudge
 - **Stability** — language spec freeze, semver compiler, deprecation policy
+- **Session types for conversations** (research track) — typed multi-turn
+  protocols between agents and users
 
 ## Horizon (authority plays, date-free)
 
-- **Talk circuit** — FOSDEM / RustConf / PyCon proposals; possibly a short
-  industry-track paper ("typed LLM calls with replayable traces")
+- **Talk circuit** — FOSDEM / RustConf / PyCon proposals
 - **Jupyter kernel** — the data-science crowd meets Nudge in a notebook
-- **Conformance certification** — "NTF-conformant" badge for third-party
-  tools and exporters, once the standard has adopters
+- **Conformance certification** — "NTF-conformant" badge for third-party tools
 
 ## Non-goals (staying honest)
 
