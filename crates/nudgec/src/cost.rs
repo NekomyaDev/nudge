@@ -150,9 +150,10 @@ mod tests {
         assert!(r.contains("cost report (fake pricing, $0.001 per call)"), "got:\n{r}");
         // analyze: 1 site, retry: 2 with repair → worst case 3 calls
         assert!(r.contains("analyze: 1 llm call site(s), min $0.001, max $0.003"), "got:\n{r}");
-        // run: plan site (flat) + merge site (retry: 3 with repair → 4 calls)
-        assert!(r.contains("run: 2 llm call site(s), min $0.002, max $0.005"), "got:\n{r}");
-        assert!(r.contains("total: 3 llm call site(s), min $0.003, max $0.008"), "got:\n{r}");
+        // run: plan site (retry: 1 with repair → 2 calls) + merge site
+        // (retry: 3 with repair → 4 calls)
+        assert!(r.contains("run: 2 llm call site(s), min $0.002, max $0.006"), "got:\n{r}");
+        assert!(r.contains("total: 3 llm call site(s), min $0.003, max $0.009"), "got:\n{r}");
         // the par map bodies call fns/tools, not llm directly — nothing dynamic
         assert!(!r.contains("runtime-dependent"), "got:\n{r}");
     }
