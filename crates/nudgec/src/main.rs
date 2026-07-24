@@ -19,6 +19,7 @@ mod codegen_ts;
 mod cost;
 mod json;
 mod lexer;
+mod lint;
 mod lsp;
 mod parser;
 mod tracecheck;
@@ -62,6 +63,12 @@ fn main() {
     // `resume` takes a run_id, not a source file
     let src = if args[1] == "resume" { String::new() } else { read_src(&args[2]) };
 
+
+    fn print_lints(items: &[ast::Item]) {
+        for l in lint::lint_items(items) {
+            eprintln!("warning[{}]: {}", l.code, l.msg);
+        }
+    }
     let compile = |src: &str| -> Result<Vec<ast::Item>, String> {
         lexer::lex(src).map_err(|e| e.msg).and_then(|t| parser::parse(t).map_err(|e| e.msg))
     };
@@ -94,6 +101,7 @@ fn main() {
             Ok(items) => {
                 let errs = check::check(&items);
                 if errs.is_empty() {
+                    print_lints(&items);
                     eprintln!("-- checked {} item(s): OK", items.len());
                 } else {
                     for e in &errs {
@@ -126,6 +134,7 @@ fn main() {
                     }
                     process::exit(1);
                 }
+                print_lints(&items);
                 let ts = codegen_ts::emit_ts(&items);
                 let stem = std::path::Path::new(&args[2])
                     .file_stem()
@@ -158,6 +167,7 @@ fn main() {
                     }
                     process::exit(1);
                 }
+                print_lints(&items);
                 let py = codegen::emit(&items);
                 let stem = std::path::Path::new(&args[2])
                     .file_stem()
@@ -190,6 +200,7 @@ fn main() {
                     }
                     process::exit(1);
                 }
+                print_lints(&items);
                 let py = codegen::emit(&items);
                 let stem = std::path::Path::new(&args[2])
                     .file_stem()
