@@ -1,6 +1,6 @@
 # Nudge — Roadmap
 
-Design v1.12 is frozen ([design.md](design.md)). This file tracks implementation.
+Design v1.13 is frozen ([design.md](design.md)). This file tracks implementation.
 
 ## MVP — v0.1 (2-week plan)
 
@@ -25,7 +25,7 @@ Design v1.12 is frozen ([design.md](design.md)). This file tracks implementation
 - **v0.3c** — TypeScript backend ✅ done — `nudgec build-ts` emits `out/<name>.ts` + `runtime/nudge_runtime.ts` ships (fake provider, replay, budget, merge); agents/streaming/par pools deferred with warning comments (80 tests)
 - **v0.3d** — OTel span export ✅ done — `NUDGE_OTEL=<path>` writes every trace record as an OTel-shaped JSON-lines span; OTLP transport post-MVP (80 tests)
 - **v0.4** — `nudge cost` static cost report, user-defined routing ✅ done — `nudgec cost` counts llm call sites at flat $0.001 fake pricing (`retry: N with repair` multiplies the worst case, par-map sites marked runtime-dependent); `route{ label: "model" when cond, … otherwise }` picks a model top-down (E0702 without `otherwise`, E0201 non-bool `when`, contextual `route`), chosen label recorded as the additive `route` trace field; TS backend mirrors it (88 tests)
-- **v1.0** — A2A export, LSP (VS Code), frozen trace format
+- **v1.0** — A2A export, LSP, frozen trace format ✅ done — v1 trace schema frozen + `nudgec trace-check` validator (E0601 on unknown versions); `nudgec a2a` emits A2A agent cards (skills from fns, effects as tags); `nudgec lsp` serves stdio LSP — full sync + publishDiagnostics via the real pipeline, dependency-free JSON-RPC (97 tests)
 - **Docs i18n** — Simplified Chinese documentation after v0.1; compiler diagnostics are localization-ready from day one
 
 ## Conventions
