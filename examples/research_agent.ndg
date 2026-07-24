@@ -15,7 +15,7 @@ fn analyze(q: string, hits: [SearchResult]) -> [Finding] uses LLM {
 
 fn run(question: string) -> Report uses LLM, Tool {
     let angles: [string] = llm"""3 search angles for: {question}"""
-        with { schema: [string], budget: 0.005 USD }
+        with { schema: [string], budget: 0.005 USD, retry: 1 with repair }
     let hits = par map angles |a| -> web_search(a)
     let found = par map(angles zip hits, concurrency = 3) |(a, h)| -> analyze(a, h)
     llm"""Merge these findings: {found}. Question: {question}. List remaining gaps."""
