@@ -227,6 +227,13 @@ fn direct_effects(
             direct_effects(l, g, effects, calls);
             direct_effects(r, g, effects, calls);
         }
+        Expr::Route { arms } => {
+            for (_, _, cond) in arms {
+                if let Some(c) = cond {
+                    direct_effects(c, g, effects, calls);
+                }
+            }
+        }
         Expr::Unary { x, .. } => direct_effects(x, g, effects, calls),
         Expr::ParMap { coll, kwargs, body, .. } => {
             direct_effects(coll, g, effects, calls);
@@ -569,6 +576,32 @@ fn check_expr(e: &Expr, locals: &HashMap<String, Ty>, g: &Globals, errs: &mut Ve
                 }
             }
         }
+        // design §4.4: route arms — every `when` condition must be bool and
+        // the block needs an `otherwise` fallback (E0702)
+        Expr::Route { arms } => {
+            let mut has_otherwise = false;
+            for (label, _, cond) in arms {
+                match cond {
+                    Some(c) => {
+                        let ct = check_expr(c, locals, g, errs);
+                        if !assignable(&ct, &Ty::Bool) {
+                            errs.push(CheckError {
+                                code: "E0201",
+                                msg: format!("route arm '{label}' has a non-bool when condition ({ct})"),
+                            });
+                        }
+                    }
+                    None => has_otherwise = true,
+                }
+            }
+            if !has_otherwise {
+                errs.push(CheckError {
+                    code: "E0702",
+                    msg: "route block needs an `otherwise` arm — no model is chosen when every `when` is false (design §4.4)".into(),
+                });
+            }
+            Ty::Str
+        }
     }
 }
 
@@ -905,5 +938,17 @@ mod tests {
         assert!(errs.iter().any(|e| e.code == "E0201" && e.msg.contains("merge expects")), "got {errs:?}");
         let errs = check_src("fn f(x: [int], s: string) -> [int] { x | merge s }");
         assert!(errs.iter().any(|e| e.code == "E0201"), "got {errs:?}");
+    }
+
+    #[test]
+    fn route_block_requires_otherwise_and_bool_conditions() {
+        // clean
+        assert_eq!(check_src("fn f(b: bool) -> string uses LLM { llm\"\"\"x\"\"\" with { model: route{ cheap: \"m1\" when b, strong: \"m2\" otherwise } } }"), vec![]);
+        // E0702: no otherwise arm
+        let errs = check_src("fn f(b: bool) -> string uses LLM { llm\"\"\"x\"\"\" with { model: route{ cheap: \"m1\" when b } } }");
+        assert!(errs.iter().any(|e| e.code == "E0702"), "got {errs:?}");
+        // E0201: non-bool condition
+        let errs = check_src("fn f(n: int) -> string uses LLM { llm\"\"\"x\"\"\" with { model: route{ cheap: \"m1\" when n, strong: \"m2\" otherwise } } }");
+        assert!(errs.iter().any(|e| e.code == "E0201" && e.msg.contains("non-bool when")), "got {errs:?}");
     }
 }
