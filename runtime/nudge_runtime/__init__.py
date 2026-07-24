@@ -588,7 +588,12 @@ def _openai_chat(provider, model, prompt):
     }).encode()
     req = urllib.request.Request(
         base.rstrip("/") + "/chat/completions", data=body,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {key}",
+            # Cloudflare (error 1010) bans urllib's default UA on some providers
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+        },
     )
     data = None
     last_err = None
