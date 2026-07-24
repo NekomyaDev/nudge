@@ -1,8 +1,10 @@
 # Nudge — Language Design
 
-**Version:** 1.16 (2026-07-25) · **Status:** Frozen for MVP implementation
+**Version:** 1.17 (2026-07-25) · **Status:** Frozen for MVP implementation
 **Audience:** compiler implementers, language designers, early adopters
 
+> **Changelog v1.17:** Prompt Clippy shipped early (strategy backlog) — §20 (new): the compiler lints `llm"""` blocks with non-fatal W-code warnings printed on `check`/`build`/`build-ts`. W0001: llm call without a `budget` (uncapped cost). W0002: prompt under 4 words (vague instruction; `{interpolation}` holes don't count). W0003: a record `schema: T` whose fields never appear in the prompt text (the model can't guess an output contract it was never told). Warnings never fail the build.
+>
 > **Changelog v1.16:** v1.1d done — §10: the LSP server gains `textDocument/hover` (signatures + keyword docs), `textDocument/definition`, and `textDocument/completion` (keywords, primitive types, `with`-keys, user symbols), all served from a per-document declaration index built by a line scan (robust against partial input; the spanned AST will replace the scan without changing the protocol surface). §8: the MCP registry grows a real transport — entries with a `command` spawn the server over stdio and speak newline-delimited JSON-RPC (`initialize` → `notifications/initialized` → `tools/call`, one persistent session per server); real tool outputs land in the trace, JSON-shaped text content is decoded, and any transport/server error raises instead of silently faking. Entries without `command` keep the stub (`[]`) behavior; unknown server names still fail fast. SSE/HTTP transport is post-v1.1.
 >
 > **Changelog v1.15:** v1.1c done — the VS Code extension landed in `editors/vscode/`: a TextMate grammar for `.ndg` (keywords, record types, `llm"""` prompts with interpolation, USD money literals, `@format`/`@range` constraints), language configuration, snippets, and diagnostics wired to the §10 LSP server over stdio via `vscode-languageclient` — no protocol re-implementation in the extension. Packaged as a `.vsix` attached to the GitHub Release; hover/completion remain post-v1.1 (v1.1d).
@@ -528,3 +530,22 @@ See [examples/research_agent.ndg](../examples/research_agent.ndg). Its guarantee
 - [x] v0.1 acceptance example (§16)
 
 **Verdict:** sufficient to implement days 1–14 of the MVP without further design rounds. Open items are all post-v0.1.
+
+## 20. Prompt Quality Lints (Prompt Clippy)
+
+Non-fatal **W-code** warnings emitted on `nudgec check` / `build` / `build-ts`
+(stderr; the build never fails on a warning). Rationale: prompt engineering
+is a compiler concern — the schema and budget are declared in the language,
+so the language can check the prompt against them.
+
+- **W0001 no-budget** — an `llm` call with no `budget` option in its
+  with-block (uncapped cost).
+- **W0002 vague-prompt** — prompt body under 4 words, counting
+  `{interpolation}` holes as zero words.
+- **W0003 schema-silence** — a record `schema: T` (declared in-file) whose
+  field names never appear in the prompt text; the warning suggests telling
+  the model the output contract explicitly.
+
+Out of scope (for now): cross-file schema lookup, severity configuration,
+`allow(w0002)` attributes. Conformance: unit tests in `lint.rs` cover all
+three rules plus the interpolation-word-count rule.
