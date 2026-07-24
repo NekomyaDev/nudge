@@ -272,6 +272,17 @@ fn ts(e: &Expr, aliases: &HashSet<String>) -> String {
             format!("Promise.race([{}])", xs.iter().map(|x| ts(x, aliases)).collect::<Vec<_>>().join(", "))
         }
         Expr::Merge { l, r } => format!("rt.merge({}, {})", ts(l, aliases), ts(r, aliases)),
+        Expr::Route { arms } => {
+            let parts = arms
+                .iter()
+                .map(|(label, model, cond)| match cond {
+                    Some(c) => format!("[{:?}, {:?}, () => {}]", label, model, ts(c, aliases)),
+                    None => format!("[{:?}, {:?}, null]", label, model),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("rt.route({parts})")
+        }
     }
 }
 
@@ -409,6 +420,15 @@ mod tests {
         let src2 = "fn f() -> string uses LLM { stream let t: string = llm\"\"\"x\"\"\" with { model: \"m\" }\n    t }";
         let out2 = gen_ts(src2);
         assert!(out2.contains("warning: streaming not yet supported by the TS backend"), "got:\n{out2}");
+    }
+
+    #[test]
+    fn ts_route_block_lowers_to_rt_route() {
+        let src = "fn pick(flag: bool) -> string uses LLM {\n    llm\"\"\"hi\"\"\" with { model: route{ cheap: \"m1\" when flag, strong: \"m2\" otherwise } }\n}";
+        let out = gen_ts(src);
+        assert!(out.contains("rt.route([\"cheap\", \"m1\", () => flag], [\"strong\", \"m2\", null])"), "got:\n{out}");
+        // annotation-stripped output stays valid JS
+        assert!(strip_ts(&out).contains("rt.route([\"cheap\", \"m1\", () => flag]"), "got:\n{out}");
     }
 
     // ── end-to-end (skipped without node / runtime checkout) ──────
