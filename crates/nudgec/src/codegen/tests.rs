@@ -674,3 +674,70 @@ fn route_block_picks_model_and_records_label_e2e() {
     assert!(log2.contains("\"model\": \"m-strong\""), "trace: {log2}");
     assert!(log2.contains("\"route\": \"strong\""), "trace: {log2}");
 }
+
+// ── v1.1a: real provider adapter (design §4.6) ─────────────────────
+
+#[test]
+fn openai_compatible_provider_e2e_with_mock_server() {
+    let Some(e) = e2e("openai_provider") else { return };
+    // mock OpenAI-compatible endpoint: asserts auth + model, answers with
+    // canned JSON and real-shaped usage numbers
+    let mock = r#"import json, http.server, socketserver, sys, pathlib
+
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(n) or b"{}")
+        assert self.path == "/v1/chat/completions", self.path
+        assert body["model"] == "gemini-2.5-flash", body
+        assert self.headers.get("Authorization") == "Bearer test-key", "missing auth"
+        resp = {"choices": [{"message": {"content": "{\"title\": \"ok\", \"confidence\": 0.9}"}}],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 7}}
+        data = json.dumps(resp).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+    def log_message(self, *a):
+        pass
+
+with socketserver.TCPServer(("127.0.0.1", 0), H) as srv:
+    pathlib.Path(sys.argv[1]).write_text(str(srv.server_address[1]))
+    srv.handle_request()
+"#;
+    std::fs::write(e.dir.join("mock.py"), mock).unwrap();
+    let port_file = e.dir.join("port.txt");
+    let mut child = std::process::Command::new("python3")
+        .arg(e.dir.join("mock.py"))
+        .arg(&port_file)
+        .spawn()
+        .expect("spawn mock server");
+    let mut port = String::new();
+    for _ in 0..100 {
+        if let Ok(p) = std::fs::read_to_string(&port_file) {
+            if !p.trim().is_empty() {
+                port = p.trim().to_string();
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(!port.is_empty(), "mock server did not start");
+
+    // a gemini-prefixed model routes through the OpenAI-compatible adapter;
+    // the JSON answer is extracted and validated against the schema
+    let src = "fn main() -> string uses LLM {\n    let a = llm\"\"\"give json\"\"\" with { model: \"gemini:gemini-2.5-flash\", schema: {title: string, confidence: float}, budget: 0.05 USD }\n    a.title\n}";
+    let out_py = e.dir.join("openai_provider.py");
+    std::fs::write(&out_py, gen(src)).unwrap();
+    let base = format!("http://127.0.0.1:{port}/v1");
+    let output = run_py(&e, &out_py, &[("NUDGE_API_KEY", "test-key"), ("NUDGE_BASE_URL", base.as_str())]);
+    let _ = child.kill();
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
+    assert!(log.contains("\"provider\": \"gemini\""), "trace: {log}");
+    assert!(log.contains("\"model\": \"gemini:gemini-2.5-flash\""), "trace: {log}");
+    assert!(log.contains("\"tokens\": {\"in\": 12, \"out\": 7}"), "trace: {log}");
+    // (12 in * $0.30 + 7 out * $2.50) / 1M from the pricing table
+    assert!(log.contains("\"cost_usd\": 2.11e-05"), "trace: {log}");
+}
