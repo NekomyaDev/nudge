@@ -43,6 +43,10 @@ Ships today:
 - OTel span export (design §6) — with ``NUDGE_OTEL=<path>`` every trace
   record is also written as an OTel-shaped JSON-lines span (file export;
   OTLP transport post-MVP).
+- model routing (design §4.4) — ``route((label, model, cond), ...)`` picks
+  the first arm whose condition holds (``otherwise`` is the ``None``
+  fallback); the chosen arm lands as an additive ``route`` field on the
+  next llm call's trace record.
 - budget enforcement (design §4.3) — fake pricing is a flat $0.001/call
   (deterministic, not a model price); per-call walls via ``budget=`` and the
   run-level counter via ``NUDGE_BUDGET`` (shared by all ``par`` branches);
@@ -610,6 +614,38 @@ class AgentState:
         )
 
 
+# ── model routing (design §4.4) ─────────────────────────────────────
+
+_LAST_ROUTE = threading.local()
+
+
+def route(*arms):
+    """User-defined model routing (design §4.4, v0.4): arms are
+    ``(label, model, cond_fn_or_None)`` triples evaluated in order; the
+    first arm whose condition is truthy wins, the arm with ``None`` is the
+    ``otherwise`` fallback. The chosen label is picked up by the next
+    ``llm_call``/``llm_stream`` as an additive ``route`` trace field."""
+    chosen = None
+    for label, model, cond in arms:
+        if cond is None:
+            if chosen is None:
+                chosen = (label, model)
+            break
+        if cond():
+            chosen = (label, model)
+            break
+    if chosen is None:
+        raise RuntimeError("route block matched no arm and has no otherwise fallback")
+    _LAST_ROUTE.choice = chosen
+    return chosen[1]
+
+
+def _take_route_label():
+    choice = getattr(_LAST_ROUTE, "choice", None)
+    _LAST_ROUTE.choice = None
+    return choice[0] if choice else None
+
+
 # ── merge reducer (design §7) ────────────────────────────────────────
 
 def merge(l, r):
@@ -850,6 +886,12 @@ def llm_stream(prompt, model=None, schema=None, retry=0, repair=False,
     attempts = 1 + (retry if repair and schema is not None else 0)
     last_errors, last_raw = [], None
     _budget_precheck()
+    # design §4.4: a model chosen via rt.route carries its arm label
+    route_label = _take_route_label()
+
+    def _x(d):
+        return {**d, "route": route_label} if route_label else d
+
     for round_no in range(attempts):
         out = _fake_answer(prompt, model, schema)
         if schema is not None:
@@ -870,25 +912,25 @@ def llm_stream(prompt, model=None, schema=None, retry=0, repair=False,
         if aborted is not None:
             last_errors, last_raw = [f"stream aborted: {aborted}"], out
             _trace_call(model, prompt, out, round_no, "schema_violation",
-                        extra={"streamed": True, "chunks": consumed, "early_abort": True})
+                        extra=_x({"streamed": True, "chunks": consumed, "early_abort": True}))
             _budget_charge(FAKE_CALL_COST, budget)
             # design §4.5: an unsatisfiable prefix aborts early and triggers repair
             prompt = _REPAIR_HINT.format(errors="stream aborted: " + aborted) + "\n" + str(prompt)
             continue
         if schema is None:
             _trace_call(model, prompt, out, 0, "ok",
-                        extra={"streamed": True, "chunks": consumed})
+                        extra=_x({"streamed": True, "chunks": consumed}))
             _budget_charge(FAKE_CALL_COST, budget)
             return out
         errors = validate(schema, out)
         if not errors:
             _trace_call(model, prompt, out, round_no, "ok",
-                        extra={"streamed": True, "chunks": consumed})
+                        extra=_x({"streamed": True, "chunks": consumed}))
             _budget_charge(FAKE_CALL_COST, budget)
             return out
         last_errors, last_raw = errors, out
         _trace_call(model, prompt, out, round_no, "schema_violation",
-                    extra={"streamed": True, "chunks": consumed})
+                    extra=_x({"streamed": True, "chunks": consumed}))
         _budget_charge(FAKE_CALL_COST, budget)
         # design §4.2 step 1: feed raw output errors back to the model
         prompt = _REPAIR_HINT.format(errors="; ".join(errors)) + "\n" + str(prompt)
@@ -936,6 +978,9 @@ def llm_call(prompt, model=None, schema=None, retry=0, repair=False,
     last_errors, last_raw = [], None
     if provider != "replay":
         _budget_precheck()
+    # design §4.4: a model chosen via rt.route carries its arm label
+    route_label = _take_route_label()
+    route_extra = {"route": route_label} if route_label else None
     for round_no in range(attempts):
         if provider == "replay":
             outputs = _replay_outputs()
@@ -956,18 +1001,18 @@ def llm_call(prompt, model=None, schema=None, retry=0, repair=False,
             out = _fake_answer(prompt, model, schema)
         if schema is None:
             if provider != "replay":
-                _trace_call(model, prompt, out, 0, "ok")
+                _trace_call(model, prompt, out, 0, "ok", extra=route_extra)
                 _budget_charge(FAKE_CALL_COST, budget)
             return out
         errors = validate(schema, out)
         if not errors:
             if provider != "replay":
-                _trace_call(model, prompt, out, round_no, "ok")
+                _trace_call(model, prompt, out, round_no, "ok", extra=route_extra)
                 _budget_charge(FAKE_CALL_COST, budget)
             return out
         last_errors, last_raw = errors, out
         if provider != "replay":
-            _trace_call(model, prompt, out, round_no, "schema_violation")
+            _trace_call(model, prompt, out, round_no, "schema_violation", extra=route_extra)
             _budget_charge(FAKE_CALL_COST, budget)
         # design §4.2 step 1: feed raw output errors back to the model
         prompt = _REPAIR_HINT.format(errors="; ".join(errors)) + "\n" + str(prompt)
