@@ -24,13 +24,17 @@ fn line_col(src: &str, at: usize) -> (usize, usize) {
 }
 
 fn diag(line: usize, col: usize, code: &str, msg: &str) -> Json {
+    diag_sev(line, col, code, msg, 1.0)
+}
+
+fn diag_sev(line: usize, col: usize, code: &str, msg: &str, severity: f64) -> Json {
     let pos = |l: usize, c: usize| Json::Obj(vec![("line".into(), Json::Num(l as f64)), ("character".into(), Json::Num(c as f64))]);
     Json::Obj(vec![
         (
             "range".into(),
             Json::Obj(vec![("start".into(), pos(line, col)), ("end".into(), pos(line, col + 1))]),
         ),
-        ("severity".into(), Json::Num(1.0)),
+        ("severity".into(), Json::Num(severity)),
         ("source".into(), Json::str("nudge")),
         ("code".into(), Json::str(code)),
         ("message".into(), Json::str(msg)),
@@ -49,12 +53,24 @@ pub fn diagnostics(src: &str) -> Vec<Json> {
                 let (l, c) = line_col(src, e.at);
                 vec![diag(l, c, "E0002", &e.msg)]
             }
-            Ok(items) => crate::check::check(&items)
-                .iter()
-                // check errors carry no span yet (spanned AST is post-MVP) —
-                // point at the file start with the stable code attached
-                .map(|e| diag(0, 0, e.code, &e.msg))
-                .collect(),
+            Ok(items) => {
+                let mut out: Vec<Json> = crate::check::check(&items)
+                    .iter()
+                    // check errors carry no span yet (spanned AST is v1.2) —
+                    // point at the file start with the stable code attached
+                    .map(|e| diag(0, 0, e.code, &e.msg))
+                    .collect();
+                // Prompt Clippy (design §20): W-code warnings surface in the
+                // editor as severity-2 diagnostics on clean files too
+                if out.is_empty() {
+                    out.extend(
+                        crate::lint::lint_items(&items)
+                            .iter()
+                            .map(|l| diag_sev(0, 0, l.code, &l.msg, 2.0)),
+                    );
+                }
+                out
+            }
         },
     }
 }
@@ -569,6 +585,16 @@ mod tests {
         let diags = diagnostics("fn broken( {\n");
         assert_eq!(diags.len(), 1);
         assert!(dumps(&diags[0]).contains("E0002"), "{diags:?}");
+    }
+
+    #[test]
+    fn prompt_clippy_warnings_reach_the_editor() {
+        // a type-correct file with prompt smells → severity-2 diagnostics
+        let diags = diagnostics("fn analyze() -> string uses LLM {\n    llm\"\"\"do it\"\"\" with { model: \"fake\" }\n}");
+        assert_eq!(diags.len(), 2, "{diags:?}");
+        let s = dumps(&Json::Arr(diags));
+        assert!(s.contains("\"severity\": 2"), "{s}");
+        assert!(s.contains("W0001") && s.contains("W0002"), "{s}");
     }
 
     #[test]
