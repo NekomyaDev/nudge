@@ -291,28 +291,105 @@ def _replay_tool_available(name):
 def _mcp_registry():
     """Multi-server MCP registry (design §8, v0.3b): ``NUDGE_MCP_SERVERS``
     holds a JSON object mapping server names to their config, e.g.
-    ``{"search": {"tools": ["web_search"]}, "fs": {"tools": ["read"]}}``.
-    Real MCP transport lands post-MVP; the registry already routes and
-    validates calls by server."""
+    ``{"search": {"command": "python3 server.py", "tools": ["web_search"]}}``.
+    v1.1d: entries with ``command`` get a real stdio JSON-RPC transport;
+    entries without one keep the stub (``[]``) behavior."""
     raw = os.environ.get("NUDGE_MCP_SERVERS")
     if not raw:
         return None
     return json.loads(raw)
 
 
-def tool_stub(name, args=None, server=None):
-    """Tool call while the MCP client is unbuilt (design §8).
+_MCP_SESSIONS = {}
 
-    Live + hybrid replay: executes (stub result ``[]``) and records a
-    ``tool.call`` trace record (with ``server`` when the tool declared
-    ``impl: mcp("server").…``). Full replay: mocked from the trace — the
-    recorded output for this tool's next call, no record written. Resume
-    (design §7): consumes the recorded prefix, then runs live and records.
-    When ``NUDGE_MCP_SERVERS`` configures a registry, a call naming an
-    unknown server fails fast.
+
+def _mcp_call(server, name, args, cfg):
+    """Real MCP transport (design §8, v1.1d): spawn the server over stdio and
+    speak newline-delimited JSON-RPC (MCP stdio framing) — one persistent
+    session per server: ``initialize`` → ``notifications/initialized`` →
+    ``tools/call``. Registry entry needs ``"command"`` (string or argv list).
+    Text content that parses as JSON is returned decoded; otherwise raw.
+    Any transport or server error raises — never a silent fake result."""
+    import shlex
+    import subprocess
+
+    sess = _MCP_SESSIONS.get(server)
+    if sess is None:
+        cmd = cfg.get("command")
+        if not cmd:
+            raise RuntimeError(
+                f"MCP server '{server}' has no 'command' in NUDGE_MCP_SERVERS"
+            )
+        argv = shlex.split(cmd) if isinstance(cmd, str) else list(cmd)
+        try:
+            proc = subprocess.Popen(
+                argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1
+            )
+        except OSError as e:
+            raise RuntimeError(f"MCP server '{server}' failed to start ({argv[0]}): {e}")
+        rid = [0]
+
+        def request(method, params):
+            rid[0] += 1
+            proc.stdin.write(
+                json.dumps({"jsonrpc": "2.0", "id": rid[0], "method": method, "params": params}) + "\n"
+            )
+            proc.stdin.flush()
+            line = proc.stdout.readline()
+            if not line:
+                raise RuntimeError(f"MCP server '{server}' closed the pipe during '{method}'")
+            msg = json.loads(line)
+            if "error" in msg:
+                raise RuntimeError(f"MCP '{method}' on '{server}': {msg['error']}")
+            return msg.get("result") or {}
+
+        def notify(method, params):
+            proc.stdin.write(json.dumps({"jsonrpc": "2.0", "method": method, "params": params}) + "\n")
+            proc.stdin.flush()
+
+        request(
+            "initialize",
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "nudge", "version": "1.1"},
+            },
+        )
+        notify("notifications/initialized", {})
+        sess = (proc, request)
+        _MCP_SESSIONS[server] = sess
+
+    _, request = sess
+    result = request(
+        "tools/call",
+        {"name": name, "arguments": args if isinstance(args, dict) else {"args": list(args or [])}},
+    )
+    if result.get("isError"):
+        raise RuntimeError(f"MCP tool '{name}' on '{server}' reported an error: {result.get('content')}")
+    content = result.get("content", [])
+    if len(content) == 1 and content[0].get("type") == "text":
+        text = content[0].get("text", "")
+        try:
+            return json.loads(text)
+        except ValueError:
+            return text
+    return content
+
+
+def tool_stub(name, args=None, server=None):
+    """Tool call (design §8).
+
+    Live + hybrid replay: executes and records a ``tool.call`` trace record
+    (with ``server`` when the tool declared ``impl: mcp("server").…``).
+    Real transport (v1.1d): when the registry entry for ``server`` carries a
+    ``command``, the call goes to the actual MCP server over stdio and the
+    real output lands in the trace. Entries without ``command`` keep the
+    stub result ``[]``. Full replay: mocked from the trace — no record
+    written. Resume (design §7): consumes the recorded prefix, then runs
+    live and records. An unknown server name fails fast.
     """
+    registry = _mcp_registry() if server is not None else None
     if server is not None:
-        registry = _mcp_registry()
         if registry is not None and server not in registry:
             raise RuntimeError(
                 f"unknown MCP server '{server}' for tool '{name}' "
@@ -324,7 +401,10 @@ def tool_stub(name, args=None, server=None):
         if _replay_tool_available(name):
             return _replay_tool_output(name)
         # resume past the recorded prefix: fall through to a live call
-    result = []
+    if registry is not None and registry[server].get("command"):
+        result = _mcp_call(server, name, args, registry[server])
+    else:
+        result = []
     record = {
         "kind": "tool.call",
         "tool": name,
