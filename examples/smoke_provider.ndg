@@ -1,0 +1,10 @@
+// Real-provider smoke agent (design §4.6, v1.1a) — run by the
+// provider-smoke workflow against the Gemini free tier: the model string's
+// `gemini:` prefix routes the call through the OpenAI-compatible adapter.
+fn main() -> string uses LLM {
+    let r = llm"""Reply with a JSON object: {"title": "nudge", "confidence": 0.99}"""
+        with { schema: {title: string, confidence: float},
+               model: "gemini:gemini-2.5-flash",
+               budget: 0.05 USD }
+    r.title
+}
