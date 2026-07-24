@@ -113,7 +113,7 @@ opens.
   papers on it (citations flow back), benchmarks feed from it, and the NTF
   standard entrenches itself by use. Community + academia + standard in one
   move. *(Feeds Doors 2–4; pairs with the web playground.)*
-- **Prompt Clippy** 🔍 — the compiler lints `llm"""` blocks: vague
+- **Prompt Clippy** 🔍 ✅ *shipped early (design §20)* — the compiler lints `llm"""` blocks: vague
   instruction, missing output contract, schema fields never mentioned in the
   prompt, prompt too long for the declared budget. Prompt engineering as a
   compiler concern — nobody does this; small build, huge visibility.
