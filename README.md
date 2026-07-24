@@ -67,7 +67,7 @@ The compiler proves the schema matches, infers effects, and computes a static co
 - **Prebuilt binaries** — every `v*` tag builds `nudgec` for Linux, macOS (x86_64 + Apple Silicon), and Windows and attaches the archives (.tar.gz for Linux/macOS, .zip for Windows) to the [GitHub Release](https://github.com/NekomyaDev/nudge/releases). Extract, add to `PATH`, done.
 - **From source** — `cargo build --release` → `target/release/nudgec`. Zero dependencies, builds in seconds.
 - **Runtime** — `export PYTHONPATH=$PWD/runtime` (emitted code imports `nudge_runtime`). crates.io / PyPI packages land when the registry secrets are enabled.
-- **VS Code** — grab `nudge-1.0.0.vsix` from the [release](https://github.com/NekomyaDev/nudge/releases) → `code --install-extension nudge-1.0.0.vsix`. Syntax highlighting, snippets, and diagnostics powered by `nudgec lsp` (source in [`editors/vscode/`](editors/vscode/)).
+- **VS Code** — grab `nudge-lang-1.0.0.vsix` from the [release](https://github.com/NekomyaDev/nudge/releases) → `code --install-extension nudge-lang-1.0.0.vsix`. Syntax highlighting, snippets, and diagnostics powered by `nudgec lsp` (source in [`editors/vscode/`](editors/vscode/)).
 
 ## Quickstart
 
