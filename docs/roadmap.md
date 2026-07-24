@@ -103,6 +103,7 @@ Agent frameworks are libraries; **Nudge is the language + runtime**.
 | v1.1b | Tag-driven release workflow → 4 platform binaries attached to GitHub Releases | 98 |
 | v1.1c | VS Code extension on the Marketplace (`Nekomya.nudge-lang`) | 98 |
 | v1.1d | LSP hover/definition/completion; real MCP stdio transport | 103 |
+| v1.2a | Prompt Clippy (design §20): W0001–W0004 lints, fn context, ×N dedupe, LSP surfacing | 113 |
 
 ## Conventions
 
