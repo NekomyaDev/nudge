@@ -1,8 +1,10 @@
 # Nudge — Language Design
 
-**Version:** 1.12 (2026-07-24) · **Status:** Frozen for MVP implementation
+**Version:** 1.13 (2026-07-24) · **Status:** Frozen for MVP implementation
 **Audience:** compiler implementers, language designers, early adopters
 
+> **Changelog v1.13:** v1.0 complete — the trace format is frozen, A2A export and the LSP server landed. §6: the v1 record schema (kinds `llm.call` / `tool.call` / `fn.return` with their required fields; additive fields like `streamed`/`route`/`server` remain allowed) is **frozen**, and `nudgec trace-check <trace.jsonl>` validates any trace against it (JSON-per-line, `v: 1`, sequential `seq`, per-kind required fields; E0601 on unknown versions). §9: `nudgec a2a <file.ndg>` emits A2A agent cards to `out/<name>.agent.json` — one card per `agent` block (skills from its fns, effects as tags), or a single card wrapping the top-level fns when the file declares no agents; serving the card over HTTP/A2A transport is post-v1.0. §10: `nudgec lsp` serves the Language Server Protocol over stdio (dependency-free JSON-RPC with Content-Length framing): `initialize`, full-document `didOpen`/`didChange`/`didClose` sync with `publishDiagnostics` backed by the real lex→parse→check pipeline (E-codes attached; check diagnostics point at file start until the spanned AST lands), `shutdown`/`exit`; hover/completion are post-v1.0.
+>
 > **Changelog v1.12:** v0.4 complete — the static cost report and user-defined model routing landed. §13: `nudgec cost <file.ndg>` walks each fn's AST and reports llm call sites under flat fake pricing ($0.001/call): per-fn lines plus a `total` line show `N llm call site(s), min $X, max $Y`; `retry: N with repair` multiplies the worst case (1+N calls), and sites inside `par map` bodies are marked runtime-dependent (× collection size). §4.4: `route{ label: "model" when cond, … , label: "model" otherwise }` is an expression returning a model string — arms evaluate top-down, the first truthy `when` wins, an `otherwise` arm is mandatory (E0702), non-bool conditions are E0201, and `route` stays a contextual keyword (only special directly before `{`). It lowers to `rt.route((label, model, lambda: cond), …)`; the winning label lands on the next `llm.call` record as the additive `route` field (§6). The TS backend mirrors the lowering (`rt.route([label, model, () => cond], …)`).
 >
 > **Changelog v1.11:** v0.3 complete — multi-server MCP routing, the TypeScript backend, and OTel span export landed. §8: a tool's `impl: mcp("server").…` server now flows into the emitted stub call; `NUDGE_MCP_SERVERS` (a JSON registry of server names → configs) validates it at call time (unknown server fails fast) and `tool.call` records gain an additive `server` field — real MCP transport still lands post-MVP. §6: with `NUDGE_OTEL=<path>` every trace record is additionally written as an OTel-shaped JSON-lines span (`traceId` per process, `spanId` per record, record fields as attributes, `status.code` 1/2) — file export only, OTLP transport post-MVP. §14: **TypeScript backend** — `nudgec build-ts` emits `out/<name>.ts` importing `./nudge_runtime.ts` (shipped in `runtime/`). The TS emitter covers type aliases, tools (with server routing), fns, llm calls, merge, and test blocks; `agent` blocks, `stream let` streaming, and par scheduling are deferred to the full TS backend and emit warning comments (`par map` lowers to a sequential `.map` at MVP). Annotations are limited to simple TS names. The TS runtime mirrors the fake provider, replay, budget walls, render/merge/USD; streaming, agent state, par pools, and OTel are Python-only at MVP.
@@ -198,6 +200,8 @@ Every run emits an append-only trace (JSON Lines). Payloads live in a content-ad
 
 **Additive fields (v1.12):** when the model string comes from a `route{}` block (§4.4), the `llm.call` record carries `route: "<label>"` — the chosen arm's label.
 
+**Frozen schema (v1.13):** the v1 record schema is now frozen — kinds `llm.call` / `tool.call` / `fn.return` with their required fields (`llm.call`: `model`, `params`, `input`, `output`, `tokens`, `cost_usd`, `repair_round`, `outcome`, `provider`; `tool.call`: `tool`, `input`, `output`; `fn.return`: `fn`, `output`) plus every field above. New fields may only be additive; removals/renames require a `v: 2` schema and `nudge trace migrate`. `nudgec trace-check <trace.jsonl>` validates conformance: JSON-per-line, `v: 1` (E0601 otherwise), sequential `seq`, per-kind required fields.
+
 **Additive fields (v1.3):** `llm.call` records carry `repair_round` (0-based attempt) and `outcome` (`ok` / `schema_violation`). Consumers of v1 traces must ignore unknown fields.
 
 **Versioning:** every record carries `v` (record schema version). `nudge trace migrate` upgrades old traces. The v1 record schema is frozen with the MVP.
@@ -293,6 +297,8 @@ let report  = Synthesizer().merge(workers)
 export agent Researcher at a2a://agents.example.com/researcher   // emits an Agent Card
 ```
 
+MVP mechanism (v1.13): `nudgec a2a <file.ndg>` emits A2A agent cards to `out/<name>.agent.json` — one card per `agent` block, or a single card wrapping the top-level fns when the file declares none. A card carries `name`, `description`, `version` (`1.0.0`), `url` (placeholder), `capabilities` (`stateTransitionHistory: true` — checkpoint/resume; streaming/push off), `defaultInputModes`/`defaultOutputModes` (`["text"]`), and `skills`: one per fn, with the typed signature as the description and the fn's effects as tags. Cards validate as plain JSON. The `export agent … at a2a://…` syntax and serving cards over HTTP land post-v1.0.
+
 ## 10. Compiler and Runtime Architecture
 
 ```
@@ -319,6 +325,8 @@ nudge_runtime (pip): trace store, checkpoints, MCP client, repair loop, par sche
 
 **Decision — compiler in Rust:** fast (compilation imperceptible), single-binary distribution, portable to a WASM playground later. The lexer is hand-rolled and dependency-free (shipped); if grammar complexity grows, `logos`/`winnow` may be adopted without changing the token/AST contracts.
 **Decision — first backend Python:** the target user (AI/ML engineer) lives there. TypeScript is the second backend; the split is made at HIR so backends share all analysis.
+
+**LSP (v1.13):** `nudgec lsp` serves the Language Server Protocol over stdio — dependency-free JSON-RPC with Content-Length framing. Implemented: `initialize` (full-document sync), `textDocument/didOpen`/`didChange`/`didClose` → `publishDiagnostics` backed by the real lex→parse→check pipeline (stable E-codes attached; lexer/parser diagnostics point at the exact line/character, checker diagnostics point at file start until the spanned AST lands), `shutdown`/`exit`; unimplemented requests receive `-32601`. Hover/completion/code-actions land post-v1.0.
 
 ## 11. Error Model and Diagnostics
 
@@ -385,6 +393,8 @@ nudge cost <file.ndg>             static cost report per function (v0.4)
 nudge trace migrate <trace>       upgrade record schema versions
 nudge fmt <file.ndg>              canonical formatter
 ```
+
+Shipped at v1.0: `nudgec trace-check <trace.jsonl>` (validate against the frozen v1 schema, §6) · `nudgec a2a <file.ndg>` (emit agent cards, §9) · `nudgec lsp` (stdio language server, §10).
 
 Exit codes: `0` ok · `1` compile/runtime error · `2` budget exceeded · `3` replay mismatch.
 
