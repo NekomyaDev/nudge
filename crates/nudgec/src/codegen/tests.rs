@@ -637,16 +637,18 @@ fn otel_export_writes_spans_for_trace_records() {
     assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
     let log = std::fs::read_to_string(&spans).unwrap();
     let lines: Vec<&str> = log.lines().collect();
-    assert_eq!(lines.len(), 1, "one span per trace record: {log}");
+    // one span per trace record: llm.call + the effectful fn's fn.return
+    assert_eq!(lines.len(), 2, "one span per trace record: {log}");
     let span = lines[0];
     assert!(span.contains("\"name\": \"llm.call\""), "span: {span}");
     assert!(span.contains("\"traceId\"") && span.contains("\"spanId\""), "span: {span}");
     assert!(span.contains("\"startTimeUnixNano\""), "span: {span}");
     assert!(span.contains("\"code\": 1"), "ok status: {span}");
+    assert!(lines[1].contains("\"name\": \"fn.return\""), "span: {}", lines[1]);
     // without NUDGE_OTEL no new spans are produced
     let output2 = run_py(&e, &out_py, &[]);
     assert!(output2.status.success());
-    assert_eq!(std::fs::read_to_string(&spans).unwrap().lines().count(), 1, "no new spans without NUDGE_OTEL");
+    assert_eq!(std::fs::read_to_string(&spans).unwrap().lines().count(), 2, "no new spans without NUDGE_OTEL");
 }
 
 // ── v0.4: route{} model routing (design §4.4) ─────────────────────
