@@ -10,8 +10,9 @@
 </p>
 
 <p align="center">
-  <img alt="release" src="https://img.shields.io/badge/release-v1.0.0-brightgreen">
-  <img alt="tests" src="https://img.shields.io/badge/tests-97%20green-brightgreen">
+  <img alt="release" src="https://img.shields.io/badge/release-v1.0.1-brightgreen">
+  <img alt="tests" src="https://img.shields.io/badge/tests-98%20green-brightgreen">
+  <a href="https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang"><img alt="VS Code extension" src="https://img.shields.io/badge/VS%20Code-Nudge%20Language-007ACC?logo=visualstudiocode"></a>
   <img alt="license" src="https://img.shields.io/badge/license-MIT-blue">
   <img alt="compiler" src="https://img.shields.io/badge/compiler-Rust%20%C2%B7%20zero%20deps-red">
   <img alt="target" src="https://img.shields.io/badge/target-Python%20%7C%20TypeScript-green">
@@ -67,7 +68,7 @@ The compiler proves the schema matches, infers effects, and computes a static co
 - **Prebuilt binaries** — every `v*` tag builds `nudgec` for Linux, macOS (x86_64 + Apple Silicon), and Windows and attaches the archives (.tar.gz for Linux/macOS, .zip for Windows) to the [GitHub Release](https://github.com/NekomyaDev/nudge/releases). Extract, add to `PATH`, done.
 - **From source** — `cargo build --release` → `target/release/nudgec`. Zero dependencies, builds in seconds.
 - **Runtime** — `export PYTHONPATH=$PWD/runtime` (emitted code imports `nudge_runtime`). crates.io / PyPI packages land when the registry secrets are enabled.
-- **VS Code** — grab `nudge-lang-1.0.0.vsix` from the [release](https://github.com/NekomyaDev/nudge/releases) → `code --install-extension nudge-lang-1.0.0.vsix`. Syntax highlighting, snippets, and diagnostics powered by `nudgec lsp` (source in [`editors/vscode/`](editors/vscode/)).
+- **VS Code** — install from the [Marketplace](https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang) (`Nudge Language` by Nekomya) or grab `nudge-lang-1.0.0.vsix` from the [release](https://github.com/NekomyaDev/nudge/releases) → `code --install-extension nudge-lang-1.0.0.vsix`. Syntax highlighting, snippets, and diagnostics powered by `nudgec lsp` (source in [`editors/vscode/`](editors/vscode/)).
 
 ## Quickstart
 
