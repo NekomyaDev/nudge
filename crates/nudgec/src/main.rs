@@ -26,7 +26,7 @@ mod tracecheck;
 use std::{env, fs, process};
 
 fn usage() -> ! {
-    eprintln!("nudgec 0.1.0 — the Nudge compiler");
+    eprintln!("nudgec 1.0.0 — the Nudge compiler");
     eprintln!("usage:");
     eprintln!("  nudgec lex   <file.ndg>   dump token stream");
     eprintln!("  nudgec parse <file.ndg>   dump AST");
