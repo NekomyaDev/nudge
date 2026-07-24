@@ -1159,7 +1159,8 @@ def llm_call(prompt, model=None, schema=None, retry=0, repair=False,
                             provider=provider, tokens={"in": in_t, "out": out_t},
                             cost=_call_cost(provider, model, in_t, out_t))
                 _budget_charge(_call_cost(provider, model, in_t, out_t), budget)
-            return out
+            # validated records support Nudge's `.field` syntax (AttrDict)
+            return _attr(out)
         last_errors, last_raw = errors, out
         if provider != "replay":
             _trace_call(model, prompt, out, round_no, "schema_violation", extra=route_extra,
