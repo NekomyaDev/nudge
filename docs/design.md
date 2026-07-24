@@ -1,8 +1,10 @@
 # Nudge — Language Design
 
-**Version:** 1.10 (2026-07-24) · **Status:** Frozen for MVP implementation
+**Version:** 1.11 (2026-07-24) · **Status:** Frozen for MVP implementation
 **Audience:** compiler implementers, language designers, early adopters
 
+> **Changelog v1.11:** v0.3 complete — multi-server MCP routing, the TypeScript backend, and OTel span export landed. §8: a tool's `impl: mcp("server").…` server now flows into the emitted stub call; `NUDGE_MCP_SERVERS` (a JSON registry of server names → configs) validates it at call time (unknown server fails fast) and `tool.call` records gain an additive `server` field — real MCP transport still lands post-MVP. §6: with `NUDGE_OTEL=<path>` every trace record is additionally written as an OTel-shaped JSON-lines span (`traceId` per process, `spanId` per record, record fields as attributes, `status.code` 1/2) — file export only, OTLP transport post-MVP. §14: **TypeScript backend** — `nudgec build-ts` emits `out/<name>.ts` importing `./nudge_runtime.ts` (shipped in `runtime/`). The TS emitter covers type aliases, tools (with server routing), fns, llm calls, merge, and test blocks; `agent` blocks, `stream let` streaming, and par scheduling are deferred to the full TS backend and emit warning comments (`par map` lowers to a sequential `.map` at MVP). Annotations are limited to simple TS names. The TS runtime mirrors the fake provider, replay, budget walls, render/merge/USD; streaming, agent state, par pools, and OTel are Python-only at MVP.
+>
 > **Changelog v1.10:** the `| merge` reducer landed (v0.3 first item). §7: `l | merge r` is an infix expression (`merge` is contextual, only special directly after `|` — `|a|` lambdas and variables named `merge` are unaffected) lowering to `rt.merge(l, r)`: dicts union (right wins on key conflicts), lists append items the left side does not already hold (grow-only set), anything else is overwritten by the right side. The type checker requires two records or two lists (E0201 otherwise; list elements must be assignable). State reducer writes compose with checkpoints: `state.found = state.found | merge [f]` is an ordinary checkpointed write whose value is the join — deterministic replay keeps resume exact. The E0402 shared-state check and parallel state writes stay deferred (par-branch bodies are expressions at MVP, so state writes cannot occur inside them yet).
 >
 > **Changelog v1.9:** agent state + checkpoint/resume landed (v0.2 third item — v0.2 complete). §7 concrete MVP mechanism: `agent` blocks parse with a `state` section (typed fields with defaults) and plain `fn` members; `state.x = v` / `state.x += v` are statements (4-token lookahead keeps bare `state.x` reads expressions), and every write checkpoints the full state to `.nudge/runs/<run_id>/checkpoint.json` (JSON files — the SQLite/Postgres stores are post-MVP). The run directory registers `program` + `trace`, so `nudge resume <run_id>` re-executes the emitted program replaying the recorded trace prefix (`NUDGE_RESUME=1`): LLM and tool calls consume the recorded prefix, then go **live** and append to the same trace (exhaustion without resume still raises `ReplayMismatch`); the first `writes` state writes of the re-execution are suppressed because the checkpoint already reflects them — deterministic re-execution makes the write sequence identical. New diagnostic **E0701** (state write outside an agent block / unknown state field); `=` writes are type-checked against the declared field, `+=` is list-concat/numeric-add. Reducers (`| merge`, E0402) and parallel writes stay deferred.
@@ -404,6 +406,9 @@ stream let p: Plan = llm"""...""" →     p = rt.llm_stream(prompt=…, schema=�
 
 state.x += v                      →     _state_<Agent>.x += v   # AgentState store checkpoints (§7)
 l | merge r                       →     rt.merge(l, r)           # reducer join (§7)
+
+; TypeScript backend (v1.11): the same items emit `./nudge_runtime.ts` calls —
+; rt.llmCall({...}) / rt.toolStub(name, args, {server}) / rt.merge(l, r).
 
 replay("t.jsonl")                 →     rt.replay(Path("t.jsonl"), mode=rt.Mode.FULL)
 ```

@@ -3,12 +3,14 @@
 //!   nudgec parse <file.ndg>   dump AST
 //!   nudgec check <file.ndg>   type-check (E0101–E0302)
 //!   nudgec build <file.ndg>   check, then emit Python to out/<name>.py
+//!   nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts (v0.3c)
 //!   nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn
 //!   nudgec resume <run_id>    continue a crashed run from its last checkpoint (design §7)
 
 mod ast;
 mod check;
 mod codegen;
+mod codegen_ts;
 mod lexer;
 mod parser;
 
@@ -21,6 +23,7 @@ fn usage() -> ! {
     eprintln!("  nudgec parse <file.ndg>   dump AST");
     eprintln!("  nudgec check <file.ndg>   type-check (E0101–E0302)");
     eprintln!("  nudgec build <file.ndg>   check, then emit Python to out/<name>.py");
+    eprintln!("  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts");
     eprintln!("  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn");
     eprintln!("  nudgec resume <run_id>    continue a crashed run from its last checkpoint");
     process::exit(64);
@@ -79,6 +82,39 @@ fn main() {
                         eprintln!("error[{}]: {}", e.code, e.msg);
                     }
                     process::exit(1);
+                }
+            }
+            Err(msg) => {
+                eprintln!("error[E0002]: {msg}");
+                process::exit(1);
+            }
+        },
+        // design §14: TypeScript backend (v0.3c) — same pipeline, TS emit
+        "build-ts" => match compile(&src) {
+            Ok(items) => {
+                let errs = check::check(&items);
+                if !errs.is_empty() {
+                    for e in &errs {
+                        eprintln!("error[{}]: {}", e.code, e.msg);
+                    }
+                    process::exit(1);
+                }
+                let ts = codegen_ts::emit_ts(&items);
+                let stem = std::path::Path::new(&args[2])
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("out");
+                if let Err(e) = fs::create_dir_all("out") {
+                    eprintln!("error: cannot create out/: {e}");
+                    process::exit(1);
+                }
+                let path = std::path::Path::new("out").join(format!("{stem}.ts"));
+                match fs::write(&path, ts) {
+                    Ok(()) => println!("wrote {}", path.display()),
+                    Err(e) => {
+                        eprintln!("error: cannot write {}: {e}", path.display());
+                        process::exit(1);
+                    }
                 }
             }
             Err(msg) => {

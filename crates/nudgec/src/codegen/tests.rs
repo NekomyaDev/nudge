@@ -46,7 +46,7 @@ fn schema_option_lowers_to_rt_schema() {
 fn tool_lowers_to_stub_fn() {
     let src = "tool web_search(q: string) -> [R] { impl: mcp(\"s\").web(q) side_effects: none }";
     let out = gen(src);
-    assert!(out.contains("def web_search(q):\n    return rt.tool_stub(\"web_search\", [q])"), "got:\n{out}");
+    assert!(out.contains("def web_search(q):\n    return rt.tool_stub(\"web_search\", [q], server=\"s\")"), "got:\n{out}");
 }
 
 #[test]
@@ -596,4 +596,48 @@ fn merge_runtime_semantics() {
     let output = run_py(&e, &driver, &[]);
     assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
     assert!(String::from_utf8_lossy(&output.stdout).contains("MERGE OK"));
+}
+
+// ── v0.3b: multi-server MCP routing (design §8) ────────────────────
+
+#[test]
+fn tool_stub_routes_and_validates_servers() {
+    let Some(e) = e2e("mcpreg") else { return };
+    let src = "tool web_search(q: string) -> [string] { impl: mcp(\"search\").web(q) side_effects: none }\nfn main() -> [string] uses Tool {\n    web_search(\"nudge\")\n}";
+    let out_py = e.dir.join("mcp_demo.py");
+    std::fs::write(&out_py, gen(src)).unwrap();
+    // registered server: the call routes and the trace records it
+    let output = run_py(&e, &out_py, &[("NUDGE_MCP_SERVERS", "{\"search\": {\"tools\": [\"web_search\"]}, \"fs\": {\"tools\": [\"read\"]}}")]);
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
+    assert!(log.contains("\"server\": \"search\""), "trace: {log}");
+    // unregistered server: fails fast with a clear error
+    let output2 = run_py(&e, &out_py, &[("NUDGE_MCP_SERVERS", "{\"other\": {}}")]);
+    assert!(!output2.status.success(), "expected unknown-server failure");
+    assert!(String::from_utf8_lossy(&output2.stderr).contains("unknown MCP server 'search'"), "stderr: {}", String::from_utf8_lossy(&output2.stderr));
+}
+
+// ── v0.3d: OTel span export (design §6) ────────────────────────────
+
+#[test]
+fn otel_export_writes_spans_for_trace_records() {
+    let Some(e) = e2e("otel") else { return };
+    let src = "fn main() -> string uses LLM {\n    llm\"\"\"hi\"\"\" with { model: \"m\" }\n}";
+    let out_py = e.dir.join("otel_demo.py");
+    std::fs::write(&out_py, gen(src)).unwrap();
+    let spans = e.dir.join("spans.jsonl");
+    let output = run_py(&e, &out_py, &[("NUDGE_OTEL", spans.to_str().unwrap())]);
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let log = std::fs::read_to_string(&spans).unwrap();
+    let lines: Vec<&str> = log.lines().collect();
+    assert_eq!(lines.len(), 1, "one span per trace record: {log}");
+    let span = lines[0];
+    assert!(span.contains("\"name\": \"llm.call\""), "span: {span}");
+    assert!(span.contains("\"traceId\"") && span.contains("\"spanId\""), "span: {span}");
+    assert!(span.contains("\"startTimeUnixNano\""), "span: {span}");
+    assert!(span.contains("\"code\": 1"), "ok status: {span}");
+    // without NUDGE_OTEL no new spans are produced
+    let output2 = run_py(&e, &out_py, &[]);
+    assert!(output2.status.success());
+    assert_eq!(std::fs::read_to_string(&spans).unwrap().lines().count(), 1, "no new spans without NUDGE_OTEL");
 }

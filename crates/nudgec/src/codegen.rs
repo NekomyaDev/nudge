@@ -50,10 +50,15 @@ pub fn emit(items: &[Item]) -> String {
                     has_main = true;
                 }
             }
-            Item::Tool { name, params, .. } => {
+            Item::Tool { name, params, fields, .. } => {
                 let ps = params.iter().map(|p| p.name.clone()).collect::<Vec<_>>().join(", ");
                 let arg_list = params.iter().map(|p| p.name.clone()).collect::<Vec<_>>().join(", ");
-                out.push_str(&format!("def {name}({ps}):\n    return rt.tool_stub(\"{name}\", [{arg_list}])\n"));
+                // design §8: `impl: mcp("server").tool(...)` routes the stub
+                // through that server in the runtime registry
+                let server = impl_server(fields)
+                    .map(|s| format!(", server={}", py_str(&s)))
+                    .unwrap_or_default();
+                out.push_str(&format!("def {name}({ps}):\n    return rt.tool_stub(\"{name}\", [{arg_list}]{server})\n"));
             }
             Item::Test { name, body } => {
                 out.push_str(&format!("def nudge_test_{}():\n", slug(name)));
@@ -252,6 +257,28 @@ fn bind_state_expr(e: &Expr, agent: &str) -> Expr {
         },
         leaf => leaf.clone(),
     }
+}
+
+/// Find the MCP server in a tool's `impl: mcp("server").tool(...)` field
+/// (design §8) — walks the expression for an `mcp("...")` call.
+pub fn impl_server(fields: &[(String, Expr)]) -> Option<String> {
+    fn find(e: &Expr) -> Option<String> {
+        match e {
+            Expr::Call { func, args, .. } => {
+                if let Expr::Ident(n) = func.as_ref() {
+                    if n == "mcp" {
+                        if let Some(Expr::Str(s)) = args.first() {
+                            return Some(s.clone());
+                        }
+                    }
+                }
+                find(func).or_else(|| args.iter().find_map(find))
+            }
+            Expr::Field { obj, .. } => find(obj),
+            _ => None,
+        }
+    }
+    fields.iter().find(|(k, _)| k == "impl").and_then(|(_, v)| find(v))
 }
 
 /// `test "run stays within budget"` → `run_stays_within_budget`.
@@ -457,7 +484,7 @@ fn llm_py(stream: bool, prompt: &Expr, options: &[(String, Expr)], repair: bool,
     format!("rt.{}(\n        {},\n    )", if stream { "llm_stream" } else { "llm_call" }, parts.join(",\n        "))
 }
 
-fn op_str(op: &BinOp) -> &'static str {
+pub fn op_str(op: &BinOp) -> &'static str {
     match op {
         BinOp::Add => "+", BinOp::Sub => "-", BinOp::Mul => "*", BinOp::Div => "/", BinOp::Mod => "%",
         BinOp::Eq => "==", BinOp::NotEq => "!=", BinOp::Lt => "<", BinOp::LtEq => "<=",
