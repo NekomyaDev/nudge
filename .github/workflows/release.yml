@@ -53,11 +53,18 @@ jobs:
           merge-multiple: true
       - run: |
           chmod +x nudgec-* || true
-          for f in nudgec-*; do tar czf "$f.tar.gz" "$f"; done
-          ls -la *.tar.gz
+          for f in nudgec-*; do
+            case "$f" in
+              *.exe) zip -q "$f.zip" "$f" ;;
+              *) tar czf "$f.tar.gz" "$f" ;;
+            esac
+          done
+          ls -la *.tar.gz *.zip
       - uses: softprops/action-gh-release@v2
         with:
-          files: "nudgec-*.tar.gz"
+          files: |
+            nudgec-*.tar.gz
+            nudgec-*.zip
           generate_release_notes: true
 
   crates:
