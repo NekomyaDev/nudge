@@ -1,8 +1,10 @@
 # Nudge — Language Design
 
-**Version:** 1.11 (2026-07-24) · **Status:** Frozen for MVP implementation
+**Version:** 1.12 (2026-07-24) · **Status:** Frozen for MVP implementation
 **Audience:** compiler implementers, language designers, early adopters
 
+> **Changelog v1.12:** v0.4 complete — the static cost report and user-defined model routing landed. §13: `nudgec cost <file.ndg>` walks each fn's AST and reports llm call sites under flat fake pricing ($0.001/call): per-fn lines plus a `total` line show `N llm call site(s), min $X, max $Y`; `retry: N with repair` multiplies the worst case (1+N calls), and sites inside `par map` bodies are marked runtime-dependent (× collection size). §4.4: `route{ label: "model" when cond, … , label: "model" otherwise }` is an expression returning a model string — arms evaluate top-down, the first truthy `when` wins, an `otherwise` arm is mandatory (E0702), non-bool conditions are E0201, and `route` stays a contextual keyword (only special directly before `{`). It lowers to `rt.route((label, model, lambda: cond), …)`; the winning label lands on the next `llm.call` record as the additive `route` field (§6). The TS backend mirrors the lowering (`rt.route([label, model, () => cond], …)`).
+>
 > **Changelog v1.11:** v0.3 complete — multi-server MCP routing, the TypeScript backend, and OTel span export landed. §8: a tool's `impl: mcp("server").…` server now flows into the emitted stub call; `NUDGE_MCP_SERVERS` (a JSON registry of server names → configs) validates it at call time (unknown server fails fast) and `tool.call` records gain an additive `server` field — real MCP transport still lands post-MVP. §6: with `NUDGE_OTEL=<path>` every trace record is additionally written as an OTel-shaped JSON-lines span (`traceId` per process, `spanId` per record, record fields as attributes, `status.code` 1/2) — file export only, OTLP transport post-MVP. §14: **TypeScript backend** — `nudgec build-ts` emits `out/<name>.ts` importing `./nudge_runtime.ts` (shipped in `runtime/`). The TS emitter covers type aliases, tools (with server routing), fns, llm calls, merge, and test blocks; `agent` blocks, `stream let` streaming, and par scheduling are deferred to the full TS backend and emit warning comments (`par map` lowers to a sequential `.map` at MVP). Annotations are limited to simple TS names. The TS runtime mirrors the fake provider, replay, budget walls, render/merge/USD; streaming, agent state, par pools, and OTel are Python-only at MVP.
 >
 > **Changelog v1.10:** the `| merge` reducer landed (v0.3 first item). §7: `l | merge r` is an infix expression (`merge` is contextual, only special directly after `|` — `|a|` lambdas and variables named `merge` are unaffected) lowering to `rt.merge(l, r)`: dicts union (right wins on key conflicts), lists append items the left side does not already hold (grow-only set), anything else is overwritten by the right side. The type checker requires two records or two lists (E0201 otherwise; list elements must be assignable). State reducer writes compose with checkpoints: `state.found = state.found | merge [f]` is an ordinary checkpointed write whose value is the join — deterministic replay keeps resume exact. The E0402 shared-state check and parallel state writes stay deferred (par-branch bodies are expressions at MVP, so state writes cannot occur inside them yet).
@@ -143,6 +145,8 @@ model: route{
 
 If routing is statically resolvable, the compiler reports cost ranges for both branches. User-defined routing functions are deferred (see Open Decisions).
 
+MVP mechanism (v1.12): `route{…}` is an expression of type `string`, usable anywhere a model string is expected (typically `with { model: … }`). Each arm is `label: "model" when <bool expr>` or `label: "model" otherwise`; arms evaluate top-down and the first truthy condition wins. Exactly one `otherwise` arm is required — **E0702** otherwise (no model is chosen when every `when` is false), and a non-bool `when` condition is **E0201**. Codegen lowers to `rt.route((label, model, lambda: cond), …, (label, model, None))` (TS: `rt.route([label, model, () => cond], …, [label, model, null])`); the runtime threads the winning label to the next `llm.call` record as the additive `route` field (§6). `route` is contextual — only special directly before `{` — so it remains a usable identifier. Static per-branch cost ranges stay deferred.
+
 ### 4.5 Streaming
 
 ```
@@ -191,6 +195,8 @@ Every run emits an append-only trace (JSON Lines). Payloads live in a content-ad
 **Tool records (v1.7):** `tool.call` records (`tool`, `input`, `output`) are emitted in live and hybrid runs (never in full replay — tools are mocked there, §6.2). Trace emission is serialized under a lock, so `par` branches cannot interleave records or duplicate `seq` numbers.
 
 **Additive fields (v1.8):** streamed `llm.call` records carry `streamed: true`, `chunks` (consumed chunk count), and `early_abort: true` on attempts aborted by incremental validation (§4.5).
+
+**Additive fields (v1.12):** when the model string comes from a `route{}` block (§4.4), the `llm.call` record carries `route: "<label>"` — the chosen arm's label.
 
 **Additive fields (v1.3):** `llm.call` records carry `repair_round` (0-based attempt) and `outcome` (`ok` / `schema_violation`). Consumers of v1 traces must ignore unknown fields.
 
@@ -341,6 +347,7 @@ Compile-time diagnostics use stable codes; messages are English-first and locali
 | E0501 | budget unit unknown | `budget: 5 EUR` (v0.1) |
 | E0601 | replay trace version unsupported | v0 trace with v1-only runtime |
 | E0701 | state write outside an agent block / unknown state field | `state.round = 1` in a plain fn |
+| E0702 | `route{}` block without an `otherwise` arm | every `when` false ⇒ no model chosen |
 
 ## 12. Grammar Summary (informative)
 
@@ -381,6 +388,8 @@ nudge fmt <file.ndg>              canonical formatter
 
 Exit codes: `0` ok · `1` compile/runtime error · `2` budget exceeded · `3` replay mismatch.
 
+`nudge cost` mechanism (v1.12): static — the compiler walks each fn's AST and counts llm call sites at flat fake pricing ($0.001/call). Each fn gets a line (`name: N llm call site(s), min $X, max $Y`) plus a `total` line; `retry: N with repair` raises the worst case to 1+N calls (retry without repair does not multiply), and sites inside `par map` bodies are marked `(× collection size inside par map — runtime-dependent)`. Test blocks replay recorded traces and count as zero live cost. Real provider pricing lands post-MVP.
+
 ---
 
 ## 14. Codegen Contract (Python backend)
@@ -407,8 +416,12 @@ stream let p: Plan = llm"""...""" →     p = rt.llm_stream(prompt=…, schema=�
 state.x += v                      →     _state_<Agent>.x += v   # AgentState store checkpoints (§7)
 l | merge r                       →     rt.merge(l, r)           # reducer join (§7)
 
+route{ c: "m1" when b,            →     rt.route(("c", "m1", lambda: b),
+       s: "m2" otherwise }              ("s", "m2", None))      # model routing (§4.4)
+
 ; TypeScript backend (v1.11): the same items emit `./nudge_runtime.ts` calls —
-; rt.llmCall({...}) / rt.toolStub(name, args, {server}) / rt.merge(l, r).
+; rt.llmCall({...}) / rt.toolStub(name, args, {server}) / rt.merge(l, r)
+; / rt.route([label, model, () => cond], …) (v1.12).
 
 replay("t.jsonl")                 →     rt.replay(Path("t.jsonl"), mode=rt.Mode.FULL)
 ```
