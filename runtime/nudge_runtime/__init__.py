@@ -37,6 +37,12 @@ Ships today:
   once the recorded llm/tool records run out, calls go live and append to
   the same trace. Reducer writes use ``merge``: dicts union (right wins),
   lists append-dedup.
+- multi-server MCP routing (design §8) — tool stubs carry their
+  ``impl: mcp("server").…`` server; ``NUDGE_MCP_SERVERS`` (JSON registry)
+  validates it and ``tool.call`` records gain a ``server`` field.
+- OTel span export (design §6) — with ``NUDGE_OTEL=<path>`` every trace
+  record is also written as an OTel-shaped JSON-lines span (file export;
+  OTLP transport post-MVP).
 - budget enforcement (design §4.3) — fake pricing is a flat $0.001/call
   (deterministic, not a model price); per-call walls via ``budget=`` and the
   run-level counter via ``NUDGE_BUDGET`` (shared by all ``par`` branches);
@@ -64,6 +70,7 @@ import os
 import sys
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -272,14 +279,36 @@ def _replay_tool_available(name):
     return _REPLAY_TOOL_STATE["idx"].get(name, 0) < len(recorded)
 
 
-def tool_stub(name, args=None):
+def _mcp_registry():
+    """Multi-server MCP registry (design §8, v0.3b): ``NUDGE_MCP_SERVERS``
+    holds a JSON object mapping server names to their config, e.g.
+    ``{"search": {"tools": ["web_search"]}, "fs": {"tools": ["read"]}}``.
+    Real MCP transport lands post-MVP; the registry already routes and
+    validates calls by server."""
+    raw = os.environ.get("NUDGE_MCP_SERVERS")
+    if not raw:
+        return None
+    return json.loads(raw)
+
+
+def tool_stub(name, args=None, server=None):
     """Tool call while the MCP client is unbuilt (design §8).
 
     Live + hybrid replay: executes (stub result ``[]``) and records a
-    ``tool.call`` trace record. Full replay: mocked from the trace — the
+    ``tool.call`` trace record (with ``server`` when the tool declared
+    ``impl: mcp("server").…``). Full replay: mocked from the trace — the
     recorded output for this tool's next call, no record written. Resume
     (design §7): consumes the recorded prefix, then runs live and records.
+    When ``NUDGE_MCP_SERVERS`` configures a registry, a call naming an
+    unknown server fails fast.
     """
+    if server is not None:
+        registry = _mcp_registry()
+        if registry is not None and server not in registry:
+            raise RuntimeError(
+                f"unknown MCP server '{server}' for tool '{name}' "
+                f"(registry has: {', '.join(sorted(registry))})"
+            )
     if _replay_mode() == "all":
         if not os.environ.get("NUDGE_RESUME"):
             return _replay_tool_output(name)
@@ -287,12 +316,15 @@ def tool_stub(name, args=None):
             return _replay_tool_output(name)
         # resume past the recorded prefix: fall through to a live call
     result = []
-    _emit_trace({
+    record = {
         "kind": "tool.call",
         "tool": name,
         "input": _jsonable(list(args) if args is not None else []),
         "output": _jsonable(result),
-    })
+    }
+    if server is not None:
+        record["server"] = server
+    _emit_trace(record)
     return result
 
 
@@ -348,6 +380,38 @@ def _trace_path() -> Path:
 _TRACE_LOCK = threading.Lock()
 
 
+_OTEL_TRACE_ID = None
+
+
+def _otel_export(record: dict) -> None:
+    """OTel-compatible span export (design §6, v0.3d): when ``NUDGE_OTEL``
+    names a path, every trace record also lands there as a JSON-lines span
+    (trace_id per process, span_id per record, record fields as
+    attributes). File export only — OTLP transport lands post-MVP."""
+    path = os.environ.get("NUDGE_OTEL")
+    if not path:
+        return
+    global _OTEL_TRACE_ID
+    if _OTEL_TRACE_ID is None:
+        _OTEL_TRACE_ID = uuid.uuid4().hex
+    now_ns = time.time_ns()
+    attributes = {k: v for k, v in record.items() if k not in ("v", "seq", "kind")}
+    ok = record.get("outcome", "ok") == "ok"
+    span = {
+        "traceId": _OTEL_TRACE_ID,
+        "spanId": uuid.uuid4().hex[:16],
+        "name": record.get("kind", "span"),
+        "kind": 3,  # SPAN_KIND_CLIENT
+        "startTimeUnixNano": now_ns,
+        "endTimeUnixNano": now_ns,
+        "attributes": _jsonable(attributes),
+        "status": {"code": 1 if ok else 2},
+    }
+    with _TRACE_LOCK:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(span, ensure_ascii=False) + "\n")
+
+
 def _emit_trace(record: dict) -> None:
     path = _trace_path()
     # serialized: par branches emit concurrently and seq must stay unique
@@ -358,6 +422,7 @@ def _emit_trace(record: dict) -> None:
         line = {"v": 1, "seq": seq, **record}
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(line, ensure_ascii=False) + "\n")
+    _otel_export(line)
 
 
 def _trace_call(model, prompt, out, repair_round, outcome, extra=None):
