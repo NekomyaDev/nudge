@@ -80,6 +80,13 @@ fn merge_lowers_to_rt_merge() {
 }
 
 #[test]
+fn route_block_lowers_to_rt_route() {
+    let src = "fn f(b: bool) -> string uses LLM { llm\"\"\"x\"\"\" with { model: route{ cheap: \"m1\" when b, strong: \"m2\" otherwise } } }";
+    let out = gen(src);
+    assert!(out.contains("model=rt.route((\"cheap\", \"m1\", lambda: b), (\"strong\", \"m2\", None))"), "got:\n{out}");
+}
+
+#[test]
 fn par_map_lowers_to_runtime_call() {
     let src = "fn f(angles: [string]) -> [string] { let h = par map angles |a| -> search(a) }";
     assert!(gen(src).contains("h = rt.par_map(angles, lambda a: search(a))"));
@@ -640,4 +647,28 @@ fn otel_export_writes_spans_for_trace_records() {
     let output2 = run_py(&e, &out_py, &[]);
     assert!(output2.status.success());
     assert_eq!(std::fs::read_to_string(&spans).unwrap().lines().count(), 1, "no new spans without NUDGE_OTEL");
+}
+
+// ── v0.4: route{} model routing (design §4.4) ─────────────────────
+
+#[test]
+fn route_block_picks_model_and_records_label_e2e() {
+    let Some(e) = e2e("route") else { return };
+    let src = "fn pick(flag: bool) -> string uses LLM {\n    llm\"\"\"hi\"\"\" with { model: route{ cheap: \"m-cheap\" when flag, strong: \"m-strong\" otherwise } }\n}\nfn main() -> string uses LLM {\n    pick(true)\n}";
+    let out_py = e.dir.join("route_demo.py");
+    std::fs::write(&out_py, gen(src)).unwrap();
+    let output = run_py(&e, &out_py, &[]);
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
+    // the when-condition is true → cheap arm wins, model + label recorded
+    assert!(log.contains("\"model\": \"m-cheap\""), "trace: {log}");
+    assert!(log.contains("\"route\": \"cheap\""), "trace: {log}");
+    // flag false → otherwise arm
+    let src2 = src.replace("pick(true)", "pick(false)");
+    std::fs::write(&out_py, gen(&src2)).unwrap();
+    let output2 = run_py(&e, &out_py, &[]);
+    assert!(output2.status.success(), "stderr: {}", String::from_utf8_lossy(&output2.stderr));
+    let log2 = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
+    assert!(log2.contains("\"model\": \"m-strong\""), "trace: {log2}");
+    assert!(log2.contains("\"route\": \"strong\""), "trace: {log2}");
 }
