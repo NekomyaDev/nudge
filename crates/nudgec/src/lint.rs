@@ -53,30 +53,46 @@ fn prompt_words(body: &str) -> usize {
 }
 
 fn lint_llm_call(
+    ctx: &str,
     prompt_body: Option<&str>,
     options: &[(String, Expr)],
+    repair: bool,
     records: &[(String, Vec<String>)],
     out: &mut Vec<Lint>,
 ) {
     // W0001: uncapped cost
     if !options.iter().any(|(k, _)| k == "budget") {
-        out.push(lint("W0001", "llm call has no `budget` option — cost is uncapped; add `budget: N USD` to the with-block"));
+        out.push(lint("W0001", format!("in {ctx}: llm call has no `budget` option — cost is uncapped; add `budget: N USD` to the with-block")));
+    }
+    // W0004: schema without repair — a validation failure raises instead
+    // of entering the repair loop
+    if options.iter().any(|(k, _)| k == "schema") && !repair {
+        out.push(lint("W0004", format!("in {ctx}: `schema` without `retry: N with repair` — a schema violation raises at runtime instead of being repaired; add a repair loop or accept the crash")));
     }
     let Some(body) = prompt_body else { return };
     // W0002: vague prompt
     if prompt_words(body) < 4 {
-        out.push(lint("W0002", "prompt is fewer than 4 words — vague instructions produce vague output; state the task and the expected shape"));
+        out.push(lint("W0002", format!("in {ctx}: prompt is fewer than 4 words — vague instructions produce vague output; state the task and the expected shape")));
     }
     // W0003: schema fields never mentioned in the prompt
     if let Some((_, Expr::Ident(schema))) = options.iter().find(|(k, _)| k == "schema") {
         if let Some((_, fields)) = records.iter().find(|(n, _)| n == schema) {
-            let lower = body.to_lowercase();
-            let mentioned = fields.iter().filter(|f| lower.contains(&f.to_lowercase())).count();
+            // word-boundary match: a field name counts as "mentioned" only
+            // as a standalone word — otherwise `in` matches "instruction"
+            let words: Vec<String> = body
+                .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .map(|w| w.to_lowercase())
+                .filter(|w| !w.is_empty())
+                .collect();
+            let mentioned = fields
+                .iter()
+                .filter(|f| words.iter().any(|w| w == &f.to_lowercase()))
+                .count();
             if !fields.is_empty() && mentioned == 0 {
                 out.push(lint(
                     "W0003",
                     format!(
-                        "schema `{schema}` fields ({}) never appear in the prompt — tell the model the output contract, e.g. \"return JSON with fields: {}\"",
+                        "in {ctx}: schema `{schema}` fields ({}) never appear in the prompt — tell the model the output contract, e.g. \"return JSON with fields: {}\"",
                         fields.join(", "),
                         fields.join(", ")
                     ),
@@ -86,52 +102,52 @@ fn lint_llm_call(
     }
 }
 
-fn walk_expr(e: &Expr, records: &[(String, Vec<String>)], out: &mut Vec<Lint>) {
+fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut Vec<Lint>) {
     match e {
-        Expr::LlmCall { prompt, options, .. } => {
+        Expr::LlmCall { prompt, options, repair } => {
             let body = match prompt.as_ref() {
                 Expr::Prompt { body, .. } => Some(body.as_str()),
                 Expr::Str(s) => Some(s.as_str()),
                 _ => None,
             };
-            lint_llm_call(body, options, records, out);
-            walk_expr(prompt, records, out);
+            lint_llm_call(ctx, body, options, *repair, records, out);
+            walk_expr(ctx, prompt, records, out);
             for (_, v) in options {
-                walk_expr(v, records, out);
+                walk_expr(ctx, v, records, out);
             }
         }
         Expr::ListLit(xs) | Expr::ParAll(xs) | Expr::ParRace(xs) => {
-            for x in xs { walk_expr(x, records, out); }
+            for x in xs { walk_expr(ctx, x, records, out); }
         }
         Expr::Call { func, args, kwargs } => {
-            walk_expr(func, records, out);
-            for a in args { walk_expr(a, records, out); }
-            for (_, v) in kwargs { walk_expr(v, records, out); }
+            walk_expr(ctx, func, records, out);
+            for a in args { walk_expr(ctx, a, records, out); }
+            for (_, v) in kwargs { walk_expr(ctx, v, records, out); }
         }
-        Expr::Field { obj, .. } => walk_expr(obj, records, out),
+        Expr::Field { obj, .. } => walk_expr(ctx, obj, records, out),
         Expr::Binary { l, r, .. } | Expr::Merge { l, r, .. } => {
-            walk_expr(l, records, out);
-            walk_expr(r, records, out);
+            walk_expr(ctx, l, records, out);
+            walk_expr(ctx, r, records, out);
         }
-        Expr::Unary { x, .. } => walk_expr(x, records, out),
+        Expr::Unary { x, .. } => walk_expr(ctx, x, records, out),
         Expr::ParMap { coll, kwargs, body, .. } => {
-            walk_expr(coll, records, out);
-            for (_, v) in kwargs { walk_expr(v, records, out); }
-            walk_expr(body, records, out);
+            walk_expr(ctx, coll, records, out);
+            for (_, v) in kwargs { walk_expr(ctx, v, records, out); }
+            walk_expr(ctx, body, records, out);
         }
         Expr::Route { arms } => {
             for (_, _, cond) in arms {
-                if let Some(c) = cond { walk_expr(c, records, out); }
+                if let Some(c) = cond { walk_expr(ctx, c, records, out); }
             }
         }
         _ => {}
     }
 }
 
-fn walk_stmt(s: &Stmt, records: &[(String, Vec<String>)], out: &mut Vec<Lint>) {
+fn walk_stmt(ctx: &str, s: &Stmt, records: &[(String, Vec<String>)], out: &mut Vec<Lint>) {
     match s {
-        Stmt::Let { value, .. } | Stmt::StateWrite { value, .. } => walk_expr(value, records, out),
-        Stmt::Assert(e) | Stmt::ExprStmt(e) => walk_expr(e, records, out),
+        Stmt::Let { value, .. } | Stmt::StateWrite { value, .. } => walk_expr(ctx, value, records, out),
+        Stmt::Assert(e) | Stmt::ExprStmt(e) => walk_expr(ctx, e, records, out),
     }
 }
 
@@ -141,11 +157,25 @@ pub fn lint_items(items: &[Item]) -> Vec<Lint> {
     let mut out = Vec::new();
     fn walk_item(it: &Item, records: &[(String, Vec<String>)], out: &mut Vec<Lint>) {
         match it {
-            Item::Fn { body, .. } | Item::Test { body, .. } => {
-                for s in body { walk_stmt(s, records, out); }
+            Item::Fn { name, body, .. } => {
+                let ctx = format!("fn {name}");
+                for s in body { walk_stmt(&ctx, s, records, out); }
             }
-            Item::Agent { fns, .. } => {
-                for f in fns { walk_item(f, records, out); }
+            Item::Test { name, body, .. } => {
+                let ctx = format!("test {}", name);
+                for s in body { walk_stmt(&ctx, s, records, out); }
+            }
+            Item::Agent { name, fns, .. } => {
+                for f in fns {
+                    // prefix agent context onto fn context
+                    match f {
+                        Item::Fn { name: fname, body, .. } => {
+                            let ctx = format!("agent {name} / fn {fname}");
+                            for s in body { walk_stmt(&ctx, s, records, out); }
+                        }
+                        _ => walk_item(f, records, out),
+                    }
+                }
             }
             _ => {}
         }
@@ -185,9 +215,34 @@ mod tests {
         let ty = "type Smoke = { title: string, confidence: float }\n";
         let silent = lints(&format!("{ty}fn f() -> string uses LLM {{\n    llm\"\"\"analyze this thing carefully\"\"\" with {{ model: \"fake\", schema: Smoke, budget: 0.01 USD }}\n}}"));
         assert!(silent.iter().any(|l| l.code == "W0003"), "{silent:?}");
-        let loud = lints(&format!("{ty}fn f() -> string uses LLM {{\n    llm\"\"\"return JSON with fields: title and confidence\"\"\" with {{ model: \"fake\", schema: Smoke, budget: 0.01 USD }}\n}}"));
+        let loud = lints(&format!("{ty}fn f() -> string uses LLM {{\n    llm\"\"\"return JSON with fields: title and confidence\"\"\" with {{ model: \"fake\", schema: Smoke, budget: 0.01 USD, retry: 2 with repair }}\n}}"));
         assert!(!loud.iter().any(|l| l.code == "W0003"), "{loud:?}");
         assert!(loud.is_empty(), "{loud:?}");
+    }
+
+    #[test]
+    fn schema_without_repair_warns_w0004() {
+        let ty = "type S = { title: string }\n";
+        let no_repair = lints(&format!("{ty}fn f() -> S uses LLM {{\n    llm\"\"\"return JSON with the title field\"\"\" with {{ model: \"fake\", schema: S, budget: 0.01 USD }}\n}}"));
+        assert!(no_repair.iter().any(|l| l.code == "W0004"), "{no_repair:?}");
+        let repaired = lints(&format!("{ty}fn f() -> S uses LLM {{\n    llm\"\"\"return JSON with the title field\"\"\" with {{ model: \"fake\", schema: S, budget: 0.01 USD, retry: 2 with repair }}\n}}"));
+        assert!(repaired.is_empty(), "{repaired:?}");
+    }
+
+    #[test]
+    fn w0003_uses_word_boundaries_not_substrings() {
+        // field named `in` must not match the word "instruction"
+        let ty = "type T = { inp: string }\n";
+        let ls = lints(&format!("{ty}fn f() -> string uses LLM {{\n    llm\"\"\"follow the instructions carefully and answer well\"\"\" with {{ model: \"fake\", schema: T, budget: 0.01 USD }}\n}}"));
+        assert!(ls.iter().any(|l| l.code == "W0003"), "substring false-negative guard: {ls:?}");
+        let ok = lints(&format!("{ty}fn f() -> string uses LLM {{\n    llm\"\"\"return JSON with the inp field please\"\"\" with {{ model: \"fake\", schema: T, budget: 0.01 USD }}\n}}"));
+        assert!(!ok.iter().any(|l| l.code == "W0003"), "substring false positive: {ok:?}");
+    }
+
+    #[test]
+    fn warnings_carry_fn_context() {
+        let ls = lints("fn analyze() -> string uses LLM {\n    llm\"\"\"do it\"\"\" with { model: \"fake\" }\n}");
+        assert!(ls.iter().all(|l| l.msg.contains("in fn analyze")), "{ls:?}");
     }
 
     #[test]
@@ -196,3 +251,4 @@ mod tests {
         assert_eq!(prompt_words(""), 0);
     }
 }
+
