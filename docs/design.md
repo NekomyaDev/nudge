@@ -1,8 +1,10 @@
 # Nudge — Language Design
 
-**Version:** 1.13 (2026-07-24) · **Status:** Frozen for MVP implementation
+**Version:** 1.14 (2026-07-25) · **Status:** Frozen for MVP implementation
 **Audience:** compiler implementers, language designers, early adopters
 
+> **Changelog v1.14:** v1.1a in progress — real providers landed. §4.6 (new): one stdlib-only OpenAI-compatible HTTP adapter serves `openai`, `gemini`, `groq`, and `ollama`. The provider is chosen by the model string prefix (`gemini:gemini-2.5-flash`) or by `NUDGE_PROVIDER`; `NUDGE_BASE_URL` overrides the endpoint, keys come from `NUDGE_API_KEY` or provider-specific envs (`GEMINI_API_KEY`, …). Real answers are JSON-extracted when a schema is set (fences → first balanced span → raw text into the repair loop), trace records carry the real provider name, real `tokens.in/out` from the API's usage, and a priced `cost_usd` from the runtime pricing table — free-tier quotas and local models price at $0, so budget walls keep working at zero cost. Streaming against real providers falls back to non-streaming; the TS runtime stays fake/replay-only at v1.1a (its adapter lands with async codegen). A secret-gated `provider-smoke` workflow runs a real agent against the Gemini free tier on demand.
+>
 > **Changelog v1.13:** v1.0 complete — the trace format is frozen, A2A export and the LSP server landed. §6: the v1 record schema (kinds `llm.call` / `tool.call` / `fn.return` with their required fields; additive fields like `streamed`/`route`/`server` remain allowed) is **frozen**, and `nudgec trace-check <trace.jsonl>` validates any trace against it (JSON-per-line, `v: 1`, sequential `seq`, per-kind required fields; E0601 on unknown versions). §9: `nudgec a2a <file.ndg>` emits A2A agent cards to `out/<name>.agent.json` — one card per `agent` block (skills from its fns, effects as tags), or a single card wrapping the top-level fns when the file declares no agents; serving the card over HTTP/A2A transport is post-v1.0. §10: `nudgec lsp` serves the Language Server Protocol over stdio (dependency-free JSON-RPC with Content-Length framing): `initialize`, full-document `didOpen`/`didChange`/`didClose` sync with `publishDiagnostics` backed by the real lex→parse→check pipeline (E-codes attached; check diagnostics point at file start until the spanned AST lands), `shutdown`/`exit`; hover/completion are post-v1.0.
 >
 > **Changelog v1.12:** v0.4 complete — the static cost report and user-defined model routing landed. §13: `nudgec cost <file.ndg>` walks each fn's AST and reports llm call sites under flat fake pricing ($0.001/call): per-fn lines plus a `total` line show `N llm call site(s), min $X, max $Y`; `retry: N with repair` multiplies the worst case (1+N calls), and sites inside `par map` bodies are marked runtime-dependent (× collection size). §4.4: `route{ label: "model" when cond, … , label: "model" otherwise }` is an expression returning a model string — arms evaluate top-down, the first truthy `when` wins, an `otherwise` arm is mandatory (E0702), non-bool conditions are E0201, and `route` stays a contextual keyword (only special directly before `{`). It lowers to `rt.route((label, model, lambda: cond), …)`; the winning label lands on the next `llm.call` record as the additive `route` field (§6). The TS backend mirrors the lowering (`rt.route([label, model, () => cond], …)`).
@@ -161,6 +163,16 @@ Schema validation runs **incrementally** over partial JSON; a prefix that can no
 MVP mechanism (v1.8): `stream let` lowers to `rt.llm_stream`. The fake provider streams its answer in deterministic 14-character chunks; each prefix is checked by `_PrefixValidator` (wrong-type literal start, number out of range, invalid `uri`, object closing without a `required` key, malformed JSON ⇒ `_PrefixImpossible`). An abort counts as a schema violation — the §4.2 repair loop applies unchanged — and is traced with `early_abort: true` plus the consumed `chunks` count. `stream` is a contextual keyword (§12): only special directly before `let`, and `stream let` on a non-LLM binding degrades to a plain `let` with a codegen warning. `for chunk in report.chunks()` lands with `for` loops post-MVP.
 
 ---
+
+## 4.6. Providers — fake, replay, and real (v1.14)
+
+| Provider | Selected by | Cost | Use |
+|---|---|---|---|
+| `fake` | default | flat $0.001/call | offline dev, tests, replay |
+| `replay` | `NUDGE_REPLAY=<trace>` | $0 | test blocks, CI |
+| `openai` / `gemini` / `groq` / `ollama` | model prefix (`gemini:gemini-2.5-flash`) or `NUDGE_PROVIDER` | pricing table; free/local = $0 | real runs |
+
+Mechanism: one OpenAI-compatible HTTP adapter (stdlib `urllib`, no deps). `NUDGE_BASE_URL` overrides the endpoint (proxies, local Ollama); keys come from `NUDGE_API_KEY` or provider-specific envs (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`). Schema'd calls JSON-extract the answer (``` fences → first balanced span → raw text, which fails validation and enters the §4.2 repair loop). Trace records carry the real provider name, real usage tokens, and priced `cost_usd` — every additive-free v1 field. Streaming falls back to non-streaming against real providers; TS is fake/replay-only until async codegen. Unknown `NUDGE_PROVIDER` values fail fast. Conformance: mock-server e2e in the compiler suite + the manual `provider-smoke` GitHub workflow against the Gemini free tier.
 
 ## 5. Parallelism
 
