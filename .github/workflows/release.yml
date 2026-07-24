@@ -47,7 +47,7 @@ jobs:
     needs: binaries
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download@v4
+      - uses: actions/download-artifact@v4
         with:
           pattern: bin-*
           merge-multiple: true
