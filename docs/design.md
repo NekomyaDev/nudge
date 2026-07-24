@@ -1,8 +1,10 @@
 # Nudge — Language Design
 
-**Version:** 1.18 (2026-07-25) · **Status:** Frozen for MVP implementation
+**Version:** 1.19 (2026-07-25) · **Status:** Frozen for MVP implementation
 **Audience:** compiler implementers, language designers, early adopters
 
+> **Changelog v1.19:** Prompt Clippy audit round 2 — W0004 no longer fires on `stream let` calls (streaming validates incrementally per §4.5; there is no repair loop to miss), and identical warnings collapse into one line with a repetition count (`×N`) until spans give each warning its own position.
+>
 > **Changelog v1.18:** Prompt Clippy quality pass — warnings carry their context (`in fn analyze` / `agent X / fn f`); W0003 mentions match on word boundaries (a field named `inp` no longer matches "instruction"); W0004 (new): `schema` without `retry: N with repair` — a violation raises instead of repairing; and lints now surface in the editor as severity-2 LSP diagnostics on otherwise-clean files, not just CLI stderr.
 >
 > **Changelog v1.17:** Prompt Clippy shipped early (strategy backlog) — §20 (new): the compiler lints `llm"""` blocks with non-fatal W-code warnings printed on `check`/`build`/`build-ts`. W0001: llm call without a `budget` (uncapped cost). W0002: prompt under 4 words (vague instruction; `{interpolation}` holes don't count). W0003: a record `schema: T` whose fields never appear in the prompt text (the model can't guess an output contract it was never told). Warnings never fail the build.
@@ -552,7 +554,9 @@ so the language can check the prompt against them.
   repair loop.
 
 Every warning carries its context (`in fn name`, `agent X / fn f`,
-`test "name"`). Lints also surface in the editor: the LSP server attaches
+`test "name"`). Identical warnings collapse into one line with a `×N`
+repetition count. W0004 is suppressed for `stream let` calls (incremental
+validation per §4.5, not the repair loop). Lints also surface in the editor: the LSP server attaches
 them as severity-2 diagnostics to otherwise-clean files (positioned at the
 file start until the spanned AST lands, same caveat as check diagnostics).
 
