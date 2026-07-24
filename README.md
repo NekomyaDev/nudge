@@ -62,6 +62,12 @@ The compiler proves the schema matches, infers effects, and computes a static co
 - **Native parallelism** — `par map`, `par race`, `par all` with compile-time race safety.
 - **MCP & Python interop** — consume MCP servers as typed tools; escape to any pip package.
 
+## Install
+
+- **Prebuilt binaries** — every `v*` tag builds `nudgec` for Linux, macOS (x86_64 + Apple Silicon), and Windows and attaches the tarballs to the [GitHub Release](https://github.com/NekomyaDev/nudge/releases). Extract, add to `PATH`, done.
+- **From source** — `cargo build --release` → `target/release/nudgec`. Zero dependencies, builds in seconds.
+- **Runtime** — `export PYTHONPATH=$PWD/runtime` (emitted code imports `nudge_runtime`). crates.io / PyPI packages land when the registry secrets are enabled.
+
 ## Quickstart
 
 ```sh
