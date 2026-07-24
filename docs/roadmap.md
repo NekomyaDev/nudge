@@ -37,3 +37,46 @@ Design v1.16 is frozen ([design.md](design.md)). This file tracks implementation
 
 - Design changes require an amendment PR against `docs/design.md` first.
 - Every diagnostic code needs a conformance fixture before it ships.
+
+## Beyond v1.1 — the path to v2.0
+
+Theme per release. Each line is a milestone, not a promise of dates; the
+community milestones (registry accounts, Show HN) unblock in parallel.
+
+### v1.2 — Depth (make the core airtight)
+- **Spanned AST** — every node carries its byte span → check diagnostics point
+  at the exact site (no more file-start diagnostics), LSP underline-precision
+- **SSE/HTTP MCP transport** — remote servers, not just local stdio
+- **TS runtime parity** — provider adapter + agents/`par` pools on async codegen
+- **crates.io + PyPI live** — `cargo install nudgec`, `pip install nudge-runtime`
+  (gated jobs already shipped in v1.1b; needs the registry tokens)
+- Community: Show HN, first external contributors, good-first-issue triage
+
+### v1.3 — Ecosystem (meet users where they are)
+- **Stdlib** — `std/http`, `std/fs`, `std/jsonl`, `std/text` as typed tools
+  with declared effects, so real programs stop escaping to raw Python
+- **Package story** — `use` across files grows into a module path +
+  lockfile-free workspace layout (Nudge stays single-binary, no registry yet)
+- **JetBrains + Zed grammars** — the TextMate grammar ports cheaply; LSP is
+  already editor-agnostic
+- **Web playground** — WASM-compiled `nudgec` on GitHub Pages: type in the
+  browser, see the trace. Zero-install trial = the top funnel for stars
+- **Provider breadth** — Anthropic + Mistral adapters, streaming for real
+  providers (SSE), per-provider pricing table refresh
+
+### v2.0 — The agent runtime (the big thesis)
+The bet: agent frameworks are libraries; **Nudge is the language + runtime**.
+- **Distributed trace store** — traces stream to a local daemon/OTLP
+  collector; `nudgec trace-check` grows into diff + regression suites
+  ("did this prompt change make the agent worse?" as CI)
+- **A2A serving** — v1.0 exports agent cards; v2.0 serves them: a compiled
+  Nudge agent is a network-addressable A2A peer out of the box
+- **Cross-run learning primitives** — budgets, routes and retries tuned from
+  historical traces (the trace format v1 was frozen exactly for this)
+- **Self-hosting milestone** — parts of the runtime rewritten in Nudge
+- Stability: language spec freeze, semver on the compiler, deprecation policy
+
+### Non-goals (staying honest)
+- No hosted SaaS, no token, no "AI cloud" — Nudge is a toolchain, MIT, forever
+- No framework lock-in: emitted Python/TS stays readable and ejectable
+
