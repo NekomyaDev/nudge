@@ -1,8 +1,10 @@
 # Nudge — Language Design
 
-**Version:** 1.17 (2026-07-25) · **Status:** Frozen for MVP implementation
+**Version:** 1.18 (2026-07-25) · **Status:** Frozen for MVP implementation
 **Audience:** compiler implementers, language designers, early adopters
 
+> **Changelog v1.18:** Prompt Clippy quality pass — warnings carry their context (`in fn analyze` / `agent X / fn f`); W0003 mentions match on word boundaries (a field named `inp` no longer matches "instruction"); W0004 (new): `schema` without `retry: N with repair` — a violation raises instead of repairing; and lints now surface in the editor as severity-2 LSP diagnostics on otherwise-clean files, not just CLI stderr.
+>
 > **Changelog v1.17:** Prompt Clippy shipped early (strategy backlog) — §20 (new): the compiler lints `llm"""` blocks with non-fatal W-code warnings printed on `check`/`build`/`build-ts`. W0001: llm call without a `budget` (uncapped cost). W0002: prompt under 4 words (vague instruction; `{interpolation}` holes don't count). W0003: a record `schema: T` whose fields never appear in the prompt text (the model can't guess an output contract it was never told). Warnings never fail the build.
 >
 > **Changelog v1.16:** v1.1d done — §10: the LSP server gains `textDocument/hover` (signatures + keyword docs), `textDocument/definition`, and `textDocument/completion` (keywords, primitive types, `with`-keys, user symbols), all served from a per-document declaration index built by a line scan (robust against partial input; the spanned AST will replace the scan without changing the protocol surface). §8: the MCP registry grows a real transport — entries with a `command` spawn the server over stdio and speak newline-delimited JSON-RPC (`initialize` → `notifications/initialized` → `tools/call`, one persistent session per server); real tool outputs land in the trace, JSON-shaped text content is decoded, and any transport/server error raises instead of silently faking. Entries without `command` keep the stub (`[]`) behavior; unknown server names still fail fast. SSE/HTTP transport is post-v1.1.
@@ -543,9 +545,18 @@ so the language can check the prompt against them.
 - **W0002 vague-prompt** — prompt body under 4 words, counting
   `{interpolation}` holes as zero words.
 - **W0003 schema-silence** — a record `schema: T` (declared in-file) whose
-  field names never appear in the prompt text; the warning suggests telling
-  the model the output contract explicitly.
+  field names never appear in the prompt text (word-boundary matching; the
+  warning suggests telling the model the output contract explicitly).
+- **W0004 schema-without-repair** — `schema` set but no `retry: N with
+  repair`: a validation failure raises at runtime instead of entering the
+  repair loop.
+
+Every warning carries its context (`in fn name`, `agent X / fn f`,
+`test "name"`). Lints also surface in the editor: the LSP server attaches
+them as severity-2 diagnostics to otherwise-clean files (positioned at the
+file start until the spanned AST lands, same caveat as check diagnostics).
 
 Out of scope (for now): cross-file schema lookup, severity configuration,
 `allow(w0002)` attributes. Conformance: unit tests in `lint.rs` cover all
-three rules plus the interpolation-word-count rule.
+four rules, word-boundary matching, context strings, and the
+interpolation-word-count rule; an LSP test covers editor surfacing.
