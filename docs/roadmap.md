@@ -49,6 +49,22 @@ editor.
 - **RFC process** — `docs/rfc/`: design decisions become public proposals;
   the governance signal of a serious language
 
+## v1.5 — Reach (channels, not features)
+
+- **DAP debugger** — Debug Adapter Protocol on top of the replay engine:
+  breakpoints on `llm.call`s, step through an agent run, time-travel back
+  over the trace. Few languages on earth ship a time-travel debugger
+- **`nudge-ci` GitHub Action** (GitHub Marketplace) — any repo adds
+  `uses: …/nudge-ci@v1` and gets agent regression CI. A distribution
+  channel disguised as a feature: our name in other people's CI logs
+- **Compliance positioning** — EU AI Act demands logging/transparency for
+  high-risk AI systems; NTF traces are audit evidence out of the box.
+  "Is your agent AI-Act-ready?" — an enterprise door with zero SaaS
+- **Agent Hub** — a community registry of NTF-conformant agents and tools
+  (A2A cards, static, vendor-free — crates.io mechanics for agents)
+- **The Nudge Book** — mdBook-style language book + playground-embedded
+  interactive tutorial. Languages grow on books
+
 ## v2.0 — The agent runtime (the big thesis)
 
 Agent frameworks are libraries; **Nudge is the language + runtime**.
@@ -61,6 +77,14 @@ Agent frameworks are libraries; **Nudge is the language + runtime**.
   traces (the v1 trace freeze exists exactly for this)
 - **Self-hosting milestone** — parts of the runtime rewritten in Nudge
 - **Stability** — language spec freeze, semver compiler, deprecation policy
+
+## Horizon (authority plays, date-free)
+
+- **Talk circuit** — FOSDEM / RustConf / PyCon proposals; possibly a short
+  industry-track paper ("typed LLM calls with replayable traces")
+- **Jupyter kernel** — the data-science crowd meets Nudge in a notebook
+- **Conformance certification** — "NTF-conformant" badge for third-party
+  tools and exporters, once the standard has adopters
 
 ## Non-goals (staying honest)
 
