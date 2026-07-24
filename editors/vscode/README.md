@@ -22,7 +22,7 @@ If `nudgec` lives elsewhere, set `nudge.serverPath` in your settings.
 ## Install from .vsix
 
 ```
-code --install-extension nudge-1.0.0.vsix
+code --install-extension nudge-lang-1.0.0.vsix
 ```
 
 or: Extensions view → `...` → *Install from VSIX...*
