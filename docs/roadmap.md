@@ -1,6 +1,6 @@
 # Nudge — Roadmap
 
-Design v1.13 is frozen ([design.md](design.md)). This file tracks implementation.
+Design v1.14 is frozen ([design.md](design.md)). This file tracks implementation.
 
 ## MVP — v0.1 (2-week plan)
 
@@ -17,7 +17,7 @@ Design v1.13 is frozen ([design.md](design.md)). This file tracks implementation
 
 ## After MVP
 
-- **v1.1a** — real provider adapter ⬜ — OpenAI-compatible HTTP provider (`NUDGE_PROVIDER=openai`, `NUDGE_BASE_URL`/`NUDGE_API_KEY`, provider prefix parsed from the model string) verified against zero-cost backends: Ollama (local), Groq & Gemini free tiers; free-tier pricing table feeds `nudgec cost` with real prices
+- **v1.1a** — real provider adapter ✅ done — one stdlib-only OpenAI-compatible HTTP adapter (`openai`/`gemini`/`groq`/`ollama`), provider prefix in the model string or `NUDGE_PROVIDER`, real usage tokens + priced cost in the trace (free/local models $0), mock-server e2e + secret-gated `provider-smoke` workflow against the Gemini free tier; TS adapter deferred to async codegen
 - **v1.1b** — distribution ⬜ — `cargo install nudgec` (crates.io), `pip install nudge-runtime` (PyPI), prebuilt release binaries (linux/mac/win) from CI
 - **v1.1c** — VS Code extension ⬜ — marketplace package wiring the existing `nudgec lsp` (syntax highlighting + diagnostics)
 - **v1.1d** — LSP depth + real MCP transport ⬜ — hover/go-to-def/completion + quick-fixes; MCP over stdio/SSE instead of the registry stub
