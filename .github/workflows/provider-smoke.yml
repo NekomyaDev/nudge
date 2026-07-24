@@ -1,0 +1,34 @@
+name: provider-smoke
+
+# Manual, secret-gated end-to-end proof that the OpenAI-compatible provider
+# adapter (design §4.6, v1.1a) runs a real agent against a real model:
+# the Gemini free tier. Trigger: Actions → provider-smoke → Run workflow.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  gemini:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: cargo build --workspace
+      - name: run the smoke agent against the Gemini free tier
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PYTHONPATH: runtime
+          NUDGE_TRACE: smoke-trace.jsonl
+        run: |
+          ./target/debug/nudgec check examples/smoke_provider.ndg
+          ./target/debug/nudgec build examples/smoke_provider.ndg
+          python3 out/smoke_provider.py
+          echo "--- trace ---"
+          cat smoke-trace.jsonl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smoke-trace
+          path: smoke-trace.jsonl
