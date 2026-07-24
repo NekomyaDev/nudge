@@ -590,14 +590,23 @@ def _openai_chat(provider, model, prompt):
         base.rstrip("/") + "/chat/completions", data=body,
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
     )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            data = json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", "replace")[:500]
-        raise RuntimeError(f"{provider} provider HTTP {e.code}: {detail}")
-    except urllib.error.URLError as e:
-        raise RuntimeError(f"{provider} provider unreachable: {e.reason}")
+    data = None
+    last_err = None
+    # 429s are routine on free tiers — back off and retry (5s, 25s, 125s)
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read())
+            break
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", "replace")[:500]
+            last_err = RuntimeError(f"{provider} provider HTTP {e.code}: {detail}")
+            if e.code == 429 and attempt < 3:
+                time.sleep(5 * (5 ** attempt))
+                continue
+            raise last_err
+        except urllib.error.URLError as e:
+            raise RuntimeError(f"{provider} provider unreachable: {e.reason}")
     try:
         text = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
