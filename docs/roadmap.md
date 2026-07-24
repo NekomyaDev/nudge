@@ -17,6 +17,11 @@ Design v1.13 is frozen ([design.md](design.md)). This file tracks implementation
 
 ## After MVP
 
+- **v1.1a** — real provider adapter ⬜ — OpenAI-compatible HTTP provider (`NUDGE_PROVIDER=openai`, `NUDGE_BASE_URL`/`NUDGE_API_KEY`, provider prefix parsed from the model string) verified against zero-cost backends: Ollama (local), Groq & Gemini free tiers; free-tier pricing table feeds `nudgec cost` with real prices
+- **v1.1b** — distribution ⬜ — `cargo install nudgec` (crates.io), `pip install nudge-runtime` (PyPI), prebuilt release binaries (linux/mac/win) from CI
+- **v1.1c** — VS Code extension ⬜ — marketplace package wiring the existing `nudgec lsp` (syntax highlighting + diagnostics)
+- **v1.1d** — LSP depth + real MCP transport ⬜ — hover/go-to-def/completion + quick-fixes; MCP over stdio/SSE instead of the registry stub
+
 - **v0.2a** — hybrid replay ✅ done — `NUDGE_REPLAY_MODE=llm` (LLM from trace, tools live), `tool.call` trace records, full-replay tool mocking, serialized trace emission (59 tests)
 - **v0.2b** — streaming (`stream let`, incremental schema validation) ✅ done — `rt.llm_stream` + `_PrefixValidator` early-abort on unsatisfiable prefixes, `streamed`/`chunks`/`early_abort` trace fields, stream-replay parity (64 tests)
 - **v0.2c** — checkpoint/resume (`agent`/`state` blocks, `nudge resume`) ✅ done — `rt.AgentState` checkpoints every state write to `.nudge/runs/<run_id>/`, resume replays the recorded prefix then goes live (replayed state writes suppressed via the `writes` counter), E0701 for stray state writes (69 tests)
