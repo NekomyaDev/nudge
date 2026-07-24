@@ -102,3 +102,27 @@ proofs, the standard.
 *Sequencing honesty: every star hangs on the door chain — trace freeze →
 standard → proofs → economy → foundation. The first link already sits in
 the repo.*
+
+## The idea backlog (accepted, awaiting a slot)
+
+Ideas ratified into the strategy; each lands in a version when its door
+opens.
+
+- **Open Trace Commons** 🌍 — the "ImageNet of agent behavior": opt-in,
+  anonymized NTF traces donated to a public dataset. Researchers write
+  papers on it (citations flow back), benchmarks feed from it, and the NTF
+  standard entrenches itself by use. Community + academia + standard in one
+  move. *(Feeds Doors 2–4; pairs with the web playground.)*
+- **Prompt Clippy** 🔍 — the compiler lints `llm"""` blocks: vague
+  instruction, missing output contract, schema fields never mentioned in the
+  prompt, prompt too long for the declared budget. Prompt engineering as a
+  compiler concern — nobody does this; small build, huge visibility.
+  *(Door 1; an early v1.2/v1.3 candidate.)*
+- **VCR-world simulation** ✈️ — record tool responses once (the trace
+  already does), replay the whole world: develop agents offline,
+  deterministically, at zero cost, with always-green CI. "VCR for the web."
+  *(Doors 1–2; a natural extension of the replay engine.)*
+- **`nudgec evolve`** 🧬 — semantic diffs between agent *versions*, not just
+  runs: "v3 shortened the prompt, moved to the strong model, cost −40%,
+  accuracy flat." Behavioral change-tracking beyond version control.
+  *(Door 5's visible face.)*
