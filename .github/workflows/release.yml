@@ -1,0 +1,86 @@
+name: release
+
+# Tag-driven release pipeline (v1.1b): `git tag v1.0.1 && git push --tags`
+# builds prebuilt nudgec binaries for linux/mac/windows and attaches them to
+# the GitHub Release. crates.io / PyPI publishing stays OFF until the owner
+# enables it: set repo variables CARGO_PUBLISH_ENABLED=true / PYPI_PUBLISH_ENABLED=true
+# plus the CARGO_REGISTRY_TOKEN / PYPI_API_TOKEN secrets.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  binaries:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
+          - { target: x86_64-apple-darwin, os: macos-13 }
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: stage the binary
+        shell: bash
+        run: |
+          BIN="target/${{ matrix.target }}/release/nudgec"
+          [ -f "$BIN" ] || BIN="$BIN.exe"
+          mkdir -p stage
+          cp "$BIN" "stage/${{ matrix.artifact_name || 'x' }}"
+          echo "staged: $(ls -la stage)"
+        env:
+          artifact_name: nudgec-${{ matrix.target }}${{ contains(matrix.target, 'windows') && '.exe' || '' }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.target }}
+          path: stage/
+
+  attach:
+    needs: binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download@v4
+        with:
+          pattern: bin-*
+          merge-multiple: true
+      - run: |
+          chmod +x nudgec-* || true
+          for f in nudgec-*; do tar czf "$f.tar.gz" "$f"; done
+          ls -la *.tar.gz
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: "nudgec-*.tar.gz"
+          generate_release_notes: true
+
+  crates:
+    if: ${{ vars.CARGO_PUBLISH_ENABLED == 'true' }}
+    needs: attach
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo publish --token "${{ secrets.CARGO_REGISTRY_TOKEN }}"
+
+  pypi:
+    if: ${{ vars.PYPI_PUBLISH_ENABLED == 'true' }}
+    needs: attach
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          pip install build twine
+          cd runtime && python -m build
+      - run: twine upload runtime/dist/* -u __token__ -p "${{ secrets.PYPI_API_TOKEN }}" --non-interactive
