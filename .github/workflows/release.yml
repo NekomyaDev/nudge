@@ -19,10 +19,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
-          - { target: x86_64-apple-darwin, os: macos-13 }
-          - { target: aarch64-apple-darwin, os: macos-latest }
-          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest, bin: nudgec-linux-x86_64 }
+          - { target: x86_64-apple-darwin, os: macos-13, bin: nudgec-macos-x86_64 }
+          - { target: aarch64-apple-darwin, os: macos-latest, bin: nudgec-macos-aarch64 }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest, bin: nudgec-windows-x86_64.exe }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -36,10 +36,8 @@ jobs:
           BIN="target/${{ matrix.target }}/release/nudgec"
           [ -f "$BIN" ] || BIN="$BIN.exe"
           mkdir -p stage
-          cp "$BIN" "stage/${{ matrix.artifact_name || 'x' }}"
-          echo "staged: $(ls -la stage)"
-        env:
-          artifact_name: nudgec-${{ matrix.target }}${{ contains(matrix.target, 'windows') && '.exe' || '' }}
+          cp "$BIN" "stage/${{ matrix.bin }}"
+          ls -la stage
       - uses: actions/upload-artifact@v4
         with:
           name: bin-${{ matrix.target }}
