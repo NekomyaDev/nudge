@@ -3,7 +3,7 @@
   "displayName": "Nudge",
   "description": "Nudge language support — typed, replayable, budget-aware LLM agents (.ndg): syntax highlighting, diagnostics via nudgec lsp, snippets",
   "version": "1.0.0",
-  "publisher": "NekomyaDev",
+  "publisher": "Nekomya",
   "license": "MIT",
   "icon": "icon.png",
   "engines": {
