@@ -1,6 +1,6 @@
 # Nudge — Roadmap
 
-Design v1.10 is frozen ([design.md](design.md)). This file tracks implementation.
+Design v1.11 is frozen ([design.md](design.md)). This file tracks implementation.
 
 ## MVP — v0.1 (2-week plan)
 
@@ -21,9 +21,9 @@ Design v1.10 is frozen ([design.md](design.md)). This file tracks implementation
 - **v0.2b** — streaming (`stream let`, incremental schema validation) ✅ done — `rt.llm_stream` + `_PrefixValidator` early-abort on unsatisfiable prefixes, `streamed`/`chunks`/`early_abort` trace fields, stream-replay parity (64 tests)
 - **v0.2c** — checkpoint/resume (`agent`/`state` blocks, `nudge resume`) ✅ done — `rt.AgentState` checkpoints every state write to `.nudge/runs/<run_id>/`, resume replays the recorded prefix then goes live (replayed state writes suppressed via the `writes` counter), E0701 for stray state writes (69 tests)
 - **v0.3a** — reducer state (`| merge`) ✅ done — `l | merge r` infix (contextual `merge`) lowers to `rt.merge`: dict union (right wins), list append-dedup; checker requires two records or two lists; composes with checkpoints + resume (74 tests)
-- **v0.3b** — multi-server MCP ⬜
-- **v0.3c** — TypeScript backend ⬜
-- **v0.3d** — OTel span export ⬜
+- **v0.3b** — multi-server MCP ✅ done — `impl: mcp("server").…` routes through the `NUDGE_MCP_SERVERS` JSON registry (unknown server fails fast), `tool.call` records gain a `server` field; real MCP transport stays post-MVP (80 tests)
+- **v0.3c** — TypeScript backend ✅ done — `nudgec build-ts` emits `out/<name>.ts` + `runtime/nudge_runtime.ts` ships (fake provider, replay, budget, merge); agents/streaming/par pools deferred with warning comments (80 tests)
+- **v0.3d** — OTel span export ✅ done — `NUDGE_OTEL=<path>` writes every trace record as an OTel-shaped JSON-lines span; OTLP transport post-MVP (80 tests)
 - **v0.4** — `nudge cost` static cost report, user-defined routing
 - **v1.0** — A2A export, LSP (VS Code), frozen trace format
 - **Docs i18n** — Simplified Chinese documentation after v0.1; compiler diagnostics are localization-ready from day one
