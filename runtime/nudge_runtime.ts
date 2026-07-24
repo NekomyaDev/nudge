@@ -128,6 +128,13 @@ export function llmCall(opts) {
     // replayed calls are not traced or charged (parity with the python runtime)
     return outs[_replayIdx++];
   }
+  // v1.1a: real providers are Python-only for now (OpenAI-compatible
+  // adapter ships in nudge_runtime; the TS adapter lands with async codegen)
+  const prefix = model && model.includes(":") ? model.split(":")[0] : null;
+  if ((process.env.NUDGE_PROVIDER && process.env.NUDGE_PROVIDER !== "fake") ||
+      (prefix && ["openai", "gemini", "groq", "ollama"].includes(prefix))) {
+    throw new Error("nudge_runtime.ts: real providers run on the Python runtime at v1.1a — compile with `nudgec build` for provider access");
+  }
   const out = sch ? _synth(sch) : `[fake:${model}] ${prompt}`;
   _emitTrace({ kind: "llm.call", model: model || "fake", outcome: "ok", cost_usd: FAKE_CALL_COST });
   _budgetCharge(FAKE_CALL_COST, budget);
