@@ -1,6 +1,6 @@
 # Nudge — Roadmap
 
-Design v1.15 is frozen ([design.md](design.md)). This file tracks implementation.
+Design v1.16 is frozen ([design.md](design.md)). This file tracks implementation.
 
 ## MVP — v0.1 (2-week plan)
 
@@ -20,7 +20,7 @@ Design v1.15 is frozen ([design.md](design.md)). This file tracks implementation
 - **v1.1a** — real provider adapter ✅ done — one stdlib-only OpenAI-compatible HTTP adapter (`openai`/`gemini`/`groq`/`ollama`), provider prefix in the model string or `NUDGE_PROVIDER`, real usage tokens + priced cost in the trace (free/local models $0), mock-server e2e + secret-gated `provider-smoke` workflow against the Gemini free tier; TS adapter deferred to async codegen
 - **v1.1b** — distribution ✅ done — tag-driven `release` workflow builds prebuilt nudgec binaries (linux x86_64, macOS x86_64 + aarch64, windows x86_64) and attaches them to the GitHub Release; crates.io / PyPI publish jobs ship gated behind repo variables (`CARGO_PUBLISH_ENABLED` / `PYPI_PUBLISH_ENABLED`) until the registry accounts + tokens exist
 - **v1.1c** — VS Code extension ✅ done — `editors/vscode/` ships a marketplace-ready package: TextMate grammar (keywords, `llm"""` prompts + interpolation, USD literals, `@constraint`s), language configuration, 5 snippets (`llm`/`type`/`par`/`fn`/`test`), and diagnostics wired to `nudgec lsp` over stdio via `vscode-languageclient`; published on the VS Code Marketplace as **Nudge Language** (`Nekomya.nudge-lang`); `.vsix` also attached to the v1.0.1 release
-- **v1.1d** — LSP depth + real MCP transport ⬜ — hover/go-to-def/completion + quick-fixes; MCP over stdio/SSE instead of the registry stub
+- **v1.1d** — LSP depth + real MCP transport ✅ done — hover/definition/completion in `nudgec lsp` from a per-document symbol index; `NUDGE_MCP_SERVERS` entries with `command` get a real stdio JSON-RPC transport (initialize → tools/call, real outputs in the trace, fail-fast errors) with mock-server e2e tests
 
 - **v0.2a** — hybrid replay ✅ done — `NUDGE_REPLAY_MODE=llm` (LLM from trace, tools live), `tool.call` trace records, full-replay tool mocking, serialized trace emission (59 tests)
 - **v0.2b** — streaming (`stream let`, incremental schema validation) ✅ done — `rt.llm_stream` + `_PrefixValidator` early-abort on unsatisfiable prefixes, `streamed`/`chunks`/`early_abort` trace fields, stream-replay parity (64 tests)
