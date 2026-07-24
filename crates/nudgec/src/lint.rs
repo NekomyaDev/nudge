@@ -57,6 +57,7 @@ fn lint_llm_call(
     prompt_body: Option<&str>,
     options: &[(String, Expr)],
     repair: bool,
+    streaming: bool,
     records: &[(String, Vec<String>)],
     out: &mut Vec<Lint>,
 ) {
@@ -65,8 +66,9 @@ fn lint_llm_call(
         out.push(lint("W0001", format!("in {ctx}: llm call has no `budget` option — cost is uncapped; add `budget: N USD` to the with-block")));
     }
     // W0004: schema without repair — a validation failure raises instead
-    // of entering the repair loop
-    if options.iter().any(|(k, _)| k == "schema") && !repair {
+    // of entering the repair loop. Skipped for streaming calls: `stream let`
+    // validates incrementally (design §4.5), there is no repair loop to miss.
+    if options.iter().any(|(k, _)| k == "schema") && !repair && !streaming {
         out.push(lint("W0004", format!("in {ctx}: `schema` without `retry: N with repair` — a schema violation raises at runtime instead of being repaired; add a repair loop or accept the crash")));
     }
     let Some(body) = prompt_body else { return };
@@ -102,7 +104,7 @@ fn lint_llm_call(
     }
 }
 
-fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut Vec<Lint>) {
+fn walk_expr(ctx: &str, streaming: bool, e: &Expr, records: &[(String, Vec<String>)], out: &mut Vec<Lint>) {
     match e {
         Expr::LlmCall { prompt, options, repair } => {
             let body = match prompt.as_ref() {
@@ -110,34 +112,34 @@ fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut V
                 Expr::Str(s) => Some(s.as_str()),
                 _ => None,
             };
-            lint_llm_call(ctx, body, options, *repair, records, out);
-            walk_expr(ctx, prompt, records, out);
+            lint_llm_call(ctx, body, options, *repair, streaming, records, out);
+            walk_expr(ctx, streaming, prompt, records, out);
             for (_, v) in options {
-                walk_expr(ctx, v, records, out);
+                walk_expr(ctx, streaming, v, records, out);
             }
         }
         Expr::ListLit(xs) | Expr::ParAll(xs) | Expr::ParRace(xs) => {
-            for x in xs { walk_expr(ctx, x, records, out); }
+            for x in xs { walk_expr(ctx, streaming, x, records, out); }
         }
         Expr::Call { func, args, kwargs } => {
-            walk_expr(ctx, func, records, out);
-            for a in args { walk_expr(ctx, a, records, out); }
-            for (_, v) in kwargs { walk_expr(ctx, v, records, out); }
+            walk_expr(ctx, streaming, func, records, out);
+            for a in args { walk_expr(ctx, streaming, a, records, out); }
+            for (_, v) in kwargs { walk_expr(ctx, streaming, v, records, out); }
         }
-        Expr::Field { obj, .. } => walk_expr(ctx, obj, records, out),
+        Expr::Field { obj, .. } => walk_expr(ctx, streaming, obj, records, out),
         Expr::Binary { l, r, .. } | Expr::Merge { l, r, .. } => {
-            walk_expr(ctx, l, records, out);
-            walk_expr(ctx, r, records, out);
+            walk_expr(ctx, streaming, l, records, out);
+            walk_expr(ctx, streaming, r, records, out);
         }
-        Expr::Unary { x, .. } => walk_expr(ctx, x, records, out),
+        Expr::Unary { x, .. } => walk_expr(ctx, streaming, x, records, out),
         Expr::ParMap { coll, kwargs, body, .. } => {
-            walk_expr(ctx, coll, records, out);
-            for (_, v) in kwargs { walk_expr(ctx, v, records, out); }
-            walk_expr(ctx, body, records, out);
+            walk_expr(ctx, streaming, coll, records, out);
+            for (_, v) in kwargs { walk_expr(ctx, streaming, v, records, out); }
+            walk_expr(ctx, streaming, body, records, out);
         }
         Expr::Route { arms } => {
             for (_, _, cond) in arms {
-                if let Some(c) = cond { walk_expr(ctx, c, records, out); }
+                if let Some(c) = cond { walk_expr(ctx, streaming, c, records, out); }
             }
         }
         _ => {}
@@ -146,8 +148,11 @@ fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut V
 
 fn walk_stmt(ctx: &str, s: &Stmt, records: &[(String, Vec<String>)], out: &mut Vec<Lint>) {
     match s {
-        Stmt::Let { value, .. } | Stmt::StateWrite { value, .. } => walk_expr(ctx, value, records, out),
-        Stmt::Assert(e) | Stmt::ExprStmt(e) => walk_expr(ctx, e, records, out),
+        // `stream let` marks every llm call in its subtree as streaming —
+        // W0004 does not apply to incremental validation
+        Stmt::Let { value, stream, .. } => walk_expr(ctx, *stream, value, records, out),
+        Stmt::StateWrite { value, .. } => walk_expr(ctx, false, value, records, out),
+        Stmt::Assert(e) | Stmt::ExprStmt(e) => walk_expr(ctx, false, e, records, out),
     }
 }
 
@@ -183,7 +188,25 @@ pub fn lint_items(items: &[Item]) -> Vec<Lint> {
     for it in items {
         walk_item(it, &records, &mut out);
     }
-    out
+    // identical warnings (same code + message — e.g. three uncapped calls in
+    // one fn) collapse into one line with a repetition count, keeping the
+    // output readable until spans give each warning its own position
+    let mut deduped: Vec<Lint> = Vec::new();
+    let mut counts: Vec<usize> = Vec::new();
+    for l in out {
+        if let Some(i) = deduped.iter().position(|d| d.code == l.code && d.msg == l.msg) {
+            counts[i] += 1;
+            continue;
+        }
+        deduped.push(l);
+        counts.push(1);
+    }
+    for (l, n) in deduped.iter_mut().zip(counts) {
+        if n > 1 {
+            l.msg = format!("{} (×{n})", l.msg);
+        }
+    }
+    deduped
 }
 
 #[cfg(test)]
@@ -243,6 +266,25 @@ mod tests {
     fn warnings_carry_fn_context() {
         let ls = lints("fn analyze() -> string uses LLM {\n    llm\"\"\"do it\"\"\" with { model: \"fake\" }\n}");
         assert!(ls.iter().all(|l| l.msg.contains("in fn analyze")), "{ls:?}");
+    }
+
+    #[test]
+    fn streaming_calls_skip_w0004() {
+        let ty = "type S = { title: string }\n";
+        let streamed = lints(&format!("{ty}fn f() -> string uses LLM {{\n    stream let a = llm\"\"\"return JSON with the title field\"\"\" with {{ model: \"fake\", schema: S, budget: 0.01 USD }}\n}}"));
+        assert!(!streamed.iter().any(|l| l.code == "W0004"), "{streamed:?}");
+        // a non-stream call in the same file still gets W0004
+        let plain = lints(&format!("{ty}fn f() -> string uses LLM {{\n    let a = llm\"\"\"return JSON with the title field\"\"\" with {{ model: \"fake\", schema: S, budget: 0.01 USD }}\n}}"));
+        assert!(plain.iter().any(|l| l.code == "W0004"), "{plain:?}");
+    }
+
+    #[test]
+    fn identical_warnings_collapse_with_a_count() {
+        let src = "fn f() -> string uses LLM {\n    let a = llm\"\"\"summarize this text please\"\"\" with { model: \"fake\" }\n    let b = llm\"\"\"summarize this text please\"\"\" with { model: \"fake\" }\n}";
+        let ls = lints(src);
+        let w1: Vec<_> = ls.iter().filter(|l| l.code == "W0001").collect();
+        assert_eq!(w1.len(), 1, "{ls:?}");
+        assert!(w1[0].msg.contains("×2"), "{}", w1[0].msg);
     }
 
     #[test]
