@@ -7,14 +7,21 @@
 //!   nudgec cost  <file.ndg>   static cost report per fn (v0.4, design §13)
 //!   nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn
 //!   nudgec resume <run_id>    continue a crashed run from its last checkpoint (design §7)
+//!   nudgec trace-check <t.jsonl> validate a trace against the frozen v1 schema (v1.0, design §6)
+//!   nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json (v1.0, design §9)
+//!   nudgec lsp                serve the Language Server Protocol over stdio (v1.0, design §10)
 
+mod a2a;
 mod ast;
 mod check;
 mod codegen;
 mod codegen_ts;
 mod cost;
+mod json;
 mod lexer;
+mod lsp;
 mod parser;
+mod tracecheck;
 
 use std::{env, fs, process};
 
@@ -29,6 +36,9 @@ fn usage() -> ! {
     eprintln!("  nudgec cost  <file.ndg>   static cost report per fn");
     eprintln!("  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn");
     eprintln!("  nudgec resume <run_id>    continue a crashed run from its last checkpoint");
+    eprintln!("  nudgec trace-check <t.jsonl> validate a trace against the frozen v1 schema");
+    eprintln!("  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json");
+    eprintln!("  nudgec lsp                serve the Language Server Protocol over stdio");
     process::exit(64);
 }
 
@@ -41,6 +51,11 @@ fn read_src(path: &str) -> String {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+    // `lsp` takes no file argument — it serves JSON-RPC over stdio
+    if args.len() == 2 && args[1] == "lsp" {
+        lsp::run();
+        return;
+    }
     if args.len() != 3 {
         usage();
     }
@@ -252,6 +267,47 @@ fn main() {
                 }
             }
         }
+        // design §6 (v1.0): validate a trace against the frozen v1 schema
+        "trace-check" => {
+            let problems = tracecheck::validate(&src);
+            if problems.is_empty() {
+                let n = src.lines().filter(|l| !l.trim().is_empty()).count();
+                eprintln!("-- trace OK ({n} record(s), frozen v1 schema)");
+            } else {
+                for p in &problems {
+                    eprintln!("error: {p}");
+                }
+                process::exit(1);
+            }
+        }
+        // design §9 (v1.0): A2A agent-card export — one card per agent
+        // block, or a single card wrapping the file's top-level fns
+        "a2a" => match compile(&src) {
+            Ok(items) => {
+                let stem = std::path::Path::new(&args[2])
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("agent");
+                if let Err(e) = fs::create_dir_all("out") {
+                    eprintln!("error: cannot create out/: {e}");
+                    process::exit(1);
+                }
+                for (name, card) in a2a::cards(&items, stem) {
+                    let path = std::path::Path::new("out").join(format!("{name}.agent.json"));
+                    match fs::write(&path, json::dumps(&card) + "\n") {
+                        Ok(()) => println!("wrote {}", path.display()),
+                        Err(e) => {
+                            eprintln!("error: cannot write {}: {e}", path.display());
+                            process::exit(1);
+                        }
+                    }
+                }
+            }
+            Err(msg) => {
+                eprintln!("error[E0002]: {msg}");
+                process::exit(1);
+            }
+        },
         _ => usage(),
     }
 }
