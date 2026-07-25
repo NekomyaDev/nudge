@@ -1,8 +1,10 @@
 # Nudge — Language Design
 
-**Version:** 1.22 (2026-07-25) · **Status:** Frozen for MVP implementation
+**Version:** 1.23 (2026-07-25) · **Status:** Frozen for MVP implementation
 **Audience:** compiler implementers, language designers, early adopters
 
+> **Changelog v1.23:** bug-hunt round 8 — replay strictness gap closed: on full replay, exhausting the recorded TOOL prefix now raises `ReplayMismatch`, matching llm calls (§6.2, and the v1.9 intent: "LLM and tool calls consume the recorded prefix … exhaustion without resume still raises"). Previously a program that changed its tool-call pattern replayed "green" with silent `[]` mocks — a determinism hole at the heart of the replay guarantee. Streaming `_PrefixValidator` audited adversarially (early type errors, missing required fields, `format: uri`, array items, char-by-char feeds) — clean.
+>
 > **Changelog v1.22:** bug-hunt round 7 — (1) `llm_stream` had the §4.3 pre-fix semantics: each round was walled individually, so streaming call sites could exceed their declared budget across repair rounds; streaming now shares the same site-cumulative wall as `llm_call`. (2) Prompt Clippy W0004 was wrongly suppressed for `stream let` (introduced in v1.19 on a mistaken premise): streaming shares the §4.2 repair loop — an early abort counts as a schema violation — so `stream` + `schema` without `retry … with repair` now warns like any other call.
 >
 > **Changelog v1.21:** §4.6 — the adapter gains a fifth provider: `mimo` (Xiaomi MiMo, OpenAI-compatible token plans; `mimo:mimo-v2.5-pro`, key from `MIMO_API_KEY`). Subscription-plan models price at $0 — budget walls keep working. The `provider-smoke` workflow accepts `mimo` as an input.
