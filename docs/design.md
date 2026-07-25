@@ -1,8 +1,10 @@
 # Nudge — Language Design
 
-**Version:** 1.21 (2026-07-25) · **Status:** Frozen for MVP implementation
+**Version:** 1.22 (2026-07-25) · **Status:** Frozen for MVP implementation
 **Audience:** compiler implementers, language designers, early adopters
 
+> **Changelog v1.22:** bug-hunt round 7 — (1) `llm_stream` had the §4.3 pre-fix semantics: each round was walled individually, so streaming call sites could exceed their declared budget across repair rounds; streaming now shares the same site-cumulative wall as `llm_call`. (2) Prompt Clippy W0004 was wrongly suppressed for `stream let` (introduced in v1.19 on a mistaken premise): streaming shares the §4.2 repair loop — an early abort counts as a schema violation — so `stream` + `schema` without `retry … with repair` now warns like any other call.
+>
 > **Changelog v1.21:** §4.6 — the adapter gains a fifth provider: `mimo` (Xiaomi MiMo, OpenAI-compatible token plans; `mimo:mimo-v2.5-pro`, key from `MIMO_API_KEY`). Subscription-plan models price at $0 — budget walls keep working. The `provider-smoke` workflow accepts `mimo` as an input.
 >
 > **Changelog v1.20:** budget-wall fix (§4.3): the declared per-call `budget` now caps the **whole call site** — repair rounds share the site budget and a round that would exceed the remainder raises `BudgetExceeded` ("call site budget exhausted … repair rounds share the site budget"). Previously each round was walled individually, so a site with `budget: 0.001 USD` and `retry: 2 with repair` could spend 3× its declared budget without raising. This also aligns runtime behavior with the static cost report's retry worst-case. Regression-locked by two e2e tests.
@@ -559,8 +561,9 @@ so the language can check the prompt against them.
 
 Every warning carries its context (`in fn name`, `agent X / fn f`,
 `test "name"`). Identical warnings collapse into one line with a `×N`
-repetition count. W0004 is suppressed for `stream let` calls (incremental
-validation per §4.5, not the repair loop). Lints also surface in the editor: the LSP server attaches
+repetition count. W0004 applies to `stream let` too —
+streaming shares the §4.2 repair loop (an early abort counts as a
+violation). Lints also surface in the editor: the LSP server attaches
 them as severity-2 diagnostics to otherwise-clean files (positioned at the
 file start until the spanned AST lands, same caveat as check diagnostics).
 
