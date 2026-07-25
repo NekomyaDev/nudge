@@ -829,3 +829,17 @@ fn call_site_budget_allows_repairs_within_budget() {
     let output = run_py(&e, &out_py, &[("NUDGE_FAKE_FAIL_FIRST", "1")]);
     assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
 }
+
+// ── v1.2 regression: streaming call sites share the same budget wall ──
+
+#[test]
+fn stream_site_budget_covers_repair_rounds() {
+    let Some(e) = e2e("stream_budget") else { return };
+    let src = "type S = { title: string }\nfn main() -> string uses LLM {\n    stream let a = llm\"\"\"return JSON with the title field\"\"\" with { model: \"fake\", schema: S, budget: 0.001 USD, retry: 2 with repair }\n    a.title\n}";
+    let out_py = e.dir.join("stream_budget.py");
+    std::fs::write(&out_py, gen(src)).unwrap();
+    let output = run_py(&e, &out_py, &[("NUDGE_FAKE_FAIL_FIRST", "2")]);
+    assert!(!output.status.success(), "stream site must hit the budget wall");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("call site budget exhausted"), "stderr: {stderr}");
+}
