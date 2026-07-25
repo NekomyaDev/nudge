@@ -1,8 +1,10 @@
 # Nudge — Language Design
 
-**Version:** 1.19 (2026-07-25) · **Status:** Frozen for MVP implementation
+**Version:** 1.20 (2026-07-25) · **Status:** Frozen for MVP implementation
 **Audience:** compiler implementers, language designers, early adopters
 
+> **Changelog v1.20:** budget-wall fix (§4.3): the declared per-call `budget` now caps the **whole call site** — repair rounds share the site budget and a round that would exceed the remainder raises `BudgetExceeded` ("call site budget exhausted … repair rounds share the site budget"). Previously each round was walled individually, so a site with `budget: 0.001 USD` and `retry: 2 with repair` could spend 3× its declared budget without raising. This also aligns runtime behavior with the static cost report's retry worst-case. Regression-locked by two e2e tests.
+>
 > **Changelog v1.19:** Prompt Clippy audit round 2 — W0004 no longer fires on `stream let` calls (streaming validates incrementally per §4.5; there is no repair loop to miss), and identical warnings collapse into one line with a repetition count (`×N`) until spans give each warning its own position.
 >
 > **Changelog v1.18:** Prompt Clippy quality pass — warnings carry their context (`in fn analyze` / `agent X / fn f`); W0003 mentions match on word boundaries (a field named `inp` no longer matches "instruction"); W0004 (new): `schema` without `retry: N with repair` — a violation raises instead of repairing; and lints now surface in the editor as severity-2 LSP diagnostics on otherwise-clean files, not just CLI stderr.
