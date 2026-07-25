@@ -397,6 +397,14 @@ def tool_stub(name, args=None, server=None):
             )
     if _replay_mode() == "all":
         if not os.environ.get("NUDGE_RESUME"):
+            # design §6.2/v1.9: exhausting the recorded prefix WITHOUT resume
+            # raises — a program that changed its tool-call pattern must fail
+            # the replay, not silently mock [] (same strictness as llm calls)
+            if not _replay_tool_available(name):
+                raise ReplayMismatch(
+                    f"program called tool '{name}' more times than the trace "
+                    "holds (tool replay exhaustion raises like llm replay)"
+                )
             return _replay_tool_output(name)
         if _replay_tool_available(name):
             return _replay_tool_output(name)
