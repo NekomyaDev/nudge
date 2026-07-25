@@ -12,7 +12,7 @@ on:
         description: "provider to smoke-test"
         type: choice
         default: groq
-        options: [groq, gemini]
+        options: [groq, gemini, mimo]
 
 jobs:
   smoke:
@@ -28,12 +28,14 @@ jobs:
         run: |
           case "${{ inputs.provider }}" in
             groq)   sed -i 's/model: "gemini:gemini-2.5-flash"/model: "groq:llama-3.3-70b-versatile"/' examples/smoke_provider.ndg ;;
+            mimo)   sed -i 's/model: "gemini:gemini-2.5-flash"/model: "mimo:mimo-v2.5-pro"/' examples/smoke_provider.ndg ;;
             gemini) : ;;
           esac
       - name: run the smoke agent against the real provider
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          MIMO_API_KEY: ${{ secrets.MIMO_API_KEY }}
           PYTHONPATH: runtime
           NUDGE_TRACE: smoke-trace.jsonl
         run: |
