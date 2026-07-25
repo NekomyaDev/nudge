@@ -1,8 +1,10 @@
 # Nudge — Language Design
 
-**Version:** 1.23 (2026-07-25) · **Status:** Frozen for MVP implementation
+**Version:** 1.24 (2026-07-25) · **Status:** Frozen for MVP implementation
 **Audience:** compiler implementers, language designers, early adopters
 
+> **Changelog v1.24:** bug-hunt round 9 — TS runtime parity fixes: (1) the TS per-call `budget` was wrongly applied against the cumulative run spend (51 calls at $0.001 with `budget: 0.05 USD` tripped the wall; python walls the single call), and float dust could trip it — both fixed with python-matching semantics + an epsilon; `NUDGE_BUDGET` remains the run-level cap. (2) the TS runtime carries `@ts-nocheck` so strict-mode consumers' `tsc` skips the vendored plain-JS file (15 implicit-any errors before; the runtime stays node-runnable as `.mjs`). Audited clean: `AgentState` checkpoint/resume write-suppression, `par_map` ordering/error propagation/real concurrency (timing-verified), `par_race`/`par_all`, merge/zip/route.
+>
 > **Changelog v1.23:** bug-hunt round 8 — replay strictness gap closed: on full replay, exhausting the recorded TOOL prefix now raises `ReplayMismatch`, matching llm calls (§6.2, and the v1.9 intent: "LLM and tool calls consume the recorded prefix … exhaustion without resume still raises"). Previously a program that changed its tool-call pattern replayed "green" with silent `[]` mocks — a determinism hole at the heart of the replay guarantee. Streaming `_PrefixValidator` audited adversarially (early type errors, missing required fields, `format: uri`, array items, char-by-char feeds) — clean.
 >
 > **Changelog v1.22:** bug-hunt round 7 — (1) `llm_stream` had the §4.3 pre-fix semantics: each round was walled individually, so streaming call sites could exceed their declared budget across repair rounds; streaming now shares the same site-cumulative wall as `llm_call`. (2) Prompt Clippy W0004 was wrongly suppressed for `stream let` (introduced in v1.19 on a mistaken premise): streaming shares the §4.2 repair loop — an early abort counts as a schema violation — so `stream` + `schema` without `retry … with repair` now warns like any other call.
