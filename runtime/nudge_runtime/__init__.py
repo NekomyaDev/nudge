@@ -608,6 +608,7 @@ _PROVIDER_BASE_URLS = {
     "openai": "https://api.openai.com/v1",
     "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
     "groq": "https://api.groq.com/openai/v1",
+    "mimo": "https://token-plan-sgp.xiaomimimo.com/v1",
     "ollama": "http://localhost:11434/v1",
 }
 
@@ -615,10 +616,12 @@ _PROVIDER_KEY_ENVS = {
     "openai": "OPENAI_API_KEY",
     "gemini": "GEMINI_API_KEY",
     "groq": "GROQ_API_KEY",
+    "mimo": "MIMO_API_KEY",
 }
 
 # USD per 1M tokens: (input, output). Models absent from the table —
-# including free-tier quotas and local Ollama models — price at $0.
+# including free-tier quotas, subscription plans (e.g. MiMo token plans),
+# and local Ollama models — price at $0.
 _MODEL_PRICING = {
     "gemini-2.5-flash": (0.30, 2.50),
     "gemini-2.0-flash": (0.10, 0.40),
