@@ -1,6 +1,8 @@
 // nudge_runtime.ts — TypeScript runtime for the Nudge TS backend (v0.3c MVP).
-// Plain-JS style on purpose: runs under node as-is (renamed .mjs in tests)
-// and compiles under tsc/deno. Subset: schema/llmCall/toolStub/replay,
+// @ts-nocheck — vendored, plain-JS style on purpose: runs under node as-is
+// (renamed .mjs in tests) and compiles under tsc/deno. Strict-mode users'
+// tsc should not type-check generated/vendor files; the runtime's own
+// conformance is covered by the compiler's e2e suite. Subset: schema/llmCall/toolStub/replay,
 // budget walls, render, merge, USD. Deferred: streaming, agent state,
 // par scheduling, OTel export (the Python runtime covers those today).
 import * as fs from "node:fs";
@@ -66,12 +68,20 @@ function _emitTrace(record) {
 }
 
 function _budgetCharge(cost, budget) {
+  // parity with the python runtime (design §4.3): the declared `budget` is a
+  // PER-CALL wall against this call's own cost; NUDGE_BUDGET is the separate
+  // run-level cap on total spend. (Previously the per-call budget was
+  // wrongly applied against the cumulative run total — and float dust like
+  // 0.050000000000000003 could trip the wall, hence the epsilon.)
+  if (budget !== null && budget !== undefined && cost > budget + 1e-9) {
+    const err = new Error(`BudgetExceeded: call cost $${cost.toFixed(4)} exceeds its declared budget $${budget}`);
+    err.name = "BudgetExceeded";
+    throw err;
+  }
   _spent += cost;
-  const wall = budget !== null && budget !== undefined ? budget
-    : process.env.NUDGE_BUDGET ? parseFloat(process.env.NUDGE_BUDGET)
-    : null;
-  if (wall !== null && _spent > wall) {
-    const err = new Error(`BudgetExceeded: spent $${_spent.toFixed(4)} > budget $${wall}`);
+  const runWall = process.env.NUDGE_BUDGET ? parseFloat(process.env.NUDGE_BUDGET) : null;
+  if (runWall !== null && _spent > runWall + 1e-9) {
+    const err = new Error(`BudgetExceeded: run spent $${_spent.toFixed(4)} > budget $${runWall}`);
     err.name = "BudgetExceeded";
     throw err;
   }
