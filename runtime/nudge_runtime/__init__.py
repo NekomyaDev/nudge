@@ -1221,6 +1221,19 @@ def llm_call(prompt, model=None, schema=None, retry=0, repair=False,
     # design §4.4: a model chosen via rt.route carries its arm label
     route_label = _take_route_label()
     route_extra = {"route": route_label} if route_label else None
+    # design §4.3: the declared `budget` caps the WHOLE call site, repair
+    # rounds included — each round is charged against what remains
+    site_spent = [0.0]
+    def charge_site(cost):
+        remaining = None if budget is None else float(budget) - site_spent[0]
+        if remaining is not None and cost > remaining:
+            raise BudgetExceeded(
+                f"call site budget exhausted: round cost ${cost:.4f} with "
+                f"${remaining:.4f} left of the declared ${float(budget):.4f} "
+                f"(repair rounds share the site budget)"
+            )
+        site_spent[0] += cost
+        _budget_charge(cost, None)
     for round_no in range(attempts):
         if provider == "replay":
             outputs = _replay_outputs()
@@ -1244,7 +1257,7 @@ def llm_call(prompt, model=None, schema=None, retry=0, repair=False,
                 _trace_call(model, prompt, out, 0, "ok", extra=route_extra,
                             provider=provider, tokens={"in": in_t, "out": out_t},
                             cost=_call_cost(provider, model, in_t, out_t))
-                _budget_charge(_call_cost(provider, model, in_t, out_t), budget)
+                charge_site(_call_cost(provider, model, in_t, out_t))
             return out
         errors = validate(schema, out)
         if not errors:
@@ -1252,7 +1265,7 @@ def llm_call(prompt, model=None, schema=None, retry=0, repair=False,
                 _trace_call(model, prompt, out, round_no, "ok", extra=route_extra,
                             provider=provider, tokens={"in": in_t, "out": out_t},
                             cost=_call_cost(provider, model, in_t, out_t))
-                _budget_charge(_call_cost(provider, model, in_t, out_t), budget)
+                charge_site(_call_cost(provider, model, in_t, out_t))
             # validated records support Nudge's `.field` syntax (AttrDict)
             return _attr(out)
         last_errors, last_raw = errors, out
@@ -1260,7 +1273,7 @@ def llm_call(prompt, model=None, schema=None, retry=0, repair=False,
             _trace_call(model, prompt, out, round_no, "schema_violation", extra=route_extra,
                         provider=provider, tokens={"in": in_t, "out": out_t},
                         cost=_call_cost(provider, model, in_t, out_t))
-            _budget_charge(_call_cost(provider, model, in_t, out_t), budget)
+            charge_site(_call_cost(provider, model, in_t, out_t))
         # design §4.2 step 1: feed raw output errors back to the model
         prompt = _REPAIR_HINT.format(errors="; ".join(errors)) + "\n" + str(prompt)
     raise SchemaFailure(last_errors, last_raw)
