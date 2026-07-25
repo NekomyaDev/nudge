@@ -843,3 +843,32 @@ fn stream_site_budget_covers_repair_rounds() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("call site budget exhausted"), "stderr: {stderr}");
 }
+
+// ── v1.2 regression: full replay is as strict for tools as for llm ──
+// A program whose tool-call pattern diverges from the trace must FAIL the
+// replay (ReplayMismatch), not silently mock [] (design §6.2/v1.9).
+
+#[test]
+fn full_replay_raises_on_tool_call_exhaustion() {
+    let Some(e) = e2e("tool_exhaust") else { return };
+    // program A: one tool call → record its trace
+    let src_a = "tool web(q: string) -> string { impl: mcp(\"search\").web(q)  side_effects: none }\nfn main() -> string uses Tool {\n    web(\"one\")\n}";
+    let py_a = e.dir.join("prog_a.py");
+    std::fs::write(&py_a, gen(src_a)).unwrap();
+    let t1 = e.dir.join("t1.jsonl");
+    let out1 = run_py(&e, &py_a, &[("NUDGE_TRACE", t1.to_str().unwrap())]);
+    assert!(out1.status.success(), "stderr: {}", String::from_utf8_lossy(&out1.stderr));
+    // program B: TWO tool calls → full replay against t1 must raise
+    let src_b = "tool web(q: string) -> string { impl: mcp(\"search\").web(q)  side_effects: none }\nfn main() -> string uses Tool {\n    let a = web(\"one\")\n    web(a)\n}";
+    let py_b = e.dir.join("prog_b.py");
+    std::fs::write(&py_b, gen(src_b)).unwrap();
+    let t2 = e.dir.join("t2.jsonl");
+    let out2 = run_py(
+        &e,
+        &py_b,
+        &[("NUDGE_TRACE", t2.to_str().unwrap()), ("NUDGE_REPLAY", t1.to_str().unwrap())],
+    );
+    assert!(!out2.status.success(), "diverged tool pattern must fail the replay");
+    let stderr = String::from_utf8_lossy(&out2.stderr);
+    assert!(stderr.contains("tool replay exhaustion") || stderr.contains("ReplayMismatch"), "stderr: {stderr}");
+}
