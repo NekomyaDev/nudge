@@ -465,4 +465,52 @@ mod tests {
         let log = std::fs::read_to_string(dir.join("trace.jsonl")).unwrap();
         assert!(log.contains("\"kind\":\"llm.call\"") || log.contains("\"kind\": \"llm.call\""), "trace: {log}");
     }
+
+    // ── v1.2 regression: TS budget walls match the python runtime ──
+    // per-call `budget` walls the single call; NUDGE_BUDGET walls the run
+    // total (the TS runtime used to apply the per-call budget against the
+    // cumulative run spend — a parity bug).
+
+    #[test]
+    fn ts_budget_walls_match_python_semantics() {
+        use std::process::Command;
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let runtime = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
+        if !runtime.exists() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("nudge_tsbudget_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rt_src = std::fs::read_to_string(runtime.join("nudge_runtime.ts")).unwrap();
+        std::fs::write(dir.join("nudge_runtime.mjs"), rt_src).unwrap();
+        // 51 calls at $0.001 with a per-call budget of $0.05: python parity
+        // says all pass (each call is well under its own wall)
+        let src = "fn main() -> string uses LLM {\n    llm\"\"\"hi there, say something brief\"\"\" with { model: \"fake\", budget: 0.05 USD }\n}";
+        let emitted = strip_ts(&gen_ts(src)).replace("./nudge_runtime.ts", "./nudge_runtime.mjs");
+        std::fs::write(dir.join("main.mjs"), &emitted).unwrap();
+        for _ in 0..51 {
+            let out = Command::new("node")
+                .arg(dir.join("main.mjs"))
+                .env("NUDGE_PROVIDER", "fake")
+                .env("NUDGE_TRACE", dir.join("trace.jsonl"))
+                .current_dir(&dir)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "per-call wall must not fire: {}", String::from_utf8_lossy(&out.stderr));
+        }
+        // run wall: NUDGE_BUDGET=0.0005 < one $0.001 call → BudgetExceeded
+        let out = Command::new("node")
+            .arg(dir.join("main.mjs"))
+            .env("NUDGE_PROVIDER", "fake")
+            .env("NUDGE_TRACE", dir.join("trace2.jsonl"))
+            .env("NUDGE_BUDGET", "0.0005")
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "run wall must fire");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("BudgetExceeded"), "stderr: {stderr}");
+    }
 }
