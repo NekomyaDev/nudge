@@ -801,3 +801,31 @@ fn mcp_unknown_server_still_fails_fast() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("unknown MCP server 'nope'"), "stderr: {stderr}");
 }
+
+// ── v1.2 regression: the declared per-call `budget` caps the WHOLE
+// call site — repair rounds included (runtime budget-wall fix) ──────
+
+#[test]
+fn call_site_budget_covers_repair_rounds() {
+    let Some(e) = e2e("site_budget") else { return };
+    // budget 0.001 = exactly one fake call; NUDGE_FAKE_FAIL_FIRST=2 forces
+    // two repair rounds → the site would spend 0.003 without the wall
+    let src = "type S = { title: string }\nfn main() -> string uses LLM {\n    llm\"\"\"return JSON with the title field\"\"\" with { model: \"fake\", schema: S, budget: 0.001 USD, retry: 2 with repair }\n}";
+    let out_py = e.dir.join("site_budget.py");
+    std::fs::write(&out_py, gen(src)).unwrap();
+    let output = run_py(&e, &out_py, &[("NUDGE_FAKE_FAIL_FIRST", "2")]);
+    assert!(!output.status.success(), "must hit the site budget wall");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("call site budget exhausted"), "stderr: {stderr}");
+}
+
+#[test]
+fn call_site_budget_allows_repairs_within_budget() {
+    let Some(e) = e2e("site_budget_ok") else { return };
+    // budget 0.005 comfortably covers 1 + 1 repair rounds (0.002)
+    let src = "type S = { title: string }\nfn main() -> string uses LLM {\n    let a = llm\"\"\"return JSON with the title field\"\"\" with { model: \"fake\", schema: S, budget: 0.005 USD, retry: 2 with repair }\n    a.title\n}";
+    let out_py = e.dir.join("site_budget_ok.py");
+    std::fs::write(&out_py, gen(src)).unwrap();
+    let output = run_py(&e, &out_py, &[("NUDGE_FAKE_FAIL_FIRST", "1")]);
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+}
