@@ -1134,6 +1134,19 @@ def llm_stream(prompt, model=None, schema=None, retry=0, repair=False,
     _budget_precheck()
     # design §4.4: a model chosen via rt.route carries its arm label
     route_label = _take_route_label()
+    # design §4.3 (v1.20 fix): the declared budget caps the WHOLE call site,
+    # repair rounds included — same wall as llm_call
+    site_spent = [0.0]
+    def charge_site(cost):
+        remaining = None if budget is None else float(budget) - site_spent[0]
+        if remaining is not None and cost > remaining:
+            raise BudgetExceeded(
+                f"call site budget exhausted: round cost ${cost:.4f} with "
+                f"${remaining:.4f} left of the declared ${float(budget):.4f} "
+                f"(repair rounds share the site budget)"
+            )
+        site_spent[0] += cost
+        _budget_charge(cost, None)
 
     def _x(d):
         return {**d, "route": route_label} if route_label else d
@@ -1159,25 +1172,25 @@ def llm_stream(prompt, model=None, schema=None, retry=0, repair=False,
             last_errors, last_raw = [f"stream aborted: {aborted}"], out
             _trace_call(model, prompt, out, round_no, "schema_violation",
                         extra=_x({"streamed": True, "chunks": consumed, "early_abort": True}))
-            _budget_charge(FAKE_CALL_COST, budget)
+            charge_site(FAKE_CALL_COST)
             # design §4.5: an unsatisfiable prefix aborts early and triggers repair
             prompt = _REPAIR_HINT.format(errors="stream aborted: " + aborted) + "\n" + str(prompt)
             continue
         if schema is None:
             _trace_call(model, prompt, out, 0, "ok",
                         extra=_x({"streamed": True, "chunks": consumed}))
-            _budget_charge(FAKE_CALL_COST, budget)
+            charge_site(FAKE_CALL_COST)
             return out
         errors = validate(schema, out)
         if not errors:
             _trace_call(model, prompt, out, round_no, "ok",
                         extra=_x({"streamed": True, "chunks": consumed}))
-            _budget_charge(FAKE_CALL_COST, budget)
+            charge_site(FAKE_CALL_COST)
             return out
         last_errors, last_raw = errors, out
         _trace_call(model, prompt, out, round_no, "schema_violation",
                     extra=_x({"streamed": True, "chunks": consumed}))
-        _budget_charge(FAKE_CALL_COST, budget)
+        charge_site(FAKE_CALL_COST)
         # design §4.2 step 1: feed raw output errors back to the model
         prompt = _REPAIR_HINT.format(errors="; ".join(errors)) + "\n" + str(prompt)
     raise SchemaFailure(last_errors, last_raw)
