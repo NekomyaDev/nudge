@@ -91,7 +91,7 @@ fn par_map_lowers_to_runtime_call() {
     let src = "fn f(angles: [string]) -> [string] { let h = par map angles |a| -> search(a) }";
     assert!(gen(src).contains("h = rt.par_map(angles, lambda a: search(a))"));
     let src = "fn f(angles: [string], hits: [string]) -> [string] { let f2 = par map(angles zip hits, concurrency = 3) |(a, h)| -> analyze(a, h) }";
-    assert!(gen(src).contains("rt.par_map(zip(angles, hits), lambda a, h: analyze(a, h), concurrency=3)"));
+    assert!(gen(src).contains("rt.par_map(rt.zip(angles, hits), lambda a, h: analyze(a, h), concurrency=3)"));
 }
 
 // ── end-to-end (skipped without python3 / runtime checkout) ──────

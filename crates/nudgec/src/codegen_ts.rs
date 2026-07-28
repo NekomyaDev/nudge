@@ -231,7 +231,12 @@ fn ts(e: &Expr, aliases: &HashSet<String>) -> String {
             parts.extend(kwargs.iter().map(|(k, v)| format!("{k}: {}", ts(v, aliases))));
             match func.as_ref() {
                 Expr::Ident(n) if n == "len" => {
-                    format!("({}.length)", ts(&args[0], aliases))
+                    // the checker enforces arity (E0201); stay panic-free if
+                    // emit is ever driven without a prior check pass
+                    match args.first() {
+                        Some(a) => format!("({}.length)", ts(a, aliases)),
+                        None => "(undefined).length".into(),
+                    }
                 }
                 Expr::Ident(n) if matches!(n.as_str(), "replay" | "python" | "mcp" | "zip") => {
                     format!("rt.{n}({})", parts.join(", "))
@@ -253,13 +258,26 @@ fn ts(e: &Expr, aliases: &HashSet<String>) -> String {
             _ => format!("(!{})", ts(x, aliases)),
         },
         Expr::ParMap { coll, kwargs, params, body } => {
-            // MVP: sequential map (no worker pool in the TS runtime yet)
-            let mut s = format!(
-                "{}.map(({}) => {})",
-                ts(coll, aliases),
-                params.join(", "),
-                ts(body, aliases)
-            );
+            // MVP: sequential map (no worker pool in the TS runtime yet).
+            // JS `Array.map` passes (element, index) — a multi-param lambda
+            // must take ONE element and destructure the zipped pair
+            // ({first, second}), or the second param silently becomes the index.
+            let mut s = if params.len() == 2 {
+                format!(
+                    "{}.map((__e) => {{ const {} = __e.first; const {} = __e.second; return {}; }})",
+                    ts(coll, aliases),
+                    params[0],
+                    params[1],
+                    ts(body, aliases)
+                )
+            } else {
+                format!(
+                    "{}.map(({}) => {})",
+                    ts(coll, aliases),
+                    params.join(", "),
+                    ts(body, aliases)
+                )
+            };
             if !kwargs.is_empty() {
                 s.push_str("  // warning: par map kwargs ignored by the TS backend (sequential map)");
             }
@@ -422,9 +440,36 @@ mod tests {
         assert!(out2.contains("warning: streaming not yet supported by the TS backend"), "got:\n{out2}");
     }
 
+    // ── v1.3 regression: two-param par map lambdas destructure the pair ──
+    // JS `Array.map` hands the callback (element, index) — emitting
+    // `.map((a, h) => …)` used to bind the INDEX to `h`. The lambda must
+    // take one element and destructure the {first, second} zip pair.
     #[test]
-    fn ts_route_block_lowers_to_rt_route() {
-        let src = "fn pick(flag: bool) -> string uses LLM {\n    llm\"\"\"hi\"\"\" with { model: route{ cheap: \"m1\" when flag, strong: \"m2\" otherwise } }\n}";
+    fn ts_par_map_two_params_destructures_the_element() {
+        let src = "fn f(xs: [string], ys: [string]) -> [string] uses LLM { par map(xs zip ys) |(a, b)| -> a }";
+        let out = gen_ts(src);
+        assert!(
+            out.contains(".map((__e) => { const a = __e.first; const b = __e.second; return a; })"),
+            "got:\n{out}"
+        );
+        // single-param lambdas keep the direct form
+        let out = gen_ts("fn f(xs: [string]) -> [string] uses LLM { par map xs |x| -> x }");
+        assert!(out.contains(".map((x) => x)"), "got:\n{out}");
+        // and the emitted JS actually computes the zip semantics under node
+        use std::process::Command;
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let js = "const xs = [1,2,3]; const ys = [10,20,30];\
+            const zip = (a, b) => a.slice(0, Math.min(a.length, b.length)).map((v, i) => ({ first: v, second: b[i] }));\
+            const out = zip(xs, ys).map((__e) => { const a = __e.first; const b = __e.second; return a + b; });\
+            if (JSON.stringify(out) !== JSON.stringify([11,22,33])) { console.error(out); process.exit(1); }";
+        let st = Command::new("node").arg("-e").arg(js).status().unwrap();
+        assert!(st.success());
+    }
+
+    #[test]
+    fn ts_route_block_lowers_to_rt_route() {        let src = "fn pick(flag: bool) -> string uses LLM {\n    llm\"\"\"hi\"\"\" with { model: route{ cheap: \"m1\" when flag, strong: \"m2\" otherwise } }\n}";
         let out = gen_ts(src);
         assert!(out.contains("rt.route([\"cheap\", \"m1\", () => flag], [\"strong\", \"m2\", null])"), "got:\n{out}");
         // annotation-stripped output stays valid JS

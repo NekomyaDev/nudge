@@ -409,7 +409,22 @@ fn check_expr(e: &Expr, locals: &HashMap<String, Ty>, g: &Globals, errs: &mut Ve
         Expr::Str(_) | Expr::Prompt { .. } => Ty::Str,
         Expr::Bool(_) => Ty::Bool,
         Expr::None => Ty::None_,
-        Expr::Ident(n) => locals.get(n).cloned().unwrap_or(Ty::Unknown),
+        Expr::Ident(n) => match locals.get(n) {
+            Some(t) => t.clone(),
+            None => {
+                // fn/tool/alias names may be referenced as values (dynamic
+                // interop stays permissive); anything else is E0101
+                let known =
+                    g.fns.contains_key(n) || g.tools.contains_key(n) || g.aliases.contains_key(n);
+                if !known {
+                    errs.push(CheckError {
+                        code: "E0101",
+                        msg: format!("unknown identifier '{n}'"),
+                    });
+                }
+                Ty::Unknown
+            }
+        },
         Expr::ListLit(xs) => {
             let mut elem = Ty::Unknown;
             for (i, x) in xs.iter().enumerate() {
@@ -449,8 +464,22 @@ fn check_expr(e: &Expr, locals: &HashMap<String, Ty>, g: &Globals, errs: &mut Ve
             }
             if let Expr::Ident(name) = func.as_ref() {
                 match name.as_str() {
-                    "len" => return Ty::Int,
+                    "len" => {
+                        if args.len() != 1 {
+                            errs.push(CheckError {
+                                code: "E0201",
+                                msg: format!("'len' takes 1 argument(s), got {}", args.len()),
+                            });
+                        }
+                        return Ty::Int;
+                    }
                     "zip" => {
+                        if args.len() != 2 {
+                            errs.push(CheckError {
+                                code: "E0201",
+                                msg: format!("'zip' takes 2 argument(s), got {}", args.len()),
+                            });
+                        }
                         let a = elem_of(arg_tys.first().unwrap_or(&Ty::Unknown));
                         let b = elem_of(arg_tys.get(1).unwrap_or(&Ty::Unknown));
                         return Ty::List(Box::new(Ty::Record(vec![
@@ -481,13 +510,25 @@ fn check_expr(e: &Expr, locals: &HashMap<String, Ty>, g: &Globals, errs: &mut Ve
                     }
                     return resolve(ret, g, &mut Vec::new(), errs);
                 }
+                // a call to a name that is neither builtin nor declared
+                errs.push(CheckError {
+                    code: "E0101",
+                    msg: format!("unknown identifier '{name}' (called but never declared)"),
+                });
             }
             Ty::Unknown
         }
         Expr::Field { obj, name } => match check_expr(obj, locals, g, errs) {
-            Ty::Record(fs) => {
-                fs.iter().find(|(k, _)| k == name).map(|(_, t)| t.clone()).unwrap_or(Ty::Unknown)
-            }
+            Ty::Record(fs) => match fs.iter().find(|(k, _)| k == name) {
+                Some((_, t)) => t.clone(),
+                None => {
+                    errs.push(CheckError {
+                        code: "E0101",
+                        msg: format!("record has no field '{name}'"),
+                    });
+                    Ty::Unknown
+                }
+            },
             _ => Ty::Unknown,
         },
         Expr::Binary { op, l, r } => {
@@ -498,6 +539,9 @@ fn check_expr(e: &Expr, locals: &HashMap<String, Ty>, g: &Globals, errs: &mut Ve
                 | BinOp::And | BinOp::Or => Ty::Bool,
                 _ => match (&lt, &rt_) {
                     (Ty::Float, _) | (_, Ty::Float) => Ty::Float,
+                    // `/` always yields float in the Python/TS runtimes
+                    // (7 / 2 == 3.5) — typing it int would be a lie
+                    (Ty::Int, Ty::Int) if matches!(op, BinOp::Div) => Ty::Float,
                     (Ty::Int, Ty::Int) => Ty::Int,
                     _ => Ty::Unknown,
                 },
@@ -610,29 +654,57 @@ fn check_expr(e: &Expr, locals: &HashMap<String, Ty>, g: &Globals, errs: &mut Ve
 /// Check a whole program. Returns every diagnostic found (deterministic order).
 pub fn check(items: &[Item]) -> Vec<CheckError> {
     let mut g = Globals::default();
+    let mut errs = Vec::new();
     for item in items {
         match item {
             Item::TypeAlias { name, ty } => {
-                g.aliases.insert(name.clone(), ty.clone());
+                if g.aliases.insert(name.clone(), ty.clone()).is_some() {
+                    errs.push(CheckError {
+                        code: "E0102",
+                        msg: format!("duplicate type alias '{name}'"),
+                    });
+                }
             }
             Item::Fn { name, params, ret, .. } => {
-                g.fns.insert(name.clone(), (params.iter().map(|p| p.ty.clone()).collect(), ret.clone()));
+                if g.fns
+                    .insert(name.clone(), (params.iter().map(|p| p.ty.clone()).collect(), ret.clone()))
+                    .is_some()
+                {
+                    errs.push(CheckError {
+                        code: "E0102",
+                        msg: format!("duplicate fn '{name}'"),
+                    });
+                }
             }
             Item::Tool { name, params, ret, .. } => {
-                g.tools.insert(name.clone(), (params.iter().map(|p| p.ty.clone()).collect(), ret.clone()));
+                if g.tools
+                    .insert(name.clone(), (params.iter().map(|p| p.ty.clone()).collect(), ret.clone()))
+                    .is_some()
+                {
+                    errs.push(CheckError {
+                        code: "E0102",
+                        msg: format!("duplicate tool '{name}'"),
+                    });
+                }
             }
             Item::Agent { fns, .. } => {
                 for f in fns {
                     if let Item::Fn { name, params, ret, .. } = f {
-                        g.fns.insert(name.clone(), (params.iter().map(|p| p.ty.clone()).collect(), ret.clone()));
+                        if g.fns
+                            .insert(name.clone(), (params.iter().map(|p| p.ty.clone()).collect(), ret.clone()))
+                            .is_some()
+                        {
+                            errs.push(CheckError {
+                                code: "E0102",
+                                msg: format!("duplicate fn '{name}' (agent fns share the top-level namespace)"),
+                            });
+                        }
                     }
                 }
             }
             Item::Test { .. } => {}
         }
     }
-
-    let mut errs = Vec::new();
 
     // resolve every alias body once, so unused-but-broken types still error
     let names: Vec<String> = g.aliases.keys().cloned().collect();
@@ -950,5 +1022,59 @@ mod tests {
         // E0201: non-bool condition
         let errs = check_src("fn f(n: int) -> string uses LLM { llm\"\"\"x\"\"\" with { model: route{ cheap: \"m1\" when n, strong: \"m2\" otherwise } } }");
         assert!(errs.iter().any(|e| e.code == "E0201" && e.msg.contains("non-bool when")), "got {errs:?}");
+    }
+
+    // ── v1.3 regression: unknown identifiers, builtin arity, div typing ──
+
+    #[test]
+    fn unknown_variable_identifier_is_e0101() {
+        let errs = check_src("fn f() -> int { qusetion }");
+        assert!(errs.iter().any(|e| e.code == "E0101" && e.msg.contains("qusetion")), "got {errs:?}");
+        // declared names stay clean
+        assert_eq!(check_src("fn f(q: int) -> int { q }"), vec![]);
+    }
+
+    #[test]
+    fn call_to_undeclared_name_is_e0101() {
+        let errs = check_src("fn f() -> int { nosuchfn(1) }");
+        assert!(errs.iter().any(|e| e.code == "E0101" && e.msg.contains("nosuchfn")), "got {errs:?}");
+    }
+
+    #[test]
+    fn unknown_record_field_is_e0101() {
+        let errs = check_src("type R = { t: string }\nfn f(r: R) -> string { r.ttle }");
+        assert!(errs.iter().any(|e| e.code == "E0101" && e.msg.contains("ttle")), "got {errs:?}");
+        assert_eq!(check_src("type R = { t: string }\nfn f(r: R) -> string { r.t }"), vec![]);
+    }
+
+    #[test]
+    fn builtin_arity_is_checked() {
+        let errs = check_src("fn f() -> int { len() }");
+        assert!(errs.iter().any(|e| e.code == "E0201" && e.msg.contains("len")), "got {errs:?}");
+        let errs = check_src("fn f(a: [int]) -> int { zip(a) }");
+        assert!(errs.iter().any(|e| e.code == "E0201" && e.msg.contains("zip")), "got {errs:?}");
+        assert_eq!(check_src("fn f(a: [int]) -> int { len(a) }"), vec![]);
+    }
+
+    #[test]
+    fn int_division_types_as_float() {
+        let errs = check_src("fn f() -> float { 7 / 2 }");
+        assert_eq!(errs, vec![], "got {errs:?}");
+        // and an int-annotated binding of a division now mismatches
+        let errs = check_src("fn f() -> int { let x: int = 7 / 2\n    x }");
+        assert!(errs.iter().any(|e| e.code == "E0201"), "got {errs:?}");
+        // the other int operators stay int
+        assert_eq!(check_src("fn f() -> int { 7 % 2 }"), vec![]);
+    }
+
+    #[test]
+    fn duplicate_definitions_are_e0102() {
+        let errs = check_src("type A = int\ntype A = string");
+        assert!(errs.iter().any(|e| e.code == "E0102" && e.msg.contains("duplicate type alias 'A'")), "got {errs:?}");
+        let errs = check_src("fn f() -> int { 1 }\nfn f() -> int { 2 }");
+        assert!(errs.iter().any(|e| e.code == "E0102" && e.msg.contains("duplicate fn 'f'")), "got {errs:?}");
+        // agent fns share the namespace: two agents, same fn name → error
+        let errs = check_src("agent A { fn step() -> int { 1 } }\nagent B { fn step() -> int { 2 } }");
+        assert!(errs.iter().any(|e| e.code == "E0102"), "got {errs:?}");
     }
 }

@@ -98,7 +98,9 @@ function _synth(sch) {
       return out;
     }
     case "array":
-      return [_synth(sch.items)];
+      // 3 items: parity with the python runtime's fake provider, so fan-out
+      // shapes exercise the same cardinality on both backends
+      return [_synth(sch.items), _synth(sch.items), _synth(sch.items)];
     case "string":
       return "fake-text";
     case "integer":
@@ -146,12 +148,53 @@ export function llmCall(opts) {
     throw new Error("nudge_runtime.ts: real providers run on the Python runtime at v1.1a — compile with `nudgec build` for provider access");
   }
   const out = sch ? _synth(sch) : `[fake:${model}] ${prompt}`;
-  _emitTrace({ kind: "llm.call", model: model || "fake", outcome: "ok", cost_usd: FAKE_CALL_COST });
+  // frozen v1 trace schema (design §6.1): the same field set the python
+  // runtime emits — `nudgec trace-check` validates these as required
+  _emitTrace({
+    kind: "llm.call",
+    model: model || "fake",
+    params: { temperature: 0 },
+    input: String(prompt),
+    output: out,
+    tokens: {
+      in: String(prompt).split(/\s+/).filter(Boolean).length,
+      out: String(out).split(/\s+/).filter(Boolean).length,
+    },
+    cost_usd: FAKE_CALL_COST,
+    repair_round: 0,
+    outcome: "ok",
+    provider: "fake",
+  });
   _budgetCharge(FAKE_CALL_COST, budget);
   return out;
 }
 
+let _replayToolCache = null;
+const _replayToolIdx = {};
+
+function _replayToolOutputs() {
+  if (_replayToolCache === null) {
+    const p = process.env.NUDGE_REPLAY;
+    _replayToolCache = {};
+    if (p) {
+      for (const r of fs.readFileSync(p, "utf8").split("\n").filter(Boolean).map(JSON.parse)
+        .filter((r) => r.kind === "tool.call")) {
+        (_replayToolCache[r.tool] = _replayToolCache[r.tool] || []).push(r.output);
+      }
+    }
+  }
+  return _replayToolCache;
+}
+
 export function toolStub(name, args = [], opts = {}) {
+  // full-replay parity with the python runtime: tool calls are mocked from
+  // the trace and write NO record (the trace stays untouched during replay)
+  if (process.env.NUDGE_REPLAY) {
+    const recorded = _replayToolOutputs()[name] || [];
+    const i = _replayToolIdx[name] || 0;
+    _replayToolIdx[name] = i + 1;
+    return i < recorded.length ? recorded[i] : [];
+  }
   const record = { kind: "tool.call", tool: name, input: args, output: [] };
   if (opts.server) record.server = opts.server;
   _emitTrace(record);

@@ -1308,15 +1308,31 @@ def llm_call(prompt, model=None, schema=None, retry=0, repair=False,
 
 def _call_unpacked(fn, x):
     """Nudge's pair-unpacking: when the lambda takes more than one parameter
-    and the element is a tuple of that arity (e.g. produced by ``zip``), it
-    is spread across the parameters — ``|(a, h)| -> f(a, h)``."""
+    and the element is a pair (a tuple, or the ``{first, second}`` record
+    produced by :func:`zip`), it is spread across the parameters —
+    ``|(a, h)| -> f(a, h)``."""
     try:
         argc = fn.__code__.co_argcount
     except AttributeError:
         argc = 1
-    if argc > 1 and isinstance(x, tuple) and len(x) == argc:
-        return fn(*x)
+    if argc > 1:
+        if isinstance(x, tuple) and len(x) == argc:
+            return fn(*x)
+        if isinstance(x, dict) and argc == 2 and "first" in x and "second" in x:
+            return fn(x["first"], x["second"])
     return fn(x)
+
+
+_py_zip = zip
+
+
+def zip(a, b):
+    """Nudge `a zip b` — pairwise zip as a REUSABLE list of ``{first,
+    second}`` records, matching the checker's type model (so `.first` /
+    `.second` field access works) while :func:`_call_unpacked` still spreads
+    pairs across multi-param ``par map`` lambdas. (Python's builtin zip
+    yields one-shot tuples — field access on them was an AttributeError.)"""
+    return [AttrDict({"first": x, "second": y}) for x, y in _py_zip(a, b)]
 
 
 def par_map(coll, fn, concurrency=None):
@@ -1343,15 +1359,24 @@ def par_all(items):
 def par_race(items):
     """First completed branch wins; losers are cancelled best-effort
     (a call already in flight keeps its spend — design §5 budget refund
-    is post-MVP)."""
+    is post-MVP).
+
+    v1.3 fix: the pool no longer joins on exit — the old
+    ``with ThreadPoolExecutor(...)`` block made ``shutdown(wait=True)``
+    wait for every losing branch before returning, so a "race" took as
+    long as the SLOWEST candidate. Losers now keep running in the
+    background while the winner's result returns immediately."""
     items = list(items)
     if not items:
         raise ValueError("par race needs at least one candidate")
-    with ThreadPoolExecutor(max_workers=len(items)) as pool:
-        futures = [pool.submit(lambda f: f() if callable(f) else f, it) for it in items]
+    pool = ThreadPoolExecutor(max_workers=len(items))
+    futures = [pool.submit(lambda f: f() if callable(f) else f, it) for it in items]
+    try:
         for done in as_completed(futures):
             for other in futures:
                 if other is not done:
                     other.cancel()
             return done.result()
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
     raise ValueError("par race found no result")

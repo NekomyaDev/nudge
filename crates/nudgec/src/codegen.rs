@@ -413,10 +413,10 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
         Expr::Call { func, args, kwargs } => {
             let mut parts: Vec<String> = args.iter().map(|a| py(a, aliases)).collect();
             parts.extend(kwargs.iter().map(|(k, v)| format!("{k}={}", py(v, aliases))));
-            // runtime-provided builtins get the rt. prefix; len/zip are
-            // real Python builtins and pass through verbatim
+            // runtime-provided builtins get the rt. prefix; len is a real
+            // Python builtin and passes through verbatim
             let f = match func.as_ref() {
-                Expr::Ident(n) if matches!(n.as_str(), "replay" | "python" | "mcp") => {
+                Expr::Ident(n) if matches!(n.as_str(), "replay" | "python" | "mcp" | "zip") => {
                     format!("rt.{n}")
                 }
                 other => py(other, aliases),
