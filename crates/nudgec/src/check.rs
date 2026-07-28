@@ -656,7 +656,39 @@ fn check_expr(
                     }
                     Ty::Bool
                 }
-                BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::LtEq | BinOp::Gt | BinOp::GtEq => {
+                // order comparisons: numeric×numeric or string×string only
+                // (`1 < "a"` used to type as bool while comparing nonsense)
+                BinOp::Lt | BinOp::LtEq | BinOp::Gt | BinOp::GtEq => {
+                    fn numeric(t: &Ty) -> bool {
+                        match t {
+                            // money literals lower to float (design §4.3)
+                            Ty::Int | Ty::Float => true,
+                            Ty::Refine(b, ..) => matches!(b.as_ref(), Ty::Int | Ty::Float),
+                            _ => false,
+                        }
+                    }
+                    let comparable = (numeric(&lt) && numeric(&rt_))
+                        || (matches!(lt, Ty::Str) && matches!(rt_, Ty::Str))
+                        || matches!(lt, Ty::Unknown)
+                        || matches!(rt_, Ty::Unknown);
+                    if !comparable {
+                        errs.push(CheckError {
+                            code: "E0201",
+                            msg: format!("cannot order-compare {lt} and {rt_}"),
+                        });
+                    }
+                    Ty::Bool
+                }
+                // equality: operands must be assignable to each other either
+                // way (int/float widen — money literals are floats, so
+                // 0.001 USD == 0.001 compares two floats)
+                BinOp::Eq | BinOp::NotEq => {
+                    if !assignable(&lt, &rt_) && !assignable(&rt_, &lt) {
+                        errs.push(CheckError {
+                            code: "E0201",
+                            msg: format!("cannot compare {lt} with {rt_} for equality"),
+                        });
+                    }
                     Ty::Bool
                 }
                 _ => match (&lt, &rt_) {
@@ -1504,5 +1536,50 @@ mod tests {
                 .any(|e| e.code == "E0201" && e.msg.contains("let 'x'")),
             "got {errs:?}"
         );
+    }
+
+    // ── v1.5 regression: comparison operand rules ──────────────────
+
+    #[test]
+    fn order_comparisons_need_comparable_operands() {
+        // numeric × numeric (incl. money and refined numerics) is fine
+        assert_eq!(
+            check_src("fn f(a: int, b: float) -> bool { a < b }"),
+            vec![]
+        );
+        assert_eq!(
+            check_src("fn f() -> bool { 0.001 USD <= 0.05 USD }"),
+            vec![]
+        );
+        assert_eq!(
+            check_src("fn f(a: int @range(1, 9)) -> bool { a < 5 }"),
+            vec![]
+        );
+        // string × string is fine
+        assert_eq!(check_src("fn f(a: string) -> bool { a < \"z\" }"), vec![]);
+        // mixed nonsense is E0201 (used to type as bool)
+        let errs = check_src("fn f() -> bool { 1 < \"a\" }");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("order-compare")),
+            "got {errs:?}"
+        );
+        let errs = check_src("fn f(a: bool) -> bool { a < true }");
+        assert!(errs.iter().any(|e| e.code == "E0201"), "got {errs:?}");
+    }
+
+    #[test]
+    fn equality_needs_compatible_operands() {
+        assert_eq!(check_src("fn f(a: int) -> bool { a == 2.5 }"), vec![]); // int/float widen
+        assert_eq!(check_src("fn f(a: string) -> bool { a != \"x\" }"), vec![]);
+        let errs = check_src("fn f() -> bool { 1 == \"a\" }");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("for equality")),
+            "got {errs:?}"
+        );
+        // records only equal matching records
+        let errs = check_src("type R = { t: string }\nfn f(r: R) -> bool { r == 1 }");
+        assert!(errs.iter().any(|e| e.code == "E0201"), "got {errs:?}");
     }
 }
