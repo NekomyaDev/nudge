@@ -12,7 +12,11 @@ fn ty_name(t: &TypeExpr) -> String {
         TypeExpr::List(inner) => format!("[{}]", ty_name(inner)),
         TypeExpr::Record(fields) => format!(
             "{{{}}}",
-            fields.iter().map(|(k, v)| format!("{k}: {}", ty_name(v))).collect::<Vec<_>>().join(", ")
+            fields
+                .iter()
+                .map(|(k, v)| format!("{k}: {}", ty_name(v)))
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
         TypeExpr::Refine(inner, name, _) => format!("{} @{name}(…)", ty_name(inner)),
     }
@@ -22,9 +26,17 @@ fn skill(name: &str, params: &[Param], ret: &TypeExpr, effects: &[String]) -> Js
     let sig = format!(
         "{}({}) -> {}{}",
         name,
-        params.iter().map(|p| format!("{}: {}", p.name, ty_name(&p.ty))).collect::<Vec<_>>().join(", "),
+        params
+            .iter()
+            .map(|p| format!("{}: {}", p.name, ty_name(&p.ty)))
+            .collect::<Vec<_>>()
+            .join(", "),
         ty_name(ret),
-        if effects.is_empty() { String::new() } else { format!(" uses {}", effects.join(", ")) },
+        if effects.is_empty() {
+            String::new()
+        } else {
+            format!(" uses {}", effects.join(", "))
+        },
     );
     Json::Obj(vec![
         ("id".into(), Json::str(name)),
@@ -35,7 +47,10 @@ fn skill(name: &str, params: &[Param], ret: &TypeExpr, effects: &[String]) -> Js
             Json::Arr(if effects.is_empty() {
                 vec![Json::str("pure")]
             } else {
-                effects.iter().map(|e| Json::str(e.to_lowercase())).collect()
+                effects
+                    .iter()
+                    .map(|e| Json::str(e.to_lowercase()))
+                    .collect()
             }),
         ),
     ])
@@ -60,8 +75,14 @@ fn card(name: &str, skills: Vec<Json>) -> Json {
                 ("stateTransitionHistory".into(), Json::Bool(true)),
             ]),
         ),
-        ("defaultInputModes".into(), Json::Arr(vec![Json::str("text")])),
-        ("defaultOutputModes".into(), Json::Arr(vec![Json::str("text")])),
+        (
+            "defaultInputModes".into(),
+            Json::Arr(vec![Json::str("text")]),
+        ),
+        (
+            "defaultOutputModes".into(),
+            Json::Arr(vec![Json::str("text")]),
+        ),
         ("skills".into(), Json::Arr(skills)),
     ])
 }
@@ -74,7 +95,13 @@ pub fn cards(items: &[Item], file_stem: &str) -> Vec<(String, Json)> {
             let skills = fns
                 .iter()
                 .filter_map(|f| match f {
-                    Item::Fn { name, params, ret, effects, .. } => Some(skill(name, params, ret, effects)),
+                    Item::Fn {
+                        name,
+                        params,
+                        ret,
+                        effects,
+                        ..
+                    } => Some(skill(name, params, ret, effects)),
                     _ => None,
                 })
                 .collect();
@@ -85,7 +112,13 @@ pub fn cards(items: &[Item], file_stem: &str) -> Vec<(String, Json)> {
         let skills = items
             .iter()
             .filter_map(|f| match f {
-                Item::Fn { name, params, ret, effects, .. } => Some(skill(name, params, ret, effects)),
+                Item::Fn {
+                    name,
+                    params,
+                    ret,
+                    effects,
+                    ..
+                } => Some(skill(name, params, ret, effects)),
                 _ => None,
             })
             .collect();

@@ -476,6 +476,29 @@ def _trace_path() -> Path:
 
 _TRACE_LOCK = threading.Lock()
 
+# in-memory seq counter (v1.4 fix): the old code re-counted every line of
+# the trace file on EVERY record — O(n²) for a run with n records, and a
+# lock-held full scan bottleneck under par branches. Seeded once per path,
+# then incremented in memory; empty lines no longer skew the sequence.
+_SEQ = {"n": None, "path": None}
+
+
+def _emit_trace(record: dict) -> None:
+    path = _trace_path()
+    # serialized: par branches emit concurrently and seq must stay unique
+    with _TRACE_LOCK:
+        if _SEQ["n"] is None or _SEQ["path"] != str(path):
+            n = 0
+            if path.exists():
+                with path.open("r", encoding="utf-8") as f:
+                    n = sum(1 for line in f if line.strip())
+            _SEQ["n"], _SEQ["path"] = n, str(path)
+        _SEQ["n"] += 1
+        line = {"v": 1, "seq": _SEQ["n"], **record}
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(line, ensure_ascii=False) + "\n")
+    _otel_export(line)
+
 
 _OTEL_TRACE_ID = None
 
@@ -507,19 +530,6 @@ def _otel_export(record: dict) -> None:
     with _TRACE_LOCK:
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(span, ensure_ascii=False) + "\n")
-
-
-def _emit_trace(record: dict) -> None:
-    path = _trace_path()
-    # serialized: par branches emit concurrently and seq must stay unique
-    with _TRACE_LOCK:
-        seq = 1
-        if path.exists():
-            seq += sum(1 for _ in path.open("r", encoding="utf-8"))
-        line = {"v": 1, "seq": seq, **record}
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(line, ensure_ascii=False) + "\n")
-    _otel_export(line)
 
 
 def _trace_call(model, prompt, out, repair_round, outcome, extra=None,
@@ -832,7 +842,11 @@ class AgentState:
         object.__setattr__(self, "_values", values)
         object.__setattr__(self, "_writes", writes)
         object.__setattr__(self, "_suppress", writes if os.environ.get("NUDGE_RESUME") else 0)
-        (run_dir / "program").write_text(os.path.abspath(sys.argv[0]), encoding="utf-8")
+        # NUDGE_PROGRAM overrides the registered entry file — `nudgec test`
+        # runs the module through a driver script, so sys.argv[0] would
+        # otherwise point `nudgec resume` at the wrong file
+        program = os.environ.get("NUDGE_PROGRAM") or os.path.abspath(sys.argv[0])
+        (run_dir / "program").write_text(program, encoding="utf-8")
         trace = os.environ.get("NUDGE_TRACE")
         if trace:
             (run_dir / "trace").write_text(os.path.abspath(trace), encoding="utf-8")

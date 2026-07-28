@@ -15,6 +15,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # e2e tests drive the generated code through real interpreters
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Run the compiler test suite
         run: cargo test --workspace
-      # Clippy and rustfmt gates land once the tree is lint-clean (pre-v0.1).
+
+  lint:
+    name: clippy + rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: rustfmt gate
+        run: cargo fmt --all -- --check
+      - name: clippy gate (warnings are errors)
+        run: cargo clippy --workspace --all-targets -- -D warnings

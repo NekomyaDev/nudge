@@ -8,6 +8,8 @@
 //!   W0003 schema-silence  — a record `schema: T` whose fields never appear
 //!                           in the prompt text (the model can't guess the
 //!                           output contract it was never told)
+//!   W0004 schema-without-repair — a `schema` with no `retry: N with repair`:
+//!                           a violation raises at runtime instead of repairing
 
 use crate::ast::{Expr, Item, Stmt, TypeExpr};
 
@@ -18,15 +20,25 @@ pub struct Lint {
 }
 
 fn lint(code: &'static str, msg: impl Into<String>) -> Lint {
-    Lint { code, msg: msg.into() }
+    Lint {
+        code,
+        msg: msg.into(),
+    }
 }
 
 /// Record type name → field names, collected from `type T = { ... }` items.
 fn record_fields(items: &[Item]) -> Vec<(String, Vec<String>)> {
     let mut out = Vec::new();
     for it in items {
-        if let Item::TypeAlias { name, ty: TypeExpr::Record(fields) } = it {
-            out.push((name.clone(), fields.iter().map(|(f, _)| f.clone()).collect()));
+        if let Item::TypeAlias {
+            name,
+            ty: TypeExpr::Record(fields),
+        } = it
+        {
+            out.push((
+                name.clone(),
+                fields.iter().map(|(f, _)| f.clone()).collect(),
+            ));
         }
     }
     out
@@ -39,16 +51,30 @@ fn prompt_words(body: &str) -> usize {
     let mut in_word = false;
     for c in body.chars() {
         match c {
-            '{' => { in_hole = true; if in_word { words += 1; in_word = false; } }
+            '{' => {
+                in_hole = true;
+                if in_word {
+                    words += 1;
+                    in_word = false;
+                }
+            }
             '}' => in_hole = false,
             c if c.is_whitespace() => {
-                if in_word && !in_hole { words += 1; }
+                if in_word && !in_hole {
+                    words += 1;
+                }
                 in_word = false;
             }
-            _ => { if !in_hole { in_word = true; } }
+            _ => {
+                if !in_hole {
+                    in_word = true;
+                }
+            }
         }
     }
-    if in_word && !in_hole { words += 1; }
+    if in_word && !in_hole {
+        words += 1;
+    }
     words
 }
 
@@ -105,7 +131,11 @@ fn lint_llm_call(
 
 fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut Vec<Lint>) {
     match e {
-        Expr::LlmCall { prompt, options, repair } => {
+        Expr::LlmCall {
+            prompt,
+            options,
+            repair,
+        } => {
             let body = match prompt.as_ref() {
                 Expr::Prompt { body, .. } => Some(body.as_str()),
                 Expr::Str(s) => Some(s.as_str()),
@@ -118,12 +148,18 @@ fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut V
             }
         }
         Expr::ListLit(xs) | Expr::ParAll(xs) | Expr::ParRace(xs) => {
-            for x in xs { walk_expr(ctx, x, records, out); }
+            for x in xs {
+                walk_expr(ctx, x, records, out);
+            }
         }
         Expr::Call { func, args, kwargs } => {
             walk_expr(ctx, func, records, out);
-            for a in args { walk_expr(ctx, a, records, out); }
-            for (_, v) in kwargs { walk_expr(ctx, v, records, out); }
+            for a in args {
+                walk_expr(ctx, a, records, out);
+            }
+            for (_, v) in kwargs {
+                walk_expr(ctx, v, records, out);
+            }
         }
         Expr::Field { obj, .. } => walk_expr(ctx, obj, records, out),
         Expr::Binary { l, r, .. } | Expr::Merge { l, r, .. } => {
@@ -131,14 +167,20 @@ fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut V
             walk_expr(ctx, r, records, out);
         }
         Expr::Unary { x, .. } => walk_expr(ctx, x, records, out),
-        Expr::ParMap { coll, kwargs, body, .. } => {
+        Expr::ParMap {
+            coll, kwargs, body, ..
+        } => {
             walk_expr(ctx, coll, records, out);
-            for (_, v) in kwargs { walk_expr(ctx, v, records, out); }
+            for (_, v) in kwargs {
+                walk_expr(ctx, v, records, out);
+            }
             walk_expr(ctx, body, records, out);
         }
         Expr::Route { arms } => {
             for (_, _, cond) in arms {
-                if let Some(c) = cond { walk_expr(ctx, c, records, out); }
+                if let Some(c) = cond {
+                    walk_expr(ctx, c, records, out);
+                }
             }
         }
         _ => {}
@@ -147,7 +189,9 @@ fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut V
 
 fn walk_stmt(ctx: &str, s: &Stmt, records: &[(String, Vec<String>)], out: &mut Vec<Lint>) {
     match s {
-        Stmt::Let { value, .. } | Stmt::StateWrite { value, .. } => walk_expr(ctx, value, records, out),
+        Stmt::Let { value, .. } | Stmt::StateWrite { value, .. } => {
+            walk_expr(ctx, value, records, out)
+        }
         Stmt::Assert(e) | Stmt::ExprStmt(e) => walk_expr(ctx, e, records, out),
     }
 }
@@ -160,19 +204,27 @@ pub fn lint_items(items: &[Item]) -> Vec<Lint> {
         match it {
             Item::Fn { name, body, .. } => {
                 let ctx = format!("fn {name}");
-                for s in body { walk_stmt(&ctx, s, records, out); }
+                for s in body {
+                    walk_stmt(&ctx, s, records, out);
+                }
             }
             Item::Test { name, body, .. } => {
                 let ctx = format!("test {}", name);
-                for s in body { walk_stmt(&ctx, s, records, out); }
+                for s in body {
+                    walk_stmt(&ctx, s, records, out);
+                }
             }
             Item::Agent { name, fns, .. } => {
                 for f in fns {
                     // prefix agent context onto fn context
                     match f {
-                        Item::Fn { name: fname, body, .. } => {
+                        Item::Fn {
+                            name: fname, body, ..
+                        } => {
                             let ctx = format!("agent {name} / fn {fname}");
-                            for s in body { walk_stmt(&ctx, s, records, out); }
+                            for s in body {
+                                walk_stmt(&ctx, s, records, out);
+                            }
                         }
                         _ => walk_item(f, records, out),
                     }
@@ -190,7 +242,10 @@ pub fn lint_items(items: &[Item]) -> Vec<Lint> {
     let mut deduped: Vec<Lint> = Vec::new();
     let mut counts: Vec<usize> = Vec::new();
     for l in out {
-        if let Some(i) = deduped.iter().position(|d| d.code == l.code && d.msg == l.msg) {
+        if let Some(i) = deduped
+            .iter()
+            .position(|d| d.code == l.code && d.msg == l.msg)
+        {
             counts[i] += 1;
             continue;
         }
@@ -253,9 +308,15 @@ mod tests {
         // field named `in` must not match the word "instruction"
         let ty = "type T = { inp: string }\n";
         let ls = lints(&format!("{ty}fn f() -> string uses LLM {{\n    llm\"\"\"follow the instructions carefully and answer well\"\"\" with {{ model: \"fake\", schema: T, budget: 0.01 USD }}\n}}"));
-        assert!(ls.iter().any(|l| l.code == "W0003"), "substring false-negative guard: {ls:?}");
+        assert!(
+            ls.iter().any(|l| l.code == "W0003"),
+            "substring false-negative guard: {ls:?}"
+        );
         let ok = lints(&format!("{ty}fn f() -> string uses LLM {{\n    llm\"\"\"return JSON with the inp field please\"\"\" with {{ model: \"fake\", schema: T, budget: 0.01 USD }}\n}}"));
-        assert!(!ok.iter().any(|l| l.code == "W0003"), "substring false positive: {ok:?}");
+        assert!(
+            !ok.iter().any(|l| l.code == "W0003"),
+            "substring false positive: {ok:?}"
+        );
     }
 
     #[test]
@@ -290,4 +351,3 @@ mod tests {
         assert_eq!(prompt_words(""), 0);
     }
 }
-

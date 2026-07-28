@@ -71,7 +71,10 @@ pub fn dumps(v: &Json) -> String {
         Json::Null => "null".into(),
         Json::Bool(b) => b.to_string(),
         Json::Num(n) => {
-            if n.fract() == 0.0 && n.abs() < 1e15 {
+            if !n.is_finite() {
+                // JSON has no NaN/Infinity — emit null instead of invalid JSON
+                "null".into()
+            } else if n.fract() == 0.0 && n.abs() < 1e15 {
                 format!("{}", *n as i64)
             } else {
                 format!("{n}")
@@ -137,7 +140,10 @@ pub fn parse(text: &str) -> Result<Json, String> {
         }
         fn num(&mut self) -> Result<Json, String> {
             let start = self.i;
-            while matches!(self.peek(), Some(b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E')) {
+            while matches!(
+                self.peek(),
+                Some(b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E')
+            ) {
                 self.i += 1;
             }
             let s = std::str::from_utf8(&self.b[start..self.i]).map_err(|e| e.to_string())?;
@@ -167,14 +173,37 @@ pub fn parse(text: &str) -> Result<Json, String> {
                             Some(b'b') => out.push('\u{0008}'),
                             Some(b'f') => out.push('\u{000C}'),
                             Some(b'u') => {
-                                let hex = self
-                                    .b
-                                    .get(self.i + 1..self.i + 5)
-                                    .and_then(|h| std::str::from_utf8(h).ok())
-                                    .ok_or("bad \\u escape")?;
-                                let cp = u32::from_str_radix(hex, 16).map_err(|_| "bad \\u escape")?;
-                                out.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
-                                self.i += 4;
+                                // \uXXXX, with UTF-16 surrogate-pair support
+                                // (astral-plane chars like emoji arrive as
+                                // "\uD83D\uDE00" — a lone surrogate is U+FFFD)
+                                fn hex_at(b: &[u8], at: usize) -> Option<u32> {
+                                    b.get(at..at + 4)
+                                        .and_then(|h| std::str::from_utf8(h).ok())
+                                        .and_then(|h| u32::from_str_radix(h, 16).ok())
+                                }
+                                let cp = hex_at(self.b, self.i + 1).ok_or("bad \\u escape")?;
+                                self.i += 4; // consumed XXXX (i on last digit)
+                                if (0xD800..0xDC00).contains(&cp) {
+                                    // high surrogate: combine with a following \uDC00–\uDFFF
+                                    let paired = if self.b.get(self.i + 1) == Some(&b'\\')
+                                        && self.b.get(self.i + 2) == Some(&b'u')
+                                    {
+                                        hex_at(self.b, self.i + 3)
+                                            .filter(|lo| (0xDC00..0xE000).contains(lo))
+                                    } else {
+                                        None
+                                    };
+                                    match paired {
+                                        Some(lo) => {
+                                            let c = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                                            out.push(char::from_u32(c).unwrap_or('\u{FFFD}'));
+                                            self.i += 6; // consumed \uXXXX of the low half
+                                        }
+                                        None => out.push('\u{FFFD}'),
+                                    }
+                                } else {
+                                    out.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
+                                }
                             }
                             _ => return Err(format!("bad escape at byte {}", self.i)),
                         }
@@ -238,7 +267,10 @@ pub fn parse(text: &str) -> Result<Json, String> {
             }
         }
     }
-    let mut p = P { b: text.as_bytes(), i: 0 };
+    let mut p = P {
+        b: text.as_bytes(),
+        i: 0,
+    };
     let v = p.value()?;
     p.ws();
     if p.i != text.len() {
@@ -254,9 +286,18 @@ mod tests {
     #[test]
     fn json_roundtrip() {
         let v = parse(r#"{"a": [1, 2.5, "x\ny", true, null], "b": {"c": "é"}}"#).unwrap();
-        assert_eq!(v.get("a").and_then(|a| a.idx(0)).and_then(Json::as_num), Some(1.0));
-        assert_eq!(v.get("a").and_then(|a| a.idx(2)).and_then(Json::as_str), Some("x\ny"));
-        assert_eq!(v.get("b").and_then(|b| b.get("c")).and_then(Json::as_str), Some("é"));
+        assert_eq!(
+            v.get("a").and_then(|a| a.idx(0)).and_then(Json::as_num),
+            Some(1.0)
+        );
+        assert_eq!(
+            v.get("a").and_then(|a| a.idx(2)).and_then(Json::as_str),
+            Some("x\ny")
+        );
+        assert_eq!(
+            v.get("b").and_then(|b| b.get("c")).and_then(Json::as_str),
+            Some("é")
+        );
         let s = dumps(&v);
         let v2 = parse(&s).unwrap();
         assert_eq!(v, v2);
@@ -268,5 +309,15 @@ mod tests {
         assert_eq!(dumps(&Json::Num(0.001)), "0.001");
         assert!(parse("{\"a\":}").is_err());
         assert!(parse("[1,]").is_err());
+    }
+
+    #[test]
+    fn surrogate_pairs_decode_and_nonfinite_numbers_dump_as_null() {
+        // "\uD83D\uDE00" is 😀 — a lone surrogate used to become two U+FFFD
+        let v = parse("\"\\uD83D\\uDE00\"").unwrap();
+        assert_eq!(v.as_str(), Some("😀"));
+        assert!(parse("\"\\uD83D\"").is_ok()); // lone surrogate → replacement char, not a crash
+        assert_eq!(dumps(&Json::Num(f64::NAN)), "null");
+        assert_eq!(dumps(&Json::Num(f64::INFINITY)), "null");
     }
 }

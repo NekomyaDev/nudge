@@ -46,7 +46,10 @@ fn usage() -> ! {
 fn read_src(path: &str) -> String {
     match fs::read_to_string(path) {
         Ok(s) => s,
-        Err(e) => { eprintln!("error: cannot read {path}: {e}"); process::exit(1); }
+        Err(e) => {
+            eprintln!("error: cannot read {path}: {e}");
+            process::exit(1);
+        }
     }
 }
 
@@ -61,16 +64,21 @@ fn main() {
         usage();
     }
     // `resume` takes a run_id, not a source file
-    let src = if args[1] == "resume" { String::new() } else { read_src(&args[2]) };
-
+    let src = if args[1] == "resume" {
+        String::new()
+    } else {
+        read_src(&args[2])
+    };
 
     fn print_lints(items: &[ast::Item]) {
         for l in lint::lint_items(items) {
             eprintln!("warning[{}]: {}", l.code, l.msg);
         }
     }
-    let compile = |src: &str| -> Result<Vec<ast::Item>, String> {
-        lexer::lex(src).map_err(|e| e.msg).and_then(|t| parser::parse(t).map_err(|e| e.msg))
+    let compile = |src: &str| -> Result<Vec<ast::Item>, (String, usize)> {
+        lexer::lex(src)
+            .map_err(|e| (e.msg, e.at))
+            .and_then(|t| parser::parse(t).map_err(|e| (e.msg, e.at)))
     };
 
     match args[1].as_str() {
@@ -92,8 +100,8 @@ fn main() {
                 }
                 eprintln!("-- parsed {} item(s) OK", items.len());
             }
-            Err(msg) => {
-                eprintln!("error[E0002]: {msg}");
+            Err((msg, at)) => {
+                eprintln!("error[E0002]: {msg} at byte {at}");
                 process::exit(1);
             }
         },
@@ -110,8 +118,8 @@ fn main() {
                     process::exit(1);
                 }
             }
-            Err(msg) => {
-                eprintln!("error[E0002]: {msg}");
+            Err((msg, at)) => {
+                eprintln!("error[E0002]: {msg} at byte {at}");
                 process::exit(1);
             }
         },
@@ -119,8 +127,8 @@ fn main() {
         // sites per fn under flat fake pricing
         "cost" => match compile(&src) {
             Ok(items) => print!("{}", cost::report(&items)),
-            Err(msg) => {
-                eprintln!("error[E0002]: {msg}");
+            Err((msg, at)) => {
+                eprintln!("error[E0002]: {msg} at byte {at}");
                 process::exit(1);
             }
         },
@@ -153,8 +161,8 @@ fn main() {
                     }
                 }
             }
-            Err(msg) => {
-                eprintln!("error[E0002]: {msg}");
+            Err((msg, at)) => {
+                eprintln!("error[E0002]: {msg} at byte {at}");
                 process::exit(1);
             }
         },
@@ -186,8 +194,8 @@ fn main() {
                     }
                 }
             }
-            Err(msg) => {
-                eprintln!("error[E0002]: {msg}");
+            Err((msg, at)) => {
+                eprintln!("error[E0002]: {msg} at byte {at}");
                 process::exit(1);
             }
         },
@@ -230,8 +238,14 @@ fn main() {
                     process::exit(1);
                 }
                 // cwd stays the user's: relative trace paths in tests resolve
-                // exactly like they will under `nudge test`
-                match process::Command::new("python3").arg(&driver).status() {
+                // exactly like they will under `nudge test`. NUDGE_PROGRAM
+                // points agent-state registration at the emitted module,
+                // not this driver (resume correctness, design §7).
+                match process::Command::new("python3")
+                    .arg(&driver)
+                    .env("NUDGE_PROGRAM", &abs)
+                    .status()
+                {
                     Ok(status) => process::exit(status.code().unwrap_or(1)),
                     Err(e) => {
                         eprintln!("error: cannot run python3: {e}");
@@ -239,8 +253,8 @@ fn main() {
                     }
                 }
             }
-            Err(msg) => {
-                eprintln!("error[E0002]: {msg}");
+            Err((msg, at)) => {
+                eprintln!("error[E0002]: {msg} at byte {at}");
                 process::exit(1);
             }
         },
@@ -255,7 +269,11 @@ fn main() {
                 match fs::read_to_string(dir.join(name)) {
                     Ok(s) => s,
                     Err(_) => {
-                        eprintln!("error: unknown run_id '{run}' (no {} in {})", name, dir.display());
+                        eprintln!(
+                            "error: unknown run_id '{run}' (no {} in {})",
+                            name,
+                            dir.display()
+                        );
                         process::exit(1);
                     }
                 }
@@ -314,8 +332,8 @@ fn main() {
                     }
                 }
             }
-            Err(msg) => {
-                eprintln!("error[E0002]: {msg}");
+            Err((msg, at)) => {
+                eprintln!("error[E0002]: {msg} at byte {at}");
                 process::exit(1);
             }
         },

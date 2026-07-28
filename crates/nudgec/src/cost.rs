@@ -35,7 +35,12 @@ pub fn report(items: &[Item]) -> String {
             }
             Item::Agent { name, fns, .. } => {
                 for f in fns {
-                    if let Item::Fn { name: fn_name, body, .. } = f {
+                    if let Item::Fn {
+                        name: fn_name,
+                        body,
+                        ..
+                    } = f
+                    {
                         let c = count_body(body);
                         line(&mut out, &format!("{name}.{fn_name}"), &c);
                         total.add(&c);
@@ -51,7 +56,11 @@ pub fn report(items: &[Item]) -> String {
 }
 
 fn line(out: &mut String, name: &str, c: &Count) {
-    let note = if c.dynamic { "  (× collection size inside par map — runtime-dependent)" } else { "" };
+    let note = if c.dynamic {
+        "  (× collection size inside par map — runtime-dependent)"
+    } else {
+        ""
+    };
     out.push_str(&format!(
         "  {name}: {} llm call site(s), min ${:.3}, max ${:.3}{note}\n",
         c.sites,
@@ -74,7 +83,11 @@ fn count_body(body: &[Stmt]) -> Count {
 
 fn count_expr(e: &Expr, in_par: bool, c: &mut Count) {
     match e {
-        Expr::LlmCall { prompt, options, repair } => {
+        Expr::LlmCall {
+            prompt,
+            options,
+            repair,
+        } => {
             c.sites += 1;
             // the §4.2 repair loop re-calls up to `retry` times when set
             let retry = if *repair {
@@ -101,8 +114,14 @@ fn count_expr(e: &Expr, in_par: bool, c: &mut Count) {
                 count_expr(x, in_par, c);
             }
         }
-        Expr::Prompt { .. } | Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Money(..)
-        | Expr::Bool(_) | Expr::None | Expr::Ident(_) => {}
+        Expr::Prompt { .. }
+        | Expr::Int(_)
+        | Expr::Float(_)
+        | Expr::Str(_)
+        | Expr::Money(..)
+        | Expr::Bool(_)
+        | Expr::None
+        | Expr::Ident(_) => {}
         Expr::Call { func, args, kwargs } => {
             count_expr(func, in_par, c);
             for a in args {
@@ -118,7 +137,9 @@ fn count_expr(e: &Expr, in_par: bool, c: &mut Count) {
             count_expr(r, in_par, c);
         }
         Expr::Unary { x, .. } => count_expr(x, in_par, c),
-        Expr::ParMap { coll, kwargs, body, .. } => {
+        Expr::ParMap {
+            coll, kwargs, body, ..
+        } => {
             count_expr(coll, in_par, c);
             for (_, v) in kwargs {
                 count_expr(v, in_par, c);
@@ -145,15 +166,28 @@ mod tests {
 
     #[test]
     fn research_agent_cost_report() {
-        let items = parse(lex(include_str!("../../../examples/research_agent.ndg")).unwrap()).unwrap();
+        let items =
+            parse(lex(include_str!("../../../examples/research_agent.ndg")).unwrap()).unwrap();
         let r = report(&items);
-        assert!(r.contains("cost report (fake pricing, $0.001 per call)"), "got:\n{r}");
+        assert!(
+            r.contains("cost report (fake pricing, $0.001 per call)"),
+            "got:\n{r}"
+        );
         // analyze: 1 site, retry: 2 with repair → worst case 3 calls
-        assert!(r.contains("analyze: 1 llm call site(s), min $0.001, max $0.003"), "got:\n{r}");
+        assert!(
+            r.contains("analyze: 1 llm call site(s), min $0.001, max $0.003"),
+            "got:\n{r}"
+        );
         // run: plan site (retry: 1 with repair → 2 calls) + merge site
         // (retry: 3 with repair → 4 calls)
-        assert!(r.contains("run: 2 llm call site(s), min $0.002, max $0.006"), "got:\n{r}");
-        assert!(r.contains("total: 3 llm call site(s), min $0.003, max $0.009"), "got:\n{r}");
+        assert!(
+            r.contains("run: 2 llm call site(s), min $0.002, max $0.006"),
+            "got:\n{r}"
+        );
+        assert!(
+            r.contains("total: 3 llm call site(s), min $0.003, max $0.009"),
+            "got:\n{r}"
+        );
         // the par map bodies call fns/tools, not llm directly — nothing dynamic
         assert!(!r.contains("runtime-dependent"), "got:\n{r}");
     }
@@ -162,17 +196,27 @@ mod tests {
     fn llm_sites_inside_par_map_are_marked_dynamic() {
         let src = "fn f(xs: [string]) -> [string] uses LLM {\n    par map xs |x| -> llm\"\"\"go {x}\"\"\" with { model: \"m\" }\n}";
         let r = report(&parse(lex(src).unwrap()).unwrap());
-        assert!(r.contains("f: 1 llm call site(s), min $0.001, max $0.001"), "got:\n{r}");
-        assert!(r.contains("runtime-dependent"), "par map calls must be marked dynamic, got:\n{r}");
+        assert!(
+            r.contains("f: 1 llm call site(s), min $0.001, max $0.001"),
+            "got:\n{r}"
+        );
+        assert!(
+            r.contains("runtime-dependent"),
+            "par map calls must be marked dynamic, got:\n{r}"
+        );
     }
 
     #[test]
     fn retry_with_repairs_multiplies_the_worst_case() {
         let src = "fn f() -> string uses LLM {\n    llm\"\"\"x\"\"\" with { model: \"m\", retry: 2 with repair }\n}";
         let r = report(&parse(lex(src).unwrap()).unwrap());
-        assert!(r.contains("f: 1 llm call site(s), min $0.001, max $0.003"), "got:\n{r}");
+        assert!(
+            r.contains("f: 1 llm call site(s), min $0.001, max $0.003"),
+            "got:\n{r}"
+        );
         // retry without repair does not multiply
-        let src2 = "fn f() -> string uses LLM {\n    llm\"\"\"x\"\"\" with { model: \"m\", retry: 2 }\n}";
+        let src2 =
+            "fn f() -> string uses LLM {\n    llm\"\"\"x\"\"\" with { model: \"m\", retry: 2 }\n}";
         let r2 = report(&parse(lex(src2).unwrap()).unwrap());
         assert!(r2.contains("max $0.001"), "got:\n{r2}");
     }

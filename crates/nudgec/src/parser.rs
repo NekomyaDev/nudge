@@ -28,34 +28,64 @@ pub struct Parser {
 
 type PResult<T> = Result<T, ParseError>;
 
+/// Positional args + keyword args of one call site.
+type CallArgs = (Vec<Expr>, Vec<(String, Expr)>);
+
 impl Parser {
     pub fn new(tokens: Vec<Spanned>) -> Self {
         Parser { t: tokens, i: 0 }
     }
 
     // ── cursor helpers ──────────────────────────────────────────────
-    fn peek(&self) -> &Tok { &self.t[self.i].tok }
-    fn peek2(&self) -> &Tok { self.t.get(self.i + 1).map(|s| &s.tok).unwrap_or(&Tok::Eof) }
-    fn pos(&self) -> usize { self.t[self.i].start }
-    fn bump(&mut self) { if self.i + 1 < self.t.len() { self.i += 1; } }
-
-    fn err<T>(&self, msg: impl Into<String>) -> PResult<T> {
-        Err(ParseError { msg: msg.into(), at: self.pos() })
+    fn peek(&self) -> &Tok {
+        &self.t[self.i].tok
+    }
+    fn peek2(&self) -> &Tok {
+        self.t.get(self.i + 1).map(|s| &s.tok).unwrap_or(&Tok::Eof)
+    }
+    fn pos(&self) -> usize {
+        self.t[self.i].start
+    }
+    fn bump(&mut self) {
+        if self.i + 1 < self.t.len() {
+            self.i += 1;
+        }
     }
 
-    fn at(&self, t: &Tok) -> bool { self.peek() == t }
+    fn err<T>(&self, msg: impl Into<String>) -> PResult<T> {
+        Err(ParseError {
+            msg: msg.into(),
+            at: self.pos(),
+        })
+    }
+
+    fn at(&self, t: &Tok) -> bool {
+        self.peek() == t
+    }
 
     fn eat(&mut self, t: &Tok) -> bool {
-        if self.at(t) { self.bump(); true } else { false }
+        if self.at(t) {
+            self.bump();
+            true
+        } else {
+            false
+        }
     }
 
     fn expect(&mut self, t: &Tok, what: &str) -> PResult<()> {
-        if self.eat(t) { Ok(()) } else { self.err(format!("expected {what}, found {:?}", self.peek())) }
+        if self.eat(t) {
+            Ok(())
+        } else {
+            self.err(format!("expected {what}, found {:?}", self.peek()))
+        }
     }
 
     fn ident(&mut self) -> PResult<String> {
         match self.peek().clone() {
-            Tok::Ident(s) => { self.bump(); Ok(s) }
+            Tok::Ident(s) => {
+                self.bump();
+                Ok(s)
+            }
             other => self.err(format!("expected identifier, found {other:?}")),
         }
     }
@@ -76,7 +106,9 @@ impl Parser {
             Tok::Tool => self.parse_tool(),
             Tok::Test => self.parse_test(),
             Tok::Agent => self.parse_agent(),
-            other => self.err(format!("expected item (type/fn/tool/test), found {other:?}")),
+            other => self.err(format!(
+                "expected item (type/fn/tool/test), found {other:?}"
+            )),
         }
     }
 
@@ -108,7 +140,9 @@ impl Parser {
         if self.eat(&Tok::Uses) {
             loop {
                 effs.push(self.ident()?);
-                if !self.eat(&Tok::Comma) { break; }
+                if !self.eat(&Tok::Comma) {
+                    break;
+                }
             }
         }
         Ok(effs)
@@ -122,7 +156,13 @@ impl Parser {
         let ret = self.parse_type()?;
         let effects = self.parse_effects()?;
         let body = self.parse_block()?;
-        Ok(Item::Fn { name, params, ret, effects, body })
+        Ok(Item::Fn {
+            name,
+            params,
+            ret,
+            effects,
+            body,
+        })
     }
 
     fn parse_tool(&mut self) -> PResult<Item> {
@@ -142,13 +182,21 @@ impl Parser {
             self.eat(&Tok::Comma);
         }
         self.expect(&Tok::RBrace, "'}'")?;
-        Ok(Item::Tool { name, params, ret, fields })
+        Ok(Item::Tool {
+            name,
+            params,
+            ret,
+            fields,
+        })
     }
 
     fn parse_test(&mut self) -> PResult<Item> {
         self.bump(); // test
         let name = match self.peek().clone() {
-            Tok::Str(s) => { self.bump(); s }
+            Tok::Str(s) => {
+                self.bump();
+                s
+            }
             other => return self.err(format!("expected test name string, found {other:?}")),
         };
         let body = self.parse_block()?;
@@ -163,7 +211,9 @@ impl Parser {
         let mut state = Vec::new();
         let mut fns = Vec::new();
         while !self.at(&Tok::RBrace) {
-            if self.at(&Tok::Eof) { return self.err("unexpected end of file inside agent"); }
+            if self.at(&Tok::Eof) {
+                return self.err("unexpected end of file inside agent");
+            }
             match self.peek() {
                 Tok::State => {
                     self.bump(); // state
@@ -180,7 +230,11 @@ impl Parser {
                     self.expect(&Tok::RBrace, "'}' after state block")?;
                 }
                 Tok::Fn => fns.push(self.parse_fn()?),
-                other => return self.err(format!("expected `state` or `fn` inside agent, found {other:?}")),
+                other => {
+                    return self.err(format!(
+                        "expected `state` or `fn` inside agent, found {other:?}"
+                    ))
+                }
             }
         }
         self.expect(&Tok::RBrace, "'}' after agent body")?;
@@ -191,7 +245,9 @@ impl Parser {
         self.expect(&Tok::LBrace, "'{'")?;
         let mut stmts = Vec::new();
         while !self.at(&Tok::RBrace) {
-            if self.at(&Tok::Eof) { return self.err("unexpected end of file inside block"); }
+            if self.at(&Tok::Eof) {
+                return self.err("unexpected end of file inside block");
+            }
             stmts.push(self.parse_stmt()?);
         }
         self.expect(&Tok::RBrace, "'}'")?;
@@ -203,10 +259,19 @@ impl Parser {
             Tok::Let => {
                 self.bump();
                 let name = self.ident()?;
-                let ty = if self.eat(&Tok::Colon) { Some(self.parse_type()?) } else { None };
+                let ty = if self.eat(&Tok::Colon) {
+                    Some(self.parse_type()?)
+                } else {
+                    None
+                };
                 self.expect(&Tok::Assign, "'=' in let binding")?;
                 let value = self.parse_expr()?;
-                Ok(Stmt::Let { name, ty, value, stream: false })
+                Ok(Stmt::Let {
+                    name,
+                    ty,
+                    value,
+                    stream: false,
+                })
             }
             // `stream let x: T = llm"""..."""` (design §4.5) — `stream` is a
             // contextual keyword: only special when directly followed by `let`
@@ -214,29 +279,48 @@ impl Parser {
                 self.bump(); // stream
                 self.bump(); // let
                 let name = self.ident()?;
-                let ty = if self.eat(&Tok::Colon) { Some(self.parse_type()?) } else { None };
+                let ty = if self.eat(&Tok::Colon) {
+                    Some(self.parse_type()?)
+                } else {
+                    None
+                };
                 self.expect(&Tok::Assign, "'=' in stream let binding")?;
                 let value = self.parse_expr()?;
-                Ok(Stmt::Let { name, ty, value, stream: true })
+                Ok(Stmt::Let {
+                    name,
+                    ty,
+                    value,
+                    stream: true,
+                })
             }
-            Tok::Assert => { self.bump(); Ok(Stmt::Assert(self.parse_expr()?)) }
-            // `state.x = v` / `state.x += v` (design §7) — only valid inside
+            Tok::Assert => {
+                self.bump();
+                Ok(Stmt::Assert(self.parse_expr()?))
+            }
+            // `state.x = v` / `+=` / `-=` (design §7) — only valid inside
             // an agent block; the checker enforces that (E0701). Lookahead
             // past `state . field` keeps a bare `state.x` read an expression.
-            Tok::State if self.peek2() == &Tok::Dot
-                && matches!(self.t.get(self.i + 2).map(|s| &s.tok), Some(Tok::Ident(_)))
-                && matches!(self.t.get(self.i + 3).map(|s| &s.tok), Some(Tok::Assign) | Some(Tok::PlusEq)) => {
+            Tok::State
+                if self.peek2() == &Tok::Dot
+                    && matches!(self.t.get(self.i + 2).map(|s| &s.tok), Some(Tok::Ident(_)))
+                    && matches!(
+                        self.t.get(self.i + 3).map(|s| &s.tok),
+                        Some(Tok::Assign) | Some(Tok::PlusEq) | Some(Tok::MinusEq)
+                    ) =>
+            {
                 self.bump(); // state
                 self.bump(); // .
                 let field = self.ident()?;
-                let aug = if self.eat(&Tok::PlusEq) {
-                    true
+                let op = if self.eat(&Tok::PlusEq) {
+                    StateOp::Add
+                } else if self.eat(&Tok::MinusEq) {
+                    StateOp::Sub
                 } else {
-                    self.expect(&Tok::Assign, "'=' or '+=' in state write")?;
-                    false
+                    self.expect(&Tok::Assign, "'=', '+=' or '-=' in state write")?;
+                    StateOp::Set
                 };
                 let value = self.parse_expr()?;
-                Ok(Stmt::StateWrite { field, aug, value })
+                Ok(Stmt::StateWrite { field, op, value })
             }
             _ => Ok(Stmt::ExprStmt(self.parse_expr()?)),
         }
@@ -245,7 +329,10 @@ impl Parser {
     // ── types ───────────────────────────────────────────────────────
     fn parse_type(&mut self) -> PResult<TypeExpr> {
         let mut ty = match self.peek().clone() {
-            Tok::Ident(name) => { self.bump(); TypeExpr::Named(name) }
+            Tok::Ident(name) => {
+                self.bump();
+                TypeExpr::Named(name)
+            }
             Tok::LBracket => {
                 self.bump();
                 let inner = self.parse_type()?;
@@ -264,7 +351,11 @@ impl Parser {
                 self.expect(&Tok::RBrace, "'}' in record type")?;
                 TypeExpr::Record(fields)
             }
-            Tok::LParen => { self.bump(); self.expect(&Tok::RParen, "unit type '()'")?; TypeExpr::Named("()".into()) }
+            Tok::LParen => {
+                self.bump();
+                self.expect(&Tok::RParen, "unit type '()'")?;
+                TypeExpr::Named("()".into())
+            }
             other => return self.err(format!("expected type, found {other:?}")),
         };
         // refinement: @name(args)
@@ -283,7 +374,9 @@ impl Parser {
     }
 
     // ── expressions (precedence low → high, design §12) ─────────────
-    pub fn parse_expr(&mut self) -> PResult<Expr> { self.parse_merge() }
+    pub fn parse_expr(&mut self) -> PResult<Expr> {
+        self.parse_merge()
+    }
 
     /// `l | merge r` (design §7): reducer join — `merge` is a contextual
     /// keyword, only special directly after `|` (so `|a|` lambdas and a
@@ -294,7 +387,10 @@ impl Parser {
             self.bump(); // |
             self.bump(); // merge
             let r = self.parse_or()?;
-            l = Expr::Merge { l: Box::new(l), r: Box::new(r) };
+            l = Expr::Merge {
+                l: Box::new(l),
+                r: Box::new(r),
+            };
         }
         Ok(l)
     }
@@ -303,7 +399,11 @@ impl Parser {
         let mut l = self.parse_and()?;
         while self.eat(&Tok::Or) {
             let r = self.parse_and()?;
-            l = Expr::Binary { op: BinOp::Or, l: Box::new(l), r: Box::new(r) };
+            l = Expr::Binary {
+                op: BinOp::Or,
+                l: Box::new(l),
+                r: Box::new(r),
+            };
         }
         Ok(l)
     }
@@ -312,7 +412,11 @@ impl Parser {
         let mut l = self.parse_cmp()?;
         while self.eat(&Tok::And) {
             let r = self.parse_cmp()?;
-            l = Expr::Binary { op: BinOp::And, l: Box::new(l), r: Box::new(r) };
+            l = Expr::Binary {
+                op: BinOp::And,
+                l: Box::new(l),
+                r: Box::new(r),
+            };
         }
         Ok(l)
     }
@@ -321,15 +425,22 @@ impl Parser {
         let mut l = self.parse_add()?;
         loop {
             let op = match self.peek() {
-                Tok::EqEq => Some(BinOp::Eq), Tok::NotEq => Some(BinOp::NotEq),
-                Tok::Lt => Some(BinOp::Lt), Tok::LtEq => Some(BinOp::LtEq),
-                Tok::Gt => Some(BinOp::Gt), Tok::GtEq => Some(BinOp::GtEq),
+                Tok::EqEq => Some(BinOp::Eq),
+                Tok::NotEq => Some(BinOp::NotEq),
+                Tok::Lt => Some(BinOp::Lt),
+                Tok::LtEq => Some(BinOp::LtEq),
+                Tok::Gt => Some(BinOp::Gt),
+                Tok::GtEq => Some(BinOp::GtEq),
                 _ => None,
             };
             if let Some(op) = op {
                 self.bump();
                 let r = self.parse_add()?;
-                l = Expr::Binary { op, l: Box::new(l), r: Box::new(r) };
+                l = Expr::Binary {
+                    op,
+                    l: Box::new(l),
+                    r: Box::new(r),
+                };
                 continue;
             }
             // MVP infix rule: `a zip b` → zip(a, b)
@@ -352,11 +463,17 @@ impl Parser {
         let mut l = self.parse_mul()?;
         loop {
             let op = match self.peek() {
-                Tok::Plus => BinOp::Add, Tok::Minus => BinOp::Sub, _ => break,
+                Tok::Plus => BinOp::Add,
+                Tok::Minus => BinOp::Sub,
+                _ => break,
             };
             self.bump();
             let r = self.parse_mul()?;
-            l = Expr::Binary { op, l: Box::new(l), r: Box::new(r) };
+            l = Expr::Binary {
+                op,
+                l: Box::new(l),
+                r: Box::new(r),
+            };
         }
         Ok(l)
     }
@@ -365,20 +482,38 @@ impl Parser {
         let mut l = self.parse_unary()?;
         loop {
             let op = match self.peek() {
-                Tok::Star => BinOp::Mul, Tok::Slash => BinOp::Div, Tok::Percent => BinOp::Mod,
+                Tok::Star => BinOp::Mul,
+                Tok::Slash => BinOp::Div,
+                Tok::Percent => BinOp::Mod,
                 _ => break,
             };
             self.bump();
             let r = self.parse_unary()?;
-            l = Expr::Binary { op, l: Box::new(l), r: Box::new(r) };
+            l = Expr::Binary {
+                op,
+                l: Box::new(l),
+                r: Box::new(r),
+            };
         }
         Ok(l)
     }
 
     fn parse_unary(&mut self) -> PResult<Expr> {
         match self.peek() {
-            Tok::Minus => { self.bump(); Ok(Expr::Unary { op: BinOp::Sub, x: Box::new(self.parse_unary()?) }) }
-            Tok::Bang => { self.bump(); Ok(Expr::Unary { op: BinOp::Not, x: Box::new(self.parse_unary()?) }) }
+            Tok::Minus => {
+                self.bump();
+                Ok(Expr::Unary {
+                    op: BinOp::Sub,
+                    x: Box::new(self.parse_unary()?),
+                })
+            }
+            Tok::Bang => {
+                self.bump();
+                Ok(Expr::Unary {
+                    op: BinOp::Not,
+                    x: Box::new(self.parse_unary()?),
+                })
+            }
             _ => self.parse_postfix(),
         }
     }
@@ -390,11 +525,18 @@ impl Parser {
                 Tok::Dot => {
                     self.bump();
                     let name = self.ident()?;
-                    e = Expr::Field { obj: Box::new(e), name };
+                    e = Expr::Field {
+                        obj: Box::new(e),
+                        name,
+                    };
                 }
                 Tok::LParen => {
                     let (args, kwargs) = self.parse_call_args()?;
-                    e = Expr::Call { func: Box::new(e), args, kwargs };
+                    e = Expr::Call {
+                        func: Box::new(e),
+                        args,
+                        kwargs,
+                    };
                 }
                 _ => break,
             }
@@ -402,13 +544,14 @@ impl Parser {
         Ok(e)
     }
 
-    fn parse_call_args(&mut self) -> PResult<(Vec<Expr>, Vec<(String, Expr)>)> {
+    fn parse_call_args(&mut self) -> PResult<CallArgs> {
         self.expect(&Tok::LParen, "'('")?;
         let mut args = Vec::new();
         let mut kwargs = Vec::new();
         while !self.at(&Tok::RParen) {
             if let (Tok::Ident(name), Tok::Assign) = (self.peek().clone(), self.peek2().clone()) {
-                self.bump(); self.bump();
+                self.bump();
+                self.bump();
                 kwargs.push((name, self.parse_expr()?));
             } else {
                 args.push(self.parse_expr()?);
@@ -440,13 +583,35 @@ impl Parser {
 
     fn parse_primary(&mut self) -> PResult<Expr> {
         match self.peek().clone() {
-            Tok::Int(v) => { self.bump(); Ok(Expr::Int(v)) }
-            Tok::Float(v) => { self.bump(); Ok(Expr::Float(v)) }
-            Tok::Str(s) => { self.bump(); Ok(Expr::Str(s)) }
-            Tok::Money(v, u) => { let (v, u) = (v, u.clone()); self.bump(); Ok(Expr::Money(v, u)) }
-            Tok::True => { self.bump(); Ok(Expr::Bool(true)) }
-            Tok::False => { self.bump(); Ok(Expr::Bool(false)) }
-            Tok::None => { self.bump(); Ok(Expr::None) }
+            Tok::Int(v) => {
+                self.bump();
+                Ok(Expr::Int(v))
+            }
+            Tok::Float(v) => {
+                self.bump();
+                Ok(Expr::Float(v))
+            }
+            Tok::Str(s) => {
+                self.bump();
+                Ok(Expr::Str(s))
+            }
+            Tok::Money(v, u) => {
+                let (v, u) = (v, u.clone());
+                self.bump();
+                Ok(Expr::Money(v, u))
+            }
+            Tok::True => {
+                self.bump();
+                Ok(Expr::Bool(true))
+            }
+            Tok::False => {
+                self.bump();
+                Ok(Expr::Bool(false))
+            }
+            Tok::None => {
+                self.bump();
+                Ok(Expr::None)
+            }
             // `route{ cheap: "m" when cond, strong: "m2" otherwise }` (design
             // §4.4) — `route` is contextual: only special directly before `{`
             Tok::Ident(s) if s == "route" && self.peek2() == &Tok::LBrace => {
@@ -457,8 +622,15 @@ impl Parser {
                     let label = self.ident()?;
                     self.expect(&Tok::Colon, "':' in route arm")?;
                     let model = match self.peek().clone() {
-                        Tok::Str(m) => { self.bump(); m }
-                        other => return self.err(format!("expected model string in route arm, found {other:?}")),
+                        Tok::Str(m) => {
+                            self.bump();
+                            m
+                        }
+                        other => {
+                            return self.err(format!(
+                                "expected model string in route arm, found {other:?}"
+                            ))
+                        }
                     };
                     let cond = if self.eat(&Tok::Ident("when".into())) {
                         Some(self.parse_expr()?)
@@ -475,8 +647,14 @@ impl Parser {
             }
             // `state` reads (`state.round`) inside agent fns (design §7);
             // codegen binds it to the agent's checkpointed state object
-            Tok::State => { self.bump(); Ok(Expr::Ident("state".into())) }
-            Tok::Ident(name) => { self.bump(); Ok(Expr::Ident(name)) }
+            Tok::State => {
+                self.bump();
+                Ok(Expr::Ident("state".into()))
+            }
+            Tok::Ident(name) => {
+                self.bump();
+                Ok(Expr::Ident(name))
+            }
             Tok::LBracket => {
                 self.bump();
                 let mut xs = Vec::new();
@@ -495,7 +673,10 @@ impl Parser {
             }
             Tok::Prompt(body) => {
                 self.bump();
-                let prompt = Expr::Prompt { interpolations: scan_interpolations(&body), body };
+                let prompt = Expr::Prompt {
+                    interpolations: scan_interpolations(&body),
+                    body,
+                };
                 // optional with-block turns it into an LlmCall
                 if self.at(&Tok::With) && self.peek2() == &Tok::LBrace {
                     self.bump(); // with
@@ -508,14 +689,21 @@ impl Parser {
                         let val = self.parse_expr()?;
                         options.push((key, val));
                         // `retry: N with repair` — `repair` is a contextual keyword (design §12)
-                        if self.at(&Tok::With) && matches!(self.peek2(), Tok::Ident(s) if s == "repair") {
-                            self.bump(); self.bump();
+                        if self.at(&Tok::With)
+                            && matches!(self.peek2(), Tok::Ident(s) if s == "repair")
+                        {
+                            self.bump();
+                            self.bump();
                             repair = true;
                         }
                         self.eat(&Tok::Comma);
                     }
                     self.expect(&Tok::RBrace, "'}'")?;
-                    Ok(Expr::LlmCall { prompt: Box::new(prompt), options, repair })
+                    Ok(Expr::LlmCall {
+                        prompt: Box::new(prompt),
+                        options,
+                        repair,
+                    })
                 } else {
                     Ok(prompt)
                 }
@@ -535,7 +723,12 @@ impl Parser {
                             (self.parse_add()?, Vec::new())
                         };
                         let (params, body) = self.parse_lambda()?;
-                        Ok(Expr::ParMap { coll: Box::new(coll), kwargs, params, body: Box::new(body) })
+                        Ok(Expr::ParMap {
+                            coll: Box::new(coll),
+                            kwargs,
+                            params,
+                            body: Box::new(body),
+                        })
                     }
                     Tok::All => {
                         self.bump();
@@ -597,7 +790,9 @@ mod tests {
                 match ty {
                     TypeExpr::Record(fields) => {
                         assert_eq!(fields.len(), 2);
-                        assert!(matches!(fields[1].1, TypeExpr::Refine(_, ref r, _) if r == "range"));
+                        assert!(
+                            matches!(fields[1].1, TypeExpr::Refine(_, ref r, _) if r == "range")
+                        );
                     }
                     other => panic!("expected record type, got {other:?}"),
                 }
@@ -615,11 +810,20 @@ fn analyze(q: string) -> [Finding] uses LLM {
 }"#;
         let items = parse_str(src);
         match &items[0] {
-            Item::Fn { name, effects, body, .. } => {
+            Item::Fn {
+                name,
+                effects,
+                body,
+                ..
+            } => {
                 assert_eq!(name, "analyze");
                 assert_eq!(effects, &vec!["LLM".to_string()]);
                 match &body[0] {
-                    Stmt::ExprStmt(Expr::LlmCall { prompt, options, repair }) => {
+                    Stmt::ExprStmt(Expr::LlmCall {
+                        prompt,
+                        options,
+                        repair,
+                    }) => {
                         assert!(repair);
                         assert_eq!(options.len(), 4);
                         match prompt.as_ref() {
@@ -642,7 +846,10 @@ fn analyze(q: string) -> [Finding] uses LLM {
         let items = parse_str("fn f() -> () { let h = par map angles |a| -> search(a) }");
         match &items[0] {
             Item::Fn { body, .. } => match &body[0] {
-                Stmt::Let { value: Expr::ParMap { params, kwargs, .. }, .. } => {
+                Stmt::Let {
+                    value: Expr::ParMap { params, kwargs, .. },
+                    ..
+                } => {
                     assert_eq!(params, &vec!["a".to_string()]);
                     assert!(kwargs.is_empty());
                 }
@@ -656,7 +863,16 @@ fn analyze(q: string) -> [Finding] uses LLM {
         );
         match &items[0] {
             Item::Fn { body, .. } => match &body[0] {
-                Stmt::Let { value: Expr::ParMap { coll, params, kwargs, .. }, .. } => {
+                Stmt::Let {
+                    value:
+                        Expr::ParMap {
+                            coll,
+                            params,
+                            kwargs,
+                            ..
+                        },
+                    ..
+                } => {
                     assert_eq!(params, &vec!["a".to_string(), "h".to_string()]);
                     assert_eq!(kwargs.len(), 1);
                     assert!(matches!(coll.as_ref(), Expr::Call { .. })); // zip(angles, hits)
@@ -680,8 +896,17 @@ test "budget" {
             Item::Test { name, body } => {
                 assert_eq!(name, "budget");
                 assert_eq!(body.len(), 3);
-                assert!(matches!(body[1], Stmt::Assert(Expr::Binary { op: BinOp::Lt, .. })));
-                assert!(matches!(body[2], Stmt::Assert(Expr::Binary { op: BinOp::GtEq, .. })));
+                assert!(matches!(
+                    body[1],
+                    Stmt::Assert(Expr::Binary { op: BinOp::Lt, .. })
+                ));
+                assert!(matches!(
+                    body[2],
+                    Stmt::Assert(Expr::Binary {
+                        op: BinOp::GtEq,
+                        ..
+                    })
+                ));
             }
             other => panic!("expected test, got {other:?}"),
         }
@@ -722,7 +947,12 @@ test "budget" {
         let items = parse_str(src);
         match &items[0] {
             Item::Fn { body, .. } => match &body[0] {
-                Stmt::Let { name, stream, value, .. } => {
+                Stmt::Let {
+                    name,
+                    stream,
+                    value,
+                    ..
+                } => {
                     assert_eq!(name, "t");
                     assert!(stream);
                     assert!(matches!(value, Expr::LlmCall { .. }));
@@ -758,8 +988,12 @@ test "budget" {
                 assert_eq!(fns.len(), 1);
                 match &fns[0] {
                     Item::Fn { body, .. } => {
-                        assert!(matches!(&body[1], Stmt::StateWrite { field, aug: true, .. } if field == "notes"));
-                        assert!(matches!(&body[2], Stmt::StateWrite { field, aug: false, .. } if field == "round"));
+                        assert!(
+                            matches!(&body[1], Stmt::StateWrite { field, op: StateOp::Add, .. } if field == "notes")
+                        );
+                        assert!(
+                            matches!(&body[2], Stmt::StateWrite { field, op: StateOp::Set, .. } if field == "round")
+                        );
                     }
                     other => panic!("expected fn inside agent, got {other:?}"),
                 }
@@ -792,7 +1026,9 @@ test "budget" {
         // `route` alone is an ordinary identifier
         let items = parse(lex("fn f() -> int { let route = 3\n    route }").unwrap()).unwrap();
         match &items[0] {
-            Item::Fn { body, .. } => assert!(matches!(&body[0], Stmt::Let { name, .. } if name == "route")),
+            Item::Fn { body, .. } => {
+                assert!(matches!(&body[0], Stmt::Let { name, .. } if name == "route"))
+            }
             _ => panic!("expected fn"),
         }
     }
@@ -821,5 +1057,22 @@ test "budget" {
     #[test]
     fn parse_error_is_clean_not_panic() {
         assert!(parse(lex("fn broken(").unwrap()).is_err());
+    }
+
+    #[test]
+    fn state_write_supports_minus_eq() {
+        let src = "agent A {\n    state {\n        round: int = 0,\n    }\n    fn back() -> int {\n        state.round -= 1\n        state.round\n    }\n}";
+        let items = parse(lex(src).unwrap()).unwrap();
+        match &items[0] {
+            Item::Agent { fns, .. } => match &fns[0] {
+                Item::Fn { body, .. } => {
+                    assert!(
+                        matches!(&body[0], Stmt::StateWrite { field, op: StateOp::Sub, .. } if field == "round")
+                    );
+                }
+                other => panic!("expected fn, got {other:?}"),
+            },
+            other => panic!("expected agent, got {other:?}"),
+        }
     }
 }

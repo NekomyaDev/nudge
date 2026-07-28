@@ -28,11 +28,19 @@ fn diag(line: usize, col: usize, code: &str, msg: &str) -> Json {
 }
 
 fn diag_sev(line: usize, col: usize, code: &str, msg: &str, severity: f64) -> Json {
-    let pos = |l: usize, c: usize| Json::Obj(vec![("line".into(), Json::Num(l as f64)), ("character".into(), Json::Num(c as f64))]);
+    let pos = |l: usize, c: usize| {
+        Json::Obj(vec![
+            ("line".into(), Json::Num(l as f64)),
+            ("character".into(), Json::Num(c as f64)),
+        ])
+    };
     Json::Obj(vec![
         (
             "range".into(),
-            Json::Obj(vec![("start".into(), pos(line, col)), ("end".into(), pos(line, col + 1))]),
+            Json::Obj(vec![
+                ("start".into(), pos(line, col)),
+                ("end".into(), pos(line, col + 1)),
+            ]),
         ),
         ("severity".into(), Json::Num(severity)),
         ("source".into(), Json::str("nudge")),
@@ -78,10 +86,16 @@ pub fn diagnostics(src: &str) -> Vec<Json> {
 fn notify_diagnostics(uri: &str, diags: Vec<Json>) -> Json {
     Json::Obj(vec![
         ("jsonrpc".into(), Json::str("2.0")),
-        ("method".into(), Json::str("textDocument/publishDiagnostics")),
+        (
+            "method".into(),
+            Json::str("textDocument/publishDiagnostics"),
+        ),
         (
             "params".into(),
-            Json::Obj(vec![("uri".into(), Json::str(uri)), ("diagnostics".into(), Json::Arr(diags))]),
+            Json::Obj(vec![
+                ("uri".into(), Json::str(uri)),
+                ("diagnostics".into(), Json::Arr(diags)),
+            ]),
         ),
     ])
 }
@@ -100,7 +114,10 @@ fn respond_error(id: &Json, code: f64, msg: &str) -> Json {
         ("id".into(), id.clone()),
         (
             "error".into(),
-            Json::Obj(vec![("code".into(), Json::Num(code)), ("message".into(), Json::str(msg))]),
+            Json::Obj(vec![
+                ("code".into(), Json::Num(code)),
+                ("message".into(), Json::str(msg)),
+            ]),
         ),
     ])
 }
@@ -140,13 +157,25 @@ fn index(src: &str) -> Vec<Sym> {
             continue;
         }
         let indent = raw.len() - line.len();
-        for (kw, kind) in [("fn ", "function"), ("type ", "type"), ("agent ", "agent"), ("tool ", "tool"), ("let ", "variable")] {
+        for (kw, kind) in [
+            ("fn ", "function"),
+            ("type ", "type"),
+            ("agent ", "agent"),
+            ("tool ", "tool"),
+            ("let ", "variable"),
+        ] {
             if let Some(rest) = line.strip_prefix(kw) {
                 let name: String = rest.chars().take_while(|&c| is_ident_char(c)).collect();
                 if !name.is_empty() && is_ident_start(name.chars().next().unwrap()) {
                     let col = indent + kw.len();
                     let detail = line.trim_end().trim_end_matches('{').trim_end().to_string();
-                    out.push(Sym { kind, name, line: line_no, col, detail });
+                    out.push(Sym {
+                        kind,
+                        name,
+                        line: line_no,
+                        col,
+                        detail,
+                    });
                 }
             }
         }
@@ -235,7 +264,10 @@ fn completions(src: &str) -> Json {
         };
         push(&s.name.clone(), kind, &s.detail.clone());
     }
-    Json::Obj(vec![("isIncomplete".into(), Json::Bool(false)), ("items".into(), Json::Arr(items))])
+    Json::Obj(vec![
+        ("isIncomplete".into(), Json::Bool(false)),
+        ("items".into(), Json::Arr(items)),
+    ])
 }
 
 fn hover(src: &str, line: usize, col: usize) -> Json {
@@ -245,11 +277,19 @@ fn hover(src: &str, line: usize, col: usize) -> Json {
     let md = |v: String| {
         Json::Obj(vec![(
             "contents".into(),
-            Json::Obj(vec![("kind".into(), Json::str("markdown")), ("value".into(), Json::str(v))]),
+            Json::Obj(vec![
+                ("kind".into(), Json::str("markdown")),
+                ("value".into(), Json::str(v)),
+            ]),
         )])
     };
     if let Some(s) = index(src).iter().find(|s| s.name == word) {
-        return md(format!("```nudge\n{}\n```\n*{}* — declared on line {}", s.detail, s.kind, s.line + 1));
+        return md(format!(
+            "```nudge\n{}\n```\n*{}* — declared on line {}",
+            s.detail,
+            s.kind,
+            s.line + 1
+        ));
     }
     if ["string", "float", "int", "bool"].contains(&word.as_str()) {
         return md(format!("`{word}` — primitive type"));
@@ -267,7 +307,12 @@ fn definition(src: &str, uri: &str, line: usize, col: usize) -> Json {
     let Some(s) = index(src).into_iter().find(|s| s.name == word) else {
         return Json::Null;
     };
-    let pos = |l: usize, c: usize| Json::Obj(vec![("line".into(), Json::Num(l as f64)), ("character".into(), Json::Num(c as f64))]);
+    let pos = |l: usize, c: usize| {
+        Json::Obj(vec![
+            ("line".into(), Json::Num(l as f64)),
+            ("character".into(), Json::Num(c as f64)),
+        ])
+    };
     Json::Obj(vec![
         ("uri".into(), Json::str(uri)),
         (
@@ -282,7 +327,10 @@ fn definition(src: &str, uri: &str, line: usize, col: usize) -> Json {
 
 impl Lsp {
     pub fn new() -> Self {
-        Lsp { docs: HashMap::new(), shutdown: false }
+        Lsp {
+            docs: HashMap::new(),
+            shutdown: false,
+        }
     }
 
     /// Handle one incoming message; returns the messages to send back.
@@ -303,7 +351,10 @@ impl Lsp {
                                 ("definitionProvider".into(), Json::Bool(true)),
                                 (
                                     "completionProvider".into(),
-                                    Json::Obj(vec![("triggerCharacters".into(), Json::Arr(vec![]))]),
+                                    Json::Obj(vec![(
+                                        "triggerCharacters".into(),
+                                        Json::Arr(vec![]),
+                                    )]),
                                 ),
                             ]),
                         )]),
@@ -313,13 +364,22 @@ impl Lsp {
             "initialized" | "$/cancelRequest" => vec![],
             "shutdown" => {
                 self.shutdown = true;
-                id.map(|i| vec![respond(&i, Json::Null)]).unwrap_or_default()
+                id.map(|i| vec![respond(&i, Json::Null)])
+                    .unwrap_or_default()
             }
             "exit" => std::process::exit(if self.shutdown { 0 } else { 1 }),
             "textDocument/didOpen" => {
                 let doc = params.get("textDocument").cloned().unwrap_or(Json::Null);
-                let uri = doc.get("uri").and_then(Json::as_str).unwrap_or("").to_string();
-                let text = doc.get("text").and_then(Json::as_str).unwrap_or("").to_string();
+                let uri = doc
+                    .get("uri")
+                    .and_then(Json::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let text = doc
+                    .get("text")
+                    .and_then(Json::as_str)
+                    .unwrap_or("")
+                    .to_string();
                 let diags = diagnostics(&text);
                 self.docs.insert(uri.clone(), text);
                 vec![notify_diagnostics(&uri, diags)]
@@ -390,7 +450,11 @@ impl Lsp {
             // requests we don't implement get a JSON-RPC error; unknown
             // notifications are ignored per the LSP spec
             _ => match id {
-                Some(i) => vec![respond_error(&i, -32601.0, &format!("method not implemented: {method}"))],
+                Some(i) => vec![respond_error(
+                    &i,
+                    -32601.0,
+                    &format!("method not implemented: {method}"),
+                )],
                 None => vec![],
             },
         }
@@ -473,7 +537,10 @@ mod tests {
         let mut lsp = Lsp::new();
         let out = lsp.dispatch(&request(1, "initialize", Json::Obj(vec![])));
         let s = dumps(&out[0]);
-        assert!(s.contains("\"id\": 1") && s.contains("\"textDocumentSync\": 1"), "{s}");
+        assert!(
+            s.contains("\"id\": 1") && s.contains("\"textDocumentSync\": 1"),
+            "{s}"
+        );
         let out2 = lsp.dispatch(&request(2, "shutdown", Json::Null));
         assert!(dumps(&out2[0]).contains("\"result\": null"));
         // unimplemented request → JSON-RPC error
@@ -485,7 +552,10 @@ mod tests {
 
     fn pos_params(uri: &str, line: usize, col: usize) -> Json {
         Json::Obj(vec![
-            ("textDocument".into(), Json::Obj(vec![("uri".into(), Json::str(uri))])),
+            (
+                "textDocument".into(),
+                Json::Obj(vec![("uri".into(), Json::str(uri))]),
+            ),
             (
                 "position".into(),
                 Json::Obj(vec![
@@ -502,12 +572,13 @@ mod tests {
             ("method".into(), Json::str("textDocument/didOpen")),
             (
                 "params".into(),
-                Json::Obj(vec![
-                    ("textDocument".into(), Json::Obj(vec![
+                Json::Obj(vec![(
+                    "textDocument".into(),
+                    Json::Obj(vec![
                         ("uri".into(), Json::str(uri)),
                         ("text".into(), Json::str(text)),
-                    ])),
-                ]),
+                    ]),
+                )]),
             ),
         ]));
     }
@@ -540,25 +611,54 @@ mod tests {
         // initialize advertises the new capabilities
         let init = lsp.dispatch(&request(1, "initialize", Json::Obj(vec![])));
         let s = dumps(&init[0]);
-        assert!(s.contains("hoverProvider") && s.contains("definitionProvider") && s.contains("completionProvider"), "{s}");
+        assert!(
+            s.contains("hoverProvider")
+                && s.contains("definitionProvider")
+                && s.contains("completionProvider"),
+            "{s}"
+        );
         // hover over `find` call site (line 4, col 26) → signature markdown
         let h = lsp.dispatch(&request(2, "textDocument/hover", pos_params(uri, 4, 26)));
         let s = dumps(&h[0]);
         assert!(s.contains("fn find(q: string) -> Finding uses LLM"), "{s}");
         // hover over a keyword
         let h2 = lsp.dispatch(&request(3, "textDocument/hover", pos_params(uri, 0, 1)));
-        assert!(dumps(&h2[0]).contains("Declare a named type"), "{}", dumps(&h2[0]));
+        assert!(
+            dumps(&h2[0]).contains("Declare a named type"),
+            "{}",
+            dumps(&h2[0])
+        );
         // go-to-definition on `find` → line 1, col 3
-        let d = lsp.dispatch(&request(4, "textDocument/definition", pos_params(uri, 4, 26)));
+        let d = lsp.dispatch(&request(
+            4,
+            "textDocument/definition",
+            pos_params(uri, 4, 26),
+        ));
         let s = dumps(&d[0]);
-        assert!(s.contains(uri) && s.contains("\"line\": 1") && s.contains("\"character\": 3"), "{s}");
+        assert!(
+            s.contains(uri) && s.contains("\"line\": 1") && s.contains("\"character\": 3"),
+            "{s}"
+        );
         // completion lists keywords + user symbols
-        let c = lsp.dispatch(&request(5, "textDocument/completion", pos_params(uri, 4, 26)));
+        let c = lsp.dispatch(&request(
+            5,
+            "textDocument/completion",
+            pos_params(uri, 4, 26),
+        ));
         let s = dumps(&c[0]);
-        assert!(s.contains("\"label\": \"schema\"") && s.contains("\"label\": \"find\"") && s.contains("\"label\": \"Finding\""), "{s}");
+        assert!(
+            s.contains("\"label\": \"schema\"")
+                && s.contains("\"label\": \"find\"")
+                && s.contains("\"label\": \"Finding\""),
+            "{s}"
+        );
         // hover over nothing meaningful → null
         let n = lsp.dispatch(&request(6, "textDocument/hover", pos_params(uri, 2, 14)));
-        assert!(dumps(&n[0]).contains("\"result\": null"), "{}", dumps(&n[0]));
+        assert!(
+            dumps(&n[0]).contains("\"result\": null"),
+            "{}",
+            dumps(&n[0])
+        );
     }
 
     #[test]
@@ -607,7 +707,10 @@ mod tests {
                 (
                     "params".into(),
                     Json::Obj(vec![
-                        ("textDocument".into(), Json::Obj(vec![("uri".into(), Json::str(uri))])),
+                        (
+                            "textDocument".into(),
+                            Json::Obj(vec![("uri".into(), Json::str(uri))]),
+                        ),
                         (
                             "contentChanges".into(),
                             Json::Arr(vec![Json::Obj(vec![("text".into(), Json::str(text))])]),

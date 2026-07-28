@@ -58,13 +58,20 @@ impl fmt::Display for Ty {
 #[derive(Default)]
 struct Globals {
     aliases: HashMap<String, TypeExpr>,
-    fns: HashMap<String, (Vec<TypeExpr>, TypeExpr)>,
-    tools: HashMap<String, (Vec<TypeExpr>, TypeExpr)>,
+    // name → ((param name, param type)…, return type) — kwargs checking
+    // needs the names, not just the positional types
+    fns: HashMap<String, (Vec<(String, TypeExpr)>, TypeExpr)>,
+    tools: HashMap<String, (Vec<(String, TypeExpr)>, TypeExpr)>,
 }
 
 // ── type resolution ─────────────────────────────────────────────────
 
-fn resolve(t: &TypeExpr, g: &Globals, visiting: &mut Vec<String>, errs: &mut Vec<CheckError>) -> Ty {
+fn resolve(
+    t: &TypeExpr,
+    g: &Globals,
+    visiting: &mut Vec<String>,
+    errs: &mut Vec<CheckError>,
+) -> Ty {
     match t {
         TypeExpr::Named(name) => match name.as_str() {
             "int" => Ty::Int,
@@ -77,7 +84,10 @@ fn resolve(t: &TypeExpr, g: &Globals, visiting: &mut Vec<String>, errs: &mut Vec
                 if visiting.iter().any(|v| v == name) {
                     errs.push(CheckError {
                         code: "E0202",
-                        msg: format!("cyclic type alias '{}'", visiting.join(" → ") + " → " + name),
+                        msg: format!(
+                            "cyclic type alias '{}'",
+                            visiting.join(" → ") + " → " + name
+                        ),
                     });
                     return Ty::Unknown;
                 }
@@ -101,7 +111,10 @@ fn resolve(t: &TypeExpr, g: &Globals, visiting: &mut Vec<String>, errs: &mut Vec
         },
         TypeExpr::List(inner) => Ty::List(Box::new(resolve(inner, g, visiting, errs))),
         TypeExpr::Record(fields) => Ty::Record(
-            fields.iter().map(|(k, ft)| (k.clone(), resolve(ft, g, visiting, errs))).collect(),
+            fields
+                .iter()
+                .map(|(k, ft)| (k.clone(), resolve(ft, g, visiting, errs)))
+                .collect(),
         ),
         TypeExpr::Refine(base, name, args) => {
             validate_refinement(name, args, errs);
@@ -117,7 +130,9 @@ fn validate_refinement(name: &str, args: &[Expr], errs: &mut Vec<CheckError>) {
             if !(args.len() == 2 && args.iter().all(numeric)) {
                 errs.push(CheckError {
                     code: "E0202",
-                    msg: format!("@range expects 2 numeric bounds, e.g. @range(0, 1) — got {args:?}"),
+                    msg: format!(
+                        "@range expects 2 numeric bounds, e.g. @range(0, 1) — got {args:?}"
+                    ),
                 });
             }
         }
@@ -154,7 +169,10 @@ fn assignable(src: &Ty, dst: &Ty) -> bool {
         (Ty::Record(a), Ty::Record(b)) => {
             a.len() == b.len()
                 && b.iter().all(|(k, bt)| {
-                    a.iter().find(|(ak, _)| ak == k).map(|(_, at)| assignable(at, bt)).unwrap_or(false)
+                    a.iter()
+                        .find(|(ak, _)| ak == k)
+                        .map(|(_, at)| assignable(at, bt))
+                        .unwrap_or(false)
                 })
         }
         (Ty::Refine(a, _), b) => assignable(a, b),
@@ -235,7 +253,9 @@ fn direct_effects(
             }
         }
         Expr::Unary { x, .. } => direct_effects(x, g, effects, calls),
-        Expr::ParMap { coll, kwargs, body, .. } => {
+        Expr::ParMap {
+            coll, kwargs, body, ..
+        } => {
             direct_effects(coll, g, effects, calls);
             for (_, v) in kwargs {
                 direct_effects(v, g, effects, calls);
@@ -275,6 +295,9 @@ fn fn_items(items: &[Item]) -> Vec<&Item> {
     out
 }
 
+/// Agent fn context: the agent name plus its declared state fields.
+type AgentCtx<'a> = Option<(&'a str, &'a [(String, TypeExpr, Expr)])>;
+
 /// Check one fn body. `agent_ctx` is `Some((agent_name, state_fields))` when
 /// the fn lives inside an `agent` block: `state` becomes a record local and
 /// state writes are validated against the declared fields. Outside an agent,
@@ -284,7 +307,7 @@ fn check_fn_body(
     params: &[Param],
     ret: &TypeExpr,
     body: &[Stmt],
-    agent_ctx: Option<(&str, &[(String, TypeExpr, Expr)])>,
+    agent_ctx: AgentCtx<'_>,
     g: &Globals,
     errs: &mut Vec<CheckError>,
 ) {
@@ -304,7 +327,9 @@ fn check_fn_body(
     let mut last_ty = Ty::None_;
     for st in body {
         match st {
-            Stmt::Let { name: n, ty, value, .. } => {
+            Stmt::Let {
+                name: n, ty, value, ..
+            } => {
                 let vt = check_expr(value, &locals, g, errs);
                 let bound = match ty {
                     Some(ann) => {
@@ -321,7 +346,7 @@ fn check_fn_body(
                 };
                 locals.insert(n.clone(), bound);
             }
-            Stmt::StateWrite { field, aug, value } => {
+            Stmt::StateWrite { field, op, value } => {
                 let vt = check_expr(value, &locals, g, errs);
                 match agent_ctx {
                     None => errs.push(CheckError {
@@ -336,9 +361,10 @@ fn check_fn_body(
                             }),
                             Some((_, fty, _)) => {
                                 // `=`: the value must fit the declared type.
-                                // `+=`: list-concat / numeric add — the runtime
-                                // checkpoint stores whatever the write yields.
-                                if !*aug {
+                                // `+=`/`-=`: list-concat / numeric add-sub —
+                                // the runtime checkpoint stores whatever the
+                                // write yields.
+                                if matches!(op, StateOp::Set) {
                                     let want = resolve(fty, g, &mut Vec::new(), errs);
                                     if !assignable(&vt, &want) {
                                         errs.push(CheckError {
@@ -353,7 +379,13 @@ fn check_fn_body(
                 }
             }
             Stmt::Assert(e) => {
-                check_expr(e, &locals, g, errs);
+                let at = check_expr(e, &locals, g, errs);
+                if !assignable(&at, &Ty::Bool) {
+                    errs.push(CheckError {
+                        code: "E0201",
+                        msg: format!("assert expects a bool condition, got {at}"),
+                    });
+                }
             }
             Stmt::ExprStmt(e) => {
                 last_ty = check_expr(e, &locals, g, errs);
@@ -385,14 +417,21 @@ fn schema_expr_ty(e: &Expr, g: &Globals, errs: &mut Vec<CheckError>) -> Ty {
         None => {
             errs.push(CheckError {
                 code: "E0202",
-                msg: format!("schema must be a type (e.g. schema: Report or schema: [Finding]) — got {e:?}"),
+                msg: format!(
+                    "schema must be a type (e.g. schema: Report or schema: [Finding]) — got {e:?}"
+                ),
             });
             Ty::Unknown
         }
     }
 }
 
-fn check_expr(e: &Expr, locals: &HashMap<String, Ty>, g: &Globals, errs: &mut Vec<CheckError>) -> Ty {
+fn check_expr(
+    e: &Expr,
+    locals: &HashMap<String, Ty>,
+    g: &Globals,
+    errs: &mut Vec<CheckError>,
+) -> Ty {
     match e {
         Expr::Int(_) => Ty::Int,
         Expr::Float(_) => Ty::Float,
@@ -426,16 +465,32 @@ fn check_expr(e: &Expr, locals: &HashMap<String, Ty>, g: &Globals, errs: &mut Ve
             }
         },
         Expr::ListLit(xs) => {
+            // unify the element type: later elements must fit (or widen, so
+            // [1, 2.5] is [float]); incompatible mixes are E0201 — they used
+            // to be typed by the first element alone
             let mut elem = Ty::Unknown;
-            for (i, x) in xs.iter().enumerate() {
+            for x in xs {
                 let t = check_expr(x, locals, g, errs);
-                if i == 0 {
+                if matches!(elem, Ty::Unknown) {
                     elem = t;
+                } else if assignable(&t, &elem) {
+                    // fits the running element type
+                } else if assignable(&elem, &t) {
+                    elem = t; // widen (int → float)
+                } else {
+                    errs.push(CheckError {
+                        code: "E0201",
+                        msg: format!(
+                            "list element {t} does not fit the list's element type {elem}"
+                        ),
+                    });
                 }
             }
             Ty::List(Box::new(elem))
         }
-        Expr::LlmCall { prompt, options, .. } => {
+        Expr::LlmCall {
+            prompt, options, ..
+        } => {
             if let Expr::Prompt { interpolations, .. } = prompt.as_ref() {
                 for name in interpolations {
                     let root = name.split('.').next().unwrap_or(name);
@@ -458,10 +513,14 @@ fn check_expr(e: &Expr, locals: &HashMap<String, Ty>, g: &Globals, errs: &mut Ve
             schema_ty.unwrap_or(Ty::Str)
         }
         Expr::Call { func, args, kwargs } => {
-            let arg_tys: Vec<Ty> = args.iter().map(|a| check_expr(a, locals, g, errs)).collect();
-            for (_, v) in kwargs {
-                check_expr(v, locals, g, errs);
-            }
+            let arg_tys: Vec<Ty> = args
+                .iter()
+                .map(|a| check_expr(a, locals, g, errs))
+                .collect();
+            let kwarg_tys: Vec<(&String, Ty)> = kwargs
+                .iter()
+                .map(|(k, v)| (k, check_expr(v, locals, g, errs)))
+                .collect();
             if let Expr::Ident(name) = func.as_ref() {
                 match name.as_str() {
                     "len" => {
@@ -492,13 +551,18 @@ fn check_expr(e: &Expr, locals: &HashMap<String, Ty>, g: &Globals, errs: &mut Ve
                 }
                 let sig = g.fns.get(name).or_else(|| g.tools.get(name));
                 if let Some((params, ret)) = sig {
-                    if params.len() != args.len() {
+                    if args.len() > params.len() {
                         errs.push(CheckError {
                             code: "E0201",
-                            msg: format!("'{name}' takes {} argument(s), got {}", params.len(), args.len()),
+                            msg: format!(
+                                "'{name}' takes {} argument(s), got {}",
+                                params.len(),
+                                args.len()
+                            ),
                         });
                     } else {
-                        for (at, pt) in arg_tys.iter().zip(params.iter()) {
+                        // positional args fill the first params in order
+                        for (at, (_, pt)) in arg_tys.iter().zip(params.iter()) {
                             let want = resolve(pt, g, &mut Vec::new(), errs);
                             if !assignable(at, &want) {
                                 errs.push(CheckError {
@@ -506,6 +570,45 @@ fn check_expr(e: &Expr, locals: &HashMap<String, Ty>, g: &Globals, errs: &mut Ve
                                     msg: format!("argument to '{name}' must be {want}, got {at}"),
                                 });
                             }
+                        }
+                        // kwargs fill the rest by name — unknown, duplicate,
+                        // mistyped and missing parameters are all diagnosed
+                        let mut missing: Vec<&str> = params[args.len()..]
+                            .iter()
+                            .map(|(n, _)| n.as_str())
+                            .collect();
+                        for (k, vt) in &kwarg_tys {
+                            match params.iter().position(|(pn, _)| pn == *k) {
+                                None => errs.push(CheckError {
+                                    code: "E0201",
+                                    msg: format!("'{name}' has no parameter '{k}'"),
+                                }),
+                                Some(pos) if pos < args.len() => errs.push(CheckError {
+                                    code: "E0201",
+                                    msg: format!("parameter '{k}' of '{name}' got a value twice"),
+                                }),
+                                Some(pos) => {
+                                    let want = resolve(&params[pos].1, g, &mut Vec::new(), errs);
+                                    if !assignable(vt, &want) {
+                                        errs.push(CheckError {
+                                            code: "E0201",
+                                            msg: format!("argument '{k}' to '{name}' must be {want}, got {vt}"),
+                                        });
+                                    }
+                                    missing.retain(|m| *m != k.as_str());
+                                }
+                            }
+                        }
+                        if !missing.is_empty() {
+                            errs.push(CheckError {
+                                code: "E0201",
+                                msg: format!(
+                                    "'{name}' takes {} argument(s), got {} (missing: {})",
+                                    params.len(),
+                                    args.len(),
+                                    missing.join(", ")
+                                ),
+                            });
                         }
                     }
                     return resolve(ret, g, &mut Vec::new(), errs);
@@ -535,8 +638,27 @@ fn check_expr(e: &Expr, locals: &HashMap<String, Ty>, g: &Globals, errs: &mut Ve
             let lt = check_expr(l, locals, g, errs);
             let rt_ = check_expr(r, locals, g, errs);
             match op {
-                BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::LtEq | BinOp::Gt | BinOp::GtEq
-                | BinOp::And | BinOp::Or => Ty::Bool,
+                // boolean connectives need bool operands — `1 and "x"` used
+                // to type as bool while operating on nonsense
+                BinOp::And | BinOp::Or => {
+                    let word = if matches!(op, BinOp::And) {
+                        "and"
+                    } else {
+                        "or"
+                    };
+                    for (side, t) in [("left", &lt), ("right", &rt_)] {
+                        if !assignable(t, &Ty::Bool) {
+                            errs.push(CheckError {
+                                code: "E0201",
+                                msg: format!("'{word}' expects bool operands, {side} side is {t}"),
+                            });
+                        }
+                    }
+                    Ty::Bool
+                }
+                BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::LtEq | BinOp::Gt | BinOp::GtEq => {
+                    Ty::Bool
+                }
                 _ => match (&lt, &rt_) {
                     (Ty::Float, _) | (_, Ty::Float) => Ty::Float,
                     // `/` always yields float in the Python/TS runtimes
@@ -554,7 +676,12 @@ fn check_expr(e: &Expr, locals: &HashMap<String, Ty>, g: &Globals, errs: &mut Ve
                 _ => t,
             }
         }
-        Expr::ParMap { coll, kwargs, params, body } => {
+        Expr::ParMap {
+            coll,
+            kwargs,
+            params,
+            body,
+        } => {
             let ct = check_expr(coll, locals, g, errs);
             for (_, v) in kwargs {
                 check_expr(v, locals, g, errs);
@@ -565,7 +692,11 @@ fn check_expr(e: &Expr, locals: &HashMap<String, Ty>, g: &Globals, errs: &mut Ve
                     if let Ty::Record(fs) = pair.as_ref() {
                         for (i, p) in params.iter().enumerate() {
                             let key = if i == 0 { "first" } else { "second" };
-                            let t = fs.iter().find(|(k, _)| k == key).map(|(_, t)| t.clone()).unwrap_or(Ty::Unknown);
+                            let t = fs
+                                .iter()
+                                .find(|(k, _)| k == key)
+                                .map(|(_, t)| t.clone())
+                                .unwrap_or(Ty::Unknown);
                             inner.insert(p.clone(), t);
                         }
                     }
@@ -581,14 +712,20 @@ fn check_expr(e: &Expr, locals: &HashMap<String, Ty>, g: &Globals, errs: &mut Ve
             Ty::List(Box::new(check_expr(body, &inner, g, errs)))
         }
         Expr::ParAll(xs) => {
-            let t = xs.first().map(|x| check_expr(x, locals, g, errs)).unwrap_or(Ty::Unknown);
+            let t = xs
+                .first()
+                .map(|x| check_expr(x, locals, g, errs))
+                .unwrap_or(Ty::Unknown);
             for x in &xs[1.min(xs.len())..] {
                 check_expr(x, locals, g, errs);
             }
             Ty::List(Box::new(t))
         }
         Expr::ParRace(xs) => {
-            let t = xs.first().map(|x| check_expr(x, locals, g, errs)).unwrap_or(Ty::Unknown);
+            let t = xs
+                .first()
+                .map(|x| check_expr(x, locals, g, errs))
+                .unwrap_or(Ty::Unknown);
             for x in &xs[1.min(xs.len())..] {
                 check_expr(x, locals, g, errs);
             }
@@ -614,7 +751,9 @@ fn check_expr(e: &Expr, locals: &HashMap<String, Ty>, g: &Globals, errs: &mut Ve
                 _ => {
                     errs.push(CheckError {
                         code: "E0201",
-                        msg: format!("merge expects two records or two lists, got {lt} | merge {rt_}"),
+                        msg: format!(
+                            "merge expects two records or two lists, got {lt} | merge {rt_}"
+                        ),
                     });
                     Ty::Unknown
                 }
@@ -631,7 +770,9 @@ fn check_expr(e: &Expr, locals: &HashMap<String, Ty>, g: &Globals, errs: &mut Ve
                         if !assignable(&ct, &Ty::Bool) {
                             errs.push(CheckError {
                                 code: "E0201",
-                                msg: format!("route arm '{label}' has a non-bool when condition ({ct})"),
+                                msg: format!(
+                                    "route arm '{label}' has a non-bool when condition ({ct})"
+                                ),
                             });
                         }
                     }
@@ -665,9 +806,20 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                     });
                 }
             }
-            Item::Fn { name, params, ret, .. } => {
+            Item::Fn {
+                name, params, ret, ..
+            } => {
                 if g.fns
-                    .insert(name.clone(), (params.iter().map(|p| p.ty.clone()).collect(), ret.clone()))
+                    .insert(
+                        name.clone(),
+                        (
+                            params
+                                .iter()
+                                .map(|p| (p.name.clone(), p.ty.clone()))
+                                .collect(),
+                            ret.clone(),
+                        ),
+                    )
                     .is_some()
                 {
                     errs.push(CheckError {
@@ -676,9 +828,20 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                     });
                 }
             }
-            Item::Tool { name, params, ret, .. } => {
+            Item::Tool {
+                name, params, ret, ..
+            } => {
                 if g.tools
-                    .insert(name.clone(), (params.iter().map(|p| p.ty.clone()).collect(), ret.clone()))
+                    .insert(
+                        name.clone(),
+                        (
+                            params
+                                .iter()
+                                .map(|p| (p.name.clone(), p.ty.clone()))
+                                .collect(),
+                            ret.clone(),
+                        ),
+                    )
                     .is_some()
                 {
                     errs.push(CheckError {
@@ -689,9 +852,21 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
             }
             Item::Agent { fns, .. } => {
                 for f in fns {
-                    if let Item::Fn { name, params, ret, .. } = f {
+                    if let Item::Fn {
+                        name, params, ret, ..
+                    } = f
+                    {
                         if g.fns
-                            .insert(name.clone(), (params.iter().map(|p| p.ty.clone()).collect(), ret.clone()))
+                            .insert(
+                                name.clone(),
+                                (
+                                    params
+                                        .iter()
+                                        .map(|p| (p.name.clone(), p.ty.clone()))
+                                        .collect(),
+                                    ret.clone(),
+                                ),
+                            )
                             .is_some()
                         {
                             errs.push(CheckError {
@@ -715,24 +890,49 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
 
     for item in items {
         match item {
-            Item::Fn { name, params, ret, body, .. } => {
+            Item::Fn {
+                name,
+                params,
+                ret,
+                body,
+                ..
+            } => {
                 check_fn_body(name, params, ret, body, None, &g, &mut errs);
             }
-            Item::Agent { name: agent, state, fns } => {
+            Item::Agent {
+                name: agent,
+                state,
+                fns,
+            } => {
                 // resolve state field types once; unknown types already error
                 for (_, ty, _) in state {
                     resolve(ty, &g, &mut Vec::new(), &mut errs);
                 }
                 for f in fns {
-                    if let Item::Fn { name, params, ret, body, .. } = f {
+                    if let Item::Fn {
+                        name,
+                        params,
+                        ret,
+                        body,
+                        ..
+                    } = f
+                    {
                         check_fn_body(name, params, ret, body, Some((agent, state)), &g, &mut errs);
                     }
                 }
             }
-            Item::Tool { params, ret, fields, .. } => {
+            Item::Tool {
+                params,
+                ret,
+                fields,
+                ..
+            } => {
                 let mut locals: HashMap<String, Ty> = HashMap::new();
                 for p in params {
-                    locals.insert(p.name.clone(), resolve(&p.ty, &g, &mut Vec::new(), &mut errs));
+                    locals.insert(
+                        p.name.clone(),
+                        resolve(&p.ty, &g, &mut Vec::new(), &mut errs),
+                    );
                 }
                 resolve(ret, &g, &mut Vec::new(), &mut errs);
                 for (_, v) in fields {
@@ -743,8 +943,23 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                 let mut locals: HashMap<String, Ty> = HashMap::new();
                 for st in body {
                     match st {
-                        Stmt::Let { name, value, .. } => {
+                        Stmt::Let {
+                            name, ty, value, ..
+                        } => {
                             let vt = check_expr(value, &locals, &g, &mut errs);
+                            // same annotation rule as fn bodies (v1.4 fix:
+                            // test lets used to skip the assignability check)
+                            if let Some(ann) = ty {
+                                let at = resolve(ann, &g, &mut Vec::new(), &mut errs);
+                                if !assignable(&vt, &at) {
+                                    errs.push(CheckError {
+                                        code: "E0201",
+                                        msg: format!(
+                                            "let '{name}' is annotated {at} but the value is {vt}"
+                                        ),
+                                    });
+                                }
+                            }
                             locals.insert(name.clone(), vt);
                         }
                         Stmt::StateWrite { field, .. } => {
@@ -753,7 +968,16 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                                 msg: format!("state write 'state.{field}' outside an agent block — state exists only inside `agent` (design §7)"),
                             });
                         }
-                        Stmt::Assert(e) | Stmt::ExprStmt(e) => {
+                        Stmt::Assert(e) => {
+                            let at = check_expr(e, &locals, &g, &mut errs);
+                            if !assignable(&at, &Ty::Bool) {
+                                errs.push(CheckError {
+                                    code: "E0201",
+                                    msg: format!("assert expects a bool condition, got {at}"),
+                                });
+                            }
+                        }
+                        Stmt::ExprStmt(e) => {
                             check_expr(e, &locals, &g, &mut errs);
                         }
                     }
@@ -800,7 +1024,12 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
     }
 
     for item in fn_items(items) {
-        if let Item::Fn { name, effects: declared, .. } = item {
+        if let Item::Fn {
+            name,
+            effects: declared,
+            ..
+        } = item
+        {
             for d in declared {
                 if !KNOWN_EFFECTS.contains(&d.as_str()) {
                     errs.push(CheckError {
@@ -810,12 +1039,18 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                 }
             }
             let want = &inferred[name];
-            let missing: Vec<&String> =
-                want.iter().filter(|e| !declared.iter().any(|d| d == *e)).collect();
+            let missing: Vec<&String> = want
+                .iter()
+                .filter(|e| !declared.iter().any(|d| d == *e))
+                .collect();
             if missing.is_empty() {
                 continue;
             }
-            let list = missing.iter().map(|e| e.as_str()).collect::<Vec<_>>().join(", ");
+            let list = missing
+                .iter()
+                .map(|e| e.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
             if declared.is_empty() {
                 errs.push(CheckError {
                     code: "E0301",
@@ -859,38 +1094,62 @@ mod tests {
         let errs = check_src(
             "type Finding = { claim: string }\ntype Report = { title: string }\nfn f() -> [Finding] uses LLM { llm\"\"\"x\"\"\" with { schema: Report } }",
         );
-        assert!(errs.iter().any(|e| e.code == "E0201" && e.msg.contains("declares ->")), "got {errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("declares ->")),
+            "got {errs:?}"
+        );
         assert_eq!(errs.len(), 1, "got {errs:?}");
     }
 
     #[test]
     fn unknown_interpolation_identifier() {
         let errs = check_src("fn f(q: string) -> string uses LLM { llm\"\"\"hi {qusetion}\"\"\" with { model: \"m\" } }");
-        assert!(errs.iter().any(|e| e.code == "E0101" && e.msg.contains("qusetion")), "got {errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0101" && e.msg.contains("qusetion")),
+            "got {errs:?}"
+        );
     }
 
     #[test]
     fn unknown_type_name() {
         let errs = check_src("fn f(x: Strnig) -> int { 1 }");
-        assert!(errs.iter().any(|e| e.code == "E0101" && e.msg.contains("Strnig")), "got {errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0101" && e.msg.contains("Strnig")),
+            "got {errs:?}"
+        );
     }
 
     #[test]
     fn malformed_range_refinement() {
         let errs = check_src("type S = float @range(1)");
-        assert!(errs.iter().any(|e| e.code == "E0202" && e.msg.contains("@range")), "got {errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0202" && e.msg.contains("@range")),
+            "got {errs:?}"
+        );
     }
 
     #[test]
     fn unknown_refinement() {
         let errs = check_src("type S = float @between(0, 1)");
-        assert!(errs.iter().any(|e| e.code == "E0202" && e.msg.contains("@between")), "got {errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0202" && e.msg.contains("@between")),
+            "got {errs:?}"
+        );
     }
 
     #[test]
     fn let_annotation_mismatch() {
         let errs = check_src("fn f() -> int { let x: int = \"nope\" }");
-        assert!(errs.iter().any(|e| e.code == "E0201" && e.msg.contains("let 'x'")), "got {errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("let 'x'")),
+            "got {errs:?}"
+        );
     }
 
     #[test]
@@ -903,17 +1162,30 @@ mod tests {
     fn call_argument_type_and_arity() {
         let src = "type R = { t: string }\ntool web(q: string) -> [R] { impl: mcp(\"s\").web(q) }\nfn f(n: int) -> [R] uses Tool { web(n) }";
         let errs = check_src(src);
-        assert!(errs.iter().any(|e| e.code == "E0201" && e.msg.contains("argument to 'web'")), "got {errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("argument to 'web'")),
+            "got {errs:?}"
+        );
         let errs2 = check_src(
             "type R = { t: string }\ntool web(q: string) -> [R] { impl: mcp(\"s\").web(q) }\nfn f() -> [R] uses Tool { web() }",
         );
-        assert!(errs2.iter().any(|e| e.code == "E0201" && e.msg.contains("takes 1 argument")), "got {errs2:?}");
+        assert!(
+            errs2
+                .iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("takes 1 argument")),
+            "got {errs2:?}"
+        );
     }
 
     #[test]
     fn cyclic_alias_is_an_error_not_a_hang() {
         let errs = check_src("type A = { b: B }\ntype B = { a: A }");
-        assert!(errs.iter().any(|e| e.code == "E0202" && e.msg.contains("cyclic")), "got {errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0202" && e.msg.contains("cyclic")),
+            "got {errs:?}"
+        );
     }
 
     #[test]
@@ -928,14 +1200,23 @@ mod tests {
     #[test]
     fn llm_call_without_uses_is_e0301() {
         let errs = check_src("fn f() -> string { llm\"\"\"x\"\"\" with { model: \"m\" } }");
-        assert!(errs.iter().any(|e| e.code == "E0301" && e.msg.contains("LLM") && e.msg.contains("f")), "got {errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0301" && e.msg.contains("LLM") && e.msg.contains("f")),
+            "got {errs:?}"
+        );
     }
 
     #[test]
     fn narrow_annotation_is_e0302() {
         let src = "type R = { t: string }\ntool web(q: string) -> [R] { impl: mcp(\"s\").web(q) }\nfn f(q: string) -> [R] uses LLM { web(q) }";
         let errs = check_src(src);
-        assert!(errs.iter().any(|e| e.code == "E0302" && e.msg.contains("Tool") && e.msg.contains("too narrow")), "got {errs:?}");
+        assert!(
+            errs.iter().any(|e| e.code == "E0302"
+                && e.msg.contains("Tool")
+                && e.msg.contains("too narrow")),
+            "got {errs:?}"
+        );
     }
 
     #[test]
@@ -943,13 +1224,20 @@ mod tests {
         let src = "fn a() -> string uses LLM { llm\"\"\"x\"\"\" with { model: \"m\" } }\nfn b() -> string { a() }";
         let errs = check_src(src);
         assert_eq!(errs.len(), 1, "got {errs:?}");
-        assert!(errs[0].code == "E0301" && errs[0].msg.contains("'b'"), "got {errs:?}");
+        assert!(
+            errs[0].code == "E0301" && errs[0].msg.contains("'b'"),
+            "got {errs:?}"
+        );
     }
 
     #[test]
     fn replay_and_python_are_io() {
         let errs = check_src("fn f(p: string) -> string { replay(p) }");
-        assert!(errs.iter().any(|e| e.code == "E0301" && e.msg.contains("IO")), "got {errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0301" && e.msg.contains("IO")),
+            "got {errs:?}"
+        );
         let errs2 = check_src("fn f(p: string) -> string uses IO { replay(p) }");
         assert_eq!(errs2, vec![]);
     }
@@ -963,7 +1251,11 @@ mod tests {
     #[test]
     fn unknown_effect_name_is_e0101() {
         let errs = check_src("fn f() -> int uses Magic { 1 }");
-        assert!(errs.iter().any(|e| e.code == "E0101" && e.msg.contains("Magic")), "got {errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0101" && e.msg.contains("Magic")),
+            "got {errs:?}"
+        );
     }
 
     #[test]
@@ -974,13 +1266,19 @@ mod tests {
 
     #[test]
     fn non_usd_budget_is_e0501() {
-        let errs = check_src("fn f() -> string uses LLM { llm\"\"\"x\"\"\" with { budget: 5 EUR } }");
-        assert!(errs.iter().any(|e| e.code == "E0501" && e.msg.contains("EUR")), "got {errs:?}");
+        let errs =
+            check_src("fn f() -> string uses LLM { llm\"\"\"x\"\"\" with { budget: 5 EUR } }");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0501" && e.msg.contains("EUR")),
+            "got {errs:?}"
+        );
     }
 
     #[test]
     fn usd_budget_is_clean() {
-        let errs = check_src("fn f() -> string uses LLM { llm\"\"\"x\"\"\" with { budget: 0.02 USD } }");
+        let errs =
+            check_src("fn f() -> string uses LLM { llm\"\"\"x\"\"\" with { budget: 0.02 USD } }");
         assert_eq!(errs, vec![]);
     }
 
@@ -994,7 +1292,11 @@ mod tests {
         assert!(errs.iter().any(|e| e.code == "E0701"), "got {errs:?}");
         // E0701: undeclared state field
         let errs = check_src("agent B {\n    state {\n        round: int = 0,\n    }\n    fn step() -> int { state.missing = 1\n        0\n    }\n}");
-        assert!(errs.iter().any(|e| e.code == "E0701" && e.msg.contains("no field 'missing'")), "got {errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0701" && e.msg.contains("no field 'missing'")),
+            "got {errs:?}"
+        );
         // E0201: `=` write with a mismatched type
         let errs = check_src("agent C {\n    state {\n        round: int = 0,\n    }\n    fn step() -> int { state.round = \"oops\"\n        0\n    }\n}");
         assert!(errs.iter().any(|e| e.code == "E0201"), "got {errs:?}");
@@ -1004,10 +1306,17 @@ mod tests {
     fn merge_reducer_checks_operands() {
         // clean: list append-dedup and record union
         assert_eq!(check_src("fn f(x: [int]) -> [int] { x | merge x }"), vec![]);
-        assert_eq!(check_src("type R = { a: int }\nfn f(x: R) -> R { x | merge x }"), vec![]);
+        assert_eq!(
+            check_src("type R = { a: int }\nfn f(x: R) -> R { x | merge x }"),
+            vec![]
+        );
         // E0201: mismatched / scalar operands
         let errs = check_src("fn f(x: int) -> int { x | merge x }");
-        assert!(errs.iter().any(|e| e.code == "E0201" && e.msg.contains("merge expects")), "got {errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("merge expects")),
+            "got {errs:?}"
+        );
         let errs = check_src("fn f(x: [int], s: string) -> [int] { x | merge s }");
         assert!(errs.iter().any(|e| e.code == "E0201"), "got {errs:?}");
     }
@@ -1021,7 +1330,11 @@ mod tests {
         assert!(errs.iter().any(|e| e.code == "E0702"), "got {errs:?}");
         // E0201: non-bool condition
         let errs = check_src("fn f(n: int) -> string uses LLM { llm\"\"\"x\"\"\" with { model: route{ cheap: \"m1\" when n, strong: \"m2\" otherwise } } }");
-        assert!(errs.iter().any(|e| e.code == "E0201" && e.msg.contains("non-bool when")), "got {errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("non-bool when")),
+            "got {errs:?}"
+        );
     }
 
     // ── v1.3 regression: unknown identifiers, builtin arity, div typing ──
@@ -1029,7 +1342,11 @@ mod tests {
     #[test]
     fn unknown_variable_identifier_is_e0101() {
         let errs = check_src("fn f() -> int { qusetion }");
-        assert!(errs.iter().any(|e| e.code == "E0101" && e.msg.contains("qusetion")), "got {errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0101" && e.msg.contains("qusetion")),
+            "got {errs:?}"
+        );
         // declared names stay clean
         assert_eq!(check_src("fn f(q: int) -> int { q }"), vec![]);
     }
@@ -1037,22 +1354,41 @@ mod tests {
     #[test]
     fn call_to_undeclared_name_is_e0101() {
         let errs = check_src("fn f() -> int { nosuchfn(1) }");
-        assert!(errs.iter().any(|e| e.code == "E0101" && e.msg.contains("nosuchfn")), "got {errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0101" && e.msg.contains("nosuchfn")),
+            "got {errs:?}"
+        );
     }
 
     #[test]
     fn unknown_record_field_is_e0101() {
         let errs = check_src("type R = { t: string }\nfn f(r: R) -> string { r.ttle }");
-        assert!(errs.iter().any(|e| e.code == "E0101" && e.msg.contains("ttle")), "got {errs:?}");
-        assert_eq!(check_src("type R = { t: string }\nfn f(r: R) -> string { r.t }"), vec![]);
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0101" && e.msg.contains("ttle")),
+            "got {errs:?}"
+        );
+        assert_eq!(
+            check_src("type R = { t: string }\nfn f(r: R) -> string { r.t }"),
+            vec![]
+        );
     }
 
     #[test]
     fn builtin_arity_is_checked() {
         let errs = check_src("fn f() -> int { len() }");
-        assert!(errs.iter().any(|e| e.code == "E0201" && e.msg.contains("len")), "got {errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("len")),
+            "got {errs:?}"
+        );
         let errs = check_src("fn f(a: [int]) -> int { zip(a) }");
-        assert!(errs.iter().any(|e| e.code == "E0201" && e.msg.contains("zip")), "got {errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("zip")),
+            "got {errs:?}"
+        );
         assert_eq!(check_src("fn f(a: [int]) -> int { len(a) }"), vec![]);
     }
 
@@ -1070,11 +1406,103 @@ mod tests {
     #[test]
     fn duplicate_definitions_are_e0102() {
         let errs = check_src("type A = int\ntype A = string");
-        assert!(errs.iter().any(|e| e.code == "E0102" && e.msg.contains("duplicate type alias 'A'")), "got {errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0102" && e.msg.contains("duplicate type alias 'A'")),
+            "got {errs:?}"
+        );
         let errs = check_src("fn f() -> int { 1 }\nfn f() -> int { 2 }");
-        assert!(errs.iter().any(|e| e.code == "E0102" && e.msg.contains("duplicate fn 'f'")), "got {errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0102" && e.msg.contains("duplicate fn 'f'")),
+            "got {errs:?}"
+        );
         // agent fns share the namespace: two agents, same fn name → error
-        let errs = check_src("agent A { fn step() -> int { 1 } }\nagent B { fn step() -> int { 2 } }");
+        let errs =
+            check_src("agent A { fn step() -> int { 1 } }\nagent B { fn step() -> int { 2 } }");
         assert!(errs.iter().any(|e| e.code == "E0102"), "got {errs:?}");
+    }
+
+    // ── v1.4 regression: kwargs, bool rules, list unification ──────
+
+    #[test]
+    fn kwargs_fill_params_by_name() {
+        // kwargs alone satisfy the signature (used to be a false "takes 1" error)
+        let src = "fn g(a: int, b: string) -> int { a }\nfn f() -> int { g(1, b = \"x\") }";
+        assert_eq!(check_src(src), vec![]);
+        let src = "fn g(a: int) -> int { a }\nfn f() -> int { g(a = 3) }";
+        assert_eq!(check_src(src), vec![]);
+        // unknown kwarg name
+        let errs = check_src("fn g(a: int) -> int { a }\nfn f() -> int { g(b = 3) }");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("no parameter 'b'")),
+            "got {errs:?}"
+        );
+        // positional + kwarg for the same param
+        let errs = check_src("fn g(a: int) -> int { a }\nfn f() -> int { g(1, a = 3) }");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("twice")),
+            "got {errs:?}"
+        );
+        // mistyped kwarg
+        let errs = check_src("fn g(a: int) -> int { a }\nfn f() -> int { g(a = \"x\") }");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("argument 'a'")),
+            "got {errs:?}"
+        );
+        // still missing after kwargs
+        let errs = check_src("fn g(a: int, b: int) -> int { a }\nfn f() -> int { g(1) }");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("missing: b")),
+            "got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn assert_and_boolean_connectives_need_bools() {
+        let errs = check_src("test \"t\" { assert \"nope\" }");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("assert expects a bool")),
+            "got {errs:?}"
+        );
+        let errs = check_src("fn f(x: int) -> bool { x and true }");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("'and' expects bool")),
+            "got {errs:?}"
+        );
+        assert_eq!(
+            check_src("fn f(x: bool) -> bool { x and true or false }"),
+            vec![]
+        );
+        assert_eq!(check_src("test \"t\" { assert 1 < 2 }"), vec![]);
+    }
+
+    #[test]
+    fn list_literals_unify_element_types() {
+        // numeric widening is fine
+        assert_eq!(check_src("fn f() -> [float] { [1, 2.5] }"), vec![]);
+        // incompatible mixes are E0201 (used to be typed by the first element)
+        let errs = check_src("fn f() -> [int] { [1, \"a\"] }");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("list element")),
+            "got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_block_let_annotations_are_checked() {
+        let errs = check_src("test \"t\" { let x: int = \"nope\"\nassert true }");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("let 'x'")),
+            "got {errs:?}"
+        );
     }
 }

@@ -17,7 +17,10 @@ fn hello_llm_golden() {
 fn llm_options_and_interpolation() {
     let src = "fn f(q: string) -> string uses LLM {\n    llm\"\"\"hi {q}\"\"\"\n    with { model: \"m\", retry: 2 with repair, cache: content_addressed, tags: [\"a\", \"b\"] }\n}";
     let out = gen(src);
-    assert!(out.contains("prompt=rt.render(\"hi {q}\", {\"q\": q}),"), "got:\n{out}");
+    assert!(
+        out.contains("prompt=rt.render(\"hi {q}\", {\"q\": q}),"),
+        "got:\n{out}"
+    );
     assert!(out.contains("retry=2,"), "got:\n{out}");
     assert!(out.contains("repair=True,"), "got:\n{out}");
     assert!(out.contains("cache=\"content_addressed\","), "got:\n{out}");
@@ -28,7 +31,10 @@ fn llm_options_and_interpolation() {
 fn type_alias_lowers_to_schema_literal() {
     let src = "type Url = string @format(url)\ntype Finding = { claim: string, confidence: float @range(0, 1) }";
     let out = gen(src);
-    assert!(out.contains("Url = rt.schema({\"type\": \"string\", \"format\": \"uri\"})"), "got:\n{out}");
+    assert!(
+        out.contains("Url = rt.schema({\"type\": \"string\", \"format\": \"uri\"})"),
+        "got:\n{out}"
+    );
     assert!(
         out.contains("Finding = rt.schema({\"type\": \"object\", \"properties\": {\"claim\": {\"type\": \"string\"}, \"confidence\": {\"type\": \"number\", \"minimum\": 0, \"maximum\": 1}}, \"required\": [\"claim\", \"confidence\"]})"),
         "got:\n{out}"
@@ -39,14 +45,22 @@ fn type_alias_lowers_to_schema_literal() {
 fn schema_option_lowers_to_rt_schema() {
     let src = "type Finding = { claim: string }\nfn f() -> [Finding] uses LLM { llm\"\"\"x\"\"\" with { schema: [Finding] } }";
     let out = gen(src);
-    assert!(out.contains("schema=rt.schema({\"type\": \"array\", \"items\": Finding})"), "got:\n{out}");
+    assert!(
+        out.contains("schema=rt.schema({\"type\": \"array\", \"items\": Finding})"),
+        "got:\n{out}"
+    );
 }
 
 #[test]
 fn tool_lowers_to_stub_fn() {
     let src = "tool web_search(q: string) -> [R] { impl: mcp(\"s\").web(q) side_effects: none }";
     let out = gen(src);
-    assert!(out.contains("def web_search(q):\n    return rt.tool_stub(\"web_search\", [q], server=\"s\")"), "got:\n{out}");
+    assert!(
+        out.contains(
+            "def web_search(q):\n    return rt.tool_stub(\"web_search\", [q], server=\"s\")"
+        ),
+        "got:\n{out}"
+    );
 }
 
 #[test]
@@ -58,17 +72,26 @@ fn stream_let_lowers_to_llm_stream() {
     // stream on a non-llm binding degrades to a plain let with a warning
     let src2 = "fn f() -> int { stream let n = 3\n    n }";
     let out2 = gen(src2);
-    assert!(out2.contains("n = 3  # warning: stream ignored on non-llm binding"), "got:\n{out2}");
+    assert!(
+        out2.contains("n = 3  # warning: stream ignored on non-llm binding"),
+        "got:\n{out2}"
+    );
 }
 
 #[test]
 fn agent_lowers_to_checkpointed_state() {
     let src = "agent A {\n    state {\n        notes: [string] = [],\n        round: int = 0,\n    }\n    fn step(q: string) -> int uses LLM {\n        let r = llm\"\"\"next: {q}\"\"\" with { model: \"m\" }\n        state.notes += [r]\n        state.round = state.round + 1\n        state.round\n    }\n}";
     let out = gen(src);
-    assert!(out.contains("_state_A = rt.AgentState(\"A\", {\"notes\": [], \"round\": 0})"), "got:\n{out}");
+    assert!(
+        out.contains("_state_A = rt.AgentState(\"A\", {\"notes\": [], \"round\": 0})"),
+        "got:\n{out}"
+    );
     assert!(out.contains("def step(q):"), "got:\n{out}");
     assert!(out.contains("_state_A.notes += [r]"), "got:\n{out}");
-    assert!(out.contains("_state_A.round = (_state_A.round + 1)"), "got:\n{out}");
+    assert!(
+        out.contains("_state_A.round = (_state_A.round + 1)"),
+        "got:\n{out}"
+    );
     assert!(out.contains("return _state_A.round"), "got:\n{out}");
 }
 
@@ -76,14 +99,20 @@ fn agent_lowers_to_checkpointed_state() {
 fn merge_lowers_to_rt_merge() {
     let src = "agent A {\n    state {\n        found: [string] = [],\n    }\n    fn step(s: string) -> [string] {\n        state.found = state.found | merge [s]\n        state.found\n    }\n}";
     let out = gen(src);
-    assert!(out.contains("_state_A.found = rt.merge(_state_A.found, [s])"), "got:\n{out}");
+    assert!(
+        out.contains("_state_A.found = rt.merge(_state_A.found, [s])"),
+        "got:\n{out}"
+    );
 }
 
 #[test]
 fn route_block_lowers_to_rt_route() {
     let src = "fn f(b: bool) -> string uses LLM { llm\"\"\"x\"\"\" with { model: route{ cheap: \"m1\" when b, strong: \"m2\" otherwise } } }";
     let out = gen(src);
-    assert!(out.contains("model=rt.route((\"cheap\", \"m1\", lambda: b), (\"strong\", \"m2\", None))"), "got:\n{out}");
+    assert!(
+        out.contains("model=rt.route((\"cheap\", \"m1\", lambda: b), (\"strong\", \"m2\", None))"),
+        "got:\n{out}"
+    );
 }
 
 #[test]
@@ -91,7 +120,8 @@ fn par_map_lowers_to_runtime_call() {
     let src = "fn f(angles: [string]) -> [string] { let h = par map angles |a| -> search(a) }";
     assert!(gen(src).contains("h = rt.par_map(angles, lambda a: search(a))"));
     let src = "fn f(angles: [string], hits: [string]) -> [string] { let f2 = par map(angles zip hits, concurrency = 3) |(a, h)| -> analyze(a, h) }";
-    assert!(gen(src).contains("rt.par_map(rt.zip(angles, hits), lambda a, h: analyze(a, h), concurrency=3)"));
+    assert!(gen(src)
+        .contains("rt.par_map(rt.zip(angles, hits), lambda a, h: analyze(a, h), concurrency=3)"));
 }
 
 // ── end-to-end (skipped without python3 / runtime checkout) ──────
@@ -138,9 +168,16 @@ fn hello_llm_runs_under_fake_provider() {
     let out_py = e.dir.join("hello_llm.py");
     std::fs::write(&out_py, py).unwrap();
     let output = run_py(&e, &out_py, &[]);
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("[fake:anthropic:sonnet-4.6]"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("[fake:anthropic:sonnet-4.6]"),
+        "stdout: {stdout}"
+    );
     let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
     assert!(log.contains("\"kind\": \"llm.call\""), "trace: {log}");
 }
@@ -161,9 +198,16 @@ fn research_agent_runs_end_to_end() {
     )
     .unwrap();
     let output = run_py(&e, &driver, &[]);
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("OK") && stdout.contains("findings"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("OK") && stdout.contains("findings"),
+        "stdout: {stdout}"
+    );
     let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
     let calls = log.lines().filter(|l| l.contains("\"llm.call\"")).count();
     // fake provider plans 3 angles: 1 plan + 3 analyze + 1 merge
@@ -177,8 +221,15 @@ fn repair_round_recovers_from_schema_violation() {
     let out_py = e.dir.join("repair_demo.py");
     std::fs::write(&out_py, gen(src)).unwrap();
     let output = run_py(&e, &out_py, &[("NUDGE_FAKE_FAIL_FIRST", "1")]);
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
-    assert!(String::from_utf8_lossy(&output.stdout).contains("title"), "stdout: {output:?}");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("title"),
+        "stdout: {output:?}"
+    );
     let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
     assert!(log.contains("schema_violation"), "trace: {log}");
     assert!(log.contains("\"repair_round\": 1"), "trace: {log}");
@@ -191,8 +242,16 @@ fn exhausted_repairs_raise_schema_failure() {
     let out_py = e.dir.join("fail_demo.py");
     std::fs::write(&out_py, gen(src)).unwrap();
     let output = run_py(&e, &out_py, &[("NUDGE_FAKE_FAIL_FIRST", "99")]);
-    assert!(!output.status.success(), "expected failure, stdout: {}", String::from_utf8_lossy(&output.stdout));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("SchemaFailure"), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        !output.status.success(),
+        "expected failure, stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("SchemaFailure"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 // ── day 9–10: test blocks + replay ─────────────────────────────
@@ -201,14 +260,23 @@ fn exhausted_repairs_raise_schema_failure() {
 fn test_block_lowers_to_runnable_fn() {
     let src = "test \"stays within budget!\" { let t = replay(\"traces/x.jsonl\")\nassert t.cost_usd < 0.25 }";
     let out = gen(src);
-    assert!(out.contains("def nudge_test_stays_within_budget():"), "got:\n{out}");
-    assert!(out.contains("t = rt.replay(\"traces/x.jsonl\")"), "got:\n{out}");
+    assert!(
+        out.contains("def nudge_test_stays_within_budget():"),
+        "got:\n{out}"
+    );
+    assert!(
+        out.contains("t = rt.replay(\"traces/x.jsonl\")"),
+        "got:\n{out}"
+    );
     assert!(out.contains("assert (t.cost_usd < 0.25)"), "got:\n{out}");
 }
 
 #[test]
 fn slug_edge_cases() {
-    assert_eq!(slug("run stays within budget on recorded trace"), "run_stays_within_budget_on_recorded_trace");
+    assert_eq!(
+        slug("run stays within budget on recorded trace"),
+        "run_stays_within_budget_on_recorded_trace"
+    );
     assert_eq!(slug("!!weird — NA ME!!"), "weird_na_me");
     assert_eq!(slug(""), "unnamed");
 }
@@ -231,23 +299,41 @@ fn test_block_runs_against_recorded_trace() {
     .unwrap();
     let trace_path = e.dir.join("traces/demo_run.jsonl");
     let output = run_py(&e, &rec, &[("NUDGE_TRACE", trace_path.to_str().unwrap())]);
-    assert!(output.status.success(), "record stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "record stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let log = std::fs::read_to_string(&trace_path).unwrap();
-    assert!(log.contains("\"fn.return\""), "trace needs a fn.return record: {log}");
+    assert!(
+        log.contains("\"fn.return\""),
+        "trace needs a fn.return record: {log}"
+    );
 
     // 2. run the generated nudge_test_* functions with cwd = e.dir
     //    (so the relative trace path in the test block resolves)
     let driver = e.dir.join("run_tests.py");
-    std::fs::write(&driver, TEST_DRIVER_PY.replace("__MODULE__", &out_py.to_string_lossy())).unwrap();
+    std::fs::write(
+        &driver,
+        TEST_DRIVER_PY.replace("__MODULE__", &out_py.to_string_lossy()),
+    )
+    .unwrap();
     let output = std::process::Command::new("python3")
         .arg(&driver)
         .current_dir(&e.dir)
         .env("PYTHONPATH", &e.runtime)
         .output()
         .unwrap();
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("PASS nudge_test_run_stays_within_budget_on_recorded_trace"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("PASS nudge_test_run_stays_within_budget_on_recorded_trace"),
+        "stdout: {stdout}"
+    );
 }
 
 #[test]
@@ -265,18 +351,35 @@ fn replay_mode_reproduces_outputs_without_provider() {
     // live run
     let trace1 = e.dir.join("t1.jsonl");
     let out1 = run_py(&e, &driver, &[("NUDGE_TRACE", trace1.to_str().unwrap())]);
-    assert!(out1.status.success(), "stderr: {}", String::from_utf8_lossy(&out1.stderr));
+    assert!(
+        out1.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out1.stderr)
+    );
     // full replay of that trace: zero provider calls, zero new llm.call records
     let trace2 = e.dir.join("t2.jsonl");
     let out2 = run_py(
         &e,
         &driver,
-        &[("NUDGE_TRACE", trace2.to_str().unwrap()), ("NUDGE_REPLAY", trace1.to_str().unwrap())],
+        &[
+            ("NUDGE_TRACE", trace2.to_str().unwrap()),
+            ("NUDGE_REPLAY", trace1.to_str().unwrap()),
+        ],
     );
-    assert!(out2.status.success(), "stderr: {}", String::from_utf8_lossy(&out2.stderr));
-    assert_eq!(out1.stdout, out2.stdout, "replay must reproduce the live result");
+    assert!(
+        out2.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out2.stderr)
+    );
+    assert_eq!(
+        out1.stdout, out2.stdout,
+        "replay must reproduce the live result"
+    );
     let log2 = std::fs::read_to_string(&trace2).unwrap_or_default();
-    assert!(!log2.contains("\"llm.call\""), "replay must not call any provider: {log2}");
+    assert!(
+        !log2.contains("\"llm.call\""),
+        "replay must not call any provider: {log2}"
+    );
 }
 
 #[test]
@@ -285,14 +388,25 @@ fn replay_version_mismatch_raises() {
     let bad = e.dir.join("bad.jsonl");
     std::fs::write(&bad, "{\"v\": 99, \"seq\": 1, \"kind\": \"llm.call\"}\n").unwrap();
     let driver = e.dir.join("drive_v.py");
-    std::fs::write(&driver, format!("import nudge_runtime as rt\nrt.replay({:?})\n", bad.to_string_lossy())).unwrap();
+    std::fs::write(
+        &driver,
+        format!(
+            "import nudge_runtime as rt\nrt.replay({:?})\n",
+            bad.to_string_lossy()
+        ),
+    )
+    .unwrap();
     let output = std::process::Command::new("python3")
         .arg(&driver)
         .env("PYTHONPATH", &e.runtime)
         .output()
         .unwrap();
     assert!(!output.status.success(), "expected failure");
-    assert!(String::from_utf8_lossy(&output.stderr).contains("ReplayMismatch"), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("ReplayMismatch"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 // ── day 11–12: budget + parallel scheduler ─────────────────────
@@ -312,7 +426,11 @@ fn run_budget_wall_stops_the_run() {
     )
     .unwrap();
     let output = run_py(&e, &driver, &[("NUDGE_BUDGET", "0.0025")]);
-    assert!(!output.status.success(), "expected BudgetExceeded, stdout: {}", String::from_utf8_lossy(&output.stdout));
+    assert!(
+        !output.status.success(),
+        "expected BudgetExceeded, stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("BudgetExceeded"), "stderr: {stderr}");
     // the trace is complete up to the crash point (design §11). The 3
@@ -320,7 +438,10 @@ fn run_budget_wall_stops_the_run() {
     // traced) before the shared counter crosses the wall
     let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
     let calls = log.lines().filter(|l| l.contains("\"llm.call\"")).count();
-    assert!((3..=4).contains(&calls), "expected 3–4 llm.call records before the wall, trace: {log}");
+    assert!(
+        (3..=4).contains(&calls),
+        "expected 3–4 llm.call records before the wall, trace: {log}"
+    );
 }
 
 #[test]
@@ -331,13 +452,21 @@ fn per_call_budget_wall() {
     std::fs::write(&out_py, gen(src)).unwrap();
     let output = run_py(&e, &out_py, &[]);
     assert!(!output.status.success(), "expected BudgetExceeded");
-    assert!(String::from_utf8_lossy(&output.stderr).contains("BudgetExceeded"), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("BudgetExceeded"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     // an ample per-call budget passes
     let src2 = "fn main() -> string uses LLM {\n    llm\"\"\"hi\"\"\" with { model: \"m\", budget: 0.01 USD }\n}";
     let out_py2 = e.dir.join("call_budget_ok.py");
     std::fs::write(&out_py2, gen(src2)).unwrap();
     let output2 = run_py(&e, &out_py2, &[]);
-    assert!(output2.status.success(), "stderr: {}", String::from_utf8_lossy(&output2.stderr));
+    assert!(
+        output2.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output2.stderr)
+    );
 }
 
 #[test]
@@ -350,7 +479,11 @@ fn par_map_is_concurrent_and_order_preserving() {
     )
     .unwrap();
     let output = run_py(&e, &driver, &[]);
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(String::from_utf8_lossy(&output.stdout).contains("PAR OK"));
 }
 
@@ -365,8 +498,15 @@ fn par_branches_share_the_run_budget() {
     )
     .unwrap();
     let output = run_py(&e, &driver, &[("NUDGE_BUDGET", "0.0025")]);
-    assert!(!output.status.success(), "expected BudgetExceeded from an in-flight branch");
-    assert!(String::from_utf8_lossy(&output.stderr).contains("BudgetExceeded"), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        !output.status.success(),
+        "expected BudgetExceeded from an in-flight branch"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("BudgetExceeded"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 // ── v0.2: hybrid replay (design §6.2) ──────────────────────────
@@ -384,19 +524,38 @@ fn live_run_traces_tool_calls() {
     )
     .unwrap();
     let output = run_py(&e, &driver, &[]);
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
     let tools = log.lines().filter(|l| l.contains("\"tool.call\"")).count();
-    assert_eq!(tools, 3, "expected 3 tool.call records (one per angle), trace: {log}");
+    assert_eq!(
+        tools, 3,
+        "expected 3 tool.call records (one per angle), trace: {log}"
+    );
     assert!(log.contains("\"tool\": \"web_search\""), "trace: {log}");
     // seq stays unique even though tool calls fan out on a thread pool
     let mut seqs: Vec<u64> = log
         .lines()
-        .filter_map(|l| l.split("\"seq\": ").nth(1)?.split(',').next()?.trim().parse().ok())
+        .filter_map(|l| {
+            l.split("\"seq\": ")
+                .nth(1)?
+                .split(',')
+                .next()?
+                .trim()
+                .parse()
+                .ok()
+        })
         .collect();
     seqs.sort_unstable();
     seqs.dedup();
-    assert_eq!(seqs.len(), log.lines().count(), "duplicate seq in trace: {log}");
+    assert_eq!(
+        seqs.len(),
+        log.lines().count(),
+        "duplicate seq in trace: {log}"
+    );
 }
 
 #[test]
@@ -414,7 +573,11 @@ fn hybrid_replay_runs_tools_live_but_not_llm() {
     // 1. record a live run
     let t1 = e.dir.join("t1.jsonl");
     let out1 = run_py(&e, &driver, &[("NUDGE_TRACE", t1.to_str().unwrap())]);
-    assert!(out1.status.success(), "stderr: {}", String::from_utf8_lossy(&out1.stderr));
+    assert!(
+        out1.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out1.stderr)
+    );
     // 2. hybrid replay: llm from trace, tools live
     let t2 = e.dir.join("t2.jsonl");
     let out2 = run_py(
@@ -426,10 +589,20 @@ fn hybrid_replay_runs_tools_live_but_not_llm() {
             ("NUDGE_REPLAY_MODE", "llm"),
         ],
     );
-    assert!(out2.status.success(), "stderr: {}", String::from_utf8_lossy(&out2.stderr));
-    assert_eq!(out1.stdout, out2.stdout, "hybrid replay must reproduce the result");
+    assert!(
+        out2.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out2.stderr)
+    );
+    assert_eq!(
+        out1.stdout, out2.stdout,
+        "hybrid replay must reproduce the result"
+    );
     let log2 = std::fs::read_to_string(&t2).unwrap();
-    assert!(!log2.contains("\"llm.call\""), "llm must come from the trace: {log2}");
+    assert!(
+        !log2.contains("\"llm.call\""),
+        "llm must come from the trace: {log2}"
+    );
     let tools = log2.lines().filter(|l| l.contains("\"tool.call\"")).count();
     assert_eq!(tools, 3, "tools run live in hybrid mode: {log2}");
 }
@@ -448,18 +621,32 @@ fn full_replay_mocks_tools_from_the_trace() {
     .unwrap();
     let t1 = e.dir.join("t1.jsonl");
     let out1 = run_py(&e, &driver, &[("NUDGE_TRACE", t1.to_str().unwrap())]);
-    assert!(out1.status.success(), "stderr: {}", String::from_utf8_lossy(&out1.stderr));
+    assert!(
+        out1.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out1.stderr)
+    );
     // full replay (default mode): nothing executes, nothing new is recorded
     let t2 = e.dir.join("t2.jsonl");
     let out2 = run_py(
         &e,
         &driver,
-        &[("NUDGE_TRACE", t2.to_str().unwrap()), ("NUDGE_REPLAY", t1.to_str().unwrap())],
+        &[
+            ("NUDGE_TRACE", t2.to_str().unwrap()),
+            ("NUDGE_REPLAY", t1.to_str().unwrap()),
+        ],
     );
-    assert!(out2.status.success(), "stderr: {}", String::from_utf8_lossy(&out2.stderr));
+    assert!(
+        out2.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out2.stderr)
+    );
     assert_eq!(out1.stdout, out2.stdout);
     let log2 = std::fs::read_to_string(&t2).unwrap_or_default();
-    assert!(!log2.contains("\"llm.call\"") && !log2.contains("\"tool.call\""), "full replay must not execute anything: {log2}");
+    assert!(
+        !log2.contains("\"llm.call\"") && !log2.contains("\"tool.call\""),
+        "full replay must not execute anything: {log2}"
+    );
 }
 
 // ── v0.2: streaming (design §4.5) ──────────────────────────────
@@ -471,15 +658,33 @@ fn stream_let_runs_and_traces_chunks() {
     let out_py = e.dir.join("stream_demo.py");
     std::fs::write(&out_py, gen(src)).unwrap();
     let output = run_py(&e, &out_py, &[]);
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
-    assert!(String::from_utf8_lossy(&output.stdout).contains("title"), "stdout: {output:?}");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("title"),
+        "stdout: {output:?}"
+    );
     let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
     assert!(log.contains("\"streamed\": true"), "trace: {log}");
     let chunks: u64 = log
         .lines()
-        .filter_map(|l| l.split("\"chunks\": ").nth(1)?.split('}').next()?.trim().parse::<u64>().ok())
+        .filter_map(|l| {
+            l.split("\"chunks\": ")
+                .nth(1)?
+                .split('}')
+                .next()?
+                .trim()
+                .parse::<u64>()
+                .ok()
+        })
         .sum();
-    assert!(chunks >= 2, "a 16-char payload should stream in >= 2 chunks, trace: {log}");
+    assert!(
+        chunks >= 2,
+        "a 16-char payload should stream in >= 2 chunks, trace: {log}"
+    );
 }
 
 #[test]
@@ -491,14 +696,24 @@ fn stream_aborts_early_on_unsatisfiable_prefix_then_repairs() {
     let out_py = e.dir.join("stream_abort.py");
     std::fs::write(&out_py, gen(src)).unwrap();
     let output = run_py(&e, &out_py, &[("NUDGE_FAKE_FAIL_FIRST", "1")]);
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
     assert!(log.contains("\"early_abort\": true"), "trace: {log}");
-    assert!(log.contains("\"outcome\": \"schema_violation\""), "trace: {log}");
+    assert!(
+        log.contains("\"outcome\": \"schema_violation\""),
+        "trace: {log}"
+    );
     assert!(log.contains("\"repair_round\": 1"), "trace: {log}");
     // the abort happened on the first chunk — tokens beyond it were saved
     let first = log.lines().next().unwrap();
-    assert!(first.contains("\"chunks\": 1"), "expected abort on chunk 1, record: {first}");
+    assert!(
+        first.contains("\"chunks\": 1"),
+        "expected abort on chunk 1, record: {first}"
+    );
 }
 
 #[test]
@@ -510,15 +725,38 @@ fn stream_replay_consumes_the_recorded_value() {
     // 1. live streamed run
     let t1 = e.dir.join("t1.jsonl");
     let out1 = run_py(&e, &out_py, &[("NUDGE_TRACE", t1.to_str().unwrap())]);
-    assert!(out1.status.success(), "stderr: {}", String::from_utf8_lossy(&out1.stderr));
-    assert!(std::fs::read_to_string(&t1).unwrap().contains("\"streamed\": true"));
+    assert!(
+        out1.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out1.stderr)
+    );
+    assert!(std::fs::read_to_string(&t1)
+        .unwrap()
+        .contains("\"streamed\": true"));
     // 2. replay: consumes the recorded final value, no streaming, no new records
     let t2 = e.dir.join("t2.jsonl");
-    let out2 = run_py(&e, &out_py, &[("NUDGE_TRACE", t2.to_str().unwrap()), ("NUDGE_REPLAY", t1.to_str().unwrap())]);
-    assert!(out2.status.success(), "stderr: {}", String::from_utf8_lossy(&out2.stderr));
-    assert_eq!(out1.stdout, out2.stdout, "replay must reproduce the streamed result");
+    let out2 = run_py(
+        &e,
+        &out_py,
+        &[
+            ("NUDGE_TRACE", t2.to_str().unwrap()),
+            ("NUDGE_REPLAY", t1.to_str().unwrap()),
+        ],
+    );
+    assert!(
+        out2.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out2.stderr)
+    );
+    assert_eq!(
+        out1.stdout, out2.stdout,
+        "replay must reproduce the streamed result"
+    );
     let log2 = std::fs::read_to_string(&t2).unwrap_or_default();
-    assert!(!log2.contains("\"llm.call\""), "replay must not call any provider: {log2}");
+    assert!(
+        !log2.contains("\"llm.call\""),
+        "replay must not call any provider: {log2}"
+    );
 }
 
 // ── v0.2: agent state + checkpoints (design §7) ────────────────
@@ -530,16 +768,24 @@ fn agent_state_checkpoints_each_write() {
     let out_py = e.dir.join("agent_demo.py");
     std::fs::write(&out_py, gen(src)).unwrap();
     let output = run_py(&e, &out_py, &[("NUDGE_RUN_ID", "run-agent-1")]);
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1");
     // every state write checkpointed: round reached 1, notes holds the note
-    let ck = std::fs::read_to_string(e.dir.join(".nudge/runs/run-agent-1/checkpoint.json")).unwrap();
+    let ck =
+        std::fs::read_to_string(e.dir.join(".nudge/runs/run-agent-1/checkpoint.json")).unwrap();
     assert!(ck.contains("\"round\": 1"), "checkpoint: {ck}");
     assert!(ck.contains("\"notes\": ["), "checkpoint: {ck}");
     assert!(ck.contains("\"writes\": 2"), "checkpoint: {ck}");
     // the run registry lets `nudge resume` find the program + trace
     let program = std::fs::read_to_string(e.dir.join(".nudge/runs/run-agent-1/program")).unwrap();
-    assert!(program.ends_with("agent_demo.py"), "program registry: {program}");
+    assert!(
+        program.ends_with("agent_demo.py"),
+        "program registry: {program}"
+    );
 }
 
 #[test]
@@ -552,26 +798,53 @@ fn resume_continues_from_checkpoint_without_double_apply() {
     std::fs::write(&out_py, gen(src)).unwrap();
     // 1. crash: $0.0015 covers exactly one fake call; the second hits the wall
     let trace = e.dir.join("trace.jsonl");
-    let out1 = run_py(&e, &out_py, &[("NUDGE_RUN_ID", "run-resume-1"), ("NUDGE_BUDGET", "0.0015")]);
+    let out1 = run_py(
+        &e,
+        &out_py,
+        &[("NUDGE_RUN_ID", "run-resume-1"), ("NUDGE_BUDGET", "0.0015")],
+    );
     assert!(!out1.status.success(), "expected a BudgetExceeded crash");
-    assert!(String::from_utf8_lossy(&out1.stderr).contains("BudgetExceeded"), "stderr: {}", String::from_utf8_lossy(&out1.stderr));
-    let ck = std::fs::read_to_string(e.dir.join(".nudge/runs/run-resume-1/checkpoint.json")).unwrap();
+    assert!(
+        String::from_utf8_lossy(&out1.stderr).contains("BudgetExceeded"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out1.stderr)
+    );
+    let ck =
+        std::fs::read_to_string(e.dir.join(".nudge/runs/run-resume-1/checkpoint.json")).unwrap();
     assert!(ck.contains("\"round\": 1"), "checkpoint after crash: {ck}");
     // 2. resume: replay the recorded call, then go live — round must end
     //    at exactly 2 (the replayed write is suppressed, not re-applied)
     let out2 = run_py(
         &e,
         &out_py,
-        &[("NUDGE_RUN_ID", "run-resume-1"), ("NUDGE_REPLAY", trace.to_str().unwrap()), ("NUDGE_RESUME", "1")],
+        &[
+            ("NUDGE_RUN_ID", "run-resume-1"),
+            ("NUDGE_REPLAY", trace.to_str().unwrap()),
+            ("NUDGE_RESUME", "1"),
+        ],
     );
-    assert!(out2.status.success(), "resume stderr: {}", String::from_utf8_lossy(&out2.stderr));
-    let ck2 = std::fs::read_to_string(e.dir.join(".nudge/runs/run-resume-1/checkpoint.json")).unwrap();
-    assert!(ck2.contains("\"round\": 2"), "checkpoint after resume: {ck2}");
-    assert!(ck2.contains("\"writes\": 2"), "write counter after resume: {ck2}");
+    assert!(
+        out2.status.success(),
+        "resume stderr: {}",
+        String::from_utf8_lossy(&out2.stderr)
+    );
+    let ck2 =
+        std::fs::read_to_string(e.dir.join(".nudge/runs/run-resume-1/checkpoint.json")).unwrap();
+    assert!(
+        ck2.contains("\"round\": 2"),
+        "checkpoint after resume: {ck2}"
+    );
+    assert!(
+        ck2.contains("\"writes\": 2"),
+        "write counter after resume: {ck2}"
+    );
     // the resumed run's live call appended to the same trace: 1 recorded + 1 live
     let log = std::fs::read_to_string(&trace).unwrap();
     let calls = log.lines().filter(|l| l.contains("\"llm.call\"")).count();
-    assert_eq!(calls, 2, "expected one recorded + one live call, trace: {log}");
+    assert_eq!(
+        calls, 2,
+        "expected one recorded + one live call, trace: {log}"
+    );
 }
 
 // ── v0.3: merge reducer (design §7) ────────────────────────────
@@ -585,9 +858,18 @@ fn merge_reducer_write_dedups_and_checkpoints() {
     let out_py = e.dir.join("merge_demo.py");
     std::fs::write(&out_py, gen(src)).unwrap();
     let output = run_py(&e, &out_py, &[("NUDGE_RUN_ID", "run-merge-1")]);
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1", "merge must dedup the identical findings");
-    let ck = std::fs::read_to_string(e.dir.join(".nudge/runs/run-merge-1/checkpoint.json")).unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "1",
+        "merge must dedup the identical findings"
+    );
+    let ck =
+        std::fs::read_to_string(e.dir.join(".nudge/runs/run-merge-1/checkpoint.json")).unwrap();
     assert!(ck.contains("\"found\": ["), "checkpoint: {ck}");
 }
 
@@ -601,7 +883,11 @@ fn merge_runtime_semantics() {
     )
     .unwrap();
     let output = run_py(&e, &driver, &[]);
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(String::from_utf8_lossy(&output.stdout).contains("MERGE OK"));
 }
 
@@ -614,14 +900,29 @@ fn tool_stub_routes_and_validates_servers() {
     let out_py = e.dir.join("mcp_demo.py");
     std::fs::write(&out_py, gen(src)).unwrap();
     // registered server: the call routes and the trace records it
-    let output = run_py(&e, &out_py, &[("NUDGE_MCP_SERVERS", "{\"search\": {\"tools\": [\"web_search\"]}, \"fs\": {\"tools\": [\"read\"]}}")]);
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let output = run_py(
+        &e,
+        &out_py,
+        &[(
+            "NUDGE_MCP_SERVERS",
+            "{\"search\": {\"tools\": [\"web_search\"]}, \"fs\": {\"tools\": [\"read\"]}}",
+        )],
+    );
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
     assert!(log.contains("\"server\": \"search\""), "trace: {log}");
     // unregistered server: fails fast with a clear error
     let output2 = run_py(&e, &out_py, &[("NUDGE_MCP_SERVERS", "{\"other\": {}}")]);
     assert!(!output2.status.success(), "expected unknown-server failure");
-    assert!(String::from_utf8_lossy(&output2.stderr).contains("unknown MCP server 'search'"), "stderr: {}", String::from_utf8_lossy(&output2.stderr));
+    assert!(
+        String::from_utf8_lossy(&output2.stderr).contains("unknown MCP server 'search'"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output2.stderr)
+    );
 }
 
 // ── v0.3d: OTel span export (design §6) ────────────────────────────
@@ -634,21 +935,36 @@ fn otel_export_writes_spans_for_trace_records() {
     std::fs::write(&out_py, gen(src)).unwrap();
     let spans = e.dir.join("spans.jsonl");
     let output = run_py(&e, &out_py, &[("NUDGE_OTEL", spans.to_str().unwrap())]);
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let log = std::fs::read_to_string(&spans).unwrap();
     let lines: Vec<&str> = log.lines().collect();
     // one span per trace record: llm.call + the effectful fn's fn.return
     assert_eq!(lines.len(), 2, "one span per trace record: {log}");
     let span = lines[0];
     assert!(span.contains("\"name\": \"llm.call\""), "span: {span}");
-    assert!(span.contains("\"traceId\"") && span.contains("\"spanId\""), "span: {span}");
+    assert!(
+        span.contains("\"traceId\"") && span.contains("\"spanId\""),
+        "span: {span}"
+    );
     assert!(span.contains("\"startTimeUnixNano\""), "span: {span}");
     assert!(span.contains("\"code\": 1"), "ok status: {span}");
-    assert!(lines[1].contains("\"name\": \"fn.return\""), "span: {}", lines[1]);
+    assert!(
+        lines[1].contains("\"name\": \"fn.return\""),
+        "span: {}",
+        lines[1]
+    );
     // without NUDGE_OTEL no new spans are produced
     let output2 = run_py(&e, &out_py, &[]);
     assert!(output2.status.success());
-    assert_eq!(std::fs::read_to_string(&spans).unwrap().lines().count(), 2, "no new spans without NUDGE_OTEL");
+    assert_eq!(
+        std::fs::read_to_string(&spans).unwrap().lines().count(),
+        2,
+        "no new spans without NUDGE_OTEL"
+    );
 }
 
 // ── v0.4: route{} model routing (design §4.4) ─────────────────────
@@ -660,7 +976,11 @@ fn route_block_picks_model_and_records_label_e2e() {
     let out_py = e.dir.join("route_demo.py");
     std::fs::write(&out_py, gen(src)).unwrap();
     let output = run_py(&e, &out_py, &[]);
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
     // the when-condition is true → cheap arm wins, model + label recorded
     assert!(log.contains("\"model\": \"m-cheap\""), "trace: {log}");
@@ -669,7 +989,11 @@ fn route_block_picks_model_and_records_label_e2e() {
     let src2 = src.replace("pick(true)", "pick(false)");
     std::fs::write(&out_py, gen(&src2)).unwrap();
     let output2 = run_py(&e, &out_py, &[]);
-    assert!(output2.status.success(), "stderr: {}", String::from_utf8_lossy(&output2.stderr));
+    assert!(
+        output2.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output2.stderr)
+    );
     let log2 = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
     assert!(log2.contains("\"model\": \"m-strong\""), "trace: {log2}");
     assert!(log2.contains("\"route\": \"strong\""), "trace: {log2}");
@@ -679,7 +1003,9 @@ fn route_block_picks_model_and_records_label_e2e() {
 
 #[test]
 fn openai_compatible_provider_e2e_with_mock_server() {
-    let Some(e) = e2e("openai_provider") else { return };
+    let Some(e) = e2e("openai_provider") else {
+        return;
+    };
     // mock OpenAI-compatible endpoint: asserts auth + model, answers with
     // canned JSON and real-shaped usage numbers
     let mock = r#"import json, http.server, socketserver, sys, pathlib
@@ -731,13 +1057,31 @@ with socketserver.TCPServer(("127.0.0.1", 0), H) as srv:
     let out_py = e.dir.join("openai_provider.py");
     std::fs::write(&out_py, gen(src)).unwrap();
     let base = format!("http://127.0.0.1:{port}/v1");
-    let output = run_py(&e, &out_py, &[("NUDGE_API_KEY", "test-key"), ("NUDGE_BASE_URL", base.as_str())]);
+    let output = run_py(
+        &e,
+        &out_py,
+        &[
+            ("NUDGE_API_KEY", "test-key"),
+            ("NUDGE_BASE_URL", base.as_str()),
+        ],
+    );
     let _ = child.kill();
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let _ = child.wait(); // reap the zombie (clippy::zombie_processes)
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
     assert!(log.contains("\"provider\": \"gemini\""), "trace: {log}");
-    assert!(log.contains("\"model\": \"gemini:gemini-2.5-flash\""), "trace: {log}");
-    assert!(log.contains("\"tokens\": {\"in\": 12, \"out\": 7}"), "trace: {log}");
+    assert!(
+        log.contains("\"model\": \"gemini:gemini-2.5-flash\""),
+        "trace: {log}"
+    );
+    assert!(
+        log.contains("\"tokens\": {\"in\": 12, \"out\": 7}"),
+        "trace: {log}"
+    );
     // (12 in * $0.30 + 7 out * $2.50) / 1M from the pricing table
     assert!(log.contains("\"cost_usd\": 2.11e-05"), "trace: {log}");
 }
@@ -781,7 +1125,11 @@ for line in sys.stdin:
         e.dir.join("mock_mcp.py").display()
     );
     let output = run_py(&e, &out_py, &[("NUDGE_MCP_SERVERS", registry.as_str())]);
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let log = std::fs::read_to_string(e.dir.join("trace.jsonl")).unwrap();
     assert!(log.contains("\"kind\": \"tool.call\""), "trace: {log}");
     assert!(log.contains("\"server\": \"search\""), "trace: {log}");
@@ -799,7 +1147,10 @@ fn mcp_unknown_server_still_fails_fast() {
     let output = run_py(&e, &out_py, &[("NUDGE_MCP_SERVERS", registry)]);
     assert!(!output.status.success(), "should fail on unknown server");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("unknown MCP server 'nope'"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("unknown MCP server 'nope'"),
+        "stderr: {stderr}"
+    );
 }
 
 // ── v1.2 regression: the declared per-call `budget` caps the WHOLE
@@ -816,32 +1167,49 @@ fn call_site_budget_covers_repair_rounds() {
     let output = run_py(&e, &out_py, &[("NUDGE_FAKE_FAIL_FIRST", "2")]);
     assert!(!output.status.success(), "must hit the site budget wall");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("call site budget exhausted"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("call site budget exhausted"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]
 fn call_site_budget_allows_repairs_within_budget() {
-    let Some(e) = e2e("site_budget_ok") else { return };
+    let Some(e) = e2e("site_budget_ok") else {
+        return;
+    };
     // budget 0.005 comfortably covers 1 + 1 repair rounds (0.002)
     let src = "type S = { title: string }\nfn main() -> string uses LLM {\n    let a = llm\"\"\"return JSON with the title field\"\"\" with { model: \"fake\", schema: S, budget: 0.005 USD, retry: 2 with repair }\n    a.title\n}";
     let out_py = e.dir.join("site_budget_ok.py");
     std::fs::write(&out_py, gen(src)).unwrap();
     let output = run_py(&e, &out_py, &[("NUDGE_FAKE_FAIL_FIRST", "1")]);
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 // ── v1.2 regression: streaming call sites share the same budget wall ──
 
 #[test]
 fn stream_site_budget_covers_repair_rounds() {
-    let Some(e) = e2e("stream_budget") else { return };
+    let Some(e) = e2e("stream_budget") else {
+        return;
+    };
     let src = "type S = { title: string }\nfn main() -> string uses LLM {\n    stream let a = llm\"\"\"return JSON with the title field\"\"\" with { model: \"fake\", schema: S, budget: 0.001 USD, retry: 2 with repair }\n    a.title\n}";
     let out_py = e.dir.join("stream_budget.py");
     std::fs::write(&out_py, gen(src)).unwrap();
     let output = run_py(&e, &out_py, &[("NUDGE_FAKE_FAIL_FIRST", "2")]);
-    assert!(!output.status.success(), "stream site must hit the budget wall");
+    assert!(
+        !output.status.success(),
+        "stream site must hit the budget wall"
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("call site budget exhausted"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("call site budget exhausted"),
+        "stderr: {stderr}"
+    );
 }
 
 // ── v1.2 regression: full replay is as strict for tools as for llm ──
@@ -857,7 +1225,11 @@ fn full_replay_raises_on_tool_call_exhaustion() {
     std::fs::write(&py_a, gen(src_a)).unwrap();
     let t1 = e.dir.join("t1.jsonl");
     let out1 = run_py(&e, &py_a, &[("NUDGE_TRACE", t1.to_str().unwrap())]);
-    assert!(out1.status.success(), "stderr: {}", String::from_utf8_lossy(&out1.stderr));
+    assert!(
+        out1.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out1.stderr)
+    );
     // program B: TWO tool calls → full replay against t1 must raise
     let src_b = "tool web(q: string) -> string { impl: mcp(\"search\").web(q)  side_effects: none }\nfn main() -> string uses Tool {\n    let a = web(\"one\")\n    web(a)\n}";
     let py_b = e.dir.join("prog_b.py");
@@ -866,9 +1238,56 @@ fn full_replay_raises_on_tool_call_exhaustion() {
     let out2 = run_py(
         &e,
         &py_b,
-        &[("NUDGE_TRACE", t2.to_str().unwrap()), ("NUDGE_REPLAY", t1.to_str().unwrap())],
+        &[
+            ("NUDGE_TRACE", t2.to_str().unwrap()),
+            ("NUDGE_REPLAY", t1.to_str().unwrap()),
+        ],
     );
-    assert!(!out2.status.success(), "diverged tool pattern must fail the replay");
+    assert!(
+        !out2.status.success(),
+        "diverged tool pattern must fail the replay"
+    );
     let stderr = String::from_utf8_lossy(&out2.stderr);
-    assert!(stderr.contains("tool replay exhaustion") || stderr.contains("ReplayMismatch"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("tool replay exhaustion") || stderr.contains("ReplayMismatch"),
+        "stderr: {stderr}"
+    );
+}
+
+// ── v1.4 regression ────────────────────────────────────────────────
+
+#[test]
+fn float_literals_keep_their_decimal_point() {
+    // Rust prints 1.0 as "1" — the emitted code used to carry an INT
+    // literal where Nudge said float
+    let out = gen("fn f() -> float { 1.0 }");
+    assert!(out.contains("return 1.0"), "got:\n{out}");
+    assert!(!out.contains("return 1\n"), "got:\n{out}");
+    // non-integral floats are untouched
+    assert!(gen("fn f() -> float { 1.5 }").contains("return 1.5"));
+}
+
+#[test]
+fn colliding_test_slugs_both_survive() {
+    let src = "test \"a b\" { assert true }\ntest \"a_b\" { assert true }";
+    let out = gen(src);
+    assert!(out.contains("def nudge_test_a_b()"), "got:\n{out}");
+    assert!(out.contains("def nudge_test_a_b_2()"), "got:\n{out}");
+}
+
+#[test]
+fn state_write_minus_eq_compiles_and_runs() {
+    let Some(e) = e2e("state_minus_eq") else {
+        return;
+    };
+    let src = "agent A {\n    state {\n        round: int = 3,\n    }\n    fn back() -> int {\n        state.round -= 1\n        state.round -= 1\n        state.round\n    }\n    fn main() -> int uses Tool {\n        back()\n    }\n}";
+    let py = e.dir.join("minus_eq.py");
+    std::fs::write(&py, gen(src)).unwrap();
+    let out = run_py(&e, &py, &[]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1");
 }

@@ -10,8 +10,15 @@ use crate::json::Json;
 fn required(kind: &str) -> Option<&'static [&'static str]> {
     match kind {
         "llm.call" => Some(&[
-            "model", "params", "input", "output", "tokens", "cost_usd",
-            "repair_round", "outcome", "provider",
+            "model",
+            "params",
+            "input",
+            "output",
+            "tokens",
+            "cost_usd",
+            "repair_round",
+            "outcome",
+            "provider",
         ]),
         "tool.call" => Some(&["tool", "input", "output"]),
         "fn.return" => Some(&["fn", "output"]),
@@ -23,6 +30,9 @@ fn required(kind: &str) -> Option<&'static [&'static str]> {
 pub fn validate(text: &str) -> Vec<String> {
     let mut errs = Vec::new();
     let mut expect_seq = 1.0;
+    // a line with a missing seq breaks the counter — re-baseline on the
+    // next valid seq instead of cascading a second false "out of order"
+    let mut seq_unknown = false;
     for (idx, line) in text.lines().enumerate() {
         let n = idx + 1;
         if line.trim().is_empty() {
@@ -40,17 +50,26 @@ pub fn validate(text: &str) -> Vec<String> {
             }
         };
         match rec.get("v").and_then(Json::as_num) {
-            Some(v) if v == 1.0 => {}
+            Some(1.0) => {}
             Some(v) => errs.push(format!("line {n}: unsupported record version {v} (E0601)")),
             None => errs.push(format!("line {n}: missing or non-numeric `v`")),
         }
         match rec.get("seq").and_then(Json::as_num) {
-            Some(s) if s == expect_seq => expect_seq += 1.0,
-            Some(s) => {
-                errs.push(format!("line {n}: seq {s} out of order (expected {expect_seq})"));
+            Some(s) if seq_unknown => {
+                seq_unknown = false;
                 expect_seq = s + 1.0;
             }
-            None => errs.push(format!("line {n}: missing or non-numeric `seq`")),
+            Some(s) if s == expect_seq => expect_seq += 1.0,
+            Some(s) => {
+                errs.push(format!(
+                    "line {n}: seq {s} out of order (expected {expect_seq})"
+                ));
+                expect_seq = s + 1.0;
+            }
+            None => {
+                errs.push(format!("line {n}: missing or non-numeric `seq`"));
+                seq_unknown = true;
+            }
         }
         match rec.get("kind").and_then(Json::as_str) {
             None => errs.push(format!("line {n}: missing `kind`")),
@@ -100,10 +119,48 @@ mod tests {
             llm_line(7),
         );
         let errs = validate(&text);
-        assert!(errs.iter().any(|e| e.contains("line 1") && e.contains("E0601")), "{errs:?}");
-        assert!(errs.iter().any(|e| e.contains("line 1") && e.contains("missing `model`")), "{errs:?}");
-        assert!(errs.iter().any(|e| e.contains("line 2") && e.contains("unknown record kind")), "{errs:?}");
-        assert!(errs.iter().any(|e| e.contains("line 3") && e.contains("missing `input`")), "{errs:?}");
-        assert!(errs.iter().any(|e| e.contains("line 4") && e.contains("out of order")), "{errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("line 1") && e.contains("E0601")),
+            "{errs:?}"
+        );
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("line 1") && e.contains("missing `model`")),
+            "{errs:?}"
+        );
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("line 2") && e.contains("unknown record kind")),
+            "{errs:?}"
+        );
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("line 3") && e.contains("missing `input`")),
+            "{errs:?}"
+        );
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("line 4") && e.contains("out of order")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_seq_rebaselines_instead_of_cascading() {
+        // line 2 has no seq; line 3 must NOT inherit a stale expectation
+        // and report a second, false "out of order"
+        let text = format!(
+            "{}\n{}\n{}\n",
+            llm_line(1),
+            r#"{"v": 1, "kind": "fn.return", "fn": "main", "output": 1}"#,
+            llm_line(2),
+        );
+        let errs = validate(&text);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(
+            errs[0].contains("line 2") && errs[0].contains("`seq`"),
+            "{errs:?}"
+        );
     }
 }
