@@ -21,7 +21,9 @@ fn open_browser(url: &str) {
         ("xdg-open", url)
     };
     let result = if cfg!(target_os = "windows") {
-        process::Command::new(cmd).args(["/c", "start", "", arg]).spawn()
+        process::Command::new(cmd)
+            .args(["/c", "start", "", arg])
+            .spawn()
     } else {
         process::Command::new(cmd).arg(arg).spawn()
     };
