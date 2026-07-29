@@ -729,4 +729,3 @@ mod tests {
         assert!(s.contains("\"diagnostics\": []"), "{s}");
     }
 }
-
