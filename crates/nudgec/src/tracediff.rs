@@ -159,7 +159,11 @@ pub fn diff(a_text: &str, b_text: &str) -> String {
                 };
                 let mut lines: Vec<String> = Vec::new();
                 if s(ra, "kind") != s(rb, "kind") {
-                    lines.push(format!("  kind      {} -> {}", s(ra, "kind"), s(rb, "kind")));
+                    lines.push(format!(
+                        "  kind      {} -> {}",
+                        s(ra, "kind"),
+                        s(rb, "kind")
+                    ));
                 }
                 let oa = s(ra, "outcome");
                 let ob = s(rb, "outcome");
@@ -179,7 +183,10 @@ pub fn diff(a_text: &str, b_text: &str) -> String {
                 let ca = num(ra, "cost_usd");
                 let cb = num(rb, "cost_usd");
                 if (ca - cb).abs() > 1e-12 {
-                    lines.push(format!("  cost      ${ca:.4} -> ${cb:.4}{}", cost_delta(ca, cb)));
+                    lines.push(format!(
+                        "  cost      ${ca:.4} -> ${cb:.4}{}",
+                        cost_delta(ca, cb)
+                    ));
                 }
                 let oa = ra.get("output");
                 let ob = rb.get("output");
