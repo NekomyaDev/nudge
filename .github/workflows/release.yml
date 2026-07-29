@@ -52,11 +52,25 @@ jobs:
           pattern: bin-*
           merge-multiple: true
       - run: |
+          # Asset names: nudgec-<tag>-<platform>.{tar.gz,zip}
+          # (no bare ".exe.zip" double extensions, version always visible)
+          TAG="${GITHUB_REF_NAME}"
           chmod +x nudgec-* || true
           for f in nudgec-*; do
             case "$f" in
-              *.exe) zip -q "$f.zip" "$f" ;;
-              *) tar czf "$f.tar.gz" "$f" ;;
+              *.exe)
+                name="${f%.exe}"                       # nudgec-windows-x86_64
+                platform="${name#nudgec-}"             # windows-x86_64
+                mv "$f" "nudgec.exe"
+                zip -q "nudgec-${TAG}-${platform}.zip" "nudgec.exe"
+                rm "nudgec.exe"
+                ;;
+              *)
+                platform="${f#nudgec-}"                # linux-x86_64 / macos-*
+                mv "$f" "nudgec"
+                tar czf "nudgec-${TAG}-${platform}.tar.gz" "nudgec"
+                rm "nudgec"
+                ;;
             esac
           done
           ls -la *.tar.gz *.zip
