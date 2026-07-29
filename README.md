@@ -60,6 +60,7 @@ The compiler proves the schema matches, infers effects, and computes a static co
 - **Prompt Clippy** — the compiler lints your `llm"""` blocks: vague instructions, missing output contracts, overlong prompts
 - **MCP & Python interop** — consume real MCP servers over stdio as typed tools; escape to any pip package
 - **Real providers** — one stdlib-only adapter for OpenAI / Gemini / Groq / Ollama; free tiers and local models work at $0
+- **Trace viewer** — `nudgec trace-view <trace.jsonl>` opens a local web UI over any run: timeline, tokens, cost, repairs highlighted
 - **A2A agent-card export, LSP, OpenTelemetry** — built in, not bolted on
 
 ## Quickstart
