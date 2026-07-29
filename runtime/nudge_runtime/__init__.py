@@ -244,7 +244,11 @@ def effectful(effects):
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
             out = fn(*args, **kwargs)
-            _emit_trace({"kind": "fn.return", "fn": fn.__name__, "output": _jsonable(out)})
+            rec = {"kind": "fn.return", "fn": fn.__name__, "output": _jsonable(out)}
+            branch = _current_branch()
+            if branch:
+                rec["branch"] = branch
+            _emit_trace(rec)
             return out
         wrapper.__nudge_effects__ = frozenset(effects)
         return wrapper
@@ -423,6 +427,9 @@ def tool_stub(name, args=None, server=None):
     }
     if server is not None:
         record["server"] = server
+    branch = _current_branch()
+    if branch:
+        record["branch"] = branch
     _emit_trace(record)
     return result
 
@@ -553,6 +560,9 @@ def _trace_call(model, prompt, out, repair_round, outcome, extra=None,
     if extra:
         # additive v1 fields (design §6.1): streamed / chunks / early_abort
         record.update(extra)
+    branch = _current_branch()
+    if branch:
+        record["branch"] = branch
     _emit_trace(record)
 
 
@@ -953,6 +963,25 @@ class AgentState:
 # ── model routing (design §4.4) ─────────────────────────────────────
 
 _LAST_ROUTE = threading.local()
+
+# NTF v1.1 (additive): records emitted inside a `par` branch carry a `branch`
+# label — "par[0]", "par[1]", ... — so trace-view/trace-diff can separate
+# parallel lanes. Frozen-v1 compatible (additive field, design §6.1).
+_BRANCH = threading.local()
+
+
+def _current_branch():
+    return getattr(_BRANCH, "id", None)
+
+
+def _run_with_branch(label, fn, x):
+    prev = getattr(_BRANCH, "id", None)
+    _BRANCH.id = label
+    try:
+        return _call_unpacked(fn, x)
+    finally:
+        _BRANCH.id = prev
+
 
 
 def route(*arms):
@@ -1435,7 +1464,10 @@ def par_map(coll, fn, concurrency=None):
         return []
     workers = concurrency or min(32, len(items))
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        return list(pool.map(lambda x: _call_unpacked(fn, x), items))
+        return list(pool.map(
+            lambda ix: _run_with_branch(f"par[{ix[0]}]", fn, ix[1]),
+            enumerate(items),
+        ))
 
 
 def par_all(items):
@@ -1444,7 +1476,10 @@ def par_all(items):
     if not items:
         return []
     with ThreadPoolExecutor(max_workers=len(items)) as pool:
-        return list(pool.map(lambda f: f() if callable(f) else f, items))
+        return list(pool.map(
+            lambda ix: _run_with_branch(f"par[{ix[0]}]", (lambda f: f() if callable(f) else f), ix[1]),
+            enumerate(items),
+        ))
 
 
 def par_race(items):
@@ -1461,7 +1496,10 @@ def par_race(items):
     if not items:
         raise ValueError("par race needs at least one candidate")
     pool = ThreadPoolExecutor(max_workers=len(items))
-    futures = [pool.submit(lambda f: f() if callable(f) else f, it) for it in items]
+    futures = [
+        pool.submit(_run_with_branch, f"par[{i}]", (lambda f: f() if callable(f) else f), it)
+        for i, it in enumerate(items)
+    ]
     try:
         for done in as_completed(futures):
             for other in futures:
