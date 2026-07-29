@@ -61,7 +61,48 @@ jobs:
         run: |
           ./target/release/nudgec trace-diff traces/mimo_run.jsonl traces/mimo_run.jsonl
           ./target/release/nudgec trace-diff examples/traces/demo_run.jsonl traces/mimo_run.jsonl
+      - name: Write the par smoke program (NTF v1.1 branch lanes)
+        run: |
+          cat > smoke/mimo_par_smoke.ndg <<'NDG'
+          type Brief = { summary: string, keywords: [string], reading_time_min: float }
+
+          fn summarize(topic: string) -> Brief uses LLM {
+              llm"""Summarize {topic} in one sentence, then give 3 keywords and an estimated reading time in minutes. Return the summary, keywords and reading_time_min."""
+              with { schema: Brief, model: "mimo:mimo-v2.5", budget: 0.02 USD, retry: 1 with repair }
+          }
+
+          fn main() -> [Brief] uses LLM {
+              let topics = ["urban heat islands", "green roofs", "sponge cities"]
+              par map topics |t| -> summarize(t)
+          }
+          NDG
+      - name: Compile the par smoke program
+        run: |
+          ./target/release/nudgec check smoke/mimo_par_smoke.ndg
+          ./target/release/nudgec build smoke/mimo_par_smoke.ndg
+      - name: Live par run against MiMo (branch lanes)
+        env:
+          MIMO_API_KEY: ${{ secrets.MIMO_API_KEY }}
+          NUDGE_PROVIDER: mimo
+          NUDGE_TRACE: traces/mimo_par.jsonl
+          NUDGE_BUDGET: "0.06"
+          PYTHONPATH: runtime
+        run: python3 out/mimo_par_smoke.py
+      - name: Validate the par trace (branch fields present, frozen v1 OK)
+        run: |
+          ./target/release/nudgec trace-check traces/mimo_par.jsonl
+          grep -q '"branch": "par\[0\]"' traces/mimo_par.jsonl
+          grep -q '"branch": "par\[1\]"' traces/mimo_par.jsonl
+          grep -q '"branch": "par\[2\]"' traces/mimo_par.jsonl
+      - name: Trace viewer smoke check (par trace)
+        run: |
+          ./target/release/nudgec trace-view traces/mimo_par.jsonl --no-open --port 8322 &
+          sleep 1
+          curl -fsS http://127.0.0.1:8322/trace | grep -q '"branch"'
+          kill %1
       - uses: actions/upload-artifact@v4
         with:
           name: mimo-trace
-          path: traces/mimo_run.jsonl
+          path: |
+            traces/mimo_run.jsonl
+            traces/mimo_par.jsonl
