@@ -11,22 +11,16 @@
 
 <p align="center">
   <a href="https://github.com/NekomyaDev/nudge/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/NekomyaDev/nudge/actions/workflows/ci.yml/badge.svg"></a>
-  <img alt="release" src="https://img.shields.io/badge/release-v1.0.1-brightgreen">
-  <img alt="tests" src="https://img.shields.io/badge/tests-147%20passing-brightgreen">
-  <img alt="clippy" src="https://img.shields.io/badge/clippy-0%20warnings-brightgreen">
-  <a href="https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang"><img alt="VS Code extension" src="https://img.shields.io/badge/VS%20Code-Nudge%20Language-007ACC?logo=visualstudiocode"></a>
+  <img alt="release" src="https://img.shields.io/badge/release-v1.2-brightgreen">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-blue">
   <img alt="compiler" src="https://img.shields.io/badge/compiler-Rust%20%C2%B7%20zero%20deps-red">
   <img alt="target" src="https://img.shields.io/badge/target-Python%20%7C%20TypeScript-green">
+  <a href="https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang"><img alt="VS Code extension" src="https://img.shields.io/badge/VS%20Code-Nudge%20Language-007ACC?logo=visualstudiocode"></a>
 </p>
 
 ---
 
-## Why Nudge exists
-
-Production agents in 2026 are still held together with Python glue: prompt chains parsed by hand, tool calls wrapped in try/except, no replay, no cost control, no regression tests. Libraries patch symptoms. **Nudge fixes the layer where the problem actually lives: the language.**
-
-Nudge is an open-source **AI agent programming language** with **deterministic replay** (every run emits a trace; every trace replays as a test at zero token cost), **LLM cost control** (compile-time budgets and a static cost report), typed tool use over **MCP (Model Context Protocol)**, **A2A agent-card export**, an **LSP language server** for editor diagnostics, and **OpenTelemetry** span export — one `.ndg` file in, production-grade agent infrastructure out.
+Production agents are still held together with glue code: prompt chains parsed by hand, tool calls wrapped in try/except, no replay, no cost control, no regression tests. Libraries patch symptoms. **Nudge fixes the layer where the problem actually lives: the language.**
 
 | Pain | Libraries | Nudge |
 |---|---|---|
@@ -55,54 +49,54 @@ test "stays within budget on recorded trace" {
 
 The compiler proves the schema matches, infers effects, and computes a static cost bound. The runtime records every call to a content-addressed trace you can diff, commit, and replay.
 
-## Guarantees at a glance
+## What you get
 
-- **Typed LLM calls** — output schema is a language type; violations trigger automatic repair, never reach your code.
-- **Effect system** — pure / `LLM` / `Tool` / `IO` effects inferred and shown in signatures.
-- **Deterministic replay** — full, hybrid, and live modes; traces are git-friendly JSONL.
-- **Budget contracts** — per-call and per-run USD ceilings with static estimation.
-- **Checkpointed agent state** — crash, then `nudge resume` from the last checkpoint.
-- **Native parallelism** — `par map`, `par race`, `par all` with compile-time race safety.
-- **MCP & Python interop** — consume real MCP servers over stdio as typed tools; escape to any pip package.
-
-## Install
-
-- **Prebuilt binaries** — every `v*` tag builds `nudgec` for Linux, macOS (x86_64 + Apple Silicon), and Windows and attaches the archives (.tar.gz for Linux/macOS, .zip for Windows) to the [GitHub Release](https://github.com/NekomyaDev/nudge/releases). Extract, add to `PATH`, done.
-- **From source** — `cargo build --release` → `target/release/nudgec`. Zero dependencies, builds in seconds.
-- **Runtime** — `export PYTHONPATH=$PWD/runtime` (emitted code imports `nudge_runtime`). crates.io / PyPI packages land when the registry secrets are enabled.
-- **VS Code** — install from the [Marketplace](https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang) (`Nudge Language` by Nekomya) or grab `nudge-lang-1.0.0.vsix` from the [release](https://github.com/NekomyaDev/nudge/releases) → `code --install-extension nudge-lang-1.0.0.vsix`. Syntax highlighting, snippets, and diagnostics powered by `nudgec lsp` (source in [`editors/vscode/`](editors/vscode/)).
+- **Typed LLM calls** — output schema is a language type; violations trigger automatic repair, never reach your code
+- **Effect system** — pure / `LLM` / `Tool` / `IO` effects inferred and shown in signatures
+- **Deterministic replay** — full, hybrid, and live modes; traces are git-friendly JSONL
+- **Budget contracts** — per-call and per-run USD ceilings with static estimation (`nudgec cost`)
+- **Checkpointed agent state** — crash, then `nudge resume` from the last checkpoint
+- **Native parallelism** — `par map`, `par race`, `par all` with compile-time race safety
+- **Prompt Clippy** — the compiler lints your `llm"""` blocks: vague instructions, missing output contracts, overlong prompts
+- **MCP & Python interop** — consume real MCP servers over stdio as typed tools; escape to any pip package
+- **Real providers** — one stdlib-only adapter for OpenAI / Gemini / Groq / Ollama; free tiers and local models work at $0
+- **A2A agent-card export, LSP, OpenTelemetry** — built in, not bolted on
 
 ## Quickstart
 
 ```sh
 cargo build                              # the nudgec compiler
-export PYTHONPATH=$PWD/runtime           # emitted code imports nudge_runtime (absolute: survives cd)
+export PYTHONPATH=$PWD/runtime           # emitted code imports nudge_runtime
 
 nudgec check examples/research_agent.ndg # type + effect verification
-nudgec cost examples/research_agent.ndg  # static cost report (fake pricing)
-nudgec a2a examples/research_agent.ndg   # export an A2A agent card to out/
+nudgec cost examples/research_agent.ndg  # static cost report
 nudgec build examples/research_agent.ndg # emit Python to out/
 cd examples && nudgec test research_agent.ndg   # replay the committed trace — zero tokens
 ```
 
-Everything runs against the deterministic fake provider by default: no API key, no token spend. See [examples/README.md](examples/README.md) for the full walkthrough (live runs, full replay, budget walls).
+Everything runs against a deterministic fake provider by default: **no API key, no token spend.** See [examples/README.md](examples/README.md) for live runs and the full walkthrough.
 
-## Status
+## Install
 
-**v1.0 — roadmap complete.** v0.1 MVP, v0.2, v0.3, v0.4, and v1.0 all shipped. The language design is frozen ([docs/design.md](docs/design.md), v1.24) and the full 14-day MVP plan is done ([docs/roadmap.md](docs/roadmap.md)): lexer → parser → **type checker** (E0101–E0202) → **effect inference** (E0301/E0302) → Python codegen → **trace store + replay** → **budget enforcement + parallel scheduler** → **self-testing research agent**. The v0.1 acceptance criteria all pass: the agent is 29 lines, does zero manual JSON parsing, and its replay test passes at zero token cost (115 tests green). **v0.2a hybrid replay landed:** `NUDGE_REPLAY_MODE=llm` replays the LLM from a trace while tools run live; traces now carry `tool.call` records. **v0.2b streaming landed:** `stream let` streams LLM output through an incremental schema validator that aborts unsatisfiable prefixes early (design §4.5). **v0.2c checkpoint/resume landed:** `agent`/`state` blocks checkpoint every state write, and `nudge resume <run_id>` continues a crashed run from its last checkpoint (design §7). **v0.3a reducer state landed:** `l | merge r` joins dicts (union) and lists (append-dedup) for CRDT-style state writes (design §7). **v0.3b–d landed:** multi-server MCP routing via the `NUDGE_MCP_SERVERS` registry (design §8), a TypeScript backend (`nudgec build-ts` + `runtime/nudge_runtime.ts`), and OTel span export (`NUDGE_OTEL`). **v0.4 landed:** `nudgec cost` reports llm call sites statically at flat fake pricing (design §13), and `route{ cheap: "m1" when cond, strong: "m2" otherwise }` picks a model per call, recording the chosen label in the trace (design §4.4). **v1.0 landed:** the v1 trace schema is frozen with a `nudgec trace-check` validator (design §6), `nudgec a2a` exports A2A agent cards (design §9), and `nudgec lsp` serves the Language Server Protocol over stdio for editor diagnostics (design §10). **v1.1 adds distribution + editor support:** prebuilt binaries per tag (release workflow), real providers (design §4.6), and a VS Code extension (`editors/vscode/`, `.vsix` on the release page). **v1.1a detail:** the same `.ndg` runs against OpenAI/Gemini/Groq/MiMo/Ollama through one dependency-free adapter (design §4.6) — free tiers and local models work at $0. **v1.1d:** `nudgec lsp` now answers hover/definition/completion, and MCP registry entries with a `command` get a real stdio JSON-RPC transport — actual server outputs land in the trace (design §8/§10).
-
-## The name
-
-*Nudge* — a small, intentional push. That is what a well-typed prompt really is: you don't command an LLM and parse whatever comes back, you nudge it into a schema and let the language enforce the rest. Files use the `.ndg` extension.
-
-Documentation is in English; Simplified Chinese docs are planned after v0.1.
+- **Prebuilt binaries** — Linux, macOS (x86_64 + Apple Silicon), Windows on the [Releases](https://github.com/NekomyaDev/nudge/releases) page
+- **From source** — `cargo build --release` → `target/release/nudgec`. Zero dependencies, builds in seconds
+- **VS Code** — [Nudge Language](https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang) on the Marketplace: highlighting, snippets, and diagnostics via `nudgec lsp`
 
 ## Documentation
 
-- [Language design](docs/design.md) — types, effects, replay, budgets, compiler architecture
-- [Roadmap](docs/roadmap.md) — MVP plan and v0.1→v1.0 milestones
+- [Language design](docs/design.md) — types, effects, replay, budgets, compiler architecture (frozen at v1.24)
+- [Strategy: Six Locked Doors](docs/strategy.md) — why Nudge exists, and the order in which it becomes indispensable
+- [Roadmap](docs/roadmap.md) — shipped history and what's next (trace viewer, NTF standard, capability-based tool security)
 - [Examples](examples/) — the self-testing research agent
+
+## Contributing
+
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the open [`good first issue`s](https://github.com/NekomyaDev/nudge/labels/good%20first%20issue): new example agents, replay conformance tests, provider adapters, and editor support.
+
+## The name
+
+*Nudge* — a small, intentional push. You don't command an LLM and parse whatever comes back; you nudge it into a schema and let the language enforce the rest. Files use the `.ndg` extension.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). No SaaS, no token, no lock-in: Nudge is an open toolchain, forever.
