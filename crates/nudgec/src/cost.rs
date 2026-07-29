@@ -149,11 +149,11 @@ fn line(out: &mut String, name: &str, c: &Count, t: &Count) {
     out.push('\n');
 }
 
-/// Collect fn-call edges: `Expr::Call` on a plain identifier, excluding
+/// Collect fn-call edges: `ExprKind::Call` on a plain identifier, excluding
 /// builtins — the same walk as `count_expr`, tracking `par map` bodies.
 fn collect_calls(e: &Expr, in_par: bool, out: &mut Vec<(String, bool)>) {
-    match e {
-        Expr::LlmCall {
+    match &e.kind {
+        ExprKind::LlmCall {
             prompt, options, ..
         } => {
             collect_calls(prompt, in_par, out);
@@ -161,21 +161,21 @@ fn collect_calls(e: &Expr, in_par: bool, out: &mut Vec<(String, bool)>) {
                 collect_calls(v, in_par, out);
             }
         }
-        Expr::ListLit(xs) | Expr::ParAll(xs) | Expr::ParRace(xs) => {
+        ExprKind::ListLit(xs) | ExprKind::ParAll(xs) | ExprKind::ParRace(xs) => {
             for x in xs {
                 collect_calls(x, in_par, out);
             }
         }
-        Expr::Prompt { .. }
-        | Expr::Int(_)
-        | Expr::Float(_)
-        | Expr::Str(_)
-        | Expr::Money(..)
-        | Expr::Bool(_)
-        | Expr::None
-        | Expr::Ident(_) => {}
-        Expr::Call { func, args, kwargs } => {
-            if let Expr::Ident(n) = func.as_ref() {
+        ExprKind::Prompt { .. }
+        | ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Str(_)
+        | ExprKind::Money(..)
+        | ExprKind::Bool(_)
+        | ExprKind::None
+        | ExprKind::Ident(_) => {}
+        ExprKind::Call { func, args, kwargs } => {
+            if let ExprKind::Ident(n) = &func.as_ref().kind {
                 if !matches!(n.as_str(), "len" | "zip" | "replay" | "mcp" | "python") {
                     out.push((n.clone(), in_par));
                 }
@@ -188,13 +188,13 @@ fn collect_calls(e: &Expr, in_par: bool, out: &mut Vec<(String, bool)>) {
                 collect_calls(v, in_par, out);
             }
         }
-        Expr::Field { obj, .. } => collect_calls(obj, in_par, out),
-        Expr::Binary { l, r, .. } | Expr::Merge { l, r } => {
+        ExprKind::Field { obj, .. } => collect_calls(obj, in_par, out),
+        ExprKind::Binary { l, r, .. } | ExprKind::Merge { l, r } => {
             collect_calls(l, in_par, out);
             collect_calls(r, in_par, out);
         }
-        Expr::Unary { x, .. } => collect_calls(x, in_par, out),
-        Expr::ParMap {
+        ExprKind::Unary { x, .. } => collect_calls(x, in_par, out),
+        ExprKind::ParMap {
             coll, kwargs, body, ..
         } => {
             collect_calls(coll, in_par, out);
@@ -204,7 +204,7 @@ fn collect_calls(e: &Expr, in_par: bool, out: &mut Vec<(String, bool)>) {
             // calls in the lambda run once per element — dynamic edge
             collect_calls(body, true, out);
         }
-        Expr::Route { arms } => {
+        ExprKind::Route { arms } => {
             for (_, _, cond) in arms {
                 if let Some(x) = cond {
                     collect_calls(x, in_par, out);
@@ -215,8 +215,8 @@ fn collect_calls(e: &Expr, in_par: bool, out: &mut Vec<(String, bool)>) {
 }
 
 fn count_expr(e: &Expr, in_par: bool, c: &mut Count) {
-    match e {
-        Expr::LlmCall {
+    match &e.kind {
+        ExprKind::LlmCall {
             prompt,
             options,
             repair,
@@ -227,8 +227,8 @@ fn count_expr(e: &Expr, in_par: bool, c: &mut Count) {
                 options
                     .iter()
                     .find(|(k, _)| k == "retry")
-                    .and_then(|(_, v)| match v {
-                        Expr::Int(n) => Some(*n as usize),
+                    .and_then(|(_, v)| match &v.kind {
+                        ExprKind::Int(n) => Some(*n as usize),
                         _ => None,
                     })
                     .unwrap_or(0)
@@ -242,20 +242,20 @@ fn count_expr(e: &Expr, in_par: bool, c: &mut Count) {
                 count_expr(v, in_par, c);
             }
         }
-        Expr::ListLit(xs) | Expr::ParAll(xs) | Expr::ParRace(xs) => {
+        ExprKind::ListLit(xs) | ExprKind::ParAll(xs) | ExprKind::ParRace(xs) => {
             for x in xs {
                 count_expr(x, in_par, c);
             }
         }
-        Expr::Prompt { .. }
-        | Expr::Int(_)
-        | Expr::Float(_)
-        | Expr::Str(_)
-        | Expr::Money(..)
-        | Expr::Bool(_)
-        | Expr::None
-        | Expr::Ident(_) => {}
-        Expr::Call { func, args, kwargs } => {
+        ExprKind::Prompt { .. }
+        | ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Str(_)
+        | ExprKind::Money(..)
+        | ExprKind::Bool(_)
+        | ExprKind::None
+        | ExprKind::Ident(_) => {}
+        ExprKind::Call { func, args, kwargs } => {
             count_expr(func, in_par, c);
             for a in args {
                 count_expr(a, in_par, c);
@@ -264,13 +264,13 @@ fn count_expr(e: &Expr, in_par: bool, c: &mut Count) {
                 count_expr(v, in_par, c);
             }
         }
-        Expr::Field { obj, .. } => count_expr(obj, in_par, c),
-        Expr::Binary { l, r, .. } | Expr::Merge { l, r } => {
+        ExprKind::Field { obj, .. } => count_expr(obj, in_par, c),
+        ExprKind::Binary { l, r, .. } | ExprKind::Merge { l, r } => {
             count_expr(l, in_par, c);
             count_expr(r, in_par, c);
         }
-        Expr::Unary { x, .. } => count_expr(x, in_par, c),
-        Expr::ParMap {
+        ExprKind::Unary { x, .. } => count_expr(x, in_par, c),
+        ExprKind::ParMap {
             coll, kwargs, body, ..
         } => {
             count_expr(coll, in_par, c);
@@ -280,7 +280,7 @@ fn count_expr(e: &Expr, in_par: bool, c: &mut Count) {
             // the lambda body runs once per element — calls in it are dynamic
             count_expr(body, true, c);
         }
-        Expr::Route { arms } => {
+        ExprKind::Route { arms } => {
             for (_, _, cond) in arms {
                 if let Some(x) = cond {
                     count_expr(x, in_par, c);
