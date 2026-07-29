@@ -129,7 +129,7 @@ fn resolve(
 }
 
 fn validate_refinement(name: &str, args: &[Expr], errs: &mut Vec<CheckError>) {
-    let numeric = |e: &Expr| matches!(e, Expr::Int(_) | Expr::Float(_));
+    let numeric = |e: &Expr| matches!(&e.kind, ExprKind::Int(_) | ExprKind::Float(_));
     match name {
         "range" => {
             if !(args.len() == 2 && args.iter().all(numeric)) {
@@ -144,8 +144,8 @@ fn validate_refinement(name: &str, args: &[Expr], errs: &mut Vec<CheckError>) {
         }
         "format" => {
             let ok = args.len() == 1
-                && match &args[0] {
-                    Expr::Ident(f) | Expr::Str(f) => matches!(f.as_str(), "url" | "email"),
+                && match &args[0].kind {
+                    ExprKind::Ident(f) | ExprKind::Str(f) => matches!(f.as_str(), "url" | "email"),
                     _ => false,
                 };
             if !ok {
@@ -208,15 +208,15 @@ fn direct_effects(
     effects: &mut BTreeSet<String>,
     calls: &mut BTreeSet<String>,
 ) {
-    match e {
-        Expr::LlmCall { options, .. } => {
+    match &e.kind {
+        ExprKind::LlmCall { options, .. } => {
             effects.insert("LLM".into());
             for (_, v) in options {
                 direct_effects(v, g, effects, calls);
             }
         }
-        Expr::Call { func, args, kwargs } => {
-            if let Expr::Ident(name) = func.as_ref() {
+        ExprKind::Call { func, args, kwargs } => {
+            if let ExprKind::Ident(name) = &func.as_ref().kind {
                 match name.as_str() {
                     "replay" | "python" => {
                         effects.insert("IO".into());
@@ -243,25 +243,25 @@ fn direct_effects(
                 direct_effects(v, g, effects, calls);
             }
         }
-        Expr::ListLit(xs) | Expr::ParAll(xs) | Expr::ParRace(xs) => {
+        ExprKind::ListLit(xs) | ExprKind::ParAll(xs) | ExprKind::ParRace(xs) => {
             for x in xs {
                 direct_effects(x, g, effects, calls);
             }
         }
-        Expr::Field { obj, .. } => direct_effects(obj, g, effects, calls),
-        Expr::Binary { l, r, .. } | Expr::Merge { l, r } => {
+        ExprKind::Field { obj, .. } => direct_effects(obj, g, effects, calls),
+        ExprKind::Binary { l, r, .. } | ExprKind::Merge { l, r } => {
             direct_effects(l, g, effects, calls);
             direct_effects(r, g, effects, calls);
         }
-        Expr::Route { arms } => {
+        ExprKind::Route { arms } => {
             for (_, _, cond) in arms {
                 if let Some(c) = cond {
                     direct_effects(c, g, effects, calls);
                 }
             }
         }
-        Expr::Unary { x, .. } => direct_effects(x, g, effects, calls),
-        Expr::ParMap {
+        ExprKind::Unary { x, .. } => direct_effects(x, g, effects, calls),
+        ExprKind::ParMap {
             coll, kwargs, body, ..
         } => {
             direct_effects(coll, g, effects, calls);
@@ -426,10 +426,10 @@ fn check_fn_body(
 // ── expression checking + inference ─────────────────────────────────
 
 fn schema_expr_ty(e: &Expr, g: &Globals, errs: &mut Vec<CheckError>) -> Ty {
-    let as_type = match e {
-        Expr::Ident(n) => Some(TypeExpr::Named(n.clone())),
-        Expr::ListLit(xs) if xs.len() == 1 => match &xs[0] {
-            Expr::Ident(n) => Some(TypeExpr::List(Box::new(TypeExpr::Named(n.clone())))),
+    let as_type = match &e.kind {
+        ExprKind::Ident(n) => Some(TypeExpr::Named(n.clone())),
+        ExprKind::ListLit(xs) if xs.len() == 1 => match &xs[0].kind {
+            ExprKind::Ident(n) => Some(TypeExpr::List(Box::new(TypeExpr::Named(n.clone())))),
             _ => None,
         },
         _ => None,
@@ -455,10 +455,10 @@ fn check_expr(
     g: &Globals,
     errs: &mut Vec<CheckError>,
 ) -> Ty {
-    match e {
-        Expr::Int(_) => Ty::Int,
-        Expr::Float(_) => Ty::Float,
-        Expr::Money(_, unit) => {
+    match &e.kind {
+        ExprKind::Int(_) => Ty::Int,
+        ExprKind::Float(_) => Ty::Float,
+        ExprKind::Money(_, unit) => {
             // v0.1 speaks USD only (design §4.3)
             if unit != "USD" {
                 errs.push(CheckError {
@@ -469,10 +469,10 @@ fn check_expr(
             }
             Ty::Float
         }
-        Expr::Str(_) | Expr::Prompt { .. } => Ty::Str,
-        Expr::Bool(_) => Ty::Bool,
-        Expr::None => Ty::None_,
-        Expr::Ident(n) => match locals.get(n) {
+        ExprKind::Str(_) | ExprKind::Prompt { .. } => Ty::Str,
+        ExprKind::Bool(_) => Ty::Bool,
+        ExprKind::None => Ty::None_,
+        ExprKind::Ident(n) => match locals.get(n) {
             Some(t) => t.clone(),
             None => {
                 // fn/tool/alias names may be referenced as values (dynamic
@@ -489,7 +489,7 @@ fn check_expr(
                 Ty::Unknown
             }
         },
-        Expr::ListLit(xs) => {
+        ExprKind::ListLit(xs) => {
             // unify the element type: later elements must fit (or widen, so
             // [1, 2.5] is [float]); incompatible mixes are E0201 — they used
             // to be typed by the first element alone
@@ -514,10 +514,10 @@ fn check_expr(
             }
             Ty::List(Box::new(elem))
         }
-        Expr::LlmCall {
+        ExprKind::LlmCall {
             prompt, options, ..
         } => {
-            if let Expr::Prompt { interpolations, .. } = prompt.as_ref() {
+            if let ExprKind::Prompt { interpolations, .. } = &prompt.as_ref().kind {
                 for name in interpolations {
                     let root = name.split('.').next().unwrap_or(name);
                     if !locals.contains_key(root) {
@@ -539,7 +539,7 @@ fn check_expr(
             }
             schema_ty.unwrap_or(Ty::Str)
         }
-        Expr::Call { func, args, kwargs } => {
+        ExprKind::Call { func, args, kwargs } => {
             let arg_tys: Vec<Ty> = args
                 .iter()
                 .map(|a| check_expr(a, locals, g, errs))
@@ -548,7 +548,7 @@ fn check_expr(
                 .iter()
                 .map(|(k, v)| (k, check_expr(v, locals, g, errs)))
                 .collect();
-            if let Expr::Ident(name) = func.as_ref() {
+            if let ExprKind::Ident(name) = &func.as_ref().kind {
                 match name.as_str() {
                     "len" => {
                         if args.len() != 1 {
@@ -657,7 +657,7 @@ fn check_expr(
             }
             Ty::Unknown
         }
-        Expr::Field { obj, name } => match check_expr(obj, locals, g, errs) {
+        ExprKind::Field { obj, name } => match check_expr(obj, locals, g, errs) {
             Ty::Record(fs) => match fs.iter().find(|(k, _)| k == name) {
                 Some((_, t)) => t.clone(),
                 None => {
@@ -671,7 +671,7 @@ fn check_expr(
             },
             _ => Ty::Unknown,
         },
-        Expr::Binary { op, l, r } => {
+        ExprKind::Binary { op, l, r } => {
             let lt = check_expr(l, locals, g, errs);
             let rt_ = check_expr(r, locals, g, errs);
             match op {
@@ -741,14 +741,14 @@ fn check_expr(
                 },
             }
         }
-        Expr::Unary { op, x } => {
+        ExprKind::Unary { op, x } => {
             let t = check_expr(x, locals, g, errs);
             match op {
                 BinOp::Not => Ty::Bool,
                 _ => t,
             }
         }
-        Expr::ParMap {
+        ExprKind::ParMap {
             coll,
             kwargs,
             params,
@@ -783,7 +783,7 @@ fn check_expr(
             }
             Ty::List(Box::new(check_expr(body, &inner, g, errs)))
         }
-        Expr::ParAll(xs) => {
+        ExprKind::ParAll(xs) => {
             let t = xs
                 .first()
                 .map(|x| check_expr(x, locals, g, errs))
@@ -793,7 +793,7 @@ fn check_expr(
             }
             Ty::List(Box::new(t))
         }
-        Expr::ParRace(xs) => {
+        ExprKind::ParRace(xs) => {
             let t = xs
                 .first()
                 .map(|x| check_expr(x, locals, g, errs))
@@ -805,7 +805,7 @@ fn check_expr(
         }
         // design §7 reducer join: two records (dict union) or two lists
         // (append-dedup); anything else is a type error
-        Expr::Merge { l, r } => {
+        ExprKind::Merge { l, r } => {
             let lt = check_expr(l, locals, g, errs);
             let rt_ = check_expr(r, locals, g, errs);
             match (&lt, &rt_) {
@@ -835,7 +835,7 @@ fn check_expr(
         }
         // design §4.4: route arms — every `when` condition must be bool and
         // the block needs an `otherwise` fallback (E0702)
-        Expr::Route { arms } => {
+        ExprKind::Route { arms } => {
             let mut has_otherwise = false;
             for (label, _, cond) in arms {
                 match cond {

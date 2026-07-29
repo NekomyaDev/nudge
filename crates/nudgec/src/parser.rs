@@ -59,6 +59,28 @@ impl Parser {
         })
     }
 
+    /// Wrap an expression kind with an explicit span (spanned AST, stage 2).
+    fn ex(&self, span: Span, kind: ExprKind) -> Expr {
+        Expr { kind, span }
+    }
+
+    /// Expression whose span runs from `start` to the end of the last
+    /// consumed token.
+    fn ex_from(&self, start: usize, kind: ExprKind) -> Expr {
+        let end = if self.i == 0 {
+            start
+        } else {
+            self.t[self.i - 1].end
+        };
+        self.ex(
+            Span {
+                start,
+                end: end.max(start),
+            },
+            kind,
+        )
+    }
+
     /// Wrap a statement kind with the span from `start` to the end of the
     /// last consumed token (spanned AST, stage 1).
     fn spanned(&self, start: usize, kind: StmtKind) -> Stmt {
@@ -415,10 +437,14 @@ impl Parser {
             self.bump(); // |
             self.bump(); // merge
             let r = self.parse_or()?;
-            l = Expr::Merge {
-                l: Box::new(l),
-                r: Box::new(r),
-            };
+            let span = join_span(&l, &r);
+            l = self.ex(
+                span,
+                ExprKind::Merge {
+                    l: Box::new(l),
+                    r: Box::new(r),
+                },
+            );
         }
         Ok(l)
     }
@@ -427,11 +453,15 @@ impl Parser {
         let mut l = self.parse_and()?;
         while self.eat(&Tok::Or) {
             let r = self.parse_and()?;
-            l = Expr::Binary {
-                op: BinOp::Or,
-                l: Box::new(l),
-                r: Box::new(r),
-            };
+            let span = join_span(&l, &r);
+            l = self.ex(
+                span,
+                ExprKind::Binary {
+                    op: BinOp::Or,
+                    l: Box::new(l),
+                    r: Box::new(r),
+                },
+            );
         }
         Ok(l)
     }
@@ -440,11 +470,15 @@ impl Parser {
         let mut l = self.parse_cmp()?;
         while self.eat(&Tok::And) {
             let r = self.parse_cmp()?;
-            l = Expr::Binary {
-                op: BinOp::And,
-                l: Box::new(l),
-                r: Box::new(r),
-            };
+            let span = join_span(&l, &r);
+            l = self.ex(
+                span,
+                ExprKind::Binary {
+                    op: BinOp::And,
+                    l: Box::new(l),
+                    r: Box::new(r),
+                },
+            );
         }
         Ok(l)
     }
@@ -464,22 +498,34 @@ impl Parser {
             if let Some(op) = op {
                 self.bump();
                 let r = self.parse_add()?;
-                l = Expr::Binary {
-                    op,
-                    l: Box::new(l),
-                    r: Box::new(r),
-                };
+                let span = join_span(&l, &r);
+                l = self.ex(
+                    span,
+                    ExprKind::Binary {
+                        op,
+                        l: Box::new(l),
+                        r: Box::new(r),
+                    },
+                );
                 continue;
             }
             // MVP infix rule: `a zip b` → zip(a, b)
             if matches!(self.peek(), Tok::Ident(s) if s == "zip") {
                 self.bump();
                 let r = self.parse_add()?;
-                l = Expr::Call {
-                    func: Box::new(Expr::Ident("zip".into())),
-                    args: vec![l, r],
-                    kwargs: vec![],
+                let span = join_span(&l, &r);
+                let zspan = Span {
+                    start: l.span.end,
+                    end: r.span.start,
                 };
+                l = self.ex(
+                    span,
+                    ExprKind::Call {
+                        func: Box::new(self.ex(zspan, ExprKind::Ident("zip".into()))),
+                        args: vec![l, r],
+                        kwargs: vec![],
+                    },
+                );
                 continue;
             }
             break;
@@ -497,11 +543,15 @@ impl Parser {
             };
             self.bump();
             let r = self.parse_mul()?;
-            l = Expr::Binary {
-                op,
-                l: Box::new(l),
-                r: Box::new(r),
-            };
+            let span = join_span(&l, &r);
+            l = self.ex(
+                span,
+                ExprKind::Binary {
+                    op,
+                    l: Box::new(l),
+                    r: Box::new(r),
+                },
+            );
         }
         Ok(l)
     }
@@ -517,11 +567,15 @@ impl Parser {
             };
             self.bump();
             let r = self.parse_unary()?;
-            l = Expr::Binary {
-                op,
-                l: Box::new(l),
-                r: Box::new(r),
-            };
+            let span = join_span(&l, &r);
+            l = self.ex(
+                span,
+                ExprKind::Binary {
+                    op,
+                    l: Box::new(l),
+                    r: Box::new(r),
+                },
+            );
         }
         Ok(l)
     }
@@ -529,18 +583,36 @@ impl Parser {
     fn parse_unary(&mut self) -> PResult<Expr> {
         match self.peek() {
             Tok::Minus => {
+                let start = self.pos();
                 self.bump();
-                Ok(Expr::Unary {
-                    op: BinOp::Sub,
-                    x: Box::new(self.parse_unary()?),
-                })
+                let x = self.parse_unary()?;
+                let span = Span {
+                    start,
+                    end: x.span.end,
+                };
+                Ok(self.ex(
+                    span,
+                    ExprKind::Unary {
+                        op: BinOp::Sub,
+                        x: Box::new(x),
+                    },
+                ))
             }
             Tok::Bang => {
+                let start = self.pos();
                 self.bump();
-                Ok(Expr::Unary {
-                    op: BinOp::Not,
-                    x: Box::new(self.parse_unary()?),
-                })
+                let x = self.parse_unary()?;
+                let span = Span {
+                    start,
+                    end: x.span.end,
+                };
+                Ok(self.ex(
+                    span,
+                    ExprKind::Unary {
+                        op: BinOp::Not,
+                        x: Box::new(x),
+                    },
+                ))
             }
             _ => self.parse_postfix(),
         }
@@ -553,18 +625,32 @@ impl Parser {
                 Tok::Dot => {
                     self.bump();
                     let name = self.ident()?;
-                    e = Expr::Field {
-                        obj: Box::new(e),
-                        name,
+                    let span = Span {
+                        start: e.span.start,
+                        end: self.t[self.i - 1].end,
                     };
+                    e = self.ex(
+                        span,
+                        ExprKind::Field {
+                            obj: Box::new(e),
+                            name,
+                        },
+                    );
                 }
                 Tok::LParen => {
                     let (args, kwargs) = self.parse_call_args()?;
-                    e = Expr::Call {
-                        func: Box::new(e),
-                        args,
-                        kwargs,
+                    let span = Span {
+                        start: e.span.start,
+                        end: self.t[self.i - 1].end,
                     };
+                    e = self.ex(
+                        span,
+                        ExprKind::Call {
+                            func: Box::new(e),
+                            args,
+                            kwargs,
+                        },
+                    );
                 }
                 _ => break,
             }
@@ -612,37 +698,45 @@ impl Parser {
     fn parse_primary(&mut self) -> PResult<Expr> {
         match self.peek().clone() {
             Tok::Int(v) => {
+                let start = self.pos();
                 self.bump();
-                Ok(Expr::Int(v))
+                Ok(self.ex_from(start, ExprKind::Int(v)))
             }
             Tok::Float(v) => {
+                let start = self.pos();
                 self.bump();
-                Ok(Expr::Float(v))
+                Ok(self.ex_from(start, ExprKind::Float(v)))
             }
             Tok::Str(s) => {
+                let start = self.pos();
                 self.bump();
-                Ok(Expr::Str(s))
+                Ok(self.ex_from(start, ExprKind::Str(s)))
             }
             Tok::Money(v, u) => {
+                let start = self.pos();
                 let (v, u) = (v, u.clone());
                 self.bump();
-                Ok(Expr::Money(v, u))
+                Ok(self.ex_from(start, ExprKind::Money(v, u)))
             }
             Tok::True => {
+                let start = self.pos();
                 self.bump();
-                Ok(Expr::Bool(true))
+                Ok(self.ex_from(start, ExprKind::Bool(true)))
             }
             Tok::False => {
+                let start = self.pos();
                 self.bump();
-                Ok(Expr::Bool(false))
+                Ok(self.ex_from(start, ExprKind::Bool(false)))
             }
             Tok::None => {
+                let start = self.pos();
                 self.bump();
-                Ok(Expr::None)
+                Ok(self.ex_from(start, ExprKind::None))
             }
             // `route{ cheap: "m" when cond, strong: "m2" otherwise }` (design
             // §4.4) — `route` is contextual: only special directly before `{`
             Tok::Ident(s) if s == "route" && self.peek2() == &Tok::LBrace => {
+                let start = self.pos();
                 self.bump(); // route
                 self.bump(); // {
                 let mut arms = Vec::new();
@@ -671,19 +765,22 @@ impl Parser {
                     self.eat(&Tok::Comma);
                 }
                 self.expect(&Tok::RBrace, "'}' after route block")?;
-                Ok(Expr::Route { arms })
+                Ok(self.ex_from(start, ExprKind::Route { arms }))
             }
             // `state` reads (`state.round`) inside agent fns (design §7);
             // codegen binds it to the agent's checkpointed state object
             Tok::State => {
+                let start = self.pos();
                 self.bump();
-                Ok(Expr::Ident("state".into()))
+                Ok(self.ex_from(start, ExprKind::Ident("state".into())))
             }
             Tok::Ident(name) => {
+                let start = self.pos();
                 self.bump();
-                Ok(Expr::Ident(name))
+                Ok(self.ex_from(start, ExprKind::Ident(name)))
             }
             Tok::LBracket => {
+                let start = self.pos();
                 self.bump();
                 let mut xs = Vec::new();
                 while !self.at(&Tok::RBracket) {
@@ -691,7 +788,7 @@ impl Parser {
                     self.eat(&Tok::Comma);
                 }
                 self.expect(&Tok::RBracket, "']'")?;
-                Ok(Expr::ListLit(xs))
+                Ok(self.ex_from(start, ExprKind::ListLit(xs)))
             }
             Tok::LParen => {
                 self.bump();
@@ -700,11 +797,15 @@ impl Parser {
                 Ok(e)
             }
             Tok::Prompt(body) => {
+                let start = self.pos();
                 self.bump();
-                let prompt = Expr::Prompt {
-                    interpolations: scan_interpolations(&body),
-                    body,
-                };
+                let prompt = self.ex_from(
+                    start,
+                    ExprKind::Prompt {
+                        interpolations: scan_interpolations(&body),
+                        body,
+                    },
+                );
                 // optional with-block turns it into an LlmCall
                 if self.at(&Tok::With) && self.peek2() == &Tok::LBrace {
                     self.bump(); // with
@@ -727,16 +828,24 @@ impl Parser {
                         self.eat(&Tok::Comma);
                     }
                     self.expect(&Tok::RBrace, "'}'")?;
-                    Ok(Expr::LlmCall {
-                        prompt: Box::new(prompt),
-                        options,
-                        repair,
-                    })
+                    let span = Span {
+                        start: prompt.span.start,
+                        end: self.t[self.i - 1].end,
+                    };
+                    Ok(self.ex(
+                        span,
+                        ExprKind::LlmCall {
+                            prompt: Box::new(prompt),
+                            options,
+                            repair,
+                        },
+                    ))
                 } else {
                     Ok(prompt)
                 }
             }
             Tok::Par => {
+                let start = self.pos();
                 self.bump();
                 match self.peek().clone() {
                     Tok::Map => {
@@ -751,22 +860,34 @@ impl Parser {
                             (self.parse_add()?, Vec::new())
                         };
                         let (params, body) = self.parse_lambda()?;
-                        Ok(Expr::ParMap {
-                            coll: Box::new(coll),
-                            kwargs,
-                            params,
-                            body: Box::new(body),
-                        })
+                        let span = Span {
+                            start,
+                            end: body.span.end,
+                        };
+                        Ok(self.ex(
+                            span,
+                            ExprKind::ParMap {
+                                coll: Box::new(coll),
+                                kwargs,
+                                params,
+                                body: Box::new(body),
+                            },
+                        ))
                     }
                     Tok::All => {
                         self.bump();
                         let (args, _) = self.parse_call_args()?;
-                        Ok(Expr::ParAll(args))
+                        Ok(self.ex_from(start, ExprKind::ParAll(args)))
                     }
                     Tok::Race => {
                         self.bump();
-                        match self.parse_primary()? {
-                            Expr::ListLit(xs) => Ok(Expr::ParRace(xs)),
+                        let lst = self.parse_primary()?;
+                        let span = Span {
+                            start,
+                            end: lst.span.end,
+                        };
+                        match lst.kind {
+                            ExprKind::ListLit(xs) => Ok(self.ex(span, ExprKind::ParRace(xs))),
                             _ => self.err("par race expects a list of callables"),
                         }
                     }
@@ -775,6 +896,15 @@ impl Parser {
             }
             other => self.err(format!("unexpected token {other:?}")),
         }
+    }
+}
+
+/// Span covering two sibling expressions (composite node spans derive
+/// from their children — spanned AST, stage 2).
+fn join_span(l: &Expr, r: &Expr) -> Span {
+    Span {
+        start: l.span.start,
+        end: r.span.end,
     }
 }
 
@@ -847,15 +977,19 @@ fn analyze(q: string) -> [Finding] uses LLM {
                 assert_eq!(name, "analyze");
                 assert_eq!(effects, &vec!["LLM".to_string()]);
                 match &body[0].kind {
-                    StmtKind::ExprStmt(Expr::LlmCall {
-                        prompt,
-                        options,
-                        repair,
-                    }) => {
+                    StmtKind::ExprStmt(e) => {
+                        let ExprKind::LlmCall {
+                            prompt,
+                            options,
+                            repair,
+                        } = &e.kind
+                        else {
+                            panic!("expected llm call");
+                        };
                         assert!(repair);
                         assert_eq!(options.len(), 4);
-                        match prompt.as_ref() {
-                            Expr::Prompt { interpolations, .. } => {
+                        match &prompt.kind {
+                            ExprKind::Prompt { interpolations, .. } => {
                                 assert_eq!(interpolations, &vec!["q".to_string()]);
                             }
                             other => panic!("expected prompt, got {other:?}"),
@@ -874,10 +1008,10 @@ fn analyze(q: string) -> [Finding] uses LLM {
         let items = parse_str("fn f() -> () { let h = par map angles |a| -> search(a) }");
         match &items[0] {
             Item::Fn { body, .. } => match &body[0].kind {
-                StmtKind::Let {
-                    value: Expr::ParMap { params, kwargs, .. },
-                    ..
-                } => {
+                StmtKind::Let { value, .. } => {
+                    let ExprKind::ParMap { params, kwargs, .. } = &value.kind else {
+                        panic!("expected par map");
+                    };
                     assert_eq!(params, &vec!["a".to_string()]);
                     assert!(kwargs.is_empty());
                 }
@@ -891,19 +1025,19 @@ fn analyze(q: string) -> [Finding] uses LLM {
         );
         match &items[0] {
             Item::Fn { body, .. } => match &body[0].kind {
-                StmtKind::Let {
-                    value:
-                        Expr::ParMap {
-                            coll,
-                            params,
-                            kwargs,
-                            ..
-                        },
-                    ..
-                } => {
+                StmtKind::Let { value, .. } => {
+                    let ExprKind::ParMap {
+                        coll,
+                        params,
+                        kwargs,
+                        ..
+                    } = &value.kind
+                    else {
+                        panic!("expected par map");
+                    };
                     assert_eq!(params, &vec!["a".to_string(), "h".to_string()]);
                     assert_eq!(kwargs.len(), 1);
-                    assert!(matches!(coll.as_ref(), Expr::Call { .. })); // zip(angles, hits)
+                    assert!(matches!(&coll.kind, ExprKind::Call { .. })); // zip(angles, hits)
                 }
                 other => panic!("expected par map, got {other:?}"),
             },
@@ -924,16 +1058,19 @@ test "budget" {
             Item::Test { name, body } => {
                 assert_eq!(name, "budget");
                 assert_eq!(body.len(), 3);
+                let StmtKind::Assert(a1) = &body[1].kind else {
+                    panic!("expected assert")
+                };
+                assert!(matches!(&a1.kind, ExprKind::Binary { op: BinOp::Lt, .. }));
+                let StmtKind::Assert(a2) = &body[2].kind else {
+                    panic!("expected assert")
+                };
                 assert!(matches!(
-                    body[1].kind,
-                    StmtKind::Assert(Expr::Binary { op: BinOp::Lt, .. })
-                ));
-                assert!(matches!(
-                    body[2].kind,
-                    StmtKind::Assert(Expr::Binary {
+                    &a2.kind,
+                    ExprKind::Binary {
                         op: BinOp::GtEq,
                         ..
-                    })
+                    }
                 ));
             }
             other => panic!("expected test, got {other:?}"),
@@ -949,7 +1086,7 @@ test "budget" {
                 assert_eq!(fields.len(), 2);
                 assert_eq!(fields[0].0, "impl");
                 assert_eq!(fields[1].0, "side_effects");
-                assert!(matches!(fields[1].1, Expr::None));
+                assert!(matches!(fields[1].1.kind, ExprKind::None));
             }
             other => panic!("expected tool, got {other:?}"),
         }
@@ -983,7 +1120,7 @@ test "budget" {
                 } => {
                     assert_eq!(name, "t");
                     assert!(stream);
-                    assert!(matches!(value, Expr::LlmCall { .. }));
+                    assert!(matches!(&value.kind, ExprKind::LlmCall { .. }));
                 }
                 other => panic!("expected stream let, got {other:?}"),
             },
@@ -1036,18 +1173,21 @@ test "budget" {
         let items = parse(lex(src).unwrap()).unwrap();
         match &items[0] {
             Item::Fn { body, .. } => match &body[0].kind {
-                StmtKind::ExprStmt(Expr::LlmCall { options, .. }) => match &options[0].1 {
-                    Expr::Route { arms } => {
-                        assert_eq!(arms.len(), 2);
-                        assert_eq!(arms[0].0, "cheap");
-                        assert_eq!(arms[0].1, "m1");
-                        assert!(arms[0].2.is_some());
-                        assert_eq!(arms[1].0, "strong");
-                        assert!(arms[1].2.is_none());
-                    }
-                    other => panic!("expected route, got {other:?}"),
+                StmtKind::ExprStmt(e) => match &e.kind {
+                    ExprKind::LlmCall { options, .. } => match &options[0].1.kind {
+                        ExprKind::Route { arms } => {
+                            assert_eq!(arms.len(), 2);
+                            assert_eq!(arms[0].0, "cheap");
+                            assert_eq!(arms[0].1, "m1");
+                            assert!(arms[0].2.is_some());
+                            assert_eq!(arms[1].0, "strong");
+                            assert!(arms[1].2.is_none());
+                        }
+                        other => panic!("expected route, got {other:?}"),
+                    },
+                    other => panic!("expected llm call, got {other:?}"),
                 },
-                other => panic!("expected llm call, got {other:?}"),
+                other => panic!("expected llm call stmt, got {other:?}"),
             },
             _ => panic!("expected fn"),
         }
@@ -1067,7 +1207,7 @@ test "budget" {
         let items = parse(lex("fn f(x: [int]) -> [int] { x | merge x }").unwrap()).unwrap();
         match &items[0] {
             Item::Fn { body, .. } => match &body[0].kind {
-                StmtKind::ExprStmt(Expr::Merge { .. }) => {}
+                StmtKind::ExprStmt(e) => assert!(matches!(&e.kind, ExprKind::Merge { .. })),
                 other => panic!("expected merge expr, got {other:?}"),
             },
             _ => panic!("expected fn"),
@@ -1077,6 +1217,28 @@ test "budget" {
         match &items[0] {
             Item::Fn { body, .. } => {
                 assert!(matches!(&body[0].kind, StmtKind::Let { name, .. } if name == "merge"));
+            }
+            _ => panic!("expected fn"),
+        }
+    }
+
+    #[test]
+    fn expressions_carry_source_spans() {
+        // composite spans derive from children: `1 + 2 * 3` — the root
+        // binary covers the whole expression, its right child covers `2 * 3`
+        let src = "fn f() -> int { 1 + 2 * 3 }";
+        let items = parse(lex(src).unwrap()).unwrap();
+        match &items[0] {
+            Item::Fn { body, .. } => {
+                let StmtKind::ExprStmt(e) = &body[0].kind else {
+                    panic!("expected expr stmt")
+                };
+                assert_eq!(&src[e.span.start..e.span.end], "1 + 2 * 3");
+                let ExprKind::Binary { l, r, .. } = &e.kind else {
+                    panic!("expected binary")
+                };
+                assert_eq!(&src[l.span.start..l.span.end], "1");
+                assert_eq!(&src[r.span.start..r.span.end], "2 * 3");
             }
             _ => panic!("expected fn"),
         }

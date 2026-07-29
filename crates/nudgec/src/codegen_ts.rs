@@ -295,8 +295,8 @@ fn schema_ts(
                     format!("\"maximum\": {}", ts(&args[1], aliases, sigs)),
                 ],
                 ("format", 1) => {
-                    let f = match &args[0] {
-                        Expr::Ident(s) | Expr::Str(s) => s.as_str(),
+                    let f = match &args[0].kind {
+                        ExprKind::Ident(s) | ExprKind::Str(s) => s.as_str(),
                         _ => "url",
                     };
                     vec![format!(
@@ -344,10 +344,10 @@ fn expr_schema_ts(
     aliases: &HashSet<String>,
     sigs: &HashMap<String, Vec<String>>,
 ) -> String {
-    match e {
-        Expr::Ident(n) => schema_ts(&TypeExpr::Named(n.clone()), aliases, sigs),
-        Expr::ListLit(xs) if xs.len() == 1 => match &xs[0] {
-            Expr::Ident(n) => schema_ts(
+    match &e.kind {
+        ExprKind::Ident(n) => schema_ts(&TypeExpr::Named(n.clone()), aliases, sigs),
+        ExprKind::ListLit(xs) if xs.len() == 1 => match &xs[0].kind {
+            ExprKind::Ident(n) => schema_ts(
                 &TypeExpr::List(Box::new(TypeExpr::Named(n.clone()))),
                 aliases,
                 sigs,
@@ -359,21 +359,21 @@ fn expr_schema_ts(
 }
 
 fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) -> String {
-    match e {
-        Expr::Int(v) => v.to_string(),
-        Expr::Float(v) => crate::codegen::fmt_f64(*v),
-        Expr::Str(s) => js_str(s),
-        Expr::Money(v, _) => format!("rt.USD(\"{v}\")"),
-        Expr::Bool(b) => {
+    match &e.kind {
+        ExprKind::Int(v) => v.to_string(),
+        ExprKind::Float(v) => crate::codegen::fmt_f64(*v),
+        ExprKind::Str(s) => js_str(s),
+        ExprKind::Money(v, _) => format!("rt.USD(\"{v}\")"),
+        ExprKind::Bool(b) => {
             if *b {
                 "true".into()
             } else {
                 "false".into()
             }
         }
-        Expr::None => "null".into(),
-        Expr::Ident(n) => n.clone(),
-        Expr::ListLit(xs) => {
+        ExprKind::None => "null".into(),
+        ExprKind::Ident(n) => n.clone(),
+        ExprKind::ListLit(xs) => {
             format!(
                 "[{}]",
                 xs.iter()
@@ -382,7 +382,7 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
                     .join(", ")
             )
         }
-        Expr::Prompt {
+        ExprKind::Prompt {
             body,
             interpolations,
         } => {
@@ -397,19 +397,19 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
                 format!("rt.render({}, {{{mapping}}})", js_str(body))
             }
         }
-        Expr::LlmCall {
+        ExprKind::LlmCall {
             prompt,
             options,
             repair,
         } => llm_ts(prompt, options, *repair, aliases, sigs),
-        Expr::Call { func, args, kwargs } => {
+        ExprKind::Call { func, args, kwargs } => {
             let mut parts: Vec<String> = args.iter().map(|a| ts(a, aliases, sigs)).collect();
             // JS has no named arguments — emitting `f(k: v)` was a syntax
             // error. For a known callee, kwargs drop into their declared
             // parameter slots (the checker has already matched the names);
             // for an unknown one, they go as a trailing options object.
-            match func.as_ref() {
-                Expr::Ident(n) if sigs.contains_key(n) => {
+            match &func.as_ref().kind {
+                ExprKind::Ident(n) if sigs.contains_key(n) => {
                     let order = &sigs[n];
                     for pname in order.iter().skip(args.len()) {
                         match kwargs.iter().find(|(k, _)| k == pname) {
@@ -426,8 +426,8 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
                     );
                 }
             }
-            match func.as_ref() {
-                Expr::Ident(n) if n == "len" => {
+            match &func.as_ref().kind {
+                ExprKind::Ident(n) if n == "len" => {
                     // the checker enforces arity (E0201); stay panic-free if
                     // emit is ever driven without a prior check pass
                     match args.first() {
@@ -435,14 +435,14 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
                         None => "(undefined).length".into(),
                     }
                 }
-                Expr::Ident(n) if matches!(n.as_str(), "replay" | "python" | "mcp" | "zip") => {
+                ExprKind::Ident(n) if matches!(n.as_str(), "replay" | "python" | "mcp" | "zip") => {
                     format!("rt.{n}({})", parts.join(", "))
                 }
-                other => format!("{}({})", ts(other, aliases, sigs), parts.join(", ")),
+                _ => format!("{}({})", ts(func, aliases, sigs), parts.join(", ")),
             }
         }
-        Expr::Field { obj, name } => format!("{}.{name}", ts(obj, aliases, sigs)),
-        Expr::Binary { op, l, r } => {
+        ExprKind::Field { obj, name } => format!("{}.{name}", ts(obj, aliases, sigs)),
+        ExprKind::Binary { op, l, r } => {
             let o = match op {
                 BinOp::And => "&&",
                 BinOp::Or => "||",
@@ -450,11 +450,11 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
             };
             format!("({} {} {})", ts(l, aliases, sigs), o, ts(r, aliases, sigs))
         }
-        Expr::Unary { op, x } => match op {
+        ExprKind::Unary { op, x } => match op {
             BinOp::Sub => format!("(-{})", ts(x, aliases, sigs)),
             _ => format!("(!{})", ts(x, aliases, sigs)),
         },
-        Expr::ParMap {
+        ExprKind::ParMap {
             coll,
             kwargs,
             params,
@@ -490,7 +490,7 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
         // thunks, not values: the runtime wraps each lane's evaluation in
         // its NTF v1.1 branch label — and a plain array return fixes the
         // old un-awaited Promise.all leaking a Promise into `let` bindings
-        Expr::ParAll(xs) => {
+        ExprKind::ParAll(xs) => {
             format!(
                 "rt.parAll([{}])",
                 xs.iter()
@@ -499,7 +499,7 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
                     .join(", ")
             )
         }
-        Expr::ParRace(xs) => {
+        ExprKind::ParRace(xs) => {
             format!(
                 "rt.parRace([{}])",
                 xs.iter()
@@ -508,12 +508,12 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
                     .join(", ")
             )
         }
-        Expr::Merge { l, r } => format!(
+        ExprKind::Merge { l, r } => format!(
             "rt.merge({}, {})",
             ts(l, aliases, sigs),
             ts(r, aliases, sigs)
         ),
-        Expr::Route { arms } => {
+        ExprKind::Route { arms } => {
             let parts = arms
                 .iter()
                 .map(|(label, model, cond)| match cond {
@@ -546,9 +546,9 @@ fn llm_ts(
             "model" => parts.push(format!("model: {}", ts(v, aliases, sigs))),
             "budget" => parts.push(format!("budget: {}", ts(v, aliases, sigs))),
             "retry" => parts.push(format!("retry: {}", ts(v, aliases, sigs))),
-            "cache" => parts.push(match v {
-                Expr::Ident(n) => format!("cache: {}", js_str(n)),
-                other => format!("cache: {}", ts(other, aliases, sigs)),
+            "cache" => parts.push(match &v.kind {
+                ExprKind::Ident(n) => format!("cache: {}", js_str(n)),
+                _ => format!("cache: {}", ts(v, aliases, sigs)),
             }),
             "tags" => parts.push(format!("tags: {}", ts(v, aliases, sigs))),
             other => parts.push(format!(

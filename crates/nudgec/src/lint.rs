@@ -11,7 +11,7 @@
 //!   W0004 schema-without-repair — a `schema` with no `retry: N with repair`:
 //!                           a violation raises at runtime instead of repairing
 
-use crate::ast::{Expr, Item, Stmt, StmtKind, TypeExpr};
+use crate::ast::{Expr, ExprKind, Item, Stmt, StmtKind, TypeExpr};
 
 #[derive(Debug)]
 pub struct Lint {
@@ -102,7 +102,11 @@ fn lint_llm_call(
         out.push(lint("W0002", format!("in {ctx}: prompt is fewer than 4 words — vague instructions produce vague output; state the task and the expected shape")));
     }
     // W0003: schema fields never mentioned in the prompt
-    if let Some((_, Expr::Ident(schema))) = options.iter().find(|(k, _)| k == "schema") {
+    if let Some(ExprKind::Ident(schema)) = options
+        .iter()
+        .find(|(k, _)| k == "schema")
+        .map(|(_, v)| &v.kind)
+    {
         if let Some((_, fields)) = records.iter().find(|(n, _)| n == schema) {
             // word-boundary match: a field name counts as "mentioned" only
             // as a standalone word — otherwise `in` matches "instruction"
@@ -130,15 +134,15 @@ fn lint_llm_call(
 }
 
 fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut Vec<Lint>) {
-    match e {
-        Expr::LlmCall {
+    match &e.kind {
+        ExprKind::LlmCall {
             prompt,
             options,
             repair,
         } => {
-            let body = match prompt.as_ref() {
-                Expr::Prompt { body, .. } => Some(body.as_str()),
-                Expr::Str(s) => Some(s.as_str()),
+            let body = match &prompt.as_ref().kind {
+                ExprKind::Prompt { body, .. } => Some(body.as_str()),
+                ExprKind::Str(s) => Some(s.as_str()),
                 _ => None,
             };
             lint_llm_call(ctx, body, options, *repair, records, out);
@@ -147,12 +151,12 @@ fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut V
                 walk_expr(ctx, v, records, out);
             }
         }
-        Expr::ListLit(xs) | Expr::ParAll(xs) | Expr::ParRace(xs) => {
+        ExprKind::ListLit(xs) | ExprKind::ParAll(xs) | ExprKind::ParRace(xs) => {
             for x in xs {
                 walk_expr(ctx, x, records, out);
             }
         }
-        Expr::Call { func, args, kwargs } => {
+        ExprKind::Call { func, args, kwargs } => {
             walk_expr(ctx, func, records, out);
             for a in args {
                 walk_expr(ctx, a, records, out);
@@ -161,13 +165,13 @@ fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut V
                 walk_expr(ctx, v, records, out);
             }
         }
-        Expr::Field { obj, .. } => walk_expr(ctx, obj, records, out),
-        Expr::Binary { l, r, .. } | Expr::Merge { l, r, .. } => {
+        ExprKind::Field { obj, .. } => walk_expr(ctx, obj, records, out),
+        ExprKind::Binary { l, r, .. } | ExprKind::Merge { l, r, .. } => {
             walk_expr(ctx, l, records, out);
             walk_expr(ctx, r, records, out);
         }
-        Expr::Unary { x, .. } => walk_expr(ctx, x, records, out),
-        Expr::ParMap {
+        ExprKind::Unary { x, .. } => walk_expr(ctx, x, records, out),
+        ExprKind::ParMap {
             coll, kwargs, body, ..
         } => {
             walk_expr(ctx, coll, records, out);
@@ -176,7 +180,7 @@ fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut V
             }
             walk_expr(ctx, body, records, out);
         }
-        Expr::Route { arms } => {
+        ExprKind::Route { arms } => {
             for (_, _, cond) in arms {
                 if let Some(c) = cond {
                     walk_expr(ctx, c, records, out);

@@ -38,7 +38,7 @@ pub enum BinOp {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Expr {
+pub enum ExprKind {
     Int(i64),
     Float(f64),
     Str(String),
@@ -102,6 +102,15 @@ pub enum Expr {
     Route {
         arms: Vec<(String, String, Option<Expr>)>,
     },
+}
+
+/// An expression with its source span attached (spanned AST, stage 2).
+/// Composite nodes derive their span from their children; leaves use their
+/// token's span.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Expr {
+    pub kind: ExprKind,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]

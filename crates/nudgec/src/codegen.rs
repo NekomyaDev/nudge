@@ -170,9 +170,9 @@ fn emit_body(body: &[Stmt], aliases: &HashSet<String>, agent: Option<&str>) -> S
                 ..
             } => {
                 if *stream {
-                    match value {
+                    match &value.kind {
                         // design §4.5: stream let lowers to the incremental-validating stream call
-                        Expr::LlmCall {
+                        ExprKind::LlmCall {
                             prompt,
                             options,
                             repair,
@@ -235,9 +235,9 @@ fn emit_test_body(body: &[Stmt], aliases: &HashSet<String>) -> String {
                 ..
             } => {
                 if *stream {
-                    match value {
+                    match &value.kind {
                         // design §4.5: stream let lowers to the incremental-validating stream call
-                        Expr::LlmCall {
+                        ExprKind::LlmCall {
                             prompt,
                             options,
                             repair,
@@ -308,10 +308,12 @@ pub fn bind_state(body: &[Stmt], agent: &str) -> Vec<Stmt> {
 }
 
 fn bind_state_expr(e: &Expr, agent: &str) -> Expr {
-    match e {
-        Expr::Ident(n) if n == "state" => Expr::Ident(format!("_state_{agent}")),
-        Expr::ListLit(xs) => Expr::ListLit(xs.iter().map(|x| bind_state_expr(x, agent)).collect()),
-        Expr::Prompt {
+    let kind = match &e.kind {
+        ExprKind::Ident(n) if n == "state" => ExprKind::Ident(format!("_state_{agent}")),
+        ExprKind::ListLit(xs) => {
+            ExprKind::ListLit(xs.iter().map(|x| bind_state_expr(x, agent)).collect())
+        }
+        ExprKind::Prompt {
             body,
             interpolations,
         } => {
@@ -334,16 +336,16 @@ fn bind_state_expr(e: &Expr, agent: &str) -> Expr {
                     interps.push(k.clone());
                 }
             }
-            Expr::Prompt {
+            ExprKind::Prompt {
                 body,
                 interpolations: interps,
             }
         }
-        Expr::LlmCall {
+        ExprKind::LlmCall {
             prompt,
             options,
             repair,
-        } => Expr::LlmCall {
+        } => ExprKind::LlmCall {
             prompt: Box::new(bind_state_expr(prompt, agent)),
             options: options
                 .iter()
@@ -351,7 +353,7 @@ fn bind_state_expr(e: &Expr, agent: &str) -> Expr {
                 .collect(),
             repair: *repair,
         },
-        Expr::Call { func, args, kwargs } => Expr::Call {
+        ExprKind::Call { func, args, kwargs } => ExprKind::Call {
             func: Box::new(bind_state_expr(func, agent)),
             args: args.iter().map(|a| bind_state_expr(a, agent)).collect(),
             kwargs: kwargs
@@ -359,25 +361,25 @@ fn bind_state_expr(e: &Expr, agent: &str) -> Expr {
                 .map(|(k, v)| (k.clone(), bind_state_expr(v, agent)))
                 .collect(),
         },
-        Expr::Field { obj, name } => Expr::Field {
+        ExprKind::Field { obj, name } => ExprKind::Field {
             obj: Box::new(bind_state_expr(obj, agent)),
             name: name.clone(),
         },
-        Expr::Binary { op, l, r } => Expr::Binary {
+        ExprKind::Binary { op, l, r } => ExprKind::Binary {
             op: op.clone(),
             l: Box::new(bind_state_expr(l, agent)),
             r: Box::new(bind_state_expr(r, agent)),
         },
-        Expr::Unary { op, x } => Expr::Unary {
+        ExprKind::Unary { op, x } => ExprKind::Unary {
             op: op.clone(),
             x: Box::new(bind_state_expr(x, agent)),
         },
-        Expr::ParMap {
+        ExprKind::ParMap {
             coll,
             kwargs,
             params,
             body,
-        } => Expr::ParMap {
+        } => ExprKind::ParMap {
             coll: Box::new(bind_state_expr(coll, agent)),
             kwargs: kwargs
                 .iter()
@@ -386,13 +388,17 @@ fn bind_state_expr(e: &Expr, agent: &str) -> Expr {
             params: params.clone(),
             body: Box::new(bind_state_expr(body, agent)),
         },
-        Expr::ParAll(xs) => Expr::ParAll(xs.iter().map(|x| bind_state_expr(x, agent)).collect()),
-        Expr::ParRace(xs) => Expr::ParRace(xs.iter().map(|x| bind_state_expr(x, agent)).collect()),
-        Expr::Merge { l, r } => Expr::Merge {
+        ExprKind::ParAll(xs) => {
+            ExprKind::ParAll(xs.iter().map(|x| bind_state_expr(x, agent)).collect())
+        }
+        ExprKind::ParRace(xs) => {
+            ExprKind::ParRace(xs.iter().map(|x| bind_state_expr(x, agent)).collect())
+        }
+        ExprKind::Merge { l, r } => ExprKind::Merge {
             l: Box::new(bind_state_expr(l, agent)),
             r: Box::new(bind_state_expr(r, agent)),
         },
-        Expr::Route { arms } => Expr::Route {
+        ExprKind::Route { arms } => ExprKind::Route {
             arms: arms
                 .iter()
                 .map(|(label, model, cond)| {
@@ -405,25 +411,26 @@ fn bind_state_expr(e: &Expr, agent: &str) -> Expr {
                 .collect(),
         },
         leaf => leaf.clone(),
-    }
+    };
+    Expr { kind, span: e.span }
 }
 
 /// Find the MCP server in a tool's `impl: mcp("server").tool(...)` field
 /// (design §8) — walks the expression for an `mcp("...")` call.
 pub fn impl_server(fields: &[(String, Expr)]) -> Option<String> {
     fn find(e: &Expr) -> Option<String> {
-        match e {
-            Expr::Call { func, args, .. } => {
-                if let Expr::Ident(n) = func.as_ref() {
+        match &e.kind {
+            ExprKind::Call { func, args, .. } => {
+                if let ExprKind::Ident(n) = &func.as_ref().kind {
                     if n == "mcp" {
-                        if let Some(Expr::Str(s)) = args.first() {
+                        if let Some(ExprKind::Str(s)) = args.first().map(|a| &a.kind) {
                             return Some(s.clone());
                         }
                     }
                 }
                 find(func).or_else(|| args.iter().find_map(find))
             }
-            Expr::Field { obj, .. } => find(obj),
+            ExprKind::Field { obj, .. } => find(obj),
             _ => None,
         }
     }
@@ -507,8 +514,8 @@ fn schema_py(t: &TypeExpr, aliases: &HashSet<String>) -> String {
                     format!("\"maximum\": {}", py(&args[1], aliases)),
                 ],
                 ("format", 1) => {
-                    let f = match &args[0] {
-                        Expr::Ident(s) | Expr::Str(s) => s.as_str(),
+                    let f = match &args[0].kind {
+                        ExprKind::Ident(s) | ExprKind::Str(s) => s.as_str(),
                         _ => "url",
                     };
                     vec![format!(
@@ -548,10 +555,10 @@ fn schema_py(t: &TypeExpr, aliases: &HashSet<String>) -> String {
 
 /// A `schema:` option value (Ident / [Ident]) → schema literal.
 fn expr_schema_py(e: &Expr, aliases: &HashSet<String>) -> String {
-    match e {
-        Expr::Ident(n) => schema_py(&TypeExpr::Named(n.clone()), aliases),
-        Expr::ListLit(xs) if xs.len() == 1 => match &xs[0] {
-            Expr::Ident(n) => schema_py(
+    match &e.kind {
+        ExprKind::Ident(n) => schema_py(&TypeExpr::Named(n.clone()), aliases),
+        ExprKind::ListLit(xs) if xs.len() == 1 => match &xs[0].kind {
+            ExprKind::Ident(n) => schema_py(
                 &TypeExpr::List(Box::new(TypeExpr::Named(n.clone()))),
                 aliases,
             ),
@@ -573,21 +580,21 @@ pub fn fmt_f64(v: f64) -> String {
 }
 
 fn py(e: &Expr, aliases: &HashSet<String>) -> String {
-    match e {
-        Expr::Int(v) => v.to_string(),
-        Expr::Float(v) => fmt_f64(*v),
-        Expr::Str(s) => py_str(s),
-        Expr::Money(v, _unit) => format!("rt.USD(\"{v}\")"), // unit pre-checked (E0501)
-        Expr::Bool(b) => {
+    match &e.kind {
+        ExprKind::Int(v) => v.to_string(),
+        ExprKind::Float(v) => fmt_f64(*v),
+        ExprKind::Str(s) => py_str(s),
+        ExprKind::Money(v, _unit) => format!("rt.USD(\"{v}\")"), // unit pre-checked (E0501)
+        ExprKind::Bool(b) => {
             if *b {
                 "True".into()
             } else {
                 "False".into()
             }
         }
-        Expr::None => "None".into(),
-        Expr::Ident(n) => n.clone(),
-        Expr::ListLit(xs) => {
+        ExprKind::None => "None".into(),
+        ExprKind::Ident(n) => n.clone(),
+        ExprKind::ListLit(xs) => {
             format!(
                 "[{}]",
                 xs.iter()
@@ -596,16 +603,16 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
                     .join(", ")
             )
         }
-        Expr::Prompt {
+        ExprKind::Prompt {
             body,
             interpolations,
         } => prompt_py(body, interpolations),
-        Expr::LlmCall {
+        ExprKind::LlmCall {
             prompt,
             options,
             repair,
         } => llm_py(false, prompt, options, *repair, aliases),
-        Expr::Call { func, args, kwargs } => {
+        ExprKind::Call { func, args, kwargs } => {
             let mut parts: Vec<String> = args.iter().map(|a| py(a, aliases)).collect();
             parts.extend(
                 kwargs
@@ -614,25 +621,25 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
             );
             // runtime-provided builtins get the rt. prefix; len is a real
             // Python builtin and passes through verbatim
-            let f = match func.as_ref() {
-                Expr::Ident(n) if matches!(n.as_str(), "replay" | "python" | "mcp" | "zip") => {
+            let f = match &func.kind {
+                ExprKind::Ident(n) if matches!(n.as_str(), "replay" | "python" | "mcp" | "zip") => {
                     format!("rt.{n}")
                 }
-                other => py(other, aliases),
+                _ => py(func, aliases),
             };
             format!("{}({})", f, parts.join(", "))
         }
-        Expr::Field { obj, name } => format!("{}.{name}", py(obj, aliases)),
+        ExprKind::Field { obj, name } => format!("{}.{name}", py(obj, aliases)),
         // always parenthesized: precedence is decided by the Nudge parser,
         // never re-decided by Python
-        Expr::Binary { op, l, r } => {
+        ExprKind::Binary { op, l, r } => {
             format!("({} {} {})", py(l, aliases), op_str(op), py(r, aliases))
         }
-        Expr::Unary { op, x } => match op {
+        ExprKind::Unary { op, x } => match op {
             BinOp::Sub => format!("(-{})", py(x, aliases)),
             _ => format!("(not {})", py(x, aliases)),
         },
-        Expr::ParMap {
+        ExprKind::ParMap {
             coll,
             kwargs,
             params,
@@ -650,7 +657,7 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
             s.push(')');
             s
         }
-        Expr::ParAll(xs) => {
+        ExprKind::ParAll(xs) => {
             format!(
                 "rt.par_all([{}])",
                 xs.iter()
@@ -659,7 +666,7 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
                     .join(", ")
             )
         }
-        Expr::ParRace(xs) => {
+        ExprKind::ParRace(xs) => {
             format!(
                 "rt.par_race([{}])",
                 xs.iter()
@@ -669,9 +676,9 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
             )
         }
         // design §7: reducer join (dict union / list append-dedup at runtime)
-        Expr::Merge { l, r } => format!("rt.merge({}, {})", py(l, aliases), py(r, aliases)),
+        ExprKind::Merge { l, r } => format!("rt.merge({}, {})", py(l, aliases), py(r, aliases)),
         // design §4.4: route block — rt.route picks the first true arm
-        Expr::Route { arms } => {
+        ExprKind::Route { arms } => {
             let parts = arms
                 .iter()
                 .map(|(label, model, cond)| match cond {
@@ -721,9 +728,9 @@ fn llm_py(
             "model" => parts.push(format!("model={}", py(v, aliases))),
             "budget" => parts.push(format!("budget={}", py(v, aliases))),
             "retry" => parts.push(format!("retry={}", py(v, aliases))),
-            "cache" => parts.push(match v {
-                Expr::Ident(n) => format!("cache={}", py_str(n)),
-                other => format!("cache={}", py(other, aliases)),
+            "cache" => parts.push(match &v.kind {
+                ExprKind::Ident(n) => format!("cache={}", py_str(n)),
+                _ => format!("cache={}", py(v, aliases)),
             }),
             "tags" => parts.push(format!("tags={}", py(v, aliases))),
             other => parts.push(format!(
