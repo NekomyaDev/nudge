@@ -62,9 +62,10 @@ impl Dap {
             ("type", Json::str("response")),
             ("request_seq", Json::Num(num(req, "seq"))),
             ("success", Json::Bool(true)),
-            ("command", Json::str(
-                req.get("command").and_then(Json::as_str).unwrap_or(""),
-            )),
+            (
+                "command",
+                Json::str(req.get("command").and_then(Json::as_str).unwrap_or("")),
+            ),
             ("body", body),
         ])
     }
@@ -158,10 +159,7 @@ impl Dap {
                         ])
                     })
                     .collect();
-                vec![self.respond(
-                    req,
-                    obj(vec![("breakpoints", Json::Arr(verified))]),
-                )]
+                vec![self.respond(req, obj(vec![("breakpoints", Json::Arr(verified))]))]
             }
             "configurationDone" => {
                 self.configured = true;
@@ -215,10 +213,7 @@ impl Dap {
                     ])]),
                 )]),
             )],
-            "variables" => vec![self.respond(
-                req,
-                obj(vec![("variables", self.variables())]),
-            )],
+            "variables" => vec![self.respond(req, obj(vec![("variables", self.variables())]))],
             "next" => {
                 let resp = self.respond(req, Json::Obj(vec![]));
                 self.pos += 1;
@@ -364,12 +359,19 @@ mod tests {
 
         // stack frame names the first record
         let out = dap.dispatch(&request(3, "stackTrace", Json::Obj(vec![])));
-        assert!(dumps(&out[0]).contains("llm.call seq 1"), "{}", dumps(&out[0]));
+        assert!(
+            dumps(&out[0]).contains("llm.call seq 1"),
+            "{}",
+            dumps(&out[0])
+        );
 
         // variables expose the record's fields
         let out = dap.dispatch(&request(4, "variables", Json::Obj(vec![])));
         let s = dumps(&out[0]);
-        assert!(s.contains("\"name\": \"model\"") && s.contains("\"name\": \"outcome\""), "{s}");
+        assert!(
+            s.contains("\"name\": \"model\"") && s.contains("\"name\": \"outcome\""),
+            "{s}"
+        );
 
         // step to the end → terminated
         dap.dispatch(&request(5, "next", Json::Obj(vec![])));
@@ -404,6 +406,9 @@ mod tests {
         let mut dap = Dap::new(TRACE);
         let out = dap.dispatch(&request(1, "evaluate", Json::Obj(vec![])));
         let s = dumps(&out[0]);
-        assert!(s.contains("\"success\": false") && s.contains("not implemented"), "{s}");
+        assert!(
+            s.contains("\"success\": false") && s.contains("not implemented"),
+            "{s}"
+        );
     }
 }
