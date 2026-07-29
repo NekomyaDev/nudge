@@ -57,6 +57,10 @@ jobs:
           curl -fsS http://127.0.0.1:8321/ | grep -q "Nudge Trace Viewer"
           curl -fsS http://127.0.0.1:8321/trace | grep -q '"kind": "llm.call"'
           kill %1
+      - name: Trace diff demo (live trace vs committed demo trace)
+        run: |
+          ./target/release/nudgec trace-diff traces/mimo_run.jsonl traces/mimo_run.jsonl
+          ./target/release/nudgec trace-diff examples/traces/demo_run.jsonl traces/mimo_run.jsonl
       - uses: actions/upload-artifact@v4
         with:
           name: mimo-trace
