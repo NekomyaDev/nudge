@@ -59,6 +59,23 @@ impl Parser {
         })
     }
 
+    /// Wrap a statement kind with the span from `start` to the end of the
+    /// last consumed token (spanned AST, stage 1).
+    fn spanned(&self, start: usize, kind: StmtKind) -> Stmt {
+        let end = if self.i == 0 {
+            start
+        } else {
+            self.t[self.i - 1].end
+        };
+        Stmt {
+            kind,
+            span: Span {
+                start,
+                end: end.max(start),
+            },
+        }
+    }
+
     fn at(&self, t: &Tok) -> bool {
         self.peek() == t
     }
@@ -255,6 +272,7 @@ impl Parser {
     }
 
     fn parse_stmt(&mut self) -> PResult<Stmt> {
+        let start = self.pos();
         match self.peek().clone() {
             Tok::Let => {
                 self.bump();
@@ -266,12 +284,15 @@ impl Parser {
                 };
                 self.expect(&Tok::Assign, "'=' in let binding")?;
                 let value = self.parse_expr()?;
-                Ok(Stmt::Let {
-                    name,
-                    ty,
-                    value,
-                    stream: false,
-                })
+                Ok(self.spanned(
+                    start,
+                    StmtKind::Let {
+                        name,
+                        ty,
+                        value,
+                        stream: false,
+                    },
+                ))
             }
             // `stream let x: T = llm"""..."""` (design §4.5) — `stream` is a
             // contextual keyword: only special when directly followed by `let`
@@ -286,16 +307,20 @@ impl Parser {
                 };
                 self.expect(&Tok::Assign, "'=' in stream let binding")?;
                 let value = self.parse_expr()?;
-                Ok(Stmt::Let {
-                    name,
-                    ty,
-                    value,
-                    stream: true,
-                })
+                Ok(self.spanned(
+                    start,
+                    StmtKind::Let {
+                        name,
+                        ty,
+                        value,
+                        stream: true,
+                    },
+                ))
             }
             Tok::Assert => {
                 self.bump();
-                Ok(Stmt::Assert(self.parse_expr()?))
+                let e = self.parse_expr()?;
+                Ok(self.spanned(start, StmtKind::Assert(e)))
             }
             // `state.x = v` / `+=` / `-=` (design §7) — only valid inside
             // an agent block; the checker enforces that (E0701). Lookahead
@@ -320,9 +345,12 @@ impl Parser {
                     StateOp::Set
                 };
                 let value = self.parse_expr()?;
-                Ok(Stmt::StateWrite { field, op, value })
+                Ok(self.spanned(start, StmtKind::StateWrite { field, op, value }))
             }
-            _ => Ok(Stmt::ExprStmt(self.parse_expr()?)),
+            _ => {
+                let e = self.parse_expr()?;
+                Ok(self.spanned(start, StmtKind::ExprStmt(e)))
+            }
         }
     }
 
@@ -818,8 +846,8 @@ fn analyze(q: string) -> [Finding] uses LLM {
             } => {
                 assert_eq!(name, "analyze");
                 assert_eq!(effects, &vec!["LLM".to_string()]);
-                match &body[0] {
-                    Stmt::ExprStmt(Expr::LlmCall {
+                match &body[0].kind {
+                    StmtKind::ExprStmt(Expr::LlmCall {
                         prompt,
                         options,
                         repair,
@@ -845,8 +873,8 @@ fn analyze(q: string) -> [Finding] uses LLM {
         // bare collection form
         let items = parse_str("fn f() -> () { let h = par map angles |a| -> search(a) }");
         match &items[0] {
-            Item::Fn { body, .. } => match &body[0] {
-                Stmt::Let {
+            Item::Fn { body, .. } => match &body[0].kind {
+                StmtKind::Let {
                     value: Expr::ParMap { params, kwargs, .. },
                     ..
                 } => {
@@ -862,8 +890,8 @@ fn analyze(q: string) -> [Finding] uses LLM {
             "fn f() -> () { let f2 = par map(angles zip hits, concurrency = 3) |(a, h)| -> analyze(a, h) }",
         );
         match &items[0] {
-            Item::Fn { body, .. } => match &body[0] {
-                Stmt::Let {
+            Item::Fn { body, .. } => match &body[0].kind {
+                StmtKind::Let {
                     value:
                         Expr::ParMap {
                             coll,
@@ -898,11 +926,11 @@ test "budget" {
                 assert_eq!(body.len(), 3);
                 assert!(matches!(
                     body[1],
-                    Stmt::Assert(Expr::Binary { op: BinOp::Lt, .. })
+                    StmtKind::Assert(Expr::Binary { op: BinOp::Lt, .. })
                 ));
                 assert!(matches!(
                     body[2],
-                    Stmt::Assert(Expr::Binary {
+                    StmtKind::Assert(Expr::Binary {
                         op: BinOp::GtEq,
                         ..
                     })
@@ -946,8 +974,8 @@ test "budget" {
         let src = "fn f() -> string uses LLM { stream let t: string = llm\"\"\"x\"\"\" with { model: \"m\" }\n    t }";
         let items = parse_str(src);
         match &items[0] {
-            Item::Fn { body, .. } => match &body[0] {
-                Stmt::Let {
+            Item::Fn { body, .. } => match &body[0].kind {
+                StmtKind::Let {
                     name,
                     stream,
                     value,
@@ -964,8 +992,8 @@ test "budget" {
         // contextual keyword: `stream` remains usable as a variable name
         let items = parse_str("fn f() -> int { let stream = 3\n    stream }");
         match &items[0] {
-            Item::Fn { body, .. } => match &body[0] {
-                Stmt::Let { name, stream, .. } => {
+            Item::Fn { body, .. } => match &body[0].kind {
+                StmtKind::Let { name, stream, .. } => {
                     assert_eq!(name, "stream");
                     assert!(!stream);
                 }
@@ -989,10 +1017,10 @@ test "budget" {
                 match &fns[0] {
                     Item::Fn { body, .. } => {
                         assert!(
-                            matches!(&body[1], Stmt::StateWrite { field, op: StateOp::Add, .. } if field == "notes")
+                            matches!(&body[1].kind, StmtKind::StateWrite { field, op: StateOp::Add, .. } if field == "notes")
                         );
                         assert!(
-                            matches!(&body[2], Stmt::StateWrite { field, op: StateOp::Set, .. } if field == "round")
+                            matches!(&body[2].kind, StmtKind::StateWrite { field, op: StateOp::Set, .. } if field == "round")
                         );
                     }
                     other => panic!("expected fn inside agent, got {other:?}"),
@@ -1007,8 +1035,8 @@ test "budget" {
         let src = "fn f(cheap_ok: bool) -> string uses LLM { llm\"\"\"x\"\"\" with { model: route{ cheap: \"m1\" when cheap_ok, strong: \"m2\" otherwise } } }";
         let items = parse(lex(src).unwrap()).unwrap();
         match &items[0] {
-            Item::Fn { body, .. } => match &body[0] {
-                Stmt::ExprStmt(Expr::LlmCall { options, .. }) => match &options[0].1 {
+            Item::Fn { body, .. } => match &body[0].kind {
+                StmtKind::ExprStmt(Expr::LlmCall { options, .. }) => match &options[0].1 {
                     Expr::Route { arms } => {
                         assert_eq!(arms.len(), 2);
                         assert_eq!(arms[0].0, "cheap");
@@ -1027,7 +1055,7 @@ test "budget" {
         let items = parse(lex("fn f() -> int { let route = 3\n    route }").unwrap()).unwrap();
         match &items[0] {
             Item::Fn { body, .. } => {
-                assert!(matches!(&body[0], Stmt::Let { name, .. } if name == "route"))
+                assert!(matches!(&body[0].kind, StmtKind::Let { name, .. } if name == "route"))
             }
             _ => panic!("expected fn"),
         }
@@ -1038,8 +1066,8 @@ test "budget" {
         // `l | merge r` is a reducer join (design §7)
         let items = parse(lex("fn f(x: [int]) -> [int] { x | merge x }").unwrap()).unwrap();
         match &items[0] {
-            Item::Fn { body, .. } => match &body[0] {
-                Stmt::ExprStmt(Expr::Merge { .. }) => {}
+            Item::Fn { body, .. } => match &body[0].kind {
+                StmtKind::ExprStmt(Expr::Merge { .. }) => {}
                 other => panic!("expected merge expr, got {other:?}"),
             },
             _ => panic!("expected fn"),
@@ -1048,7 +1076,22 @@ test "budget" {
         let items = parse(lex("fn f() -> int { let merge = 3\n    merge }").unwrap()).unwrap();
         match &items[0] {
             Item::Fn { body, .. } => {
-                assert!(matches!(&body[0], Stmt::Let { name, .. } if name == "merge"));
+                assert!(matches!(&body[0].kind, StmtKind::Let { name, .. } if name == "merge"));
+            }
+            _ => panic!("expected fn"),
+        }
+    }
+
+    #[test]
+    fn statements_carry_source_spans() {
+        let src = "fn f() -> int { let x = 1\n    x }";
+        let items = parse(lex(src).unwrap()).unwrap();
+        match &items[0] {
+            Item::Fn { body, .. } => {
+                let sp = body[0].span;
+                assert_eq!(&src[sp.start..sp.end], "let x = 1");
+                let sp2 = body[1].span;
+                assert_eq!(&src[sp2.start..sp2.end], "x");
             }
             _ => panic!("expected fn"),
         }
@@ -1067,7 +1110,7 @@ test "budget" {
             Item::Agent { fns, .. } => match &fns[0] {
                 Item::Fn { body, .. } => {
                     assert!(
-                        matches!(&body[0], Stmt::StateWrite { field, op: StateOp::Sub, .. } if field == "round")
+                        matches!(&body[0].kind, StmtKind::StateWrite { field, op: StateOp::Sub, .. } if field == "round")
                     );
                 }
                 other => panic!("expected fn, got {other:?}"),
@@ -1076,3 +1119,4 @@ test "budget" {
         }
     }
 }
+
