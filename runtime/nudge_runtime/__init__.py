@@ -557,6 +557,9 @@ def _trace_call(model, prompt, out, repair_round, outcome, extra=None,
         "outcome": outcome,
         "provider": provider,
     }
+    if _pricing_unknown(provider, model):
+        # additive NTF field: cost_usd is a $0 placeholder, not a measurement
+        record["pricing"] = "unknown"
     if extra:
         # additive v1 fields (design §6.1): streamed / chunks / early_abort
         record.update(extra)
@@ -655,9 +658,9 @@ _PROVIDER_KEY_ENVS = {
     "anthropic": "ANTHROPIC_API_KEY",
 }
 
-# USD per 1M tokens: (input, output). Models absent from the table —
-# including free-tier quotas, subscription plans (e.g. MiMo token plans),
-# and local Ollama models — price at $0.
+# USD per 1M tokens: (input, output). Models absent from the table price at
+# $0 — but a $0 on a metered provider is usually a missing table entry, not a
+# free call, so the runtime flags it (W9001 + trace `pricing: "unknown"`).
 _MODEL_PRICING = {
     "gemini-2.5-flash": (0.30, 2.50),
     "gemini-2.0-flash": (0.10, 0.40),
@@ -945,13 +948,38 @@ def _complete(provider, model, prompt, schema):
     return text, in_t, out_t
 
 
+# Providers whose calls are legitimately $0 without a table entry: local
+# Ollama, plan-priced MiMo, and the fake test double.
+_PRICING_UNKNOWN_OK = {"fake", "ollama", "mimo"}
+_PRICING_WARNED = set()
+
+
+def _pricing_unknown(provider, model):
+    """True when the model has no pricing entry on a provider where that is
+    suspicious — i.e. cost_usd will be a $0 placeholder, not a real free call."""
+    if provider in _PRICING_UNKNOWN_OK:
+        return False
+    return _MODEL_PRICING.get(_split_model(model)[1]) is None
+
+
 def _call_cost(provider, model, in_t, out_t):
     """USD cost of one call: flat fake pricing, or the pricing table for
-    real providers (unknown/free/local models → $0)."""
+    real providers (unknown/free/local models → $0, with a one-time warning
+    when the $0 is a missing table entry rather than a genuinely free call)."""
     if provider == "fake":
         return FAKE_CALL_COST
     prices = _MODEL_PRICING.get(_split_model(model)[1])
     if prices is None:
+        if _pricing_unknown(provider, model):
+            bare = _split_model(model)[1]
+            if bare not in _PRICING_WARNED and os.environ.get("NUDGE_PRICING_WARN", "1") != "0":
+                _PRICING_WARNED.add(bare)
+                print(
+                    f"warning[W9001]: no pricing entry for '{bare}' ({provider}) — "
+                    "recording $0 cost; add the model to _MODEL_PRICING "
+                    "(NUDGE_PRICING_WARN=0 silences)",
+                    file=sys.stderr,
+                )
         return 0.0
     return (in_t * prices[0] + out_t * prices[1]) / 1_000_000
 
