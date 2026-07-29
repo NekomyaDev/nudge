@@ -26,8 +26,10 @@ Finish the "why did my agent do that?" answer beyond doubt.
   `branch` field in traces; trace-view badges and color-codes each lane
 - **DAP groundwork** — Debug Adapter Protocol spike on the replay engine
   (breakpoints on `llm.call`s, step through a run, time-travel over the trace)
-- **SSE/HTTP MCP transport**, **TS runtime parity**, **provider breadth**
-  (Anthropic/Mistral, real streaming)
+- **SSE/HTTP MCP transport**, **TS runtime parity**, **real streaming**
+- ~~**Provider breadth: Anthropic + Mistral**~~ ✅ shipped — Anthropic Messages API
+  adapter + OpenAI-compatible Mistral; `NUDGE_PROVIDER=fake` now explicitly overrides
+  model prefixes so $0 runs stay $0
 
 ## v1.3 — Door 2: *testable* (create the agent-CI category)
 
