@@ -64,6 +64,21 @@ The compiler proves the schema matches, infers effects, and computes a static co
 - **Trace diff** — `nudgec trace-diff a.jsonl b.jsonl` answers "what changed when I edited the prompt?": totals and per-record deltas
 - **A2A agent-card export, LSP, OpenTelemetry** — built in, not bolted on
 
+### Backend parity
+
+| Capability | Python backend | TypeScript backend |
+|---|---|---|
+| Typed calls, schema validation, repair | ✅ | ✅ |
+| Traces, replay, budget walls | ✅ | ✅ |
+| `par map/all/race` + branch labels (NTF v1.1) | ✅ thread pool | ✅ sequential (async codegen planned) |
+| Streaming (`stream let`) | ✅ live SSE + early-abort repair | ✅ fake parity (no live providers) |
+| Real providers (OpenAI/Gemini/Groq/MiMo/Mistral/Anthropic/Ollama) | ✅ | ⬜ routes to Python |
+| MCP tools, checkpoint/resume, OTel | ✅ | ⬜ |
+
+The TypeScript backend is a deliberately scoped subset today; parity work is tracked in [docs/roadmap.md](docs/roadmap.md).
+
+> **Privacy note:** traces record prompts, model outputs, and tool results verbatim — they can contain secrets or personal data. Treat trace files as sensitive artifacts; a redaction hook is on the roadmap.
+
 ## Quickstart
 
 ```sh

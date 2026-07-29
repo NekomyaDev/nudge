@@ -33,7 +33,7 @@ mod traceview;
 use std::{env, fs, process};
 
 fn usage() -> ! {
-    eprintln!("nudgec 1.0.0 — the Nudge compiler");
+    eprintln!("nudgec {} — the Nudge compiler", env!("CARGO_PKG_VERSION"));
     eprintln!("usage:");
     eprintln!("  nudgec lex   <file.ndg>   dump token stream");
     eprintln!("  nudgec parse <file.ndg>   dump AST");
