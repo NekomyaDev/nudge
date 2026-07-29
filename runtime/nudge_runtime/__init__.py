@@ -1397,6 +1397,67 @@ class _PrefixValidator:
             self.done = True
 
 
+class _FenceFilter:
+    """```json fence tolerance for streamed schema validation.
+
+    Non-streaming :func:`_extract_json` strips markdown fences; streamed
+    chunks must get the same tolerance or fence-habit models (reasoning
+    models love ```json) would early-abort every stream. Buffers until the
+    fence question is decided, then forwards only the inner JSON to the
+    prefix validator; a closing fence at line start ends forwarding.
+    """
+
+    def __init__(self, validator):
+        self.v = validator
+        self.buf = ""
+        self.mode = None       # None = deciding, "plain", "fence"
+        self.line_start = True
+        self.tail = ""         # 1-2 backticks at line start, maybe a fence
+        self.closed = False
+
+    def feed(self, chunk):
+        if self.closed:
+            return
+        if self.mode is None:
+            self.buf += chunk
+            s = self.buf.lstrip()
+            if s in ("", "`", "``"):
+                return
+            if s.startswith("```"):
+                if "\n" not in s:
+                    return
+                self.mode = "fence"
+                inner = s.split("\n", 1)[1]
+                self.buf = ""
+                if inner:
+                    self._feed_inner(inner)
+                return
+            self.mode = "plain"
+            self.v.feed(self.buf)
+            self.buf = ""
+            return
+        if self.mode == "plain":
+            self.v.feed(chunk)
+            return
+        self._feed_inner(chunk)
+
+    def _feed_inner(self, text):
+        for ch in text:
+            if self.closed:
+                return
+            if self.line_start and (ch == "`" or self.tail):
+                if ch == "`":
+                    self.tail += ch
+                    if self.tail == "```":
+                        self.closed = True
+                    continue
+                # 1-2 stray backticks turned out to be content
+                self.v.feed(self.tail)
+                self.tail = ""
+            self.line_start = ch == "\n"
+            self.v.feed(ch)
+
+
 def llm_stream(prompt, model=None, schema=None, retry=0, repair=False,
                budget=None, cache=None, tags=None, chunk_size=14):
     """One streaming typed LLM call (design §4.5).
@@ -1454,12 +1515,13 @@ def llm_stream(prompt, model=None, schema=None, retry=0, repair=False,
                       else _openai_chat_stream)(provider, bare, prompt, usage)
             acc, consumed, aborted = [], 0, None
             validator = _PrefixValidator(schema) if schema is not None else None
+            vfilter = _FenceFilter(validator) if validator is not None else None
             for chunk in stream:
                 acc.append(chunk)
                 consumed += 1
-                if validator is not None:
+                if vfilter is not None:
                     try:
-                        validator.feed(chunk)
+                        vfilter.feed(chunk)
                     except _PrefixImpossible as e:
                         aborted = str(e)
                         break
