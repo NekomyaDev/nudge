@@ -10,6 +10,7 @@
 //!   nudgec trace-check <t.jsonl> validate a trace against the frozen v1 schema (v1.0, design §6)
 //!   nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json (v1.0, design §9)
 //!   nudgec lsp                serve the Language Server Protocol over stdio (v1.0, design §10)
+//!   nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace (v1.2)
 
 mod a2a;
 mod ast;
@@ -24,6 +25,7 @@ mod lint;
 mod lsp;
 mod parser;
 mod tracecheck;
+mod traceview;
 
 use std::{env, fs, process};
 
@@ -41,6 +43,7 @@ fn usage() -> ! {
     eprintln!("  nudgec trace-check <t.jsonl> validate a trace against the frozen v1 schema");
     eprintln!("  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json");
     eprintln!("  nudgec lsp                serve the Language Server Protocol over stdio");
+    eprintln!("  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace");
     process::exit(64);
 }
 
@@ -60,6 +63,31 @@ fn main() {
     if args.len() == 2 && args[1] == "lsp" {
         lsp::run();
         return;
+    }
+    // `trace-view` takes a trace file plus optional --port/--no-open flags
+    if args.len() >= 3 && args[1] == "trace-view" {
+        let mut port = traceview::DEFAULT_PORT;
+        let mut no_open = false;
+        let mut i = 3;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--no-open" => no_open = true,
+                "--port" => {
+                    i += 1;
+                    port = args.get(i).and_then(|p| p.parse().ok()).unwrap_or_else(|| {
+                        eprintln!("error: --port requires a number");
+                        process::exit(64);
+                    });
+                }
+                other => {
+                    eprintln!("error: unknown flag '{other}'");
+                    process::exit(64);
+                }
+            }
+            i += 1;
+        }
+        let src = read_src(&args[2]);
+        traceview::run(&args[2], &src, port, no_open);
     }
     if args.len() != 3 {
         usage();
