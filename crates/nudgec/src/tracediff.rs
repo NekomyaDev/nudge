@@ -27,7 +27,11 @@ fn s(rec: &Json, key: &str) -> String {
 
 fn tokens_in_out(rec: &Json) -> (f64, f64) {
     let t = rec.get("tokens");
-    let get = |k: &str| t.and_then(|t| t.get(k)).and_then(Json::as_num).unwrap_or(0.0);
+    let get = |k: &str| {
+        t.and_then(|t| t.get(k))
+            .and_then(Json::as_num)
+            .unwrap_or(0.0)
+    };
     (get("in"), get("out"))
 }
 
@@ -41,7 +45,14 @@ struct Totals {
 }
 
 fn totals(recs: &[Json]) -> Totals {
-    let mut t = Totals { llm: 0, tools: 0, tin: 0.0, tout: 0.0, cost: 0.0, repairs: 0 };
+    let mut t = Totals {
+        llm: 0,
+        tools: 0,
+        tin: 0.0,
+        tout: 0.0,
+        cost: 0.0,
+        repairs: 0,
+    };
     for r in recs {
         match s(r, "kind").as_str() {
             "llm.call" => {
@@ -116,7 +127,10 @@ pub fn diff(a_text: &str, b_text: &str) -> String {
         ta.tin + ta.tout,
         tb.tin + tb.tout,
         delta(ta.tin + ta.tout, tb.tin + tb.tout, ""),
-        ta.tin, tb.tin, ta.tout, tb.tout
+        ta.tin,
+        tb.tin,
+        ta.tout,
+        tb.tout
     ));
     out.push_str(&format!(
         "cost      ${:.4} -> ${:.4}{}\n",
