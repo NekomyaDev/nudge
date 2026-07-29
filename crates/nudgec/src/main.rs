@@ -117,23 +117,22 @@ fn main() {
         read_src(&args[2])
     };
 
-
-/// 1-based line:col of a byte offset, for human-facing diagnostics.
-fn line_col(src: &str, at: usize) -> (usize, usize) {
-    let mut line = 1;
-    let mut col = 1;
-    for ch in src[..at.min(src.len())].chars() {
-        if ch == '\n' {
-            line += 1;
-            col = 1;
-        } else {
-            col += 1;
+    /// 1-based line:col of a byte offset, for human-facing diagnostics.
+    fn line_col(src: &str, at: usize) -> (usize, usize) {
+        let mut line = 1;
+        let mut col = 1;
+        for ch in src[..at.min(src.len())].chars() {
+            if ch == '\n' {
+                line += 1;
+                col = 1;
+            } else {
+                col += 1;
+            }
         }
+        (line, col)
     }
-    (line, col)
-}
 
-fn print_lints(items: &[ast::Item]) {
+    fn print_lints(items: &[ast::Item]) {
         for l in lint::lint_items(items) {
             eprintln!("warning[{}]: {}", l.code, l.msg);
         }
