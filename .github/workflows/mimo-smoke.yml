@@ -1,0 +1,63 @@
+name: MiMo smoke
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  smoke:
+    name: live MiMo run + trace viewer check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Build the compiler
+        run: cargo build --release --workspace
+      - name: Write the smoke program
+        run: |
+          mkdir -p smoke traces
+          cat > smoke/mimo_smoke.ndg <<'NDG'
+          type Brief = { summary: string, keywords: [string], reading_time_min: int }
+
+          fn summarize(topic: string) -> Brief uses LLM {
+              llm"""Summarize {topic} in one sentence, then give 3 keywords and an estimated reading time in minutes. Return the summary, keywords and reading_time_min."""
+              with { schema: Brief, model: "mimo:mimo-v2.5", budget: 0.02 USD, retry: 1 with repair }
+          }
+
+          fn main() -> Brief uses LLM {
+              let a = summarize("urban heat islands")
+              let b = summarize("green roofs")
+              llm"""Combine these two briefs into one: {a} and {b}. Return summary, keywords and reading_time_min."""
+              with { schema: Brief, model: "mimo:mimo-v2.5", budget: 0.02 USD, retry: 1 with repair }
+          }
+          NDG
+      - name: Compile (check + emit Python)
+        run: |
+          ./target/release/nudgec check smoke/mimo_smoke.ndg
+          ./target/release/nudgec build smoke/mimo_smoke.ndg
+      - name: Live run against MiMo
+        env:
+          MIMO_API_KEY: ${{ secrets.MIMO_API_KEY }}
+          NUDGE_PROVIDER: mimo
+          NUDGE_TRACE: traces/mimo_run.jsonl
+          NUDGE_BUDGET: "0.05"
+          PYTHONPATH: runtime
+        run: python3 out/mimo_smoke.py
+      - name: Validate the trace (frozen v1 schema)
+        run: ./target/release/nudgec trace-check traces/mimo_run.jsonl
+      - name: Trace viewer smoke check
+        run: |
+          ./target/release/nudgec trace-view traces/mimo_run.jsonl --no-open --port 8321 &
+          sleep 1
+          curl -fsS http://127.0.0.1:8321/ | grep -q "Nudge Trace Viewer"
+          curl -fsS http://127.0.0.1:8321/trace | grep -q '"kind": "llm.call"'
+          kill %1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mimo-trace
+          path: traces/mimo_run.jsonl
