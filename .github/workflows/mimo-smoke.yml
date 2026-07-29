@@ -26,14 +26,14 @@ jobs:
 
           fn summarize(topic: string) -> Brief uses LLM {
               llm"""Summarize {topic} in one sentence, then give 3 keywords and an estimated reading time in minutes. Return the summary, keywords and reading_time_min."""
-              with { schema: Brief, model: "mimo:mimo-v2.5", budget: 0.02 USD, retry: 1 with repair }
+              with { schema: Brief, model: "mimo:mimo-v2.5", budget: 0.02 USD, retry: 2 with repair }
           }
 
           fn main() -> Brief uses LLM {
               let a = summarize("urban heat islands")
               let b = summarize("green roofs")
               llm"""Combine these two briefs into one: {a} and {b}. Return summary, keywords and reading_time_min."""
-              with { schema: Brief, model: "mimo:mimo-v2.5", budget: 0.02 USD, retry: 1 with repair }
+              with { schema: Brief, model: "mimo:mimo-v2.5", budget: 0.02 USD, retry: 2 with repair }
           }
           NDG
       - name: Compile (check + emit Python)
@@ -68,7 +68,7 @@ jobs:
 
           fn summarize(topic: string) -> Brief uses LLM {
               llm"""Summarize {topic} in one sentence, then give 3 keywords and an estimated reading time in minutes. Return the summary, keywords and reading_time_min."""
-              with { schema: Brief, model: "mimo:mimo-v2.5", budget: 0.02 USD, retry: 1 with repair }
+              with { schema: Brief, model: "mimo:mimo-v2.5", budget: 0.02 USD, retry: 2 with repair }
           }
 
           fn main() -> [Brief] uses LLM {
@@ -107,7 +107,7 @@ jobs:
 
           fn main() -> Brief uses LLM {
               stream let b: Brief = llm"""Summarize urban heat islands in one sentence, then give 3 keywords and an estimated reading time in minutes. Return summary, keywords and reading_time_min."""
-                  with { schema: Brief, model: "mimo:mimo-v2.5", budget: 0.02 USD, retry: 1 with repair }
+                  with { schema: Brief, model: "mimo:mimo-v2.5", budget: 0.02 USD, retry: 2 with repair }
               b
           }
           NDG
