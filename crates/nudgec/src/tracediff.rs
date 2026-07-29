@@ -267,9 +267,7 @@ mod tests {
 
     #[test]
     fn repair_counts_are_totalled() {
-        let repaired = format!(
-            r#"{{"v": 1, "seq": 1, "kind": "llm.call", "model": "m", "params": {{}}, "input": "p", "output": "o", "tokens": {{"in": 1, "out": 1}}, "cost_usd": 0.001, "repair_round": 2, "outcome": "ok", "provider": "fake"}}"#
-        );
+        let repaired = r#"{"v": 1, "seq": 1, "kind": "llm.call", "model": "m", "params": {}, "input": "p", "output": "o", "tokens": {"in": 1, "out": 1}, "cost_usd": 0.001, "repair_round": 2, "outcome": "ok", "provider": "fake"}"#;
         let clean = format!("{}\n", llm(1, "\"o\"", 1, 1, 0.001));
         let r = diff(&format!("{repaired}\n"), &clean);
         assert!(r.contains("repairs   1 -> 0 (-1)"), "{r}");
