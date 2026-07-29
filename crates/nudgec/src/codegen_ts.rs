@@ -463,7 +463,7 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
             // ({first, second}), or the second param silently becomes the index.
             let mut s = if params.len() == 2 {
                 format!(
-                    "{}.map((__e) => {{ const {} = __e.first; const {} = __e.second; return {}; }})",
+                    "rt.parMap({}, (__e) => {{ const {} = __e.first; const {} = __e.second; return {}; }})",
                     ts(coll, aliases, sigs),
                     params[0],
                     params[1],
@@ -471,7 +471,7 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
                 )
             } else {
                 format!(
-                    "{}.map(({}) => {})",
+                    "rt.parMap({}, ({}) => {})",
                     ts(coll, aliases, sigs),
                     params.join(", "),
                     ts(body, aliases, sigs)
@@ -484,20 +484,23 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
             }
             s
         }
+        // thunks, not values: the runtime wraps each lane's evaluation in
+        // its NTF v1.1 branch label — and a plain array return fixes the
+        // old un-awaited Promise.all leaking a Promise into `let` bindings
         Expr::ParAll(xs) => {
             format!(
-                "Promise.all([{}])",
+                "rt.parAll([{}])",
                 xs.iter()
-                    .map(|x| ts(x, aliases, sigs))
+                    .map(|x| format!("() => {}", ts(x, aliases, sigs)))
                     .collect::<Vec<_>>()
                     .join(", ")
             )
         }
         Expr::ParRace(xs) => {
             format!(
-                "Promise.race([{}])",
+                "rt.parRace([{}])",
                 xs.iter()
-                    .map(|x| ts(x, aliases, sigs))
+                    .map(|x| format!("() => {}", ts(x, aliases, sigs)))
                     .collect::<Vec<_>>()
                     .join(", ")
             )
@@ -711,12 +714,12 @@ mod tests {
         let src = "fn f(xs: [string], ys: [string]) -> [string] uses LLM { par map(xs zip ys) |(a, b)| -> a }";
         let out = gen_ts(src);
         assert!(
-            out.contains(".map((__e) => { const a = __e.first; const b = __e.second; return a; })"),
+            out.contains("rt.parMap(") && out.contains("(__e) => { const a = __e.first; const b = __e.second; return a; }"),
             "got:\n{out}"
         );
         // single-param lambdas keep the direct form
         let out = gen_ts("fn f(xs: [string]) -> [string] uses LLM { par map xs |x| -> x }");
-        assert!(out.contains(".map((x) => x)"), "got:\n{out}");
+        assert!(out.contains("rt.parMap(xs, (x) => x)"), "got:\n{out}");
         // and the emitted JS actually computes the zip semantics under node
         use std::process::Command;
         if Command::new("node").arg("--version").output().is_err() {
