@@ -1369,4 +1369,3 @@ fn route_choice_lands_in_the_trace() {
     assert!(text.contains("\"route\": \"cheap\""), "trace:\n{text}");
     assert!(text.contains("\"model\": \"m1\""), "trace:\n{text}");
 }
-
