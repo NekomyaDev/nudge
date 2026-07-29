@@ -1,6 +1,14 @@
 //! Nudge AST — produced by the parser (design doc §10 pipeline).
-//! Spans are dropped at this layer for now; diagnostics re-attach them
-//! when the type checker lands (TODO: spanned AST in day 4–6).
+//! Statements carry source spans (spanned AST stage 1); diagnostics and the
+//! LSP attach them for precise locations. Expression-level spans land in
+//! stage 2.
+
+/// Half-open byte span `[start, end)` into the source file.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeExpr {
@@ -111,7 +119,7 @@ pub enum StateOp {
 
 #[derive(Debug, Clone, PartialEq)]
 #[allow(clippy::enum_variant_names)] // `ExprStmt` reads better than `Expr` here
-pub enum Stmt {
+pub enum StmtKind {
     /// `stream` is true for `stream let` (design §4.5): the bound LLM call
     /// is consumed incrementally; codegen lowers it to `rt.llm_stream`.
     Let {
@@ -129,6 +137,13 @@ pub enum Stmt {
     },
     Assert(Expr),
     ExprStmt(Expr),
+}
+
+/// A statement with its source span attached (spanned AST, stage 1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Stmt {
+    pub kind: StmtKind,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -163,3 +178,4 @@ pub enum Item {
         fns: Vec<Item>,
     },
 }
+
