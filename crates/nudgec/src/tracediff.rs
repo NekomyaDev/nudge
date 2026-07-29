@@ -255,7 +255,11 @@ mod tests {
 
     #[test]
     fn length_mismatch_is_reported() {
-        let a = format!("{}\n{}\n", llm(1, "\"x\"", 1, 1, 0.001), llm(2, "\"y\"", 1, 1, 0.001));
+        let a = format!(
+            "{}\n{}\n",
+            llm(1, "\"x\"", 1, 1, 0.001),
+            llm(2, "\"y\"", 1, 1, 0.001)
+        );
         let b = format!("{}\n", llm(1, "\"x\"", 1, 1, 0.001));
         let r = diff(&a, &b);
         assert!(r.contains("only in A"), "{r}");
