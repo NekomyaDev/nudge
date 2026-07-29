@@ -1061,6 +1061,7 @@ with socketserver.TCPServer(("127.0.0.1", 0), H) as srv:
         &e,
         &out_py,
         &[
+            ("NUDGE_PROVIDER", "gemini"),
             ("NUDGE_API_KEY", "test-key"),
             ("NUDGE_BASE_URL", base.as_str()),
         ],
@@ -1368,3 +1369,4 @@ fn route_choice_lands_in_the_trace() {
     assert!(text.contains("\"route\": \"cheap\""), "trace:\n{text}");
     assert!(text.contains("\"model\": \"m1\""), "trace:\n{text}");
 }
+
