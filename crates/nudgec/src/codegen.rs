@@ -522,7 +522,7 @@ fn schema_py(t: &TypeExpr, aliases: &HashSet<String>) -> String {
                 }
                 _ => vec![],
             };
-            match &base.as_ref().kind {
+            match base.as_ref() {
                 TypeExpr::Named(n) if is_builtin_type(n) => {
                     let base_pair = match n.as_str() {
                         "string" => "\"type\": \"string\"",
@@ -618,11 +618,11 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
             );
             // runtime-provided builtins get the rt. prefix; len is a real
             // Python builtin and passes through verbatim
-            let f = match &func.as_ref().kind {
+            let f = match &func.kind {
                 ExprKind::Ident(n) if matches!(n.as_str(), "replay" | "python" | "mcp" | "zip") => {
                     format!("rt.{n}")
                 }
-                other => py(other, aliases),
+                _ => py(func, aliases),
             };
             format!("{}({})", f, parts.join(", "))
         }
@@ -727,7 +727,7 @@ fn llm_py(
             "retry" => parts.push(format!("retry={}", py(v, aliases))),
             "cache" => parts.push(match &v.kind {
                 ExprKind::Ident(n) => format!("cache={}", py_str(n)),
-                other => format!("cache={}", py(other, aliases)),
+                _ => format!("cache={}", py(v, aliases)),
             }),
             "tags" => parts.push(format!("tags={}", py(v, aliases))),
             other => parts.push(format!(
