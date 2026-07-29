@@ -19,7 +19,8 @@ editor.
 ## v1.2 — Door 1 close-out: *debuggable* (Depth)
 
 Finish the "why did my agent do that?" answer beyond doubt.
-- **Spanned AST** — check diagnostics point at the exact site; LSP underline precision
+- ~~**Spanned AST (stage 1: statements)**~~ ✅ shipped — statements carry byte spans; check errors print as `error[E0201] at 3:5` and LSP diagnostics land on their statement. Stage 2 (expression spans) stays open below
+- **Spanned AST, stage 2** — expression-level spans for sub-expression precision (hover, inline values)
 - ~~**Trace viewer**~~ ✅ shipped (v1.2 branch) — `nudgec trace-view <trace.jsonl>`: local web UI over traces: timeline of calls, retries, budget walls, token/cost stats, zero-dep embedded server
   walls, par branches. Chrome DevTools for agents
 - ~~**Par branch labels (NTF v1.1)**~~ ✅ shipped — `par map/all/race` lanes carry an additive
