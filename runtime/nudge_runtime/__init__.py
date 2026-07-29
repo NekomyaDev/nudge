@@ -683,18 +683,22 @@ def _split_model(model):
 def _real_provider_for(model):
     """(provider, bare_model) when a real provider should handle this call,
     else None (the fake provider handles it)."""
+    env = os.environ.get("NUDGE_PROVIDER")
+    if env == "fake":
+        # EXPLICIT fake wins over any model prefix — that is how tests and
+        # $0 example runs force the fake even for `anthropic:...` models
+        return None
     prefix, bare = _split_model(model)
     if prefix:
         return prefix, bare
-    env = os.environ.get("NUDGE_PROVIDER", "fake")
-    if env != "fake":
-        if env not in _PROVIDER_BASE_URLS:
-            raise RuntimeError(
-                f"unknown NUDGE_PROVIDER '{env}' "
-                "(openai | gemini | groq | mimo | mistral | anthropic | ollama | fake)"
-            )
-        return env, bare
-    return None
+    if env is None or env == "":
+        return None
+    if env not in _PROVIDER_BASE_URLS:
+        raise RuntimeError(
+            f"unknown NUDGE_PROVIDER '{env}' "
+            "(openai | gemini | groq | mimo | mistral | anthropic | ollama | fake)"
+        )
+    return env, bare
 
 
 def _openai_chat(provider, model, prompt):
