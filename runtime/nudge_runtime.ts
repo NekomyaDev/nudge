@@ -3,9 +3,9 @@
 // (renamed .mjs in tests) and compiles under tsc/deno. Strict-mode users'
 // tsc should not type-check generated/vendor files; the runtime's own
 // conformance is covered by the compiler's e2e suite. Subset: schema/llmCall/toolStub/replay,
-// budget walls, render, merge, USD, par helpers with NTF v1.1 branch labels.
-// Deferred: streaming, real providers, OTel export (the Python runtime covers
-// those today).
+// budget walls, render, merge, USD, par helpers with NTF v1.1 branch labels,
+// fake streaming. Deferred: real providers, streamed prefix validation and
+// repair, OTel export (the Python runtime covers those today).
 import * as fs from "node:fs";
 import * as process from "node:process";
 
@@ -218,6 +218,46 @@ function _replayToolOutputs() {
     }
   }
   return _replayToolCache;
+}
+
+export function llmStream(opts) {
+  const { prompt, model = null, schema: sch = null, budget = null, chunkSize = 14 } = opts;
+  // replay consumes the recorded final value, like the python runtime (§6.2)
+  if (process.env.NUDGE_REPLAY) {
+    return llmCall(opts);
+  }
+  const prefix = model && model.includes(":") ? model.split(":")[0] : null;
+  if ((process.env.NUDGE_PROVIDER && process.env.NUDGE_PROVIDER !== "fake") ||
+      (prefix && ["openai", "gemini", "groq", "mimo", "mistral", "anthropic", "ollama"].includes(prefix))) {
+    throw new Error("nudge_runtime.ts: real providers run on the Python runtime — compile with `nudgec build` for provider access");
+  }
+  const out = sch ? _synth(sch) : `[fake:${model}] ${prompt}`;
+  // fake-provider parity with python's llm_stream: deterministic chunking,
+  // additive streamed/chunks trace fields. Streamed prefix validation and
+  // the repair loop stay Python-side for now.
+  const text = sch ? JSON.stringify(out) : String(out);
+  const chunks = text.length === 0 ? 1 : Math.ceil(text.length / chunkSize);
+  const record = {
+    kind: "llm.call",
+    model: model || "fake",
+    params: { temperature: 0 },
+    input: String(prompt),
+    output: out,
+    tokens: {
+      in: String(prompt).split(/\s+/).filter(Boolean).length,
+      out: String(out).split(/\s+/).filter(Boolean).length,
+    },
+    cost_usd: FAKE_CALL_COST,
+    repair_round: 0,
+    outcome: "ok",
+    provider: "fake",
+    streamed: true,
+    chunks,
+  };
+  if (_branchId !== null) record.branch = _branchId;
+  _emitTrace(record);
+  _budgetCharge(FAKE_CALL_COST, budget);
+  return out;
 }
 
 export function toolStub(name, args = [], opts = {}) {
