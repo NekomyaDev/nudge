@@ -925,11 +925,11 @@ test "budget" {
                 assert_eq!(name, "budget");
                 assert_eq!(body.len(), 3);
                 assert!(matches!(
-                    body[1],
+                    body[1].kind,
                     StmtKind::Assert(Expr::Binary { op: BinOp::Lt, .. })
                 ));
                 assert!(matches!(
-                    body[2],
+                    body[2].kind,
                     StmtKind::Assert(Expr::Binary {
                         op: BinOp::GtEq,
                         ..
@@ -1119,4 +1119,3 @@ test "budget" {
         }
     }
 }
-
