@@ -18,6 +18,7 @@ mod ast;
 mod check;
 mod codegen;
 mod codegen_ts;
+mod dap;
 mod cost;
 mod fuzz;
 mod json;
@@ -47,6 +48,7 @@ fn usage() -> ! {
     eprintln!("  nudgec lsp                serve the Language Server Protocol over stdio");
     eprintln!("  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace");
     eprintln!("  nudgec trace-diff <a.jsonl> <b.jsonl>  compare two traces");
+    eprintln!("  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)");
     process::exit(64);
 }
 
@@ -72,6 +74,12 @@ fn main() {
         let a = read_src(&args[2]);
         let b = read_src(&args[3]);
         print!("{}", tracediff::diff(&a, &b));
+        return;
+    }
+    // `debug` speaks DAP over stdio over a recorded trace (no file arg parsing)
+    if args.len() == 3 && args[1] == "debug" {
+        let src = read_src(&args[2]);
+        dap::run(&src);
         return;
     }
     // `trace-view` takes a trace file plus optional --port/--no-open flags
