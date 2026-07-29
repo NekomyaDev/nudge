@@ -48,6 +48,8 @@
   #detail pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
                 padding: 14px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
   #detail .kv { margin: 6px 0; } #detail .kv b { color: var(--violet); }
+  .branch { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 4px; }
+  .lane { border-left: 3px solid transparent; }
   .empty { color: var(--dim); padding: 40px 20px; text-align: center; }
 </style>
 </head>
@@ -79,6 +81,16 @@ fetch("/trace").then(r => r.text()).then(t => {
 });
 
 function money(x) { return "$" + Number(x).toFixed(4); }
+const BRANCH_COLORS = ["#8b5cf6","#34d399","#fbbf24","#60a5fa","#f87171","#f472b6","#22d3ee","#a3e635"];
+function branchColor(b) {
+  let h = 0; for (const c of b) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return BRANCH_COLORS[h % BRANCH_COLORS.length];
+}
+function branchBadge(r) {
+  if (!r.branch) return "";
+  const c = branchColor(r.branch);
+  return `<span class="branch" style="background:${c}22;color:${c}">${esc(r.branch)}</span>`;
+}
 function esc(s) { return String(s).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
 
 function renderStats() {
@@ -125,9 +137,10 @@ function renderList() {
   const vis = recs.map((r, i) => [r, i]).filter(([r]) => matches(r));
   if (!vis.length) { el.innerHTML = '<div class="empty">No records match.</div>'; return; }
   el.innerHTML = vis.map(([r, i]) => `
-    <div class="rec${i === sel ? " sel" : ""}" data-i="${i}">
+    <div class="rec lane${i === sel ? " sel" : ""}" data-i="${i}" style="${r.branch ? `border-left-color:${branchColor(r.branch)}` : ""}">
       <span class="seq">#${r.seq ?? i + 1}</span>
       <span class="kind kind-${r.kind.split(".")[0]}">${esc(r.kind)}</span>
+      ${branchBadge(r)}
       <span class="who">${esc(who(r))}</span>
       <span class="meta">${meta(r)}</span>
     </div>`).join("");
