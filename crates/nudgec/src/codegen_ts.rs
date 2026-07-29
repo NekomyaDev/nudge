@@ -306,7 +306,7 @@ fn schema_ts(
                 }
                 _ => vec![],
             };
-            match &base.as_ref().kind {
+            match base.as_ref() {
                 TypeExpr::Named(n)
                     if matches!(
                         n.as_str(),
@@ -438,7 +438,7 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
                 ExprKind::Ident(n) if matches!(n.as_str(), "replay" | "python" | "mcp" | "zip") => {
                     format!("rt.{n}({})", parts.join(", "))
                 }
-                other => format!("{}({})", ts(other, aliases, sigs), parts.join(", ")),
+                _ => format!("{}({})", ts(func, aliases, sigs), parts.join(", ")),
             }
         }
         ExprKind::Field { obj, name } => format!("{}.{name}", ts(obj, aliases, sigs)),
@@ -548,7 +548,7 @@ fn llm_ts(
             "retry" => parts.push(format!("retry: {}", ts(v, aliases, sigs))),
             "cache" => parts.push(match &v.kind {
                 ExprKind::Ident(n) => format!("cache: {}", js_str(n)),
-                other => format!("cache: {}", ts(other, aliases, sigs)),
+                _ => format!("cache: {}", ts(v, aliases, sigs)),
             }),
             "tags" => parts.push(format!("tags: {}", ts(v, aliases, sigs))),
             other => parts.push(format!(
