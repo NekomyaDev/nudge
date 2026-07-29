@@ -26,7 +26,10 @@ Finish the "why did my agent do that?" answer beyond doubt.
   `branch` field in traces; trace-view badges and color-codes each lane
 - **DAP groundwork** — Debug Adapter Protocol spike on the replay engine
   (breakpoints on `llm.call`s, step through a run, time-travel over the trace)
-- **SSE/HTTP MCP transport**, **TS runtime parity**, **real streaming**
+- **SSE/HTTP MCP transport**, **TS runtime parity**
+- ~~**Real streaming**~~ ✅ shipped — `llm_stream` now streams live over SSE
+  (OpenAI-compatible + Anthropic Messages); early-abort prefix validation and
+  the repair loop work against live streams, usage-based tokens/cost in traces
 - ~~**Provider breadth: Anthropic + Mistral**~~ ✅ shipped — Anthropic Messages API
   adapter + OpenAI-compatible Mistral; `NUDGE_PROVIDER=fake` now explicitly overrides
   model prefixes so $0 runs stay $0
