@@ -20,7 +20,7 @@ editor.
 
 Finish the "why did my agent do that?" answer beyond doubt.
 - **Spanned AST** — check diagnostics point at the exact site; LSP underline precision
-- **Trace viewer** — local web UI over traces: timeline of calls, retries, budget
+- ~~**Trace viewer**~~ ✅ shipped (v1.2 branch) — `nudgec trace-view <trace.jsonl>`: local web UI over traces: timeline of calls, retries, budget walls, token/cost stats, zero-dep embedded server
   walls, par branches. Chrome DevTools for agents
 - **DAP groundwork** — Debug Adapter Protocol spike on the replay engine
   (breakpoints on `llm.call`s, step through a run, time-travel over the trace)
