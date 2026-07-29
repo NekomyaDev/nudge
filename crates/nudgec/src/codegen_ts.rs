@@ -196,7 +196,10 @@ fn emit_body(
                 ..
             } => {
                 if *stream {
-                    format!("const {name} = {};  // warning: streaming not yet supported by the TS backend — plain call", ts(value, aliases, sigs))
+                    // the TS runtime now streams (fake parity): swap the
+                    // emitted llmCall for llmStream — same opts shape
+                    let call = ts(value, aliases, sigs).replacen("rt.llmCall(", "rt.llmStream(", 1);
+                    format!("const {name} = {call};")
                 } else {
                     format!("const {name} = {};", ts(value, aliases, sigs))
                 }
@@ -700,7 +703,7 @@ mod tests {
         let src2 = "fn f() -> string uses LLM { stream let t: string = llm\"\"\"x\"\"\" with { model: \"m\" }\n    t }";
         let out2 = gen_ts(src2);
         assert!(
-            out2.contains("warning: streaming not yet supported by the TS backend"),
+            out2.contains("const t = rt.llmStream({prompt: \"x\", model: \"m\"});"),
             "got:\n{out2}"
         );
     }
