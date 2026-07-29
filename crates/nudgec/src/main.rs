@@ -74,13 +74,10 @@ fn main() {
                 "--no-open" => no_open = true,
                 "--port" => {
                     i += 1;
-                    port = args
-                        .get(i)
-                        .and_then(|p| p.parse().ok())
-                        .unwrap_or_else(|| {
-                            eprintln!("error: --port requires a number");
-                            process::exit(64);
-                        });
+                    port = args.get(i).and_then(|p| p.parse().ok()).unwrap_or_else(|| {
+                        eprintln!("error: --port requires a number");
+                        process::exit(64);
+                    });
                 }
                 other => {
                     eprintln!("error: unknown flag '{other}'");
