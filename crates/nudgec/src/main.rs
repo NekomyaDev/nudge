@@ -117,7 +117,8 @@ fn main() {
         read_src(&args[2])
     };
 
-    /// 1-based line:col of a byte offset, for human-facing diagnostics.
+
+/// 1-based line:col of a byte offset, for human-facing diagnostics.
 fn line_col(src: &str, at: usize) -> (usize, usize) {
     let mut line = 1;
     let mut col = 1;
@@ -426,4 +427,3 @@ fn print_lints(items: &[ast::Item]) {
         _ => usage(),
     }
 }
-
