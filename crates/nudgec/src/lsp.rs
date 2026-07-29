@@ -64,9 +64,12 @@ pub fn diagnostics(src: &str) -> Vec<Json> {
             Ok(items) => {
                 let mut out: Vec<Json> = crate::check::check(&items)
                     .iter()
-                    // check errors carry no span yet (spanned AST is v1.2) —
-                    // point at the file start with the stable code attached
-                    .map(|e| diag(0, 0, e.code, &e.msg))
+                    // spanned AST (stage 1): statement-level errors point at
+                    // their statement; item-level ones fall back to file start
+                    .map(|e| {
+                        let (l, c) = e.span.map(|sp| line_col(src, sp.start)).unwrap_or((0, 0));
+                        diag(l, c, e.code, &e.msg)
+                    })
                     .collect();
                 // Prompt Clippy (design §20): W-code warnings surface in the
                 // editor as severity-2 diagnostics on clean files too
@@ -726,3 +729,4 @@ mod tests {
         assert!(s.contains("\"diagnostics\": []"), "{s}");
     }
 }
+
