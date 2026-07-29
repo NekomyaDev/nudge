@@ -310,7 +310,9 @@ pub fn bind_state(body: &[Stmt], agent: &str) -> Vec<Stmt> {
 fn bind_state_expr(e: &Expr, agent: &str) -> Expr {
     let kind = match &e.kind {
         ExprKind::Ident(n) if n == "state" => ExprKind::Ident(format!("_state_{agent}")),
-        ExprKind::ListLit(xs) => ExprKind::ListLit(xs.iter().map(|x| bind_state_expr(x, agent)).collect()),
+        ExprKind::ListLit(xs) => {
+            ExprKind::ListLit(xs.iter().map(|x| bind_state_expr(x, agent)).collect())
+        }
         ExprKind::Prompt {
             body,
             interpolations,
@@ -386,8 +388,12 @@ fn bind_state_expr(e: &Expr, agent: &str) -> Expr {
             params: params.clone(),
             body: Box::new(bind_state_expr(body, agent)),
         },
-        ExprKind::ParAll(xs) => ExprKind::ParAll(xs.iter().map(|x| bind_state_expr(x, agent)).collect()),
-        ExprKind::ParRace(xs) => ExprKind::ParRace(xs.iter().map(|x| bind_state_expr(x, agent)).collect()),
+        ExprKind::ParAll(xs) => {
+            ExprKind::ParAll(xs.iter().map(|x| bind_state_expr(x, agent)).collect())
+        }
+        ExprKind::ParRace(xs) => {
+            ExprKind::ParRace(xs.iter().map(|x| bind_state_expr(x, agent)).collect())
+        }
         ExprKind::Merge { l, r } => ExprKind::Merge {
             l: Box::new(bind_state_expr(l, agent)),
             r: Box::new(bind_state_expr(r, agent)),
@@ -406,10 +412,7 @@ fn bind_state_expr(e: &Expr, agent: &str) -> Expr {
         },
         leaf => leaf.clone(),
     };
-    Expr {
-        kind,
-        span: e.span,
-    }
+    Expr { kind, span: e.span }
 }
 
 /// Find the MCP server in a tool's `impl: mcp("server").tool(...)` field
