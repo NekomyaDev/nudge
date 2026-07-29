@@ -188,8 +188,8 @@ fn emit_body(
     let mut out = String::new();
     let last = body.len() - 1;
     for (i, st) in body.iter().enumerate() {
-        let line = match st {
-            Stmt::Let {
+        let line = match &st.kind {
+            StmtKind::Let {
                 name,
                 value,
                 stream,
@@ -205,7 +205,7 @@ fn emit_body(
                 }
             }
             // a state write is a checkpoint — the runtime Proxy persists it
-            Stmt::StateWrite { field, op, value } => {
+            StmtKind::StateWrite { field, op, value } => {
                 match agent {
                     Some((target, list_fields)) => {
                         let v = ts(value, aliases, sigs);
@@ -226,12 +226,12 @@ fn emit_body(
                     ),
                 }
             }
-            Stmt::Assert(e) => format!(
+            StmtKind::Assert(e) => format!(
                 "if (!({})) throw new Error(\"assertion failed\");",
                 ts(e, aliases, sigs)
             ),
-            Stmt::ExprStmt(e) if i == last => format!("return {};", ts(e, aliases, sigs)),
-            Stmt::ExprStmt(e) => format!("{};", ts(e, aliases, sigs)),
+            StmtKind::ExprStmt(e) if i == last => format!("return {};", ts(e, aliases, sigs)),
+            StmtKind::ExprStmt(e) => format!("{};", ts(e, aliases, sigs)),
         };
         out.push_str("  ");
         out.push_str(&line);
@@ -937,3 +937,4 @@ mod tests {
         assert!(stderr.contains("BudgetExceeded"), "stderr: {stderr}");
     }
 }
+
