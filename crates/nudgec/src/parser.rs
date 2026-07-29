@@ -899,8 +899,7 @@ impl Parser {
     }
 }
 
-/// Pull `{name}` / `{path.to.value}` interpolations out of a prompt body.
-pub /// Span covering two sibling expressions (composite node spans derive
+/// Span covering two sibling expressions (composite node spans derive
 /// from their children — spanned AST, stage 2).
 fn join_span(l: &Expr, r: &Expr) -> Span {
     Span {
@@ -909,7 +908,8 @@ fn join_span(l: &Expr, r: &Expr) -> Span {
     }
 }
 
-fn scan_interpolations(body: &str) -> Vec<String> {
+/// Pull `{name}` / `{path.to.value}` interpolations out of a prompt body.
+pub fn scan_interpolations(body: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = body;
     while let Some(open) = rest.find('{') {
