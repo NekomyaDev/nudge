@@ -3,8 +3,9 @@
 // (renamed .mjs in tests) and compiles under tsc/deno. Strict-mode users'
 // tsc should not type-check generated/vendor files; the runtime's own
 // conformance is covered by the compiler's e2e suite. Subset: schema/llmCall/toolStub/replay,
-// budget walls, render, merge, USD. Deferred: streaming,
-// par scheduling, OTel export (the Python runtime covers those today).
+// budget walls, render, merge, USD, par helpers with NTF v1.1 branch labels.
+// Deferred: streaming, real providers, OTel export (the Python runtime covers
+// those today).
 import * as fs from "node:fs";
 import * as process from "node:process";
 
@@ -130,6 +131,37 @@ function _replayOutputs() {
   return _replayOutputsCache;
 }
 
+// NTF v1.1 (additive): records emitted inside a par lane carry a `branch`
+// label — "par[0]", "par[1]", ... JS is single-threaded and the generated
+// code is synchronous, so a module-level save/restore is exact (the Python
+// runtime needs threading.local for its worker pool).
+let _branchId = null;
+
+function _withBranch(label, fn) {
+  const prev = _branchId;
+  _branchId = label;
+  try {
+    return fn();
+  } finally {
+    _branchId = prev;
+  }
+}
+
+export function parMap(coll, fn) {
+  return coll.map((x, i) => _withBranch(`par[${i}]`, () => fn(x)));
+}
+
+// thunks, not values: each lane's branch label must wrap its evaluation
+export function parAll(thunks) {
+  return thunks.map((t, i) => _withBranch(`par[${i}]`, t));
+}
+
+// sync runtime: lanes evaluate in order; the first lane's value wins
+export function parRace(thunks) {
+  const results = thunks.map((t, i) => _withBranch(`par[${i}]`, t));
+  return results[0];
+}
+
 export function llmCall(opts) {
   const { prompt, model = null, schema: sch = null, budget = null } = opts;
   if (process.env.NUDGE_REPLAY) {
@@ -150,7 +182,7 @@ export function llmCall(opts) {
   const out = sch ? _synth(sch) : `[fake:${model}] ${prompt}`;
   // frozen v1 trace schema (design §6.1): the same field set the python
   // runtime emits — `nudgec trace-check` validates these as required
-  _emitTrace({
+  const record = {
     kind: "llm.call",
     model: model || "fake",
     params: { temperature: 0 },
@@ -164,7 +196,9 @@ export function llmCall(opts) {
     repair_round: 0,
     outcome: "ok",
     provider: "fake",
-  });
+  };
+  if (_branchId !== null) record.branch = _branchId;
+  _emitTrace(record);
   _budgetCharge(FAKE_CALL_COST, budget);
   return out;
 }
@@ -197,6 +231,7 @@ export function toolStub(name, args = [], opts = {}) {
   }
   const record = { kind: "tool.call", tool: name, input: args, output: [] };
   if (opts.server) record.server = opts.server;
+  if (_branchId !== null) record.branch = _branchId;
   _emitTrace(record);
   return [];
 }
