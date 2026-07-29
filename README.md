@@ -54,7 +54,7 @@ The compiler proves the schema matches, infers effects, and computes a static co
 - **Typed LLM calls** — output schema is a language type; violations trigger automatic repair, never reach your code
 - **Effect system** — pure / `LLM` / `Tool` / `IO` effects inferred and shown in signatures
 - **Deterministic replay** — full, hybrid, and live modes; traces are git-friendly JSONL
-- **Budget contracts** — per-call and per-run USD ceilings with static estimation (`nudgec cost`)
+- **Budget contracts** — per-call, per-run, and per-repair USD ceilings (`NUDGE_REPAIR_BUDGET`) with static estimation (`nudgec cost`)
 - **Checkpointed agent state** — crash, then `nudge resume` from the last checkpoint
 - **Native parallelism** — `par map`, `par race`, `par all` with compile-time race safety
 - **Prompt Clippy** — the compiler lints your `llm"""` blocks: vague instructions, missing output contracts, overlong prompts
