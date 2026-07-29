@@ -115,7 +115,8 @@ mod tests {
             drive(&src);
             if round % 1000 == 999 {
                 // mix in fully synthetic input too
-                drive(&random_string(&mut rng, 64 + rng.below(256)));
+                let len = 64 + rng.below(256);
+                drive(&random_string(&mut rng, len));
             }
         }
     }
@@ -124,7 +125,8 @@ mod tests {
     fn fuzz_random_strings_never_panic() {
         let mut rng = Rng(0x5EED_0002);
         for _ in 0..2000 {
-            drive(&random_string(&mut rng, 1 + rng.below(128)));
+            let len = 1 + rng.below(128);
+            drive(&random_string(&mut rng, len));
         }
     }
 

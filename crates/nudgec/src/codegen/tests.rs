@@ -1304,21 +1304,38 @@ fn budget_wall_aborts_the_run() {
     let py = e.dir.join("budget_wall.py");
     std::fs::write(&py, gen(src)).unwrap();
     let out = run_py(&e, &py, &[]);
-    assert!(!out.status.success(), "budget wall must abort the run, stdout: {}", String::from_utf8_lossy(&out.stdout));
+    assert!(
+        !out.status.success(),
+        "budget wall must abort the run, stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("BudgetExceeded"), "stderr: {stderr}");
 }
 
 #[test]
 fn schema_repair_recovers_and_traces_both_rounds() {
-    let Some(e) = e2e("schema_repair") else { return };
+    let Some(e) = e2e("schema_repair") else {
+        return;
+    };
     let src = "type T = { title: string }\nfn main() -> string uses LLM {\n    let t = llm\"\"\"give a json object with title\"\"\" with { model: \"m\", schema: T, retry: 1 with repair, budget: 0.05 USD }\n    t.title\n}";
     let py = e.dir.join("schema_repair.py");
     std::fs::write(&py, gen(src)).unwrap();
     let trace = e.dir.join("repair.jsonl");
     // first round fails validation, the repair round must recover
-    let out = run_py(&e, &py, &[("NUDGE_TRACE", trace.to_str().unwrap()), ("NUDGE_FAKE_FAIL_FIRST", "1")]);
-    assert!(out.status.success(), "repair must recover, stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let out = run_py(
+        &e,
+        &py,
+        &[
+            ("NUDGE_TRACE", trace.to_str().unwrap()),
+            ("NUDGE_FAKE_FAIL_FIRST", "1"),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "repair must recover, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let text = std::fs::read_to_string(&trace).unwrap();
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
     assert!(lines.iter().any(|l| l.contains("\"schema_violation\"") && l.contains("\"repair_round\": 0")), "trace:\n{text}");
@@ -1333,7 +1350,11 @@ fn route_choice_lands_in_the_trace() {
     std::fs::write(&py, gen(src)).unwrap();
     let trace = e.dir.join("route.jsonl");
     let out = run_py(&e, &py, &[("NUDGE_TRACE", trace.to_str().unwrap())]);
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let text = std::fs::read_to_string(&trace).unwrap();
     assert!(text.contains("\"route\": \"cheap\""), "trace:\n{text}");
     assert!(text.contains("\"model\": \"m1\""), "trace:\n{text}");

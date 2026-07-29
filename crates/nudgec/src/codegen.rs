@@ -204,7 +204,9 @@ fn emit_body(body: &[Stmt], aliases: &HashSet<String>, agent: Option<&str>) -> S
                 }
                 // emit without a prior check pass stays panic-free — the
                 // checker reports E0701; mark the spot instead of panicking
-                None => format!("# error: state write 'state.{field}' outside an agent block (E0701)\n    pass"),
+                None => format!(
+                    "# error: state write 'state.{field}' outside an agent block (E0701)\n    pass"
+                ),
             },
             Stmt::Assert(e) => format!("assert {}", py(e, aliases)),
             // MVP return rule: the fn's final expression is its return value.
@@ -257,7 +259,9 @@ fn emit_test_body(body: &[Stmt], aliases: &HashSet<String>) -> String {
             // the checker reports E0701 — stay panic-free when emit is
             // driven without a prior check pass (fuzz harness does this)
             Stmt::StateWrite { field, .. } => {
-                format!("# error: state write 'state.{field}' outside an agent block (E0701)\n    pass")
+                format!(
+                    "# error: state write 'state.{field}' outside an agent block (E0701)\n    pass"
+                )
             }
             Stmt::Assert(e) => format!("assert {}", py(e, aliases)),
             Stmt::ExprStmt(e) => py(e, aliases),

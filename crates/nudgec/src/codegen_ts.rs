@@ -28,16 +28,20 @@ pub fn emit_ts(items: &[Item]) -> String {
         .iter()
         .flat_map(|i| match i {
             Item::Fn { name, params, .. } | Item::Tool { name, params, .. } => {
-                vec![(name.clone(), params.iter().map(|p| p.name.clone()).collect())]
+                vec![(
+                    name.clone(),
+                    params.iter().map(|p| p.name.clone()).collect(),
+                )]
             }
             // agent fns live in the same namespace (the checker enforces
             // uniqueness, E0102)
             Item::Agent { fns, .. } => fns
                 .iter()
                 .filter_map(|f| match f {
-                    Item::Fn { name, params, .. } => {
-                        Some((name.clone(), params.iter().map(|p| p.name.clone()).collect()))
-                    }
+                    Item::Fn { name, params, .. } => Some((
+                        name.clone(),
+                        params.iter().map(|p| p.name.clone()).collect(),
+                    )),
                     _ => None,
                 })
                 .collect(),
@@ -198,23 +202,27 @@ fn emit_body(
                 }
             }
             // a state write is a checkpoint — the runtime Proxy persists it
-            Stmt::StateWrite { field, op, value } => match agent {
-                Some((target, list_fields)) => {
-                    let v = ts(value, aliases, sigs);
-                    match op {
-                        crate::ast::StateOp::Add if list_fields.iter().any(|f| f == field) => {
-                            // Nudge list += is concat; JS += on arrays stringifies
-                            format!("_state_{target}.{field} = (_state_{target}.{field}).concat({v});")
+            Stmt::StateWrite { field, op, value } => {
+                match agent {
+                    Some((target, list_fields)) => {
+                        let v = ts(value, aliases, sigs);
+                        match op {
+                            crate::ast::StateOp::Add if list_fields.iter().any(|f| f == field) => {
+                                // Nudge list += is concat; JS += on arrays stringifies
+                                format!("_state_{target}.{field} = (_state_{target}.{field}).concat({v});")
+                            }
+                            crate::ast::StateOp::Set => format!("_state_{target}.{field} = {v};"),
+                            crate::ast::StateOp::Add => format!("_state_{target}.{field} += {v};"),
+                            crate::ast::StateOp::Sub => format!("_state_{target}.{field} -= {v};"),
                         }
-                        crate::ast::StateOp::Set => format!("_state_{target}.{field} = {v};"),
-                        crate::ast::StateOp::Add => format!("_state_{target}.{field} += {v};"),
-                        crate::ast::StateOp::Sub => format!("_state_{target}.{field} -= {v};"),
                     }
+                    // emit without a prior check pass stays panic-free — the
+                    // checker reports E0701; mark the spot instead of panicking
+                    None => format!(
+                        "// error: state write 'state.{field}' outside an agent block (E0701)"
+                    ),
                 }
-                // emit without a prior check pass stays panic-free — the
-                // checker reports E0701; mark the spot instead of panicking
-                None => format!("// error: state write 'state.{field}' outside an agent block (E0701)"),
-            },
+            }
             Stmt::Assert(e) => format!(
                 "if (!({})) throw new Error(\"assertion failed\");",
                 ts(e, aliases, sigs)
@@ -778,11 +786,18 @@ mod tests {
             .current_dir(&dir)
             .output()
             .unwrap();
-        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "2");
         let ckpt = std::fs::read_to_string(dir.join(".nudge/runs/tsr1/checkpoint.json")).unwrap();
         assert!(ckpt.contains("\"writes\": 4"), "checkpoint: {ckpt}");
-        assert!(ckpt.contains("\"a\"") && ckpt.contains("\"b\""), "checkpoint: {ckpt}");
+        assert!(
+            ckpt.contains("\"a\"") && ckpt.contains("\"b\""),
+            "checkpoint: {ckpt}"
+        );
 
         // faithful resume: the prefix replays from defaults, the guard
         // passes, and += does not double-apply
