@@ -188,11 +188,11 @@ fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut V
 }
 
 fn walk_stmt(ctx: &str, s: &Stmt, records: &[(String, Vec<String>)], out: &mut Vec<Lint>) {
-    match s {
-        Stmt::Let { value, .. } | Stmt::StateWrite { value, .. } => {
+    match &s.kind {
+        StmtKind::Let { value, .. } | StmtKind::StateWrite { value, .. } => {
             walk_expr(ctx, value, records, out)
         }
-        Stmt::Assert(e) | Stmt::ExprStmt(e) => walk_expr(ctx, e, records, out),
+        StmtKind::Assert(e) | StmtKind::ExprStmt(e) => walk_expr(ctx, e, records, out),
     }
 }
 
@@ -351,3 +351,4 @@ mod tests {
         assert_eq!(prompt_words(""), 0);
     }
 }
+
