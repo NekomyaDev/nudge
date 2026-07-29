@@ -21,6 +21,9 @@ use std::fmt;
 pub struct CheckError {
     pub code: &'static str,
     pub msg: String,
+    /// Statement span the error was raised in (spanned AST, stage 1) —
+    /// `None` for item-level diagnostics that have no single statement home.
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -83,6 +86,7 @@ fn resolve(
             _ => {
                 if visiting.iter().any(|v| v == name) {
                     errs.push(CheckError {
+                        span: None,
                         code: "E0202",
                         msg: format!(
                             "cyclic type alias '{}'",
@@ -101,6 +105,7 @@ fn resolve(
                     }
                     None => {
                         errs.push(CheckError {
+                            span: None,
                             code: "E0101",
                             msg: format!("unknown type '{name}'"),
                         });
@@ -129,6 +134,7 @@ fn validate_refinement(name: &str, args: &[Expr], errs: &mut Vec<CheckError>) {
         "range" => {
             if !(args.len() == 2 && args.iter().all(numeric)) {
                 errs.push(CheckError {
+                    span: None,
                     code: "E0202",
                     msg: format!(
                         "@range expects 2 numeric bounds, e.g. @range(0, 1) — got {args:?}"
@@ -144,12 +150,14 @@ fn validate_refinement(name: &str, args: &[Expr], errs: &mut Vec<CheckError>) {
                 };
             if !ok {
                 errs.push(CheckError {
+                    span: None,
                     code: "E0202",
                     msg: format!("@format expects one of (url, email) — got {args:?}"),
                 });
             }
         }
         _ => errs.push(CheckError {
+            span: None,
             code: "E0202",
             msg: format!("unknown refinement '@{name}' (known: @range, @format)"),
         }),
@@ -273,10 +281,10 @@ fn body_effects(
     calls: &mut BTreeSet<String>,
 ) {
     for st in body {
-        match st {
-            Stmt::Let { value, .. } => direct_effects(value, g, effects, calls),
-            Stmt::StateWrite { value, .. } => direct_effects(value, g, effects, calls),
-            Stmt::Assert(e) | Stmt::ExprStmt(e) => direct_effects(e, g, effects, calls),
+        match &st.kind {
+            StmtKind::Let { value, .. } => direct_effects(value, g, effects, calls),
+            StmtKind::StateWrite { value, .. } => direct_effects(value, g, effects, calls),
+            StmtKind::Assert(e) | StmtKind::ExprStmt(e) => direct_effects(e, g, effects, calls),
         }
     }
 }
@@ -326,8 +334,9 @@ fn check_fn_body(
     }
     let mut last_ty = Ty::None_;
     for st in body {
-        match st {
-            Stmt::Let {
+        let before = errs.len();
+        match &st.kind {
+            StmtKind::Let {
                 name: n, ty, value, ..
             } => {
                 let vt = check_expr(value, &locals, g, errs);
@@ -336,6 +345,7 @@ fn check_fn_body(
                         let at = resolve(ann, g, &mut Vec::new(), errs);
                         if !assignable(&vt, &at) {
                             errs.push(CheckError {
+                                span: None,
                                 code: "E0201",
                                 msg: format!("let '{n}' is annotated {at} but the value is {vt}"),
                             });
@@ -346,16 +356,18 @@ fn check_fn_body(
                 };
                 locals.insert(n.clone(), bound);
             }
-            Stmt::StateWrite { field, op, value } => {
+            StmtKind::StateWrite { field, op, value } => {
                 let vt = check_expr(value, &locals, g, errs);
                 match agent_ctx {
                     None => errs.push(CheckError {
+                        span: None,
                         code: "E0701",
                         msg: format!("state write 'state.{field}' outside an agent block — state exists only inside `agent` (design §7)"),
                     }),
                     Some((_, fields)) => {
                         match fields.iter().find(|(f, _, _)| f == field) {
                             None => errs.push(CheckError {
+                                span: None,
                                 code: "E0701",
                                 msg: format!("agent state has no field '{field}' — declare it in the state block"),
                             }),
@@ -368,6 +380,7 @@ fn check_fn_body(
                                     let want = resolve(fty, g, &mut Vec::new(), errs);
                                     if !assignable(&vt, &want) {
                                         errs.push(CheckError {
+                                            span: None,
                                             code: "E0201",
                                             msg: format!("state field '{field}' is {want} but the value is {vt}"),
                                         });
@@ -378,23 +391,32 @@ fn check_fn_body(
                     }
                 }
             }
-            Stmt::Assert(e) => {
+            StmtKind::Assert(e) => {
                 let at = check_expr(e, &locals, g, errs);
                 if !assignable(&at, &Ty::Bool) {
                     errs.push(CheckError {
+                        span: None,
                         code: "E0201",
                         msg: format!("assert expects a bool condition, got {at}"),
                     });
                 }
             }
-            Stmt::ExprStmt(e) => {
+            StmtKind::ExprStmt(e) => {
                 last_ty = check_expr(e, &locals, g, errs);
+            }
+        }
+        // spanned AST (stage 1): statement-level diagnostics point at their
+        // statement unless check_expr attached something more specific later
+        for e in &mut errs[before..] {
+            if e.span.is_none() {
+                e.span = Some(st.span);
             }
         }
     }
     let want = resolve(ret, g, &mut Vec::new(), errs);
     if !assignable(&last_ty, &want) {
         errs.push(CheckError {
+            span: None,
             code: "E0201",
             msg: format!("fn '{name}' declares -> {want} but its body yields {last_ty}"),
         });
@@ -416,6 +438,7 @@ fn schema_expr_ty(e: &Expr, g: &Globals, errs: &mut Vec<CheckError>) -> Ty {
         Some(t) => resolve(&t, g, &mut Vec::new(), errs),
         None => {
             errs.push(CheckError {
+                span: None,
                 code: "E0202",
                 msg: format!(
                     "schema must be a type (e.g. schema: Report or schema: [Finding]) — got {e:?}"
@@ -439,6 +462,7 @@ fn check_expr(
             // v0.1 speaks USD only (design §4.3)
             if unit != "USD" {
                 errs.push(CheckError {
+                    span: None,
                     code: "E0501",
                     msg: format!("unknown budget unit '{unit}' (v0.1 supports USD only)"),
                 });
@@ -457,6 +481,7 @@ fn check_expr(
                     g.fns.contains_key(n) || g.tools.contains_key(n) || g.aliases.contains_key(n);
                 if !known {
                     errs.push(CheckError {
+                        span: None,
                         code: "E0101",
                         msg: format!("unknown identifier '{n}'"),
                     });
@@ -479,6 +504,7 @@ fn check_expr(
                     elem = t; // widen (int → float)
                 } else {
                     errs.push(CheckError {
+                        span: None,
                         code: "E0201",
                         msg: format!(
                             "list element {t} does not fit the list's element type {elem}"
@@ -496,6 +522,7 @@ fn check_expr(
                     let root = name.split('.').next().unwrap_or(name);
                     if !locals.contains_key(root) {
                         errs.push(CheckError {
+                            span: None,
                             code: "E0101",
                             msg: format!("unknown identifier '{name}' in prompt interpolation"),
                         });
@@ -526,6 +553,7 @@ fn check_expr(
                     "len" => {
                         if args.len() != 1 {
                             errs.push(CheckError {
+                                span: None,
                                 code: "E0201",
                                 msg: format!("'len' takes 1 argument(s), got {}", args.len()),
                             });
@@ -535,6 +563,7 @@ fn check_expr(
                     "zip" => {
                         if args.len() != 2 {
                             errs.push(CheckError {
+                                span: None,
                                 code: "E0201",
                                 msg: format!("'zip' takes 2 argument(s), got {}", args.len()),
                             });
@@ -553,6 +582,7 @@ fn check_expr(
                 if let Some((params, ret)) = sig {
                     if args.len() > params.len() {
                         errs.push(CheckError {
+                            span: None,
                             code: "E0201",
                             msg: format!(
                                 "'{name}' takes {} argument(s), got {}",
@@ -566,6 +596,7 @@ fn check_expr(
                             let want = resolve(pt, g, &mut Vec::new(), errs);
                             if !assignable(at, &want) {
                                 errs.push(CheckError {
+                                    span: None,
                                     code: "E0201",
                                     msg: format!("argument to '{name}' must be {want}, got {at}"),
                                 });
@@ -580,10 +611,12 @@ fn check_expr(
                         for (k, vt) in &kwarg_tys {
                             match params.iter().position(|(pn, _)| pn == *k) {
                                 None => errs.push(CheckError {
+                                    span: None,
                                     code: "E0201",
                                     msg: format!("'{name}' has no parameter '{k}'"),
                                 }),
                                 Some(pos) if pos < args.len() => errs.push(CheckError {
+                                    span: None,
                                     code: "E0201",
                                     msg: format!("parameter '{k}' of '{name}' got a value twice"),
                                 }),
@@ -591,6 +624,7 @@ fn check_expr(
                                     let want = resolve(&params[pos].1, g, &mut Vec::new(), errs);
                                     if !assignable(vt, &want) {
                                         errs.push(CheckError {
+                                            span: None,
                                             code: "E0201",
                                             msg: format!("argument '{k}' to '{name}' must be {want}, got {vt}"),
                                         });
@@ -601,6 +635,7 @@ fn check_expr(
                         }
                         if !missing.is_empty() {
                             errs.push(CheckError {
+                                span: None,
                                 code: "E0201",
                                 msg: format!(
                                     "'{name}' takes {} argument(s), got {} (missing: {})",
@@ -615,6 +650,7 @@ fn check_expr(
                 }
                 // a call to a name that is neither builtin nor declared
                 errs.push(CheckError {
+                    span: None,
                     code: "E0101",
                     msg: format!("unknown identifier '{name}' (called but never declared)"),
                 });
@@ -626,6 +662,7 @@ fn check_expr(
                 Some((_, t)) => t.clone(),
                 None => {
                     errs.push(CheckError {
+                        span: None,
                         code: "E0101",
                         msg: format!("record has no field '{name}'"),
                     });
@@ -649,6 +686,7 @@ fn check_expr(
                     for (side, t) in [("left", &lt), ("right", &rt_)] {
                         if !assignable(t, &Ty::Bool) {
                             errs.push(CheckError {
+                                span: None,
                                 code: "E0201",
                                 msg: format!("'{word}' expects bool operands, {side} side is {t}"),
                             });
@@ -673,6 +711,7 @@ fn check_expr(
                         || matches!(rt_, Ty::Unknown);
                     if !comparable {
                         errs.push(CheckError {
+                            span: None,
                             code: "E0201",
                             msg: format!("cannot order-compare {lt} and {rt_}"),
                         });
@@ -685,6 +724,7 @@ fn check_expr(
                 BinOp::Eq | BinOp::NotEq => {
                     if !assignable(&lt, &rt_) && !assignable(&rt_, &lt) {
                         errs.push(CheckError {
+                            span: None,
                             code: "E0201",
                             msg: format!("cannot compare {lt} with {rt_} for equality"),
                         });
@@ -773,6 +813,7 @@ fn check_expr(
                 (Ty::List(a), Ty::List(b)) => {
                     if !assignable(b, a) {
                         errs.push(CheckError {
+                            span: None,
                             code: "E0201",
                             msg: format!("merge list element mismatch: {lt} vs {rt_}"),
                         });
@@ -782,6 +823,7 @@ fn check_expr(
                 (Ty::Unknown, t) | (t, Ty::Unknown) => t.clone(),
                 _ => {
                     errs.push(CheckError {
+                        span: None,
                         code: "E0201",
                         msg: format!(
                             "merge expects two records or two lists, got {lt} | merge {rt_}"
@@ -801,6 +843,7 @@ fn check_expr(
                         let ct = check_expr(c, locals, g, errs);
                         if !assignable(&ct, &Ty::Bool) {
                             errs.push(CheckError {
+                                span: None,
                                 code: "E0201",
                                 msg: format!(
                                     "route arm '{label}' has a non-bool when condition ({ct})"
@@ -813,6 +856,7 @@ fn check_expr(
             }
             if !has_otherwise {
                 errs.push(CheckError {
+                    span: None,
                     code: "E0702",
                     msg: "route block needs an `otherwise` arm — no model is chosen when every `when` is false (design §4.4)".into(),
                 });
@@ -833,6 +877,7 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
             Item::TypeAlias { name, ty } => {
                 if g.aliases.insert(name.clone(), ty.clone()).is_some() {
                     errs.push(CheckError {
+                        span: None,
                         code: "E0102",
                         msg: format!("duplicate type alias '{name}'"),
                     });
@@ -855,6 +900,7 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                     .is_some()
                 {
                     errs.push(CheckError {
+                        span: None,
                         code: "E0102",
                         msg: format!("duplicate fn '{name}'"),
                     });
@@ -877,6 +923,7 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                     .is_some()
                 {
                     errs.push(CheckError {
+                        span: None,
                         code: "E0102",
                         msg: format!("duplicate tool '{name}'"),
                     });
@@ -902,6 +949,7 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                             .is_some()
                         {
                             errs.push(CheckError {
+                                span: None,
                                 code: "E0102",
                                 msg: format!("duplicate fn '{name}' (agent fns share the top-level namespace)"),
                             });
@@ -974,8 +1022,9 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
             Item::Test { body, .. } => {
                 let mut locals: HashMap<String, Ty> = HashMap::new();
                 for st in body {
-                    match st {
-                        Stmt::Let {
+                    let before = errs.len();
+                    match &st.kind {
+                        StmtKind::Let {
                             name, ty, value, ..
                         } => {
                             let vt = check_expr(value, &locals, &g, &mut errs);
@@ -985,6 +1034,7 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                                 let at = resolve(ann, &g, &mut Vec::new(), &mut errs);
                                 if !assignable(&vt, &at) {
                                     errs.push(CheckError {
+                                        span: None,
                                         code: "E0201",
                                         msg: format!(
                                             "let '{name}' is annotated {at} but the value is {vt}"
@@ -994,23 +1044,30 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                             }
                             locals.insert(name.clone(), vt);
                         }
-                        Stmt::StateWrite { field, .. } => {
+                        StmtKind::StateWrite { field, .. } => {
                             errs.push(CheckError {
+                                span: None,
                                 code: "E0701",
                                 msg: format!("state write 'state.{field}' outside an agent block — state exists only inside `agent` (design §7)"),
                             });
                         }
-                        Stmt::Assert(e) => {
+                        StmtKind::Assert(e) => {
                             let at = check_expr(e, &locals, &g, &mut errs);
                             if !assignable(&at, &Ty::Bool) {
                                 errs.push(CheckError {
+                                    span: None,
                                     code: "E0201",
                                     msg: format!("assert expects a bool condition, got {at}"),
                                 });
                             }
                         }
-                        Stmt::ExprStmt(e) => {
+                        StmtKind::ExprStmt(e) => {
                             check_expr(e, &locals, &g, &mut errs);
+                        }
+                    }
+                    for e in &mut errs[before..] {
+                        if e.span.is_none() {
+                            e.span = Some(st.span);
                         }
                     }
                 }
@@ -1065,6 +1122,7 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
             for d in declared {
                 if !KNOWN_EFFECTS.contains(&d.as_str()) {
                     errs.push(CheckError {
+                        span: None,
                         code: "E0101",
                         msg: format!("unknown effect '{d}' in fn '{name}' (known: LLM, Tool, IO)"),
                     });
@@ -1085,6 +1143,7 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                 .join(", ");
             if declared.is_empty() {
                 errs.push(CheckError {
+                    span: None,
                     code: "E0301",
                     msg: format!(
                         "fn '{name}' uses {list} but has no `uses` clause — add `uses {list}` to its signature"
@@ -1092,6 +1151,7 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                 });
             } else {
                 errs.push(CheckError {
+                    span: None,
                     code: "E0302",
                     msg: format!(
                         "fn '{name}' declares `uses {}` but its body also uses {list} — annotation too narrow",
@@ -1119,6 +1179,20 @@ mod tests {
     fn research_agent_checks_clean() {
         let src = include_str!("../../../examples/research_agent.ndg");
         assert_eq!(check_src(src), vec![], "expected zero diagnostics");
+    }
+
+    #[test]
+    fn statement_errors_carry_spans() {
+        // the let on line 1 is annotated string but bound to an int — the
+        // diagnostic must point at that statement's span (spanned AST §1)
+        let errs = check_src("fn f() -> int { let x: string = 1\n    x }");
+        let e = errs
+            .iter()
+            .find(|e| e.code == "E0201" && e.msg.contains("let 'x'"))
+            .expect("got no let diagnostic");
+        let sp = e.span.expect("diagnostic carries no span");
+        assert_eq!(sp.start, 16, "span should start at the let keyword");
+        assert!(sp.end > sp.start);
     }
 
     #[test]
@@ -1583,3 +1657,4 @@ mod tests {
         assert!(errs.iter().any(|e| e.code == "E0201"), "got {errs:?}");
     }
 }
+
