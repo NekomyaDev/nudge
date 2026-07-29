@@ -1181,6 +1181,7 @@ test "budget" {
                     },
                     other => panic!("expected llm call, got {other:?}"),
                 },
+                other => panic!("expected llm call stmt, got {other:?}"),
             },
             _ => panic!("expected fn"),
         }
