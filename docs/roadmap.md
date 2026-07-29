@@ -24,10 +24,15 @@ Finish the "why did my agent do that?" answer beyond doubt.
   walls, par branches. Chrome DevTools for agents
 - ~~**Par branch labels (NTF v1.1)**~~ ✅ shipped — `par map/all/race` lanes carry an additive
   `branch` field in traces; trace-view badges and color-codes each lane
-- **DAP groundwork** — Debug Adapter Protocol spike on the replay engine
-  (breakpoints on `llm.call`s, step through a run, time-travel over the trace)
-- **SSE/HTTP MCP transport**, **TS runtime parity** (par helpers + NTF v1.1
-  branch labels shipped ✅; streaming and real providers remain)
+- ~~**DAP groundwork**~~ ✅ shipped — `nudgec debug <trace.jsonl>` speaks DAP over
+  stdio: breakpoints on record seqs, step/continue through a run, record
+  fields as variables. Live attach lands with the spanned AST
+- **SSE/HTTP MCP transport** — design-blocked for now: remote MCP implies
+  HTTPS, and TLS cannot be implemented under the zero-dependency constraint;
+  needs either a dep allowance or a sidecar story
+- ~~**TS runtime parity**~~ ✅ shipped — par helpers with NTF v1.1 branch labels,
+  `llmStream` fake streaming, and the un-awaited `Promise.all` leak fixed;
+  real providers and streamed repair stay Python-side by design
 - ~~**Real streaming**~~ ✅ shipped — `llm_stream` now streams live over SSE
   (OpenAI-compatible + Anthropic Messages); early-abort prefix validation and
   the repair loop work against live streams, usage-based tokens/cost in traces
