@@ -1292,7 +1292,6 @@ fn state_write_minus_eq_compiles_and_runs() {
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1");
 }
 
-
 // ── v1.6 e2e: budget wall, schema repair loop, model routing ───────
 
 #[test]
@@ -1338,8 +1337,18 @@ fn schema_repair_recovers_and_traces_both_rounds() {
     );
     let text = std::fs::read_to_string(&trace).unwrap();
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
-    assert!(lines.iter().any(|l| l.contains("\"schema_violation\"") && l.contains("\"repair_round\": 0")), "trace:\n{text}");
-    assert!(lines.iter().any(|l| l.contains("\"ok\"") && l.contains("\"repair_round\": 1")), "trace:\n{text}");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("\"schema_violation\"") && l.contains("\"repair_round\": 0")),
+        "trace:\n{text}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("\"ok\"") && l.contains("\"repair_round\": 1")),
+        "trace:\n{text}"
+    );
 }
 
 #[test]

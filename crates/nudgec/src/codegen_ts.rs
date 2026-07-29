@@ -808,7 +808,11 @@ mod tests {
             .current_dir(&dir)
             .output()
             .unwrap();
-        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "2");
 
         // diverged resume: the program changed since the "crash" — the

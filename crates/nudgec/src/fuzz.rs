@@ -37,10 +37,54 @@ mod tests {
 
     /// Interesting single-token fragments the mutator splices in.
     const FRAGMENTS: &[&str] = &[
-        "\"\"\"", "llm\"\"\"", "{", "}", "(", ")", "[", "]", "|", "->", "==", "!=", "<=", ">=",
-        "+=", "-=", "=", ":", ",", ".", "@range(0, 1)", "state.", "0.02 USD", "\"", "\\", "é", "😀",
-        "par map", "merge", "zip", "route{", "when", "otherwise", "\n\n\n", "\t", "fn", "agent",
-        "stream let", "with {", "budget:", "schema:", "999999999999999999999", "-", "0x", "1.2.3",
+        "\"\"\"",
+        "llm\"\"\"",
+        "{",
+        "}",
+        "(",
+        ")",
+        "[",
+        "]",
+        "|",
+        "->",
+        "==",
+        "!=",
+        "<=",
+        ">=",
+        "+=",
+        "-=",
+        "=",
+        ":",
+        ",",
+        ".",
+        "@range(0, 1)",
+        "state.",
+        "0.02 USD",
+        "\"",
+        "\",
+        "é",
+        "😀",
+        "par map",
+        "merge",
+        "zip",
+        "route{",
+        "when",
+        "otherwise",
+        "
+
+
+",
+        "	",
+        "fn",
+        "agent",
+        "stream let",
+        "with {",
+        "budget:",
+        "schema:",
+        "999999999999999999999",
+        "-",
+        "0x",
+        "1.2.3",
     ];
 
     fn mutate(rng: &mut Rng, base: &str) -> String {
@@ -97,8 +141,12 @@ mod tests {
 
     /// One fuzz case must never panic — any Result is acceptable.
     fn drive(src: &str) {
-        let Ok(tokens) = lexer::lex(src) else { return };
-        let Ok(items) = parser::parse(tokens) else { return };
+        let Ok(tokens) = lexer::lex(src) else {
+            return;
+        };
+        let Ok(items) = parser::parse(tokens) else {
+            return;
+        };
         let _ = check::check(&items);
         // codegen on unchecked garbage must stay panic-free too (the CLI
         // always checks first, but emit must not rely on that)
@@ -134,8 +182,26 @@ mod tests {
     fn fuzz_json_parser_never_panics() {
         let mut rng = Rng(0x5EED_0003);
         let json_fragments = [
-            "{", "}", "[", "]", ":", ",", "\"", "\\u", "\\uD83D", "\\uDE00", "null", "true",
-            "false", "-", ".", "e+", "e-", "123456789012345678901234567890", "\"\\\"", "😀",
+            "{",
+            "}",
+            "[",
+            "]",
+            ":",
+            ",",
+            "\"",
+            "\u",
+            "\uD83D",
+            "\uDE00",
+            "null",
+            "true",
+            "false",
+            "-",
+            ".",
+            "e+",
+            "e-",
+            "123456789012345678901234567890",
+            "\"\\"",
+            "😀",
         ];
         for _ in 0..4000 {
             let mut s = String::new();
