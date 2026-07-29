@@ -937,4 +937,3 @@ mod tests {
         assert!(stderr.contains("BudgetExceeded"), "stderr: {stderr}");
     }
 }
-
