@@ -11,6 +11,7 @@
 //!   nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json (v1.0, design §9)
 //!   nudgec lsp                serve the Language Server Protocol over stdio (v1.0, design §10)
 //!   nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace (v1.2)
+//!   nudgec trace-diff <a.jsonl> <b.jsonl>  compare two traces: totals + per-record deltas (v1.2)
 
 mod a2a;
 mod ast;
@@ -25,6 +26,7 @@ mod lint;
 mod lsp;
 mod parser;
 mod tracecheck;
+mod tracediff;
 mod traceview;
 
 use std::{env, fs, process};
@@ -44,6 +46,7 @@ fn usage() -> ! {
     eprintln!("  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json");
     eprintln!("  nudgec lsp                serve the Language Server Protocol over stdio");
     eprintln!("  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace");
+    eprintln!("  nudgec trace-diff <a.jsonl> <b.jsonl>  compare two traces");
     process::exit(64);
 }
 
@@ -62,6 +65,13 @@ fn main() {
     // `lsp` takes no file argument — it serves JSON-RPC over stdio
     if args.len() == 2 && args[1] == "lsp" {
         lsp::run();
+        return;
+    }
+    // `trace-diff` takes two trace files
+    if args.len() == 4 && args[1] == "trace-diff" {
+        let a = read_src(&args[2]);
+        let b = read_src(&args[3]);
+        print!("{}", tracediff::diff(&a, &b));
         return;
     }
     // `trace-view` takes a trace file plus optional --port/--no-open flags
