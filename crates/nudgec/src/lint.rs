@@ -11,7 +11,7 @@
 //!   W0004 schema-without-repair — a `schema` with no `retry: N with repair`:
 //!                           a violation raises at runtime instead of repairing
 
-use crate::ast::{Expr, Item, Stmt, StmtKind, TypeExpr};
+use crate::ast::{Expr, ExprKind, Item, Stmt, StmtKind, TypeExpr};
 
 #[derive(Debug)]
 pub struct Lint {
