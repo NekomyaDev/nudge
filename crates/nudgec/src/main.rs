@@ -117,7 +117,22 @@ fn main() {
         read_src(&args[2])
     };
 
-    fn print_lints(items: &[ast::Item]) {
+    /// 1-based line:col of a byte offset, for human-facing diagnostics.
+fn line_col(src: &str, at: usize) -> (usize, usize) {
+    let mut line = 1;
+    let mut col = 1;
+    for ch in src[..at.min(src.len())].chars() {
+        if ch == '\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
+fn print_lints(items: &[ast::Item]) {
         for l in lint::lint_items(items) {
             eprintln!("warning[{}]: {}", l.code, l.msg);
         }
@@ -160,7 +175,13 @@ fn main() {
                     eprintln!("-- checked {} item(s): OK", items.len());
                 } else {
                     for e in &errs {
-                        eprintln!("error[{}]: {}", e.code, e.msg);
+                        match e.span {
+                            Some(sp) => {
+                                let (l, c) = line_col(&src, sp.start);
+                                eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
+                            }
+                            None => eprintln!("error[{}]: {}", e.code, e.msg),
+                        }
                     }
                     process::exit(1);
                 }
@@ -185,7 +206,13 @@ fn main() {
                 let errs = check::check(&items);
                 if !errs.is_empty() {
                     for e in &errs {
-                        eprintln!("error[{}]: {}", e.code, e.msg);
+                        match e.span {
+                            Some(sp) => {
+                                let (l, c) = line_col(&src, sp.start);
+                                eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
+                            }
+                            None => eprintln!("error[{}]: {}", e.code, e.msg),
+                        }
                     }
                     process::exit(1);
                 }
@@ -218,7 +245,13 @@ fn main() {
                 let errs = check::check(&items);
                 if !errs.is_empty() {
                     for e in &errs {
-                        eprintln!("error[{}]: {}", e.code, e.msg);
+                        match e.span {
+                            Some(sp) => {
+                                let (l, c) = line_col(&src, sp.start);
+                                eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
+                            }
+                            None => eprintln!("error[{}]: {}", e.code, e.msg),
+                        }
                     }
                     process::exit(1);
                 }
@@ -251,7 +284,13 @@ fn main() {
                 let errs = check::check(&items);
                 if !errs.is_empty() {
                     for e in &errs {
-                        eprintln!("error[{}]: {}", e.code, e.msg);
+                        match e.span {
+                            Some(sp) => {
+                                let (l, c) = line_col(&src, sp.start);
+                                eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
+                            }
+                            None => eprintln!("error[{}]: {}", e.code, e.msg),
+                        }
                     }
                     process::exit(1);
                 }
@@ -387,3 +426,4 @@ fn main() {
         _ => usage(),
     }
 }
+
