@@ -1065,7 +1065,13 @@ test "budget" {
                 let StmtKind::Assert(a2) = &body[2].kind else {
                     panic!("expected assert")
                 };
-                assert!(matches!(&a2.kind, ExprKind::Binary { op: BinOp::GtEq, .. }));
+                assert!(matches!(
+                    &a2.kind,
+                    ExprKind::Binary {
+                        op: BinOp::GtEq,
+                        ..
+                    }
+                ));
             }
             other => panic!("expected test, got {other:?}"),
         }
