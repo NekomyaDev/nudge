@@ -75,7 +75,7 @@ let recs = [], filter = "all", q = "", sel = -1;
 fetch("/trace").then(r => r.text()).then(t => {
   recs = t.split("\n").filter(l => l.trim()).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
   document.getElementById("file").textContent = location.pathname === "/" ? (window.__FILE__ || "") : "";
-  renderStats(); renderList();
+  renderStats(); renderList(); if (sel >= 0) renderDetail();
 });
 
 function money(x) { return "$" + Number(x).toFixed(4); }
