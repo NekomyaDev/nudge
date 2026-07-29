@@ -65,7 +65,9 @@ of ``openai | gemini | groq | ollama`` (OpenAI-compatible HTTP, design
 configure it,
 ``NUDGE_TRACE`` (trace path, default ``trace.jsonl``), ``NUDGE_REPLAY``
 (trace to replay from instead of calling a provider), ``NUDGE_BUDGET``
-(run-level USD budget, §4.3), ``NUDGE_RUN_ID`` (checkpoint store key,
+(run-level USD budget, §4.3), ``NUDGE_REPAIR_BUDGET`` (cumulative ceiling on
+repair-round spend across the run — repair is valuable, but not unbounded),
+``NUDGE_RUN_ID`` (checkpoint store key,
 §7), ``NUDGE_RESUME`` (with ``NUDGE_REPLAY``: continue past the recorded
 prefix instead of raising ``ReplayMismatch``).
 """
@@ -775,6 +777,35 @@ def _call_cost(provider, model, in_t, out_t):
 
 _BUDGET_STATE = {"spent": 0.0, "lock": threading.Lock()}
 
+_REPAIR_BUDGET_STATE = {"spent": 0.0, "lock": threading.Lock()}
+
+
+def _repair_budget_limit():
+    raw = os.environ.get("NUDGE_REPAIR_BUDGET")
+    return float(raw) if raw else None
+
+
+def _repair_budget_precheck():
+    """Repair rounds share a cumulative, run-level ceiling. Reasoning models
+    can make a single repair round cost more than the original call — the
+    wall keeps 'fix it' from silently outspending the work itself."""
+    limit = _repair_budget_limit()
+    if limit is not None:
+        with _REPAIR_BUDGET_STATE["lock"]:
+            spent = _REPAIR_BUDGET_STATE["spent"]
+        if spent >= limit:
+            raise BudgetExceeded(
+                f"repair budget exhausted: ${spent:.4f} spent of ${limit:.4f} "
+                "(NUDGE_REPAIR_BUDGET caps cumulative repair-round spend)"
+            )
+
+
+def _repair_budget_charge(cost):
+    if _repair_budget_limit() is not None:
+        with _REPAIR_BUDGET_STATE["lock"]:
+            _REPAIR_BUDGET_STATE["spent"] += cost
+
+
 
 def _budget_limit():
     raw = os.environ.get("NUDGE_BUDGET")
@@ -1207,11 +1238,15 @@ def llm_stream(prompt, model=None, schema=None, retry=0, repair=False,
             )
         site_spent[0] += cost
         _budget_charge(cost, None)
+        if round_no >= 1:
+            _repair_budget_charge(cost)
 
     def _x(d):
         return {**d, "route": route_label} if route_label else d
 
     for round_no in range(attempts):
+        if round_no >= 1:
+            _repair_budget_precheck()
         out = _fake_answer(prompt, model, schema)
         if schema is not None:
             text = json.dumps(_jsonable(out), ensure_ascii=False)
@@ -1310,7 +1345,11 @@ def llm_call(prompt, model=None, schema=None, retry=0, repair=False,
             )
         site_spent[0] += cost
         _budget_charge(cost, None)
+        if round_no >= 1:
+            _repair_budget_charge(cost)
     for round_no in range(attempts):
+        if round_no >= 1 and provider != "replay":
+            _repair_budget_precheck()
         if provider == "replay":
             outputs = _replay_outputs()
             if _REPLAY_STATE["idx"] >= len(outputs):
