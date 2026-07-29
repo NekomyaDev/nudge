@@ -22,7 +22,7 @@ jobs:
         run: |
           mkdir -p smoke traces
           cat > smoke/mimo_smoke.ndg <<'NDG'
-          type Brief = { summary: string, keywords: [string], reading_time_min: int }
+          type Brief = { summary: string, keywords: [string], reading_time_min: float }
 
           fn summarize(topic: string) -> Brief uses LLM {
               llm"""Summarize {topic} in one sentence, then give 3 keywords and an estimated reading time in minutes. Return the summary, keywords and reading_time_min."""
