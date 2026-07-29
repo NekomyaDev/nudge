@@ -797,6 +797,112 @@ def _anthropic_chat(provider, model, prompt):
     return text, int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0)
 
 
+def _sse_events(req, provider):
+    """Open an SSE request (429 backoff like the non-streaming path) and
+    yield parsed ``data: {...}`` payloads until ``[DONE]`` or EOF."""
+    import urllib.error
+    import urllib.request
+    resp = None
+    last_err = None
+    for attempt in range(4):
+        try:
+            resp = urllib.request.urlopen(req, timeout=120)
+            break
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", "replace")[:500]
+            last_err = RuntimeError(f"{provider} provider HTTP {e.code}: {detail}")
+            if e.code == 429 and attempt < 3:
+                time.sleep(5 * (5 ** attempt))
+                continue
+            raise last_err
+        except urllib.error.URLError as e:
+            raise RuntimeError(f"{provider} provider unreachable: {e.reason}")
+    with resp:
+        for raw in resp:
+            line = raw.decode("utf-8", "replace").strip()
+            if not line.startswith("data:"):
+                continue
+            payload = line[5:].strip()
+            if payload == "[DONE]":
+                return
+            try:
+                ev = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(ev, dict):
+                yield ev
+
+
+def _openai_chat_stream(provider, model, prompt, usage):
+    """Stream one OpenAI-compatible chat completion: yields text deltas and
+    fills ``usage`` ("in"/"out") when the server reports token counts."""
+    import urllib.request
+    base = os.environ.get("NUDGE_BASE_URL", _PROVIDER_BASE_URLS[provider])
+    key_env = _PROVIDER_KEY_ENVS.get(provider)
+    key = os.environ.get("NUDGE_API_KEY") or (os.environ.get(key_env, "") if key_env else "")
+    body = json.dumps({
+        "model": model,
+        "messages": [{"role": "user", "content": str(prompt)}],
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }).encode()
+    req = urllib.request.Request(
+        base.rstrip("/") + "/chat/completions", data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {key}",
+            "Accept": "text/event-stream",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+        },
+    )
+    for ev in _sse_events(req, provider):
+        u = ev.get("usage")
+        if u:
+            usage["in"] = int(u.get("prompt_tokens") or usage["in"])
+            usage["out"] = int(u.get("completion_tokens") or usage["out"])
+        choices = ev.get("choices") or []
+        if choices:
+            delta = (choices[0].get("delta") or {}).get("content")
+            if delta:
+                yield delta
+
+
+def _anthropic_chat_stream(provider, model, prompt, usage):
+    """Stream one Anthropic Messages call: yields text deltas and fills
+    ``usage`` from message_start / message_delta events."""
+    import urllib.request
+    base = os.environ.get("NUDGE_BASE_URL", _PROVIDER_BASE_URLS[provider])
+    key = os.environ.get("NUDGE_API_KEY") or os.environ.get(
+        _PROVIDER_KEY_ENVS[provider], "")
+    body = json.dumps({
+        "model": model,
+        "max_tokens": 4096,
+        "stream": True,
+        "messages": [{"role": "user", "content": str(prompt)}],
+    }).encode()
+    req = urllib.request.Request(
+        base.rstrip("/") + "/v1/messages", data=body,
+        headers={
+            "Content-Type": "application/json",
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01",
+            "Accept": "text/event-stream",
+        },
+    )
+    for ev in _sse_events(req, provider):
+        t = ev.get("type")
+        if t == "message_start":
+            u = (ev.get("message") or {}).get("usage") or {}
+            usage["in"] = int(u.get("input_tokens") or usage["in"])
+        elif t == "content_block_delta":
+            delta = (ev.get("delta") or {}).get("text")
+            if delta:
+                yield delta
+        elif t == "message_delta":
+            u = ev.get("usage") or {}
+            usage["out"] = int(u.get("output_tokens") or usage["out"])
+
+
 def _extract_json(text):
     """Best-effort JSON extraction from a real model's answer: ```json
     fences first, then the first balanced-looking {...} / [...] span. A
@@ -1300,19 +1406,16 @@ def llm_stream(prompt, model=None, schema=None, retry=0, repair=False,
     can no longer satisfy the schema aborts the stream early — the abort
     counts as a schema violation, so the §4.2 repair loop applies. Trace
     records carry additive ``streamed``/``chunks``/``early_abort`` fields
-    (§6.1). MVP: the fake provider chunks deterministically (``chunk_size``
-    characters); replay consumes the recorded final value like
+    (§6.1). The fake provider chunks deterministically (``chunk_size``
+    characters); real providers stream over SSE (OpenAI-compatible and
+    Anthropic Messages). Replay consumes the recorded final value like
     :func:`llm_call` (§6.2 — stream flags stay in the old trace).
     """
     if os.environ.get("NUDGE_REPLAY"):
         return llm_call(prompt, model=model, schema=schema, retry=retry,
                         repair=repair, budget=budget, cache=cache, tags=tags)
     real = _real_provider_for(model)
-    if real is not None:
-        # v1.1a: real providers run non-streaming for now (token streaming
-        # lands with the SSE adapter) — the call behaves like llm_call
-        return llm_call(prompt, model=model, schema=schema, retry=retry,
-                        repair=repair, budget=budget, cache=cache, tags=tags)
+    provider = real[0] if real else "fake"
 
     attempts = 1 + (retry if repair and schema is not None else 0)
     last_errors, last_raw = [], None
@@ -1341,6 +1444,59 @@ def llm_stream(prompt, model=None, schema=None, retry=0, repair=False,
     for round_no in range(attempts):
         if round_no >= 1:
             _repair_budget_precheck()
+        if provider != "fake":
+            # real SSE streaming (v1.2): provider deltas feed the same
+            # prefix validator the fake path uses — early abort and repair
+            # behave identically, tokens/cost come from the usage events
+            usage = {"in": 0, "out": 0}
+            bare = _split_model(model)[1]
+            stream = (_anthropic_chat_stream if provider == "anthropic"
+                      else _openai_chat_stream)(provider, bare, prompt, usage)
+            acc, consumed, aborted = [], 0, None
+            validator = _PrefixValidator(schema) if schema is not None else None
+            for chunk in stream:
+                acc.append(chunk)
+                consumed += 1
+                if validator is not None:
+                    try:
+                        validator.feed(chunk)
+                    except _PrefixImpossible as e:
+                        aborted = str(e)
+                        break
+            text = "".join(acc)
+            in_t = usage["in"] or len(str(prompt).split())
+            out_t = usage["out"] or len(text.split())
+            cost = _call_cost(provider, model, in_t, out_t)
+            tok = {"in": in_t, "out": out_t}
+            if aborted is not None:
+                last_errors, last_raw = [f"stream aborted: {aborted}"], text
+                _trace_call(model, prompt, text, round_no, "schema_violation",
+                            extra=_x({"streamed": True, "chunks": consumed, "early_abort": True}),
+                            provider=provider, tokens=tok, cost=cost)
+                charge_site(cost)
+                prompt = _REPAIR_HINT.format(errors="stream aborted: " + aborted) + "\n" + str(prompt)
+                continue
+            out = _extract_json(text) if schema is not None else text
+            if schema is None:
+                _trace_call(model, prompt, out, round_no, "ok",
+                            extra=_x({"streamed": True, "chunks": consumed}),
+                            provider=provider, tokens=tok, cost=cost)
+                charge_site(cost)
+                return out
+            errors = validate(schema, out)
+            if not errors:
+                _trace_call(model, prompt, out, round_no, "ok",
+                            extra=_x({"streamed": True, "chunks": consumed}),
+                            provider=provider, tokens=tok, cost=cost)
+                charge_site(cost)
+                return _attr(out)
+            last_errors, last_raw = errors, out
+            _trace_call(model, prompt, out, round_no, "schema_violation",
+                        extra=_x({"streamed": True, "chunks": consumed}),
+                        provider=provider, tokens=tok, cost=cost)
+            charge_site(cost)
+            prompt = _REPAIR_HINT.format(errors="; ".join(errors)) + "\n" + str(prompt)
+            continue
         out = _fake_answer(prompt, model, schema)
         if schema is not None:
             text = json.dumps(_jsonable(out), ensure_ascii=False)
