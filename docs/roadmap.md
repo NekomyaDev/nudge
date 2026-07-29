@@ -16,11 +16,10 @@ editor.
 - Reddit / Show HN / LinkedIn announcement cadence
 - `good first issue` triage for first external contributors
 
-## v1.2 — Door 1 close-out: *debuggable* (Depth)
+## v1.2 — Door 1 close-out: *debuggable* (Depth) — **CLOSED** ✅
 
 Finish the "why did my agent do that?" answer beyond doubt.
-- ~~**Spanned AST (stage 1: statements)**~~ ✅ shipped — statements carry byte spans; check errors print as `error[E0201] at 3:5` and LSP diagnostics land on their statement. Stage 2 (expression spans) stays open below
-- **Spanned AST, stage 2** — expression-level spans for sub-expression precision (hover, inline values)
+- ~~**Spanned AST**~~ ✅ shipped (stages 1+2) — statements and expressions carry byte spans; check errors print as `error[E0201] at 3:5`, LSP diagnostics land on their statement. Sub-expression hover/inline values build on this next
 - ~~**Trace viewer**~~ ✅ shipped (v1.2 branch) — `nudgec trace-view <trace.jsonl>`: local web UI over traces: timeline of calls, retries, budget walls, token/cost stats, zero-dep embedded server
   walls, par branches. Chrome DevTools for agents
 - ~~**Par branch labels (NTF v1.1)**~~ ✅ shipped — `par map/all/race` lanes carry an additive
