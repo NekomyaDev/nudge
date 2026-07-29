@@ -835,13 +835,23 @@ class AgentState:
         object.__setattr__(self, "_dir", run_dir)
         values, writes = dict(defaults), 0
         ckpt = run_dir / "checkpoint.json"
-        if os.environ.get("NUDGE_RESUME") and ckpt.exists():
+        saved_values = None
+        resuming = bool(os.environ.get("NUDGE_RESUME")) and ckpt.exists()
+        if resuming:
             saved = json.loads(ckpt.read_text(encoding="utf-8"))
-            values.update(saved.get("values", {}))
             writes = saved.get("writes", 0)
+            saved_values = _jsonable(saved.get("values", {}))
+            # Replay starts from the DEFAULTS, not the checkpoint: suppressed
+            # writes are re-applied so augmented writes (+=) accumulate
+            # correctly, and the prefix end is verified against the recorded
+            # checkpoint (v1.6 divergence guard). Loading the checkpoint
+            # would double-apply every += of the prefix.
         object.__setattr__(self, "_values", values)
         object.__setattr__(self, "_writes", writes)
         object.__setattr__(self, "_suppress", writes if os.environ.get("NUDGE_RESUME") else 0)
+        # divergence guard reference: the recorded final values the
+        # replayed prefix must reproduce (v1.6 — used to be unchecked)
+        object.__setattr__(self, "_saved_values", saved_values)
         # NUDGE_PROGRAM overrides the registered entry file — `nudgec test`
         # runs the module through a driver script, so sys.argv[0] would
         # otherwise point `nudgec resume` at the wrong file
@@ -850,7 +860,11 @@ class AgentState:
         trace = os.environ.get("NUDGE_TRACE")
         if trace:
             (run_dir / "trace").write_text(os.path.abspath(trace), encoding="utf-8")
-        self._checkpoint()
+        if not resuming:
+            self._checkpoint()
+        # on resume the recorded checkpoint must survive until the replayed
+        # prefix is verified — writing defaults over it here would destroy
+        # both the resume point and the divergence-guard reference
 
     def __getattr__(self, name):
         try:
@@ -860,12 +874,36 @@ class AgentState:
 
     def __setattr__(self, name, value):
         if self._suppress > 0:
-            # replayed-prefix write — the checkpoint already reflects it
+            # replayed-prefix write: APPLY it (so a diverged replay is
+            # visible in the values) but don't checkpoint — the recorded
+            # checkpoint already reflects a faithful prefix
+            self._values[name] = value
             object.__setattr__(self, "_suppress", self._suppress - 1)
+            if self._suppress == 0:
+                self._guard_replay_faithful()
             return
         self._values[name] = value
         object.__setattr__(self, "_writes", self._writes + 1)
         self._checkpoint()
+
+    def _guard_replay_faithful(self):
+        """Resume divergence guard (v1.6): once the recorded prefix has been
+        replayed, the reproduced state must equal the recorded checkpoint —
+        otherwise the program changed since the crash and continuing would
+        silently fork history. (A replay with FEWER writes than the prefix
+        never reaches this point; that case is caught by llm/tool replay
+        divergence instead.)"""
+        saved = self._saved_values
+        if saved is None:
+            return
+        now = _jsonable(self._values)
+        if now != saved:
+            raise ReplayMismatch(
+                f"resume divergence in agent '{self._agent}': the replayed "
+                f"state {now!r} does not match the recorded checkpoint "
+                f"{saved!r} — the program changed since the crash; start a "
+                f"new run"
+            )
 
     def __repr__(self):
         return f"AgentState({self._agent!r}, {self._values!r})"

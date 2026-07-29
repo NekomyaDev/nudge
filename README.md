@@ -10,8 +10,10 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/NekomyaDev/nudge/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/NekomyaDev/nudge/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="release" src="https://img.shields.io/badge/release-v1.0.1-brightgreen">
-  <img alt="tests" src="https://img.shields.io/badge/tests-118%20green-brightgreen">
+  <img alt="tests" src="https://img.shields.io/badge/tests-143%20passing-brightgreen">
+  <img alt="clippy" src="https://img.shields.io/badge/clippy-0%20warnings-brightgreen">
   <a href="https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang"><img alt="VS Code extension" src="https://img.shields.io/badge/VS%20Code-Nudge%20Language-007ACC?logo=visualstudiocode"></a>
   <img alt="license" src="https://img.shields.io/badge/license-MIT-blue">
   <img alt="compiler" src="https://img.shields.io/badge/compiler-Rust%20%C2%B7%20zero%20deps-red">

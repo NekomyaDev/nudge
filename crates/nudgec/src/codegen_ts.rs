@@ -26,12 +26,22 @@ pub fn emit_ts(items: &[Item]) -> String {
     // reordered into positional slots at the call site
     let sigs: HashMap<String, Vec<String>> = items
         .iter()
-        .filter_map(|i| match i {
-            Item::Fn { name, params, .. } | Item::Tool { name, params, .. } => Some((
-                name.clone(),
-                params.iter().map(|p| p.name.clone()).collect(),
-            )),
-            _ => None,
+        .flat_map(|i| match i {
+            Item::Fn { name, params, .. } | Item::Tool { name, params, .. } => {
+                vec![(name.clone(), params.iter().map(|p| p.name.clone()).collect())]
+            }
+            // agent fns live in the same namespace (the checker enforces
+            // uniqueness, E0102)
+            Item::Agent { fns, .. } => fns
+                .iter()
+                .filter_map(|f| match f {
+                    Item::Fn { name, params, .. } => {
+                        Some((name.clone(), params.iter().map(|p| p.name.clone()).collect()))
+                    }
+                    _ => None,
+                })
+                .collect(),
+            _ => vec![],
         })
         .collect();
     // test slugs can collide ("a b" vs "a_b") — suffix duplicates
@@ -61,7 +71,7 @@ pub fn emit_ts(items: &[Item]) -> String {
                     "function {name}({ps}): {} {{\n",
                     ty_ts(ret, &aliases)
                 ));
-                out.push_str(&emit_body(body, &aliases, &sigs));
+                out.push_str(&emit_body(body, &aliases, &sigs, None));
                 out.push('}');
                 if name == "main" {
                     has_main = true;
@@ -95,14 +105,59 @@ pub fn emit_ts(items: &[Item]) -> String {
                     "function nudge_test_{}(): void {{\n",
                     crate::codegen::unique_slug(&slug_ts(name), &mut test_slugs)
                 ));
-                out.push_str(&emit_body(body, &aliases, &sigs));
+                out.push_str(&emit_body(body, &aliases, &sigs, None));
                 out.push('}');
             }
-            Item::Agent { name, .. } => {
-                // deferred: the TS backend does not lower agent state yet
+            Item::Agent { name, state, fns } => {
+                // agent state lowering (v1.6): mirrors the python backend —
+                // a runtime Proxy checkpoints every state write
+                let defaults = state
+                    .iter()
+                    .map(|(f, _, d)| format!("\"{f}\": {}", ts(d, &aliases, &sigs)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 out.push_str(&format!(
-                    "// warning: agent '{name}' skipped — the TS backend does not lower agent state yet (v0.3c MVP)"
+                    "const _state_{name} = rt.agentState(\"{name}\", {{{defaults}}});"
                 ));
+                // list-typed state fields drive the += → .concat lowering
+                let list_fields: Vec<String> = state
+                    .iter()
+                    .filter(|(_, ty, _)| matches!(ty, TypeExpr::List(_)))
+                    .map(|(f, _, _)| f.clone())
+                    .collect();
+                for f in fns {
+                    if let Item::Fn {
+                        name: fn_name,
+                        params,
+                        body,
+                        effects,
+                        ..
+                    } = f
+                    {
+                        let ps = params
+                            .iter()
+                            .map(|p| format!("{}: {}", p.name, ty_ts(&p.ty, &aliases)))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let fx = if effects.is_empty() {
+                            String::new()
+                        } else {
+                            format!("  // effects: {}", effects.join(", "))
+                        };
+                        out.push_str(&format!("\n\nfunction {fn_name}({ps}) {{{fx}\n"));
+                        let bound = crate::codegen::bind_state(body, name);
+                        out.push_str(&emit_body(
+                            &bound,
+                            &aliases,
+                            &sigs,
+                            Some((name.as_str(), list_fields.as_slice())),
+                        ));
+                        out.push('}');
+                        if fn_name == "main" {
+                            has_main = true;
+                        }
+                    }
+                }
             }
         }
     }
@@ -119,6 +174,9 @@ fn emit_body(
     body: &[Stmt],
     aliases: &HashSet<String>,
     sigs: &HashMap<String, Vec<String>>,
+    // agent name + its LIST-typed state fields: JS `array += [x]` coerces
+    // to a string — list state writes must emit .concat (python parity)
+    agent: Option<(&str, &[String])>,
 ) -> String {
     if body.is_empty() {
         return String::new();
@@ -139,9 +197,24 @@ fn emit_body(
                     format!("const {name} = {};", ts(value, aliases, sigs))
                 }
             }
-            Stmt::StateWrite { field, .. } => {
-                format!("// warning: state write 'state.{field}' skipped — agents are not yet supported by the TS backend")
-            }
+            // a state write is a checkpoint — the runtime Proxy persists it
+            Stmt::StateWrite { field, op, value } => match agent {
+                Some((target, list_fields)) => {
+                    let v = ts(value, aliases, sigs);
+                    match op {
+                        crate::ast::StateOp::Add if list_fields.iter().any(|f| f == field) => {
+                            // Nudge list += is concat; JS += on arrays stringifies
+                            format!("_state_{target}.{field} = (_state_{target}.{field}).concat({v});")
+                        }
+                        crate::ast::StateOp::Set => format!("_state_{target}.{field} = {v};"),
+                        crate::ast::StateOp::Add => format!("_state_{target}.{field} += {v};"),
+                        crate::ast::StateOp::Sub => format!("_state_{target}.{field} -= {v};"),
+                    }
+                }
+                // emit without a prior check pass stays panic-free — the
+                // checker reports E0701; mark the spot instead of panicking
+                None => format!("// error: state write 'state.{field}' outside an agent block (E0701)"),
+            },
             Stmt::Assert(e) => format!(
                 "if (!({})) throw new Error(\"assertion failed\");",
                 ts(e, aliases, sigs)
@@ -603,10 +676,16 @@ mod tests {
 
     #[test]
     fn ts_agent_and_stream_warn() {
+        // v1.6: agents lower to rt.agentState + a checkpointing Proxy
         let src =
-            "agent A {\n    state {\n        n: int = 0,\n    }\n    fn step() -> int { 0 }\n}";
+            "agent A {\n    state {\n        n: int = 0,\n    }\n    fn step() -> int {\n        state.n += 1\n        state.n\n    }\n}";
         let out = gen_ts(src);
-        assert!(out.contains("warning: agent 'A' skipped"), "got:\n{out}");
+        assert!(
+            out.contains("const _state_A = rt.agentState(\"A\", {\"n\": 0});"),
+            "got:\n{out}"
+        );
+        assert!(out.contains("_state_A.n += 1;"), "got:\n{out}");
+        assert!(!out.contains("skipped"), "got:\n{out}");
         let src2 = "fn f() -> string uses LLM { stream let t: string = llm\"\"\"x\"\"\" with { model: \"m\" }\n    t }";
         let out2 = gen_ts(src2);
         assert!(
@@ -672,6 +751,69 @@ mod tests {
     }
 
     // ── end-to-end (skipped without node / runtime checkout) ──────
+
+    // ── v1.6 e2e: TS agent state checkpoints + resume under node ─────
+    #[test]
+    fn ts_agent_state_checkpoints_and_resumes_under_node() {
+        use std::process::Command;
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let runtime = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
+        if !runtime.exists() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("nudge_tsagent_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = "agent A {\n    state {\n        notes: [string] = [],\n        round: int = 0,\n    }\n    fn step() -> int {\n        state.notes += [\"a\"]\n        state.round += 1\n        state.notes += [\"b\"]\n        state.round += 1\n        state.round\n    }\n    fn main() -> int {\n        step()\n    }\n}";
+        let emitted = strip_ts(&gen_ts(src)).replace("./nudge_runtime.ts", "./nudge_runtime.mjs");
+        std::fs::write(dir.join("agent.mjs"), &emitted).unwrap();
+        let rt_src = std::fs::read_to_string(runtime.join("nudge_runtime.ts")).unwrap();
+        std::fs::write(dir.join("nudge_runtime.mjs"), rt_src).unwrap();
+
+        // fresh run: checkpoint must reflect every write
+        let out = Command::new("node")
+            .arg(dir.join("agent.mjs"))
+            .env("NUDGE_RUN_ID", "tsr1")
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "2");
+        let ckpt = std::fs::read_to_string(dir.join(".nudge/runs/tsr1/checkpoint.json")).unwrap();
+        assert!(ckpt.contains("\"writes\": 4"), "checkpoint: {ckpt}");
+        assert!(ckpt.contains("\"a\"") && ckpt.contains("\"b\""), "checkpoint: {ckpt}");
+
+        // faithful resume: the prefix replays from defaults, the guard
+        // passes, and += does not double-apply
+        let out = Command::new("node")
+            .arg(dir.join("agent.mjs"))
+            .env("NUDGE_RUN_ID", "tsr1")
+            .env("NUDGE_RESUME", "1")
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "2");
+
+        // diverged resume: the program changed since the "crash" — the
+        // guard must abort with ReplayMismatch
+        let changed = emitted.replace("\"b\"", "\"CHANGED\"");
+        std::fs::write(dir.join("agent.mjs"), changed).unwrap();
+        let out = Command::new("node")
+            .arg(dir.join("agent.mjs"))
+            .env("NUDGE_RUN_ID", "tsr1")
+            .env("NUDGE_RESUME", "1")
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "diverged resume must fail");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("ReplayMismatch"),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
 
     #[test]
     fn ts_hello_runs_under_node() {

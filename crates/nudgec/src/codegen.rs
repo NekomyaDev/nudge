@@ -193,15 +193,19 @@ fn emit_body(body: &[Stmt], aliases: &HashSet<String>, agent: Option<&str>) -> S
             }
             // design §7: a state write is a checkpoint — attribute writes on
             // the AgentState object persist automatically
-            Stmt::StateWrite { field, op, value } => {
-                let target = agent.expect("codegen: state write outside an agent block (E0701)");
-                let op = match op {
-                    StateOp::Set => "=",
-                    StateOp::Add => "+=",
-                    StateOp::Sub => "-=",
-                };
-                format!("_state_{target}.{field} {op} {}", py(value, aliases))
-            }
+            Stmt::StateWrite { field, op, value } => match agent {
+                Some(target) => {
+                    let op = match op {
+                        StateOp::Set => "=",
+                        StateOp::Add => "+=",
+                        StateOp::Sub => "-=",
+                    };
+                    format!("_state_{target}.{field} {op} {}", py(value, aliases))
+                }
+                // emit without a prior check pass stays panic-free — the
+                // checker reports E0701; mark the spot instead of panicking
+                None => format!("# error: state write 'state.{field}' outside an agent block (E0701)\n    pass"),
+            },
             Stmt::Assert(e) => format!("assert {}", py(e, aliases)),
             // MVP return rule: the fn's final expression is its return value.
             Stmt::ExprStmt(e) if i == last => format!("return {}", py(e, aliases)),
@@ -250,8 +254,10 @@ fn emit_test_body(body: &[Stmt], aliases: &HashSet<String>) -> String {
                     format!("{name} = {}", py(value, aliases))
                 }
             }
-            Stmt::StateWrite { .. } => {
-                panic!("codegen: state write outside an agent block (E0701)")
+            // the checker reports E0701 — stay panic-free when emit is
+            // driven without a prior check pass (fuzz harness does this)
+            Stmt::StateWrite { field, .. } => {
+                format!("# error: state write 'state.{field}' outside an agent block (E0701)\n    pass")
             }
             Stmt::Assert(e) => format!("assert {}", py(e, aliases)),
             Stmt::ExprStmt(e) => py(e, aliases),
@@ -266,7 +272,7 @@ fn emit_test_body(body: &[Stmt], aliases: &HashSet<String>) -> String {
 /// Bind `state` reads inside an agent fn to its checkpointed state object
 /// (design §7): `state.round` → `_state_<Agent>.round`. State *writes* stay
 /// `Stmt::StateWrite` — emit_body renders them with the same target.
-fn bind_state(body: &[Stmt], agent: &str) -> Vec<Stmt> {
+pub fn bind_state(body: &[Stmt], agent: &str) -> Vec<Stmt> {
     body.iter()
         .map(|st| match st {
             Stmt::Let {

@@ -17,6 +17,7 @@ mod check;
 mod codegen;
 mod codegen_ts;
 mod cost;
+mod fuzz;
 mod json;
 mod lexer;
 mod lint;

@@ -3,7 +3,7 @@
 // (renamed .mjs in tests) and compiles under tsc/deno. Strict-mode users'
 // tsc should not type-check generated/vendor files; the runtime's own
 // conformance is covered by the compiler's e2e suite. Subset: schema/llmCall/toolStub/replay,
-// budget walls, render, merge, USD. Deferred: streaming, agent state,
+// budget walls, render, merge, USD. Deferred: streaming,
 // par scheduling, OTel export (the Python runtime covers those today).
 import * as fs from "node:fs";
 import * as process from "node:process";
@@ -199,4 +199,73 @@ export function toolStub(name, args = [], opts = {}) {
   if (opts.server) record.server = opts.server;
   _emitTrace(record);
   return [];
+}
+
+
+// ── agent state (design §7, v1.6 — parity with the python runtime) ────
+// A Proxy over the state values: every field write persists the full
+// state to .nudge/runs/<run_id>/checkpoint.json. Resume semantics mirror
+// the python AgentState, INCLUDING the v1.6 divergence guard: the prefix
+// replays from the defaults, and the reproduced values must equal the
+// recorded checkpoint or the run aborts with ReplayMismatch.
+export function agentState(agent, defaults) {
+  const run = process.env.NUDGE_RUN_ID || `run-${process.pid}`;
+  const dir = `.nudge/runs/${run}`;
+  fs.mkdirSync(dir, { recursive: true });
+  const ckptPath = `${dir}/checkpoint.json`;
+  const values = { ...defaults };
+  let writes = 0;
+  let suppress = 0;
+  let savedValues = null;
+  const resuming = !!process.env.NUDGE_RESUME && fs.existsSync(ckptPath);
+  if (resuming) {
+    const saved = JSON.parse(fs.readFileSync(ckptPath, "utf8"));
+    writes = saved.writes || 0;
+    savedValues = saved.values || {};
+    // replay from the DEFAULTS (not the checkpoint) so augmented writes
+    // (+=/-=) re-accumulate instead of double-applying
+    suppress = writes;
+  }
+  function checkpoint() {
+    fs.writeFileSync(
+      ckptPath,
+      JSON.stringify({ agent, values, writes }, null, 2) + "\n",
+    );
+  }
+  const state = new Proxy(
+    {},
+    {
+      get: (_t, k) => values[k],
+      set: (_t, k, v) => {
+        if (suppress > 0) {
+          // replayed-prefix write: apply (so += accumulates) but do not
+          // checkpoint; the prefix end is verified against the recording
+          values[k] = v;
+          suppress--;
+          if (suppress === 0 && savedValues !== null) {
+            if (JSON.stringify(values) !== JSON.stringify(savedValues)) {
+              throw new Error(
+                `ReplayMismatch: resume divergence in agent '${agent}': the replayed state ` +
+                  `${JSON.stringify(values)} does not match the recorded checkpoint ` +
+                  `${JSON.stringify(savedValues)} — the program changed since the crash; start a new run`,
+              );
+            }
+          }
+          return true;
+        }
+        values[k] = v;
+        writes++;
+        checkpoint();
+        return true;
+      },
+    },
+  );
+  fs.writeFileSync(`${dir}/program`, process.env.NUDGE_PROGRAM || process.argv[1] || "unknown");
+  if (process.env.NUDGE_TRACE) {
+    fs.writeFileSync(`${dir}/trace`, process.env.NUDGE_TRACE);
+  }
+  if (!resuming) {
+    checkpoint();
+  }
+  return state;
 }

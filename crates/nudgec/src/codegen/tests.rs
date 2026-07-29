@@ -1291,3 +1291,50 @@ fn state_write_minus_eq_compiles_and_runs() {
     );
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1");
 }
+
+
+// ── v1.6 e2e: budget wall, schema repair loop, model routing ───────
+
+#[test]
+fn budget_wall_aborts_the_run() {
+    let Some(e) = e2e("budget_wall") else { return };
+    // fake cost is $0.001/call — a declared budget BELOW that trips the
+    // per-call wall before the call is even made
+    let src = "fn main() -> string uses LLM {\n    llm\"\"\"one call please\"\"\" with { model: \"m\", budget: 0.0005 USD }\n}";
+    let py = e.dir.join("budget_wall.py");
+    std::fs::write(&py, gen(src)).unwrap();
+    let out = run_py(&e, &py, &[]);
+    assert!(!out.status.success(), "budget wall must abort the run, stdout: {}", String::from_utf8_lossy(&out.stdout));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("BudgetExceeded"), "stderr: {stderr}");
+}
+
+#[test]
+fn schema_repair_recovers_and_traces_both_rounds() {
+    let Some(e) = e2e("schema_repair") else { return };
+    let src = "type T = { title: string }\nfn main() -> string uses LLM {\n    let t = llm\"\"\"give a json object with title\"\"\" with { model: \"m\", schema: T, retry: 1 with repair, budget: 0.05 USD }\n    t.title\n}";
+    let py = e.dir.join("schema_repair.py");
+    std::fs::write(&py, gen(src)).unwrap();
+    let trace = e.dir.join("repair.jsonl");
+    // first round fails validation, the repair round must recover
+    let out = run_py(&e, &py, &[("NUDGE_TRACE", trace.to_str().unwrap()), ("NUDGE_FAKE_FAIL_FIRST", "1")]);
+    assert!(out.status.success(), "repair must recover, stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let text = std::fs::read_to_string(&trace).unwrap();
+    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert!(lines.iter().any(|l| l.contains("\"schema_violation\"") && l.contains("\"repair_round\": 0")), "trace:\n{text}");
+    assert!(lines.iter().any(|l| l.contains("\"ok\"") && l.contains("\"repair_round\": 1")), "trace:\n{text}");
+}
+
+#[test]
+fn route_choice_lands_in_the_trace() {
+    let Some(e) = e2e("route_trace") else { return };
+    let src = "fn pick(flag: bool) -> string uses LLM { llm\"\"\"say hi briefly\"\"\" with { model: route{ cheap: \"m1\" when flag, strong: \"m2\" otherwise }, budget: 0.05 USD } }\nfn main() -> string uses LLM { pick(true) }";
+    let py = e.dir.join("route_trace.py");
+    std::fs::write(&py, gen(src)).unwrap();
+    let trace = e.dir.join("route.jsonl");
+    let out = run_py(&e, &py, &[("NUDGE_TRACE", trace.to_str().unwrap())]);
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let text = std::fs::read_to_string(&trace).unwrap();
+    assert!(text.contains("\"route\": \"cheap\""), "trace:\n{text}");
+    assert!(text.contains("\"model\": \"m1\""), "trace:\n{text}");
+}
