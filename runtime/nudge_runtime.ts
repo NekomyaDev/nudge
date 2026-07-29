@@ -144,7 +144,7 @@ export function llmCall(opts) {
   // adapter ships in nudge_runtime; the TS adapter lands with async codegen)
   const prefix = model && model.includes(":") ? model.split(":")[0] : null;
   if ((process.env.NUDGE_PROVIDER && process.env.NUDGE_PROVIDER !== "fake") ||
-      (prefix && ["openai", "gemini", "groq", "ollama"].includes(prefix))) {
+      (prefix && ["openai", "gemini", "groq", "mimo", "mistral", "anthropic", "ollama"].includes(prefix))) {
     throw new Error("nudge_runtime.ts: real providers run on the Python runtime at v1.1a — compile with `nudgec build` for provider access");
   }
   const out = sch ? _synth(sch) : `[fake:${model}] ${prompt}`;
