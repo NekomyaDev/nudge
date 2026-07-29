@@ -714,7 +714,9 @@ mod tests {
         let src = "fn f(xs: [string], ys: [string]) -> [string] uses LLM { par map(xs zip ys) |(a, b)| -> a }";
         let out = gen_ts(src);
         assert!(
-            out.contains("rt.parMap(") && out.contains("(__e) => { const a = __e.first; const b = __e.second; return a; }"),
+            out.contains("rt.parMap(")
+                && out
+                    .contains("(__e) => { const a = __e.first; const b = __e.second; return a; }"),
             "got:\n{out}"
         );
         // single-param lambdas keep the direct form
