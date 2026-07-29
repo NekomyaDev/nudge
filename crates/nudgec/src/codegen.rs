@@ -162,8 +162,8 @@ fn emit_body(body: &[Stmt], aliases: &HashSet<String>, agent: Option<&str>) -> S
     let mut out = String::new();
     let last = body.len() - 1;
     for (i, st) in body.iter().enumerate() {
-        let line = match st {
-            Stmt::Let {
+        let line = match &st.kind {
+            StmtKind::Let {
                 name,
                 value,
                 stream,
@@ -193,7 +193,7 @@ fn emit_body(body: &[Stmt], aliases: &HashSet<String>, agent: Option<&str>) -> S
             }
             // design §7: a state write is a checkpoint — attribute writes on
             // the AgentState object persist automatically
-            Stmt::StateWrite { field, op, value } => match agent {
+            StmtKind::StateWrite { field, op, value } => match agent {
                 Some(target) => {
                     let op = match op {
                         StateOp::Set => "=",
@@ -208,10 +208,10 @@ fn emit_body(body: &[Stmt], aliases: &HashSet<String>, agent: Option<&str>) -> S
                     "# error: state write 'state.{field}' outside an agent block (E0701)\n    pass"
                 ),
             },
-            Stmt::Assert(e) => format!("assert {}", py(e, aliases)),
+            StmtKind::Assert(e) => format!("assert {}", py(e, aliases)),
             // MVP return rule: the fn's final expression is its return value.
-            Stmt::ExprStmt(e) if i == last => format!("return {}", py(e, aliases)),
-            Stmt::ExprStmt(e) => py(e, aliases),
+            StmtKind::ExprStmt(e) if i == last => format!("return {}", py(e, aliases)),
+            StmtKind::ExprStmt(e) => py(e, aliases),
         };
         out.push_str("    ");
         out.push_str(&line);
@@ -227,8 +227,8 @@ fn emit_test_body(body: &[Stmt], aliases: &HashSet<String>) -> String {
     }
     let mut out = String::new();
     for st in body {
-        let line = match st {
-            Stmt::Let {
+        let line = match &st.kind {
+            StmtKind::Let {
                 name,
                 value,
                 stream,
@@ -258,13 +258,13 @@ fn emit_test_body(body: &[Stmt], aliases: &HashSet<String>) -> String {
             }
             // the checker reports E0701 — stay panic-free when emit is
             // driven without a prior check pass (fuzz harness does this)
-            Stmt::StateWrite { field, .. } => {
+            StmtKind::StateWrite { field, .. } => {
                 format!(
                     "# error: state write 'state.{field}' outside an agent block (E0701)\n    pass"
                 )
             }
-            Stmt::Assert(e) => format!("assert {}", py(e, aliases)),
-            Stmt::ExprStmt(e) => py(e, aliases),
+            StmtKind::Assert(e) => format!("assert {}", py(e, aliases)),
+            StmtKind::ExprStmt(e) => py(e, aliases),
         };
         out.push_str("    ");
         out.push_str(&line);
@@ -275,28 +275,34 @@ fn emit_test_body(body: &[Stmt], aliases: &HashSet<String>) -> String {
 
 /// Bind `state` reads inside an agent fn to its checkpointed state object
 /// (design §7): `state.round` → `_state_<Agent>.round`. State *writes* stay
-/// `Stmt::StateWrite` — emit_body renders them with the same target.
+/// `StmtKind::StateWrite` — emit_body renders them with the same target.
 pub fn bind_state(body: &[Stmt], agent: &str) -> Vec<Stmt> {
     body.iter()
-        .map(|st| match st {
-            Stmt::Let {
-                name,
-                ty,
-                value,
-                stream,
-            } => Stmt::Let {
-                name: name.clone(),
-                ty: ty.clone(),
-                value: bind_state_expr(value, agent),
-                stream: *stream,
-            },
-            Stmt::StateWrite { field, op, value } => Stmt::StateWrite {
-                field: field.clone(),
-                op: *op,
-                value: bind_state_expr(value, agent),
-            },
-            Stmt::Assert(e) => Stmt::Assert(bind_state_expr(e, agent)),
-            Stmt::ExprStmt(e) => Stmt::ExprStmt(bind_state_expr(e, agent)),
+        .map(|st| {
+            let kind = match &st.kind {
+                StmtKind::Let {
+                    name,
+                    ty,
+                    value,
+                    stream,
+                } => StmtKind::Let {
+                    name: name.clone(),
+                    ty: ty.clone(),
+                    value: bind_state_expr(value, agent),
+                    stream: *stream,
+                },
+                StmtKind::StateWrite { field, op, value } => StmtKind::StateWrite {
+                    field: field.clone(),
+                    op: *op,
+                    value: bind_state_expr(value, agent),
+                },
+                StmtKind::Assert(e) => StmtKind::Assert(bind_state_expr(e, agent)),
+                StmtKind::ExprStmt(e) => StmtKind::ExprStmt(bind_state_expr(e, agent)),
+            };
+            Stmt {
+                kind,
+                span: st.span,
+            }
         })
         .collect()
 }

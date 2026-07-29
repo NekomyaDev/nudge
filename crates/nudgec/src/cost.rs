@@ -62,19 +62,19 @@ pub fn report(items: &[Item]) -> String {
     for (_, plain, body) in &fns {
         let mut c = Count::default();
         for st in body.iter() {
-            match st {
-                Stmt::Let { value, .. } => count_expr(value, false, &mut c),
-                Stmt::StateWrite { value, .. } => count_expr(value, false, &mut c),
-                Stmt::Assert(e) | Stmt::ExprStmt(e) => count_expr(e, false, &mut c),
+            match &st.kind {
+                StmtKind::Let { value, .. } => count_expr(value, false, &mut c),
+                StmtKind::StateWrite { value, .. } => count_expr(value, false, &mut c),
+                StmtKind::Assert(e) | StmtKind::ExprStmt(e) => count_expr(e, false, &mut c),
             }
         }
         direct.insert(plain.as_str(), c);
         let mut edges = Vec::new();
         for st in body.iter() {
-            match st {
-                Stmt::Let { value, .. } => collect_calls(value, false, &mut edges),
-                Stmt::StateWrite { value, .. } => collect_calls(value, false, &mut edges),
-                Stmt::Assert(e) | Stmt::ExprStmt(e) => collect_calls(e, false, &mut edges),
+            match &st.kind {
+                StmtKind::Let { value, .. } => collect_calls(value, false, &mut edges),
+                StmtKind::StateWrite { value, .. } => collect_calls(value, false, &mut edges),
+                StmtKind::Assert(e) | StmtKind::ExprStmt(e) => collect_calls(e, false, &mut edges),
             }
         }
         graph.insert(plain.as_str(), edges);
