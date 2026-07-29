@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/NekomyaDev/nudge/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/NekomyaDev/nudge/actions/workflows/ci.yml/badge.svg"></a>
-  <img alt="release" src="https://img.shields.io/badge/release-v1.2-brightgreen">
+  <img alt="release" src="https://img.shields.io/badge/release-v1.0.1-brightgreen">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-blue">
   <img alt="compiler" src="https://img.shields.io/badge/compiler-Rust%20%C2%B7%20zero%20deps-red">
   <img alt="target" src="https://img.shields.io/badge/target-Python%20%7C%20TypeScript-green">
