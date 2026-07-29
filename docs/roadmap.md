@@ -63,9 +63,11 @@ The language thesis ships: **the language where agents are safe to deploy.**
   `refine x until confidence > 0.8`; gradual verification for LLM output
 - **Refinement types for cost** — `fn f() -> string costs< 0.05 USD`:
   the checker proves call graphs stay under budget statically
-- **Unknown-model pricing policy** — unknown models currently price at $0,
-  which can under-report real cost behind the budget wall; add an explicit
-  policy (unknown cost marker / budget-active error / user override)
+- ~~**Unknown-model pricing policy**~~ ✅ shipped — a $0 on a metered provider is
+  now flagged instead of silent: one-time `warning[W9001]` on stderr (per model,
+  `NUDGE_PRICING_WARN=0` silences) and an additive `pricing: "unknown"` field on
+  the trace record, so replays and cost reports can tell a placeholder from a
+  genuinely free call (Ollama / plan-priced MiMo stay exempt)
 - **MCP deadline & lifecycle** — per-RPC timeouts, hung-server cleanup and
   restart strategy for persistent MCP sessions
 - **Trace redaction hooks** — filter secrets/PII before records hit disk
