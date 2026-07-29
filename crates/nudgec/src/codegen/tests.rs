@@ -1061,6 +1061,7 @@ with socketserver.TCPServer(("127.0.0.1", 0), H) as srv:
         &e,
         &out_py,
         &[
+            ("NUDGE_PROVIDER", "gemini"),
             ("NUDGE_API_KEY", "test-key"),
             ("NUDGE_BASE_URL", base.as_str()),
         ],

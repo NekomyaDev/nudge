@@ -60,7 +60,7 @@ Ships today:
 
 Env: ``NUDGE_PROVIDER=fake`` (default) or a real provider — the model
 string prefix (``gemini:gemini-2.5-flash``) or the env itself selects one
-of ``openai | gemini | groq | ollama`` (OpenAI-compatible HTTP, design
+of ``openai | gemini | groq | mimo | mistral | anthropic | ollama`` (design
 §4.6); ``NUDGE_BASE_URL``/``NUDGE_API_KEY`` (+ provider-specific key envs)
 configure it,
 ``NUDGE_TRACE`` (trace path, default ``trace.jsonl``), ``NUDGE_REPLAY``
@@ -640,6 +640,10 @@ _PROVIDER_BASE_URLS = {
     "groq": "https://api.groq.com/openai/v1",
     "mimo": "https://token-plan-sgp.xiaomimimo.com/v1",
     "ollama": "http://localhost:11434/v1",
+    "mistral": "https://api.mistral.ai/v1",
+    # Anthropic speaks its own Messages API, not the OpenAI shape —
+    # _complete dispatches it to _anthropic_chat below.
+    "anthropic": "https://api.anthropic.com",
 }
 
 _PROVIDER_KEY_ENVS = {
@@ -647,6 +651,8 @@ _PROVIDER_KEY_ENVS = {
     "gemini": "GEMINI_API_KEY",
     "groq": "GROQ_API_KEY",
     "mimo": "MIMO_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
 }
 
 # USD per 1M tokens: (input, output). Models absent from the table —
@@ -657,6 +663,10 @@ _MODEL_PRICING = {
     "gemini-2.0-flash": (0.10, 0.40),
     "gpt-4o-mini": (0.15, 0.60),
     "llama-3.3-70b-versatile": (0.59, 0.79),
+    "mistral-small-latest": (0.10, 0.30),
+    "mistral-large-latest": (2.00, 6.00),
+    "claude-haiku-4-5": (1.00, 5.00),
+    "claude-sonnet-4-5": (3.00, 15.00),
 }
 
 
@@ -673,18 +683,22 @@ def _split_model(model):
 def _real_provider_for(model):
     """(provider, bare_model) when a real provider should handle this call,
     else None (the fake provider handles it)."""
+    env = os.environ.get("NUDGE_PROVIDER")
+    if env == "fake":
+        # EXPLICIT fake wins over any model prefix — that is how tests and
+        # $0 example runs force the fake even for `anthropic:...` models
+        return None
     prefix, bare = _split_model(model)
     if prefix:
         return prefix, bare
-    env = os.environ.get("NUDGE_PROVIDER", "fake")
-    if env != "fake":
-        if env not in _PROVIDER_BASE_URLS:
-            raise RuntimeError(
-                f"unknown NUDGE_PROVIDER '{env}' "
-                "(openai | gemini | groq | ollama | fake)"
-            )
-        return env, bare
-    return None
+    if env is None or env == "":
+        return None
+    if env not in _PROVIDER_BASE_URLS:
+        raise RuntimeError(
+            f"unknown NUDGE_PROVIDER '{env}' "
+            "(openai | gemini | groq | mimo | mistral | anthropic | ollama | fake)"
+        )
+    return env, bare
 
 
 def _openai_chat(provider, model, prompt):
@@ -735,6 +749,54 @@ def _openai_chat(provider, model, prompt):
     return text, int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
 
 
+def _anthropic_chat(provider, model, prompt):
+    """One non-streaming call against Anthropic's Messages API (not the
+    OpenAI shape). Returns (text, input_tokens, output_tokens)."""
+    import urllib.error
+    import urllib.request
+    base = os.environ.get("NUDGE_BASE_URL", _PROVIDER_BASE_URLS[provider])
+    key = os.environ.get("NUDGE_API_KEY") or os.environ.get(
+        _PROVIDER_KEY_ENVS[provider], "")
+    body = json.dumps({
+        "model": model,
+        "max_tokens": 4096,
+        "messages": [{"role": "user", "content": str(prompt)}],
+    }).encode()
+    req = urllib.request.Request(
+        base.rstrip("/") + "/v1/messages", data=body,
+        headers={
+            "Content-Type": "application/json",
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01",
+        },
+    )
+    data = None
+    last_err = None
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read())
+            break
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", "replace")[:500]
+            last_err = RuntimeError(f"{provider} provider HTTP {e.code}: {detail}")
+            if e.code == 429 and attempt < 3:
+                time.sleep(5 * (5 ** attempt))
+                continue
+            raise last_err
+        except urllib.error.URLError as e:
+            raise RuntimeError(f"{provider} provider unreachable: {e.reason}")
+    try:
+        blocks = [b.get("text", "") for b in data["content"] if b.get("type") == "text"]
+        text = "".join(blocks)
+    except (KeyError, TypeError, AttributeError):
+        raise RuntimeError(
+            f"{provider} provider returned an unexpected payload: {str(data)[:500]}"
+        )
+    usage = data.get("usage") or {}
+    return text, int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0)
+
+
 def _extract_json(text):
     """Best-effort JSON extraction from a real model's answer: ```json
     fences first, then the first balanced-looking {...} / [...] span. A
@@ -768,7 +830,10 @@ def _complete(provider, model, prompt, schema):
     if provider == "fake":
         return _fake_answer(prompt, model, schema), 0, 0
     bare = _split_model(model)[1]
-    text, in_t, out_t = _openai_chat(provider, bare, prompt)
+    if provider == "anthropic":
+        text, in_t, out_t = _anthropic_chat(provider, bare, prompt)
+    else:
+        text, in_t, out_t = _openai_chat(provider, bare, prompt)
     if schema is not None:
         return _extract_json(text), in_t, out_t
     return text, in_t, out_t
