@@ -378,4 +378,3 @@ mod tests {
         assert!(r.contains("× collection size via par map"), "got:\n{r}");
     }
 }
-
