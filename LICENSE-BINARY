@@ -1,0 +1,41 @@
+NUDGE BINARY DISTRIBUTION LICENSE
+
+Copyright (c) 2026 NEKOMYA (NekomyaDev). All rights reserved.
+
+The source code of the Nudge compiler and related tools is licensed under
+the MIT License and is available in the private NekomyaDev/nudge repository.
+
+HOWEVER, the precompiled binary distributions of Nudge (the "Binaries")
+attached to GitHub Releases, distributed via install scripts, or made
+available through any other channel are NOT open source. They are
+proprietary software subject to the following terms:
+
+1. GRANT OF LICENSE
+   You are granted a limited, non-exclusive, non-transferable license to
+   use the Binaries for personal or commercial purposes, subject to the
+   restrictions below.
+
+2. RESTRICTIONS
+   You MAY NOT:
+   a) Decompile, reverse engineer, disassemble, or otherwise attempt to
+      derive the source code from the Binaries.
+   b) Modify, adapt, translate, or create derivative works based on the
+      Binaries.
+   c) Redistribute, sublicense, sell, lease, or transfer the Binaries to
+      any third party without prior written permission.
+   d) Remove or alter any proprietary notices, labels, or marks from the
+      Binaries.
+   e) Use the Binaries to develop a competing programming language,
+      compiler, or agent framework without authorization.
+
+3. OWNERSHIP
+   All rights, title, and interest in and to the Binaries, including all
+   intellectual property rights, remain with NEKOMYA.
+
+4. NO WARRANTY
+   THE BINARIES ARE PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND.
+
+5. TERMINATION
+   This license automatically terminates if you violate any of its terms.
+
+For licensing inquiries: contact via GitHub @NekomyaDev
