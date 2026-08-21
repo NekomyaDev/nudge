@@ -1,29 +1,10 @@
-# Nudge - Binary Distribution
-# This repository contains prebuilt binaries and documentation only.
-# Source code is available to authorized contributors.
-
-# Ignore any accidentally committed source files
-*.rs
-*.py
-*.ts
-*.js
-*.toml
-*.json
-*.html
-*.svg
-*.png
-*.md
-!README.md
-!LICENSE
-
-# Ignore build artifacts
 /target
-out/
-smoke/
-node_modules/
+**/*.rs.bk
+.nudge/store/
+traces/local/
 __pycache__/
 *.pyc
 .DS_Store
+out/
 trace.jsonl
-.nudge/store/
-traces/local/
+node_modules/

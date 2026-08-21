@@ -1,0 +1,86 @@
+{
+  "name": "nudge-lang",
+  "displayName": "Nudge Language",
+  "description": "Nudge language support — typed, replayable, budget-aware LLM agents (.ndg): syntax highlighting, diagnostics via nudgec lsp, snippets",
+  "version": "1.2.0",
+  "publisher": "Nekomya",
+  "license": "MIT",
+  "icon": "icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Snippets"
+  ],
+  "keywords": [
+    "nudge",
+    "llm",
+    "ai-agents",
+    "language",
+    "dsl"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NekomyaDev/nudge"
+  },
+  "activationEvents": [
+    "onLanguage:nudge"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "nudge",
+        "aliases": [
+          "Nudge",
+          "nudge"
+        ],
+        "extensions": [
+          ".ndg"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "nudge",
+        "scopeName": "source.nudge",
+        "path": "./syntaxes/nudge.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "nudge",
+        "path": "./snippets/nudge.json"
+      }
+    ],
+    "configuration": {
+      "title": "Nudge",
+      "properties": {
+        "nudge.serverPath": {
+          "type": "string",
+          "default": "nudgec",
+          "description": "Path to the nudgec binary (the language server runs as `nudgec lsp` over stdio)"
+        },
+        "nudge.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace LSP traffic to the Nudge output channel"
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.9.2"
+  }
+}

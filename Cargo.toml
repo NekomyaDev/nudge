@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["crates/nudgec"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/NekomyaDev/nudge"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

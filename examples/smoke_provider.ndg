@@ -1,0 +1,15 @@
+// Real-provider smoke agent (design §4.6, v1.1a) — run by the
+// provider-smoke workflow: the model string's provider prefix routes the
+// call through the OpenAI-compatible adapter. The workflow defaults to
+// Groq's free tier (sed-swaps the model line); Gemini's free tier needs
+// an account with credits.
+type Smoke = { title: string, confidence: float }
+
+fn main() -> string uses LLM {
+    let r = llm"""Reply with a JSON object with a string field title and a number field confidence. Output only JSON."""
+        with { schema: Smoke,
+               model: "gemini:gemini-2.5-flash",
+               budget: 0.05 USD,
+               retry: 2 with repair }
+    r.title
+}

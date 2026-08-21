@@ -10,6 +10,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/NekomyaDev/nudge/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/NekomyaDev/nudge/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="release" src="https://img.shields.io/badge/release-v1.2.0-brightgreen">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-blue">
   <img alt="compiler" src="https://img.shields.io/badge/compiler-Rust%20%C2%B7%20zero%20deps-red">
@@ -78,65 +79,25 @@ The TypeScript backend is a deliberately scoped subset today; parity work is tra
 
 > **Privacy note:** traces record prompts, model outputs, and tool results verbatim — they can contain secrets or personal data. Treat trace files as sensitive artifacts; a redaction hook is on the roadmap.
 
-## Install
-
-### Prebuilt binaries (recommended)
-
-Download the latest prebuilt binary for your platform from the [Releases](https://github.com/NekomyaDev/nudge/releases) page:
-
-- **Linux x86_64**: `nudgec-linux-x86_64.tar.gz`
-- **macOS x86_64**: `nudgec-macos-x86_64.tar.gz`
-- **macOS Apple Silicon**: `nudgec-macos-aarch64.tar.gz`
-- **Windows x86_64**: `nudgec-windows-x86_64.zip`
-
-After downloading:
-
-```sh
-# Linux/macOS
-tar xzf nudgec-*.tar.gz
-chmod +x nudgec
-sudo mv nudgec /usr/local/bin/
-
-# Windows (PowerShell)
-Expand-Archive nudgec-*.zip
-Move-Item nudgec.exe C:\Windows\System32\
-```
-
-### VS Code extension
-
-Install the [Nudge Language](https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang) extension from the VS Code Marketplace for syntax highlighting, snippets, and diagnostics.
-
 ## Quickstart
 
 ```sh
-# Create a simple Nudge program
-cat > hello.ndg << 'EOF'
-type Greeting = { message: string, timestamp: string }
+cargo build                              # the nudgec compiler
+export PYTHONPATH=$PWD/runtime           # emitted code imports nudge_runtime
 
-fn greet(name: string) -> Greeting uses LLM {
-    llm"""Create a greeting for {name}. Return message and timestamp."""
-    with { schema: Greeting, model: "anthropic:sonnet-4.6", budget: 0.01 USD }
-}
-
-test "greet works on recorded trace" {
-    let t = replay("traces/greet.jsonl")
-    assert t.output.message != ""
-}
-EOF
-
-# Check the program
-nudgec check hello.ndg
-
-# Build and run
-nudgec build hello.ndg
-export PYTHONPATH=$PWD/runtime
-python3 out/hello.py
-
-# Run tests (zero tokens)
-nudgec test hello.ndg
+nudgec check examples/research_agent.ndg # type + effect verification
+nudgec cost examples/research_agent.ndg  # static cost report
+nudgec build examples/research_agent.ndg # emit Python to out/
+cd examples && nudgec test research_agent.ndg   # replay the committed trace — zero tokens
 ```
 
 Everything runs against a deterministic fake provider by default: **no API key, no token spend.** See [examples/README.md](examples/README.md) for live runs and the full walkthrough.
+
+## Install
+
+- **Prebuilt binaries** — Linux, macOS (x86_64 + Apple Silicon), Windows on the [Releases](https://github.com/NekomyaDev/nudge/releases) page
+- **From source** — `cargo build --release` → `target/release/nudgec`. Zero dependencies, builds in seconds
+- **VS Code** — [Nudge Language](https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang) on the Marketplace: highlighting, snippets, and diagnostics via `nudgec lsp`
 
 ## Documentation
 
@@ -156,7 +117,3 @@ Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the open [`
 ## License
 
 MIT — see [LICENSE](LICENSE). No SaaS, no token, no lock-in: Nudge is an open toolchain, forever.
-
----
-
-> **Note:** This repository contains prebuilt binaries and documentation only. The source code is available to authorized contributors. For access, please contact [@NekomyaDev](https://github.com/NekomyaDev).
