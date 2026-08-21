@@ -41,10 +41,6 @@ Production agents are still held together with glue code: prompt chains parsed b
 
 ## A Taste of Nudge
 
-<p align="center">
-  <img src="https://via.placeholder.com/800x400/1a1a2e/00d4ff?text=Nudge+Demo+GIF" alt="Nudge Demo" width="600">
-</p>
-
 ```
 type Finding = { claim: string, source: Url, confidence: float @range(0, 1) }
 
