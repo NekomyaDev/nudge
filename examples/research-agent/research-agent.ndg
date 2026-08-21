@@ -1,0 +1,33 @@
+type Finding = { claim: string, source: string, confidence: float @range(0, 1) }
+type Research = { topic: string, findings: [Finding], summary: string, gaps: [string] }
+
+fn research_topic(topic: string, sources: [string]) -> Research uses LLM {
+    llm"""Research the topic: {topic}
+
+    Available sources:
+    {sources}
+
+    Extract verifiable findings with:
+    - Clear claims
+    - Source references
+    - Confidence scores (0-1)
+
+    Identify research gaps and summarize findings."""
+    with { schema: Research, model: "anthropic:sonnet-4.6", budget: 0.05 USD, retry: 2 with repair }
+}
+
+fn main() -> Research uses LLM {
+    let sources = [
+        "Nudge is a typed programming language for LLM agents",
+        "It compiles to Python and TypeScript",
+        "Features deterministic replay and budget contracts"
+    ]
+    research_topic("Nudge programming language", sources)
+}
+
+test "research produces structured findings" {
+    let t = replay("traces/research.jsonl")
+    assert len(t.output.findings) >= 2
+    assert t.output.summary != ""
+    assert t.cost_usd < 0.10
+}
