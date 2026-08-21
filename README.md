@@ -62,6 +62,25 @@ test "stays within budget on recorded trace" {
 
 The compiler proves the schema matches, infers effects, and computes a static cost bound. The runtime records every call to a content-addressed trace you can diff, commit, and replay.
 
+## Real-World Examples
+
+See what you can build with Nudge:
+
+| Example | Description | Features |
+|:---|:---|:---|
+| [AI Chatbot](examples/chatbot/) | Conversational agent with memory | Typed LLM, Replay, Budget |
+| [Code Reviewer](examples/code-reviewer/) | Code quality analyzer | Structured output, Scoring |
+| [Research Agent](examples/research-agent/) | Multi-source research | Confidence scores, Par map |
+| [Data Analyzer](examples/data-analyzer/) | Data pattern recognition | Insights, Recommendations |
+| [Translator](examples/translator/) | Multi-language translation | Quality scoring, Parallel |
+
+```sh
+# Try any example
+cd examples/chatbot
+nudgec check chatbot.ndg && nudgec build chatbot.ndg
+python3 out/chatbot.py
+```
+
 ## Features
 
 <div align="center">
