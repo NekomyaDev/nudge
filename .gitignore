@@ -1,10 +1,29 @@
+# Nudge - Binary Distribution
+# This repository contains prebuilt binaries and documentation only.
+
+# Ignore build artifacts
 /target
-**/*.rs.bk
-.nudge/store/
-traces/local/
+out/
+smoke/
+node_modules/
 __pycache__/
 *.pyc
 .DS_Store
-out/
 trace.jsonl
-node_modules/
+.nudge/store/
+traces/local/
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
+
+# Ignore editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Ignore temp files
+*.tmp
+*.bak
+*.log

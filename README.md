@@ -1,23 +1,33 @@
 <p align="center">
-  <img src="assets/logo.svg" width="128" height="128" alt="Nudge logo">
+  <img src="assets/logo.svg" width="200" height="200" alt="Nudge Logo">
 </p>
 
 <h1 align="center">Nudge</h1>
 
 <p align="center">
   <strong>Don't parse your agents. Nudge them.</strong><br>
-  A typed, replayable, budget-aware programming language for LLM agents — compiles to Python & TypeScript.
+  A typed, replayable, budget-aware programming language for LLM agents.<br>
+  Compiles to Python & TypeScript.
 </p>
 
 <p align="center">
-  <img alt="release" src="https://img.shields.io/badge/release-v1.2.0-brightgreen">
-  <img alt="license" src="https://img.shields.io/badge/license-Proprietary-red">
-  <img alt="compiler" src="https://img.shields.io/badge/compiler-Rust%20%C2%B7%20zero%20deps-red">
-  <img alt="target" src="https://img.shields.io/badge/target-Python%20%7C%20TypeScript-green">
-  <a href="https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang"><img alt="VS Code extension" src="https://img.shields.io/badge/VS%20Code-Nudge%20Language-007ACC?logo=visualstudiocode"></a>
+  <img alt="Version" src="https://img.shields.io/badge/version-1.2.0-blue">
+  <img alt="License" src="https://img.shields.io/badge/license-Proprietary-red">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-green">
+  <img alt="Target" src="https://img.shields.io/badge/target-Python%20%7C%20TypeScript-yellow">
+  <a href="https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang"><img alt="VS Code" src="https://img.shields.io/badge/VS%20Code-Nudge%20Language-007ACC?logo=visualstudiocode"></a>
 </p>
 
 ---
+
+<p align="center">
+  <a href="README.md">English</a> •
+  <a href="README.zh-CN.md">中文</a>
+</p>
+
+---
+
+## Why Nudge?
 
 Production agents are still held together with glue code: prompt chains parsed by hand, tool calls wrapped in try/except, no replay, no cost control, no regression tests. Libraries patch symptoms. **Nudge fixes the layer where the problem actually lives: the language.**
 
@@ -29,7 +39,7 @@ Production agents are still held together with glue code: prompt chains parsed b
 | Cost surprises | dashboards after the fact | budget is a contract, enforced by compiler + runtime |
 | Async fan-out spaghetti | manual asyncio | `par map / race / all`, race safety proven |
 
-## A taste
+## A Taste of Nudge
 
 ```
 type Finding = { claim: string, source: Url, confidence: float @range(0, 1) }
@@ -48,43 +58,66 @@ test "stays within budget on recorded trace" {
 
 The compiler proves the schema matches, infers effects, and computes a static cost bound. The runtime records every call to a content-addressed trace you can diff, commit, and replay.
 
-## What you get
+## Features
 
-- **Typed LLM calls** — output schema is a language type; violations trigger automatic repair, never reach your code
-- **Effect system** — pure / `LLM` / `Tool` / `IO` effects inferred and shown in signatures
-- **Deterministic replay** — full, hybrid, and live modes; traces are git-friendly JSONL
-- **Budget contracts** — per-call, per-run, and per-repair USD ceilings (`NUDGE_REPAIR_BUDGET`) with static estimation (`nudgec cost`)
-- **Checkpointed agent state** — crash, then `nudge resume` from the last checkpoint
-- **Native parallelism** — `par map`, `par race`, `par all` with compile-time race safety
-- **Prompt Clippy** — the compiler lints your `llm"""` blocks: vague instructions, missing output contracts, overlong prompts
-- **MCP & Python interop** — consume real MCP servers over stdio as typed tools; escape to any pip package
-- **Real providers** — one stdlib-only adapter for OpenAI / Gemini / Groq / MiMo / Mistral / Anthropic / Ollama; free tiers and local models work at $0
-- **Trace viewer** — `nudgec trace-view <trace.jsonl>` opens a local web UI over any run: timeline, tokens, cost, repairs highlighted, `par` lanes color-coded (NTF v1.1 `branch` field)
-- **Trace diff** — `nudgec trace-diff a.jsonl b.jsonl` answers "what changed when I edited the prompt?": totals and per-record deltas
-- **A2A agent-card export, LSP, OpenTelemetry** — built in, not bolted on
+<div align="center">
 
-### Backend parity
+| Feature | Description |
+|:---:|:---|
+| **Typed LLM Calls** | Output schema is a language type; violations trigger automatic repair |
+| **Effect System** | Pure / `LLM` / `Tool` / `IO` effects inferred and shown in signatures |
+| **Deterministic Replay** | Full, hybrid, and live modes; traces are git-friendly JSONL |
+| **Budget Contracts** | Per-call, per-run, and per-repair USD ceilings with static estimation |
+| **Checkpoint Resume** | Crash, then `nudge resume` from the last checkpoint |
+| **Native Parallelism** | `par map`, `par race`, `par all` with compile-time race safety |
+| **Prompt Clippy** | Compiler lints your `llm"""` blocks: vague instructions, missing contracts |
+| **MCP & Python Interop** | Consume real MCP servers over stdio; escape to any pip package |
+| **Real Providers** | OpenAI / Gemini / Groq / MiMo / Mistral / Anthropic / Ollama |
+| **Trace Viewer** | Local web UI: timeline, tokens, cost, repairs highlighted |
+| **Trace Diff** | Compare two traces: "what changed when I edited the prompt?" |
+| **A2A & LSP & OTel** | Built in, not bolted on |
 
-| Capability | Python backend | TypeScript backend |
-|---|---|---|
-| Typed calls, schema validation, repair | ✅ | ✅ |
-| Traces, replay, budget walls | ✅ | ✅ |
-| `par map/all/race` + branch labels (NTF v1.1) | ✅ thread pool | ✅ sequential (async codegen planned) |
-| Streaming (`stream let`) | ✅ live SSE + early-abort repair | ✅ fake parity (no live providers) |
-| Real providers (OpenAI/Gemini/Groq/MiMo/Mistral/Anthropic/Ollama) | ✅ | ⬜ routes to Python |
-| MCP tools, checkpoint/resume, OTel | ✅ | ⬜ |
+</div>
 
-The TypeScript backend is a deliberately scoped subset today; parity work is tracked in [docs/roadmap.md](docs/roadmap.md).
+## Quick Start
 
-> **Privacy note:** traces record prompts, model outputs, and tool results verbatim — they can contain secrets or personal data. Treat trace files as sensitive artifacts; a redaction hook is on the roadmap.
+### Install
 
-## Quickstart
+**One-Line Install (Recommended):**
 
 ```sh
-# Install Nudge
+# Linux / macOS
 curl -fsSL https://raw.githubusercontent.com/NekomyaDev/nudge/main/install.sh | bash
 
-# Create a simple Nudge program
+# Windows (PowerShell as Admin)
+irm https://raw.githubusercontent.com/NekomyaDev/nudge/main/install.ps1 | iex
+```
+
+**Package Managers:**
+
+```sh
+# Homebrew (macOS / Linux)
+brew install NekomyaDev/nudge/nudge
+
+# winget (Windows)
+winget install Nekomya.Nudge
+
+# Snap (Linux)
+sudo snap install nudge --classic
+
+# Docker
+docker run -it --rm -v $(pwd):/workspace nekomyadev/nudge nudgec --help
+```
+
+**GUI Installers:**
+
+- **Windows:** Download and double-click `install.bat`
+- **macOS:** Download and double-click `install.command`
+
+### Your First Nudge Program
+
+```sh
+# Create a program
 cat > hello.ndg << 'EOF'
 type Greeting = { message: string, timestamp: string }
 
@@ -99,11 +132,13 @@ test "greet works on recorded trace" {
 }
 EOF
 
-# Check the program
+# Type check
 nudgec check hello.ndg
 
-# Build and run
+# Compile to Python
 nudgec build hello.ndg
+
+# Run (no API key needed - uses fake provider)
 export PYTHONPATH=$PWD/runtime
 python3 out/hello.py
 
@@ -113,64 +148,39 @@ nudgec test hello.ndg
 
 Everything runs against a deterministic fake provider by default: **no API key, no token spend.**
 
-## Install
+## Backend Parity
 
-### One-Line Install (Recommended)
+| Capability | Python | TypeScript |
+|:---|:---:|:---:|
+| Typed calls, schema validation, repair | ✅ | ✅ |
+| Traces, replay, budget walls | ✅ | ✅ |
+| `par map/all/race` + branch labels | ✅ | ✅ |
+| Streaming (`stream let`) | ✅ | ✅ |
+| Real providers | ✅ | ⬜ |
+| MCP tools, checkpoint/resume, OTel | ✅ | ⬜ |
 
-**Linux/macOS:**
-```sh
-curl -fsSL https://raw.githubusercontent.com/NekomyaDev/nudge/main/install.sh | bash
-```
+## VS Code Extension
 
-**Windows (PowerShell as Admin):**
-```powershell
-irm https://raw.githubusercontent.com/NekomyaDev/nudge/main/install.ps1 | iex
-```
+Install the [Nudge Language](https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang) extension for:
 
-**Windows (Double-click):**
-Download and run [install.bat](https://github.com/NekomyaDev/nudge/releases/download/v1.2.0/install.bat)
+- Syntax highlighting
+- Code snippets
+- Real-time diagnostics via `nudgec lsp`
+- Hover information
+- Go to definition
 
-**macOS (Double-click):**
-Download and run [install.command](https://github.com/NekomyaDev/nudge/releases/download/v1.2.0/install.command)
+## Privacy Note
 
-### Package Managers
-
-**Homebrew (macOS/Linux):**
-```sh
-brew install NekomyaDev/nudge/nudge
-```
-
-**winget (Windows):**
-```sh
-winget install Nekomya.Nudge
-```
-
-**Snap (Linux):**
-```sh
-sudo snap install nudge --classic
-```
-
-**Docker:**
-```sh
-docker run -it --rm -v $(pwd):/workspace nekomyadev/nudge nudgec --help
-```
-
-### VS Code Extension
-
-Install the [Nudge Language](https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang) extension from the VS Code Marketplace. The extension will automatically detect and use your installed Nudge compiler.
-
-## Documentation
-
-Documentation is available in the private source repository. For access, contact [@NekomyaDev](https://github.com/NekomyaDev).
-
-## Contributing
-
-For contributions, please contact [@NekomyaDev](https://github.com/NekomyaDev) to access the private source repository.
-
-## The name
-
-*Nudge* — a small, intentional push. You don't command an LLM and parse whatever comes back; you nudge it into a schema and let the language enforce the rest. Files use the `.ndg` extension.
+Traces record prompts, model outputs, and tool results verbatim — they can contain secrets or personal data. Treat trace files as sensitive artifacts; a redaction hook is on the roadmap.
 
 ## License
 
-Proprietary — see [LICENSE](LICENSE) and [LICENSE-BINARY](LICENSE-BINARY). Nudge is free to use but closed source.
+Proprietary — see [LICENSE](LICENSE) and [LICENSE-BINARY](LICENSE-BINARY).
+
+Nudge is free to use but closed source. For licensing inquiries, contact [@NekomyaDev](https://github.com/NekomyaDev).
+
+---
+
+<p align="center">
+  Made with ❤️ by <a href="https://github.com/NekomyaDev">NekomyaDev</a>
+</p>
