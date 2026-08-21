@@ -1,19 +1,22 @@
 # Contributing to Nudge
 
-Thank you for your interest in contributing to Nudge! This document provides guidelines and information for contributors.
+Thank you for your interest in contributing to Nudge!
 
 ## Getting Started
 
-1. Contact [@NekomyaDev](https://github.com/NekomyaDev) to access the private source repository
-2. Fork the repository
-3. Create a feature branch
-4. Make your changes
-5. Submit a pull request
+Nudge is closed source. To contribute:
+
+1. Contact [@NekomyaDev](https://github.com/NekomyaDev) to request access to the private source repository
+2. If approved, you will be added as a collaborator
+3. Clone the private repository
+4. Create a feature branch
+5. Make your changes
+6. Submit a pull request
 
 ## Development Setup
 
 ```bash
-# Clone the repository
+# Clone the private repository (requires access)
 git clone https://github.com/NekomyaDev/nudge-source.git
 cd nudge-source
 
@@ -32,7 +35,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 - Follow Rust conventions
 - Use `cargo fmt` for formatting
 - Ensure `cargo clippy` passes without warnings
-- Write meaningful commit messages
+- Write meaningful commit messages following Conventional Commits
 
 ## Pull Request Process
 
@@ -43,7 +46,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ## Reporting Issues
 
-- Use GitHub Issues for bug reports
+Use [GitHub Issues](https://github.com/NekomyaDev/nudge/issues) for bug reports:
+
 - Include reproduction steps
 - Provide error messages and logs
 - Specify your environment (OS, Rust version, etc.)

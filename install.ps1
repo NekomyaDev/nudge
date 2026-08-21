@@ -50,7 +50,7 @@ try {
     }
 
     Write-Host ""
-    Write-Host "✓ Nudge $VERSION installed successfully!" -ForegroundColor Green
+    Write-Host "Nudge $VERSION installed successfully!" -ForegroundColor Green
     Write-Host ""
     Write-Host "Run 'nudgec --help' to get started."
     Write-Host ""

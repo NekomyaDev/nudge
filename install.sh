@@ -97,7 +97,7 @@ fi
 chmod +x /usr/local/bin/$BINARY
 
 echo ""
-echo "✓ Nudge ${VERSION} installed successfully!"
+echo "Nudge ${VERSION} installed successfully!"
 echo ""
 echo "Run 'nudgec --help' to get started."
 echo ""

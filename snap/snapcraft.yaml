@@ -1,5 +1,6 @@
 name: nudge
 version: '1.2.0'
+title: Nudge - Programming Language for LLM Agents
 summary: Typed, replayable, budget-aware programming language for LLM agents
 description: |
   Nudge is a programming language designed for LLM agents. It features:
@@ -14,8 +15,12 @@ description: |
     nudgec check hello.ndg    # Type check
     nudgec build hello.ndg    # Compile to Python
     nudgec test hello.ndg     # Run tests
-  
-  Website: https://github.com/NekomyaDev/nudge
+
+contact: elaport0880@gmail.com
+license: Proprietary
+issues: https://github.com/NekomyaDev/nudge/issues
+source-code: https://github.com/NekomyaDev/nudge
+website: https://github.com/NekomyaDev/nudge
 
 grade: stable
 confinement: classic
@@ -23,7 +28,6 @@ base: core22
 
 architectures:
   - build-on: [amd64]
-  - build-on: [arm64]
 
 parts:
   nudge:
@@ -36,5 +40,3 @@ parts:
 apps:
   nudgec:
     command: bin/nudgec
-    environment:
-      PATH: $SNAP/bin:$PATH

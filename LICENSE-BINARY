@@ -2,13 +2,14 @@ NUDGE BINARY DISTRIBUTION LICENSE
 
 Copyright (c) 2026 NEKOMYA (NekomyaDev). All rights reserved.
 
-The source code of the Nudge compiler and related tools is licensed under
-the MIT License and is available in the private NekomyaDev/nudge-source repository.
+The source code of the Nudge compiler and related tools is proprietary
+software owned by NEKOMYA and is available in the private NekomyaDev/nudge-source
+repository to authorized contributors.
 
-HOWEVER, the precompiled binary distributions of Nudge (the "Binaries")
+The precompiled binary distributions of Nudge (the "Binaries")
 attached to GitHub Releases, distributed via install scripts, or made
-available through any other channel are NOT open source. They are
-proprietary software subject to the following terms:
+available through any other channel are proprietary software subject
+to the following terms:
 
 1. GRANT OF LICENSE
    You are granted a limited, non-exclusive, non-transferable license to

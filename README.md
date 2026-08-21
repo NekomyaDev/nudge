@@ -112,6 +112,23 @@ docker run -it --rm -v $(pwd):/workspace nekomyadev/nudge nudgec --help
 
 Download from [Releases](https://github.com/NekomyaDev/nudge/releases) page:
 
+| Platform | File |
+|:---|:---|
+| Linux x86_64 | `nudgec-v1.2.0-linux-x86_64.tar.gz` |
+| macOS x86_64 | `nudgec-v1.2.0-macos-x86_64.tar.gz` |
+| macOS Apple Silicon | `nudgec-v1.2.0-macos-aarch64.tar.gz` |
+| Windows x86_64 | `nudgec-v1.2.0-windows-x86_64.zip` |
+
+```sh
+# Linux/macOS
+tar xzf nudgec-*.tar.gz
+chmod +x nudgec
+sudo mv nudgec /usr/local/bin/
+
+# Windows
+# Extract zip and add to PATH
+```
+
 ### Your First Nudge Program
 
 ```sh
