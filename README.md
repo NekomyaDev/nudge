@@ -144,11 +144,6 @@ fn greet(name: string) -> Greeting uses LLM {
     llm"""Create a greeting for {name}. Return message and timestamp."""
     with { schema: Greeting, model: "anthropic:sonnet-4.6", budget: 0.01 USD }
 }
-
-test "greet works on recorded trace" {
-    let t = replay("traces/greet.jsonl")
-    assert t.output.message != ""
-}
 EOF
 
 # Type check
@@ -158,11 +153,7 @@ nudgec check hello.ndg
 nudgec build hello.ndg
 
 # Run (no API key needed - uses fake provider)
-export PYTHONPATH=$PWD/runtime
 python3 out/hello.py
-
-# Run tests (zero tokens)
-nudgec test hello.ndg
 ```
 
 Everything runs against a deterministic fake provider by default: **no API key, no token spend.**

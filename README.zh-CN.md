@@ -140,11 +140,6 @@ fn greet(name: string) -> Greeting uses LLM {
     llm"""为 {name} 创建一个问候。返回 message 和 timestamp。"""
     with { schema: Greeting, model: "anthropic:sonnet-4.6", budget: 0.01 USD }
 }
-
-test "greet works on recorded trace" {
-    let t = replay("traces/greet.jsonl")
-    assert t.output.message != ""
-}
 EOF
 
 # 类型检查
@@ -152,6 +147,12 @@ nudgec check hello.ndg
 
 # 编译为 Python
 nudgec build hello.ndg
+
+# 运行（无需 API 密钥 - 使用假提供商）
+python3 out/hello.py
+```
+
+默认情况下，所有内容都针对确定性假提供商运行：**无需 API 密钥，无需 token 消耗。**
 
 # 运行（无需 API 密钥 - 使用假提供商）
 export PYTHONPATH=$PWD/runtime
