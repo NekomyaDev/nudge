@@ -81,33 +81,97 @@ The TypeScript backend is a deliberately scoped subset today; parity work is tra
 ## Quickstart
 
 ```sh
-cargo build                              # the nudgec compiler
-export PYTHONPATH=$PWD/runtime           # emitted code imports nudge_runtime
+# Install Nudge
+curl -fsSL https://raw.githubusercontent.com/NekomyaDev/nudge/main/install.sh | bash
 
-nudgec check examples/research_agent.ndg # type + effect verification
-nudgec cost examples/research_agent.ndg  # static cost report
-nudgec build examples/research_agent.ndg # emit Python to out/
-cd examples && nudgec test research_agent.ndg   # replay the committed trace — zero tokens
+# Create a simple Nudge program
+cat > hello.ndg << 'EOF'
+type Greeting = { message: string, timestamp: string }
+
+fn greet(name: string) -> Greeting uses LLM {
+    llm"""Create a greeting for {name}. Return message and timestamp."""
+    with { schema: Greeting, model: "anthropic:sonnet-4.6", budget: 0.01 USD }
+}
+
+test "greet works on recorded trace" {
+    let t = replay("traces/greet.jsonl")
+    assert t.output.message != ""
+}
+EOF
+
+# Check the program
+nudgec check hello.ndg
+
+# Build and run
+nudgec build hello.ndg
+export PYTHONPATH=$PWD/runtime
+python3 out/hello.py
+
+# Run tests (zero tokens)
+nudgec test hello.ndg
 ```
 
-Everything runs against a deterministic fake provider by default: **no API key, no token spend.** See [examples/README.md](examples/README.md) for live runs and the full walkthrough.
+Everything runs against a deterministic fake provider by default: **no API key, no token spend.**
 
 ## Install
 
-- **Prebuilt binaries** — Linux, macOS (x86_64 + Apple Silicon), Windows on the [Releases](https://github.com/NekomyaDev/nudge/releases) page
-- **From source** — `cargo build --release` → `target/release/nudgec`. Zero dependencies, builds in seconds
-- **VS Code** — [Nudge Language](https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang) on the Marketplace: highlighting, snippets, and diagnostics via `nudgec lsp`
+### Quick Install (Recommended)
+
+**Linux/macOS:**
+```sh
+curl -fsSL https://raw.githubusercontent.com/NekomyaDev/nudge/main/install.sh | bash
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/NekomyaDev/nudge/main/install.ps1 | iex
+```
+
+### Homebrew (macOS/Linux)
+
+```sh
+brew install NekomyaDev/nudge/nudge
+```
+
+### Docker
+
+```sh
+docker run -it --rm -v $(pwd):/workspace nekomyadev/nudge nudgec --help
+```
+
+### Manual Install
+
+Download the latest prebuilt binary for your platform from the [Releases](https://github.com/NekomyaDev/nudge/releases) page:
+
+- **Linux x86_64**: `nudgec-v1.2.0-linux-x86_64.tar.gz`
+- **macOS x86_64**: `nudgec-v1.2.0-macos-x86_64.tar.gz`
+- **macOS Apple Silicon**: `nudgec-v1.2.0-macos-aarch64.tar.gz`
+- **Windows x86_64**: `nudgec-v1.2.0-windows-x86_64.zip`
+
+After downloading:
+
+```sh
+# Linux/macOS
+tar xzf nudgec-*.tar.gz
+chmod +x nudgec
+sudo mv nudgec /usr/local/bin/
+
+# Windows (PowerShell)
+Expand-Archive nudgec-*.zip
+Move-Item nudgec.exe C:\Windows\System32\
+```
+
+### VS Code Extension
+
+Install the [Nudge Language](https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang) extension from the VS Code Marketplace for syntax highlighting, snippets, and diagnostics.
 
 ## Documentation
 
-- [Language design](docs/design.md) — types, effects, replay, budgets, compiler architecture (frozen at v1.24)
-- [Strategy: Six Locked Doors](docs/strategy.md) — why Nudge exists, and the order in which it becomes indispensable
-- [Roadmap](docs/roadmap.md) — shipped history and what's next (trace viewer, NTF standard, capability-based tool security)
-- [Examples](examples/) — the self-testing research agent
+Documentation is available in the private source repository. For access, contact [@NekomyaDev](https://github.com/NekomyaDev).
 
 ## Contributing
 
-Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the open [`good first issue`s](https://github.com/NekomyaDev/nudge/labels/good%20first%20issue): new example agents, replay conformance tests, provider adapters, and editor support.
+For contributions, please contact [@NekomyaDev](https://github.com/NekomyaDev) to access the private source repository.
 
 ## The name
 
