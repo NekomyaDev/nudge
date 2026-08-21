@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.5.0.schema.json
+
+PackageIdentifier: Nekomya.Nudge
+PackageVersion: 1.2.0
+PackageLocale: en-US
+Publisher: Nekomya
+PublisherUrl: https://github.com/NekomyaDev
+PublisherSupportUrl: https://github.com/NekomyaDev/nudge/issues
+Author: Nekomya
+PackageName: Nudge
+PackageUrl: https://github.com/NekomyaDev/nudge
+License: Proprietary
+LicenseUrl: https://github.com/NekomyaDev/nudge/blob/main/LICENSE
+Copyright: Copyright (c) 2026 NEKOMYA
+ShortDescription: Typed, replayable, budget-aware programming language for LLM agents
+Description: |
+  Nudge is a programming language designed for LLM agents. It features:
+  - Typed LLM calls with schema validation
+  - Deterministic replay and trace-based testing
+  - Budget contracts for cost control
+  - Native parallelism with par map/race/all
+  - MCP and Python interop
+Tags:
+  - nudge
+  - llm
+  - ai
+  - agents
+  - compiler
+  - language
+ManifestType: defaultLocale
+ManifestVersion: 1.5.0

@@ -115,55 +115,49 @@ Everything runs against a deterministic fake provider by default: **no API key, 
 
 ## Install
 
-### Quick Install (Recommended)
+### One-Line Install (Recommended)
 
 **Linux/macOS:**
 ```sh
 curl -fsSL https://raw.githubusercontent.com/NekomyaDev/nudge/main/install.sh | bash
 ```
 
-**Windows (PowerShell):**
+**Windows (PowerShell as Admin):**
 ```powershell
 irm https://raw.githubusercontent.com/NekomyaDev/nudge/main/install.ps1 | iex
 ```
 
-### Homebrew (macOS/Linux)
+**Windows (Double-click):**
+Download and run [install.bat](https://github.com/NekomyaDev/nudge/releases/download/v1.2.0/install.bat)
 
+**macOS (Double-click):**
+Download and run [install.command](https://github.com/NekomyaDev/nudge/releases/download/v1.2.0/install.command)
+
+### Package Managers
+
+**Homebrew (macOS/Linux):**
 ```sh
 brew install NekomyaDev/nudge/nudge
 ```
 
-### Docker
+**winget (Windows):**
+```sh
+winget install Nekomya.Nudge
+```
 
+**Snap (Linux):**
+```sh
+sudo snap install nudge --classic
+```
+
+**Docker:**
 ```sh
 docker run -it --rm -v $(pwd):/workspace nekomyadev/nudge nudgec --help
 ```
 
-### Manual Install
-
-Download the latest prebuilt binary for your platform from the [Releases](https://github.com/NekomyaDev/nudge/releases) page:
-
-- **Linux x86_64**: `nudgec-v1.2.0-linux-x86_64.tar.gz`
-- **macOS x86_64**: `nudgec-v1.2.0-macos-x86_64.tar.gz`
-- **macOS Apple Silicon**: `nudgec-v1.2.0-macos-aarch64.tar.gz`
-- **Windows x86_64**: `nudgec-v1.2.0-windows-x86_64.zip`
-
-After downloading:
-
-```sh
-# Linux/macOS
-tar xzf nudgec-*.tar.gz
-chmod +x nudgec
-sudo mv nudgec /usr/local/bin/
-
-# Windows (PowerShell)
-Expand-Archive nudgec-*.zip
-Move-Item nudgec.exe C:\Windows\System32\
-```
-
 ### VS Code Extension
 
-Install the [Nudge Language](https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang) extension from the VS Code Marketplace for syntax highlighting, snippets, and diagnostics.
+Install the [Nudge Language](https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang) extension from the VS Code Marketplace. The extension will automatically detect and use your installed Nudge compiler.
 
 ## Documentation
 
