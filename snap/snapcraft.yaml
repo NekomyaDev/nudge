@@ -3,26 +3,38 @@ version: '1.2.0'
 summary: Typed, replayable, budget-aware programming language for LLM agents
 description: |
   Nudge is a programming language designed for LLM agents. It features:
-  - Typed LLM calls with schema validation
-  - Deterministic replay and trace-based testing
-  - Budget contracts for cost control
-  - Native parallelism with par map/race/all
-  - MCP and Python interop
+  
+  • Typed LLM calls with schema validation
+  • Deterministic replay and trace-based testing
+  • Budget contracts for cost control
+  • Native parallelism with par map/race/all
+  • MCP and Python interop
+  
+  Quick start:
+    nudgec check hello.ndg    # Type check
+    nudgec build hello.ndg    # Compile to Python
+    nudgec test hello.ndg     # Run tests
+  
+  Website: https://github.com/NekomyaDev/nudge
 
 grade: stable
 confinement: classic
 base: core22
 
 architectures:
-  - build-on: amd64
-  - build-on: arm64
+  - build-on: [amd64]
+  - build-on: [arm64]
 
 parts:
   nudge:
     plugin: dump
     source: https://github.com/NekomyaDev/nudge/releases/download/v1.2.0/nudgec-v1.2.0-linux-x86_64.tar.gz
     source-checksum: sha256/0b05a3ac75c853cb80f5576f15059291ea05e4b83be12f6661d138b3fb476b65
+    organize:
+      nudgec: bin/nudgec
 
 apps:
   nudgec:
-    command: nudgec
+    command: bin/nudgec
+    environment:
+      PATH: $SNAP/bin:$PATH

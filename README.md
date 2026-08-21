@@ -93,6 +93,16 @@ curl -fsSL https://raw.githubusercontent.com/NekomyaDev/nudge/main/install.sh | 
 irm https://raw.githubusercontent.com/NekomyaDev/nudge/main/install.ps1 | iex
 ```
 
+**Package Managers:**
+
+```sh
+# Snap (Linux)
+sudo snap install nudge --classic
+
+# Docker
+docker run -it --rm -v $(pwd):/workspace nekomyadev/nudge nudgec --help
+```
+
 **GUI Installers (Double-Click):**
 
 - **Windows:** Download [`install.bat`](https://github.com/NekomyaDev/nudge/releases/download/v1.2.0/install.bat) and double-click
