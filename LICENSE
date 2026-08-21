@@ -1,21 +1,39 @@
-MIT License
+NUDGE COMPILER - PROPRIETARY SOFTWARE LICENSE
 
-Copyright (c) 2026 NEKOMYA
+Copyright (c) 2026 NEKOMYA (NekomyaDev). All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+The Nudge compiler, runtime, and all related tools (collectively, the "Software")
+are proprietary software owned by NEKOMYA. All rights, title, and interest in
+and to the Software, including all intellectual property rights, remain with
+NEKOMYA.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. GRANT OF LICENSE
+   You are granted a limited, non-exclusive, non-transferable license to
+   use the Software for personal or commercial purposes, subject to the
+   restrictions below.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+2. RESTRICTIONS
+   You MAY NOT:
+   a) Access, view, copy, or distribute the source code of the Software.
+   b) Decompile, reverse engineer, disassemble, or otherwise attempt to
+      derive the source code from the Software.
+   c) Modify, adapt, translate, or create derivative works based on the
+      Software.
+   d) Redistribute, sublicense, sell, lease, or transfer the Software to
+      any third party without prior written permission.
+   e) Remove or alter any proprietary notices, labels, or marks from the
+      Software.
+   f) Use the Software to develop a competing programming language,
+      compiler, or agent framework without authorization.
+
+3. OWNERSHIP
+   All rights, title, and interest in and to the Software, including all
+   intellectual property rights, remain with NEKOMYA.
+
+4. NO WARRANTY
+   THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND.
+
+5. TERMINATION
+   This license automatically terminates if you violate any of its terms.
+
+For licensing inquiries: contact via GitHub @NekomyaDev

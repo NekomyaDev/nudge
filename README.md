@@ -10,9 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/NekomyaDev/nudge/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/NekomyaDev/nudge/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="release" src="https://img.shields.io/badge/release-v1.2.0-brightgreen">
-  <img alt="license" src="https://img.shields.io/badge/license-MIT-blue">
+  <img alt="license" src="https://img.shields.io/badge/license-Proprietary-red">
   <img alt="compiler" src="https://img.shields.io/badge/compiler-Rust%20%C2%B7%20zero%20deps-red">
   <img alt="target" src="https://img.shields.io/badge/target-Python%20%7C%20TypeScript-green">
   <a href="https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang"><img alt="VS Code extension" src="https://img.shields.io/badge/VS%20Code-Nudge%20Language-007ACC?logo=visualstudiocode"></a>
@@ -116,4 +115,4 @@ Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the open [`
 
 ## License
 
-MIT — see [LICENSE](LICENSE). No SaaS, no token, no lock-in: Nudge is an open toolchain, forever.
+Proprietary — see [LICENSE](LICENSE) and [LICENSE-BINARY](LICENSE-BINARY). Nudge is free to use but closed source.
