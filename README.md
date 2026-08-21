@@ -93,26 +93,14 @@ curl -fsSL https://raw.githubusercontent.com/NekomyaDev/nudge/main/install.sh | 
 irm https://raw.githubusercontent.com/NekomyaDev/nudge/main/install.ps1 | iex
 ```
 
-**Package Managers:**
+**GUI Installers (Double-Click):**
 
-```sh
-# Homebrew (macOS / Linux)
-brew install NekomyaDev/nudge/nudge
+- **Windows:** Download [`install.bat`](https://github.com/NekomyaDev/nudge/releases/download/v1.2.0/install.bat) and double-click
+- **macOS:** Download [`install.command`](https://github.com/NekomyaDev/nudge/releases/download/v1.2.0/install.command) and double-click
 
-# winget (Windows)
-winget install Nekomya.Nudge
+**Manual Install:**
 
-# Snap (Linux)
-sudo snap install nudge --classic
-
-# Docker
-docker run -it --rm -v $(pwd):/workspace nekomyadev/nudge nudgec --help
-```
-
-**GUI Installers:**
-
-- **Windows:** Download and double-click `install.bat`
-- **macOS:** Download and double-click `install.command`
+Download from [Releases](https://github.com/NekomyaDev/nudge/releases) page:
 
 ### Your First Nudge Program
 
