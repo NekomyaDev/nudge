@@ -1,0 +1,48 @@
+name: examples
+
+on:
+  push:
+    branches: [main]
+    paths: ["examples/**", ".github/workflows/examples.yml"]
+  pull_request:
+    paths: ["examples/**", ".github/workflows/examples.yml"]
+
+env:
+  NUDGE_VERSION: v1.2.0
+
+jobs:
+  check-build-test:
+    name: check / build / test (${{ matrix.example }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        example: [chatbot, code-reviewer, data-analyzer, research-agent, translator]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nudgec
+        run: |
+          case "$(uname -m)" in
+            x86_64) arch=x86_64 ;;
+            aarch64) arch=aarch64 ;;
+          esac
+          curl -fsSL -o nudgec.tar.gz \
+            "https://github.com/NekomyaDev/nudge/releases/download/${NUDGE_VERSION}/nudgec-${NUDGE_VERSION}-linux-${arch}.tar.gz"
+          tar xzf nudgec.tar.gz
+          sudo install -m 0755 nudgec /usr/local/bin/nudgec
+          nudgec --version || true
+
+      - name: nudgec check
+        working-directory: examples/${{ matrix.example }}
+        run: nudgec check ${{ matrix.example }}.ndg
+
+      - name: nudgec build
+        working-directory: examples/${{ matrix.example }}
+        run: nudgec build ${{ matrix.example }}.ndg
+
+      - name: nudgec test (replay, fake provider)
+        working-directory: examples/${{ matrix.example }}
+        env:
+          NUDGE_PROVIDER: fake
+        run: nudgec test ${{ matrix.example }}.ndg
