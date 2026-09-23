@@ -15,7 +15,7 @@ A simple AI chatbot built with Nudge. Maintains conversation memory and responds
 type Message = { role: string, content: string }
 type Conversation = { messages: [Message], summary: string }
 
-fn chat(history: [Message], user_input: string) -> Conversation uses LLM {
+fn chat(history: string, user_input: string) -> Conversation uses LLM {
     llm"""Continue this conversation naturally.
 
     Conversation history:
@@ -28,10 +28,7 @@ fn chat(history: [Message], user_input: string) -> Conversation uses LLM {
 }
 
 fn main() -> Conversation uses LLM {
-    let initial: [Message] = [
-        { role: "user", content: "Hello! What can you help me with?" }
-    ]
-    chat(initial, "Tell me about Nudge programming language")
+    chat("User: Hello! What can you help me with?", "Tell me about Nudge programming language")
 }
 
 test "chat maintains conversation history" {
