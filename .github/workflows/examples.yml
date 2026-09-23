@@ -21,7 +21,7 @@ jobs:
       matrix:
         example: [chatbot, code-reviewer, data-analyzer, research-agent, translator]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Pull nudge image
         run: docker pull "$NUDGE_IMAGE"
