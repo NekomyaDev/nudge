@@ -8,7 +8,9 @@ on:
     paths: ["examples/**", ".github/workflows/examples.yml"]
 
 env:
-  NUDGE_VERSION: v1.2.0
+  # The Python runtime (nudge_runtime) ships inside the published image,
+  # so check/build/test all run there.
+  NUDGE_IMAGE: nekomyadev/nudge:1.2.0
 
 jobs:
   check-build-test:
@@ -21,28 +23,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install nudgec
+      - name: Pull nudge image
+        run: docker pull "$NUDGE_IMAGE"
+
+      - name: nudgec check / build / test (fake provider, no API key)
+        working-directory: examples/${{ matrix.example }}
         run: |
-          case "$(uname -m)" in
-            x86_64) arch=x86_64 ;;
-            aarch64) arch=aarch64 ;;
-          esac
-          curl -fsSL -o nudgec.tar.gz \
-            "https://github.com/NekomyaDev/nudge/releases/download/${NUDGE_VERSION}/nudgec-${NUDGE_VERSION}-linux-${arch}.tar.gz"
-          tar xzf nudgec.tar.gz
-          sudo install -m 0755 nudgec /usr/local/bin/nudgec
-          nudgec --version || true
-
-      - name: nudgec check
-        working-directory: examples/${{ matrix.example }}
-        run: nudgec check ${{ matrix.example }}.ndg
-
-      - name: nudgec build
-        working-directory: examples/${{ matrix.example }}
-        run: nudgec build ${{ matrix.example }}.ndg
-
-      - name: nudgec test (replay, fake provider)
-        working-directory: examples/${{ matrix.example }}
-        env:
-          NUDGE_PROVIDER: fake
-        run: nudgec test ${{ matrix.example }}.ndg
+          docker run --rm -v "$PWD:/workspace" -w "/workspace" -e NUDGE_PROVIDER=fake "$NUDGE_IMAGE" \
+            sh -c "nudgec check ${{ matrix.example }}.ndg && nudgec build ${{ matrix.example }}.ndg && nudgec test ${{ matrix.example }}.ndg"
