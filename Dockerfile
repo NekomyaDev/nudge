@@ -1,4 +1,4 @@
-FROM python:3.13-slim AS builder
+FROM python:3.14-slim AS builder
 
 LABEL maintainer="NekomyaDev <elaport0880@gmail.com>"
 LABEL description="Nudge - Typed, replayable, budget-aware programming language for LLM agents"
@@ -24,7 +24,7 @@ ARG NUDGE_VERSION=v1.2.0
 RUN curl -fsSL https://raw.githubusercontent.com/NekomyaDev/nudge/main/install.sh | bash
 
 # Final stage
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 # Copy only necessary files from builder
 COPY --from=builder /usr/local/bin/nudgec /usr/local/bin/nudgec
