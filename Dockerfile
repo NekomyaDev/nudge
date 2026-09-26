@@ -36,8 +36,8 @@ COPY --from=builder /usr/bin/node /usr/bin/node
 COPY --from=builder /usr/lib/node_modules /usr/lib/node_modules
 
 # Python runtime from this repository's source
-COPY runtime/nudge_runtime /opt/nudge_runtime
-RUN pip install --no-cache-dir /opt/nudge_runtime && rm -rf /opt/nudge_runtime
+COPY runtime /opt/runtime
+RUN pip install --no-cache-dir /opt/runtime && rm -rf /opt/runtime
 
 # Update packages and fix vulnerabilities
 RUN apt-get update && \
