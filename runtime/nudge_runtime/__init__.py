@@ -652,6 +652,9 @@ class Trace:
                 return _attr(r.get("output"))
         return None
 
+    def decision_calls(self):
+        return [r for r in self.records if r.get("kind") == "decision.call"]
+
     def llm_calls(self):
         return [r for r in self.records if r.get("kind") == "llm.call"]
 
@@ -665,6 +668,16 @@ def replay(path):
 
 
 _REPLAY_STATE = {"outputs": None, "idx": 0}
+# decision.call records replay with the same take-and-bump discipline as
+# llm calls (par lanes consume concurrently)
+_DECISION_REPLAY_STATE = {"answers": None, "idx": 0}
+
+
+def _replay_decision_answers():
+    if _DECISION_REPLAY_STATE["answers"] is None:
+        trace = Trace(os.environ["NUDGE_REPLAY"])
+        _DECISION_REPLAY_STATE["answers"] = [r.get("answers") for r in trace.decision_calls()]
+    return _DECISION_REPLAY_STATE["answers"]
 # par_map/par_race lanes replay concurrently — take-and-bump must be atomic
 # or two lanes consume the same record while another is skipped
 _REPLAY_LOCK = threading.Lock()
@@ -2215,7 +2228,24 @@ def decide(questions, state, options=None):
 
     # NUDGE_PROVIDER=fake explicitly overrides model prefixes (llm parity);
     # an UNSET NUDGE_PROVIDER does not silently fake a named provider
-    if provider == "fake" or os.environ.get("NUDGE_PROVIDER") == "fake":
+    if os.environ.get("NUDGE_REPLAY") and _replay_mode() == "all":
+        # full replay: consume recorded answers in order — strict
+        # exhaustion like llm replay (a changed decide shape must fail the
+        # replay, not silently mock); NUDGE_RESUME continues live past the
+        # recorded prefix and keeps recording
+        outs = _replay_decision_answers()
+        with _REPLAY_LOCK:
+            if _DECISION_REPLAY_STATE["idx"] >= len(outs) and not os.environ.get("NUDGE_RESUME"):
+                raise ReplayMismatch(
+                    "program made more decide calls than the trace holds "
+                    "(decision replay exhaustion raises like llm replay)"
+                )
+            if _DECISION_REPLAY_STATE["idx"] < len(outs):
+                recorded = outs[_DECISION_REPLAY_STATE["idx"]]
+                _DECISION_REPLAY_STATE["idx"] += 1
+                return _attr(recorded)
+        # resume: fall through to a live call below
+    elif provider == "fake" or os.environ.get("NUDGE_PROVIDER") == "fake":
         answers = _fake_decide(questions, state, opts)
     else:
         registry_src = os.environ.get("NUDGE_DECISION_SERVERS")
@@ -2233,15 +2263,42 @@ def decide(questions, state, options=None):
 
     latency_ms = int((time.monotonic() - started) * 1000)
     deadline = opts.get("deadline")
+    outcome = "ok"
     if deadline is not None and latency_ms > int(deadline):
         if os.environ.get("NUDGE_DECISION_STRICT") == "1":
             raise DecisionTimeout(
                 f"decision took {latency_ms} ms over the {int(deadline)} ms deadline"
             )
         # soft mode: annotate the answers so the trace/policy can see the miss
+        outcome = "deadline_missed"
         for a in answers.values():
             a["deadline_missed"] = True
+    _write_decision_record(model, provider, questions, answers,
+                           latency_ms, deadline, outcome)
     return _attr(answers)
+
+
+def _write_decision_record(model, provider, questions, answers,
+                           latency_ms, deadline, outcome):
+    """One `decision.call` NTF record (design §11.4): questions keyed by
+    name (the wire shape), answers as returned, measured latency."""
+    if not os.environ.get("NUDGE_TRACE"):
+        return
+    record = {
+        "kind": "decision.call",
+        "model": str(model),
+        "provider": provider,
+        "questions": {q["name"]: q for q in questions},
+        "answers": answers,
+        "latency_ms": latency_ms,
+        "outcome": outcome,
+    }
+    if deadline is not None:
+        record["deadline_ms"] = int(deadline)
+    branch = _current_branch()
+    if branch:
+        record["branch"] = branch
+    _emit_trace(record)
 
 
 def _http_decide(base_url, state, questions, opts):

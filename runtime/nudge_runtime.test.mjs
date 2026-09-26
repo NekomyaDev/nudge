@@ -158,3 +158,33 @@ test("unconfigured provider raises with a clear message", () => {
     if (save !== undefined) process.env.NUDGE_DECISION_SERVERS = save;
   }
 });
+
+test("decide writes a decision.call record; replay consumes it; exhaustion raises", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nudge_decide_"));
+  const trace = path.join(dir, "trace.jsonl");
+  process.env.NUDGE_TRACE = trace;
+  try {
+    const qs = [{ name: "dept", kind: "choice", prompt: "team?", options: ["a", "b"] }];
+    const winner = decide(qs, "state one", {}).dept.winner;
+    const lines = fs.readFileSync(trace, "utf8").trim().split("\n").map(JSON.parse);
+    const rec = lines.find((r) => r.kind === "decision.call");
+    assert.ok(rec, "decision.call record written");
+    assert.equal(rec.model, "fake");
+    assert.ok(rec.questions.dept, "questions keyed by name");
+    assert.equal(rec.answers.dept.winner, winner);
+    assert.equal(lines.filter((r) => r.kind === "decision.call").length, 1);
+    assert.ok(typeof rec.latency_ms === "number");
+    assert.equal(rec.outcome, "ok");
+    delete process.env.NUDGE_TRACE;
+
+    // replay: consume the recorded answer
+    process.env.NUDGE_REPLAY = trace;
+    const replayed = decide(qs, "state one", {});
+    assert.deepEqual(replayed, rec.answers);
+    // exhaustion: a second decide without a second record raises
+    assert.throws(() => decide(qs, "state two", {}), /more decide calls than the trace holds/);
+  } finally {
+    delete process.env.NUDGE_TRACE;
+    delete process.env.NUDGE_REPLAY;
+  }
+});

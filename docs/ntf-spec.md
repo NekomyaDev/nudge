@@ -25,7 +25,7 @@ for LLM calls (prompts, schemas, token counts, USD).
 |:---|:---|:---|
 | `v` | number | Record schema version. Must be `1` — validators raise **E0601** on any other value |
 | `seq` | number | 1-based, gapless record counter across the trace |
-| `kind` | string | One of `llm.call`, `tool.call`, `fn.return` |
+| `kind` | string | One of `llm.call`, `tool.call`, `fn.return`, `decision.call` |
 
 ## Record kinds
 
@@ -50,6 +50,21 @@ for LLM calls (prompts, schemas, token counts, USD).
 | `tool` | string | Tool name as declared |
 | `input` | string | Invocation input (rendered) |
 | `output` | string \| object | Tool result |
+
+### `decision.call` — one batched decision (v1.4, design §11)
+
+| Field | Type | Meaning |
+|:---|:---|:---|
+| `model` | string | Decision model id, e.g. `laya:multilingual` |
+| `provider` | string | Registry/provider entry used |
+| `questions` | object | Questions keyed by name (`kind`, `prompt`, `options`/`levels`) |
+| `answers` | object | Typed answers keyed by name (winner/p/distribution/confidence for choice) |
+| `latency_ms` | number | Measured wall time of the decision call |
+| `outcome` | string | `"ok"` or an error tag (`deadline_missed`) |
+
+Additive: `deadline_ms` (declared budget), `level` (calibration level, e.g.
+AnyJev `raw/L0/L1/L2`). `trace-diff` reports decision counts and total
+latency; `--fail-on-regression` gates latency growth and decision failures.
 
 ### `fn.return` — a traced function boundary
 

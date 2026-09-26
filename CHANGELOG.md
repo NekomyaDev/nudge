@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **NTF `decision.call` records**: batched decisions land in traces (`model/provider/questions/answers/latency_ms/outcome` + additive `deadline_ms`, `level`); full replay consumes them in order with strict exhaustion (llm parity); `trace-diff` reports decision counts + total latency and `--fail-on-regression` gates latency growth and decision failures; conformance corpus extended to 25 cases
 - **`decide{}` — typed decisions as a language primitive (v1.4 "Decision", design §11 / `docs/decision.md`)**: `decide { q: "prompt" choose [..] / yes/no / score [..] } on <state> with { model, deadline }` compiles to one batched call against a JEV-family decision model (Laya / Jev share the `/v1/systemone` wire contract); the fake provider synthesizes deterministic seeded distributions so tests stay $0; answers carry winner/p/distribution/confidence (+ additive `level`, `deadline_missed`); new `Decision` effect with full inference/purity support (E0806/E0807, W0005 option-count lint)
 - `route{}` generalization: arm values are lazy expressions — bare strings keep model-routing semantics, any other value makes route a value-level policy switch (confidence thresholds)
 - deadline semantics: soft `deadline_missed` annotation by default, `NUDGE_DECISION_STRICT=1` makes overruns fatal; `NUDGE_DECISION_SERVERS` registry for live HTTP decision providers
