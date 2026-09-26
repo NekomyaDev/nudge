@@ -37,3 +37,6 @@ desktop.ini
 *.pkg
 *.msi
 *.exe
+runtime/build/
+*.egg-info/
+.nudge/

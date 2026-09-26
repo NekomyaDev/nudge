@@ -1258,6 +1258,12 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
     errs
 }
 
+/// builtin primitive type names usable as a map key in `{string: T}`-style
+/// map types (codegen lowers these to `additionalProperties`)
+fn is_builtin_type_name(n: &str) -> bool {
+    matches!(n, "string" | "int" | "float" | "bool" | "none")
+}
+
 // ── tests ────────────────────────────────────────────────────────────
 #[cfg(test)]
 mod tests {
@@ -1750,10 +1756,4 @@ mod tests {
         let errs = check_src("type R = { t: string }\nfn f(r: R) -> bool { r == 1 }");
         assert!(errs.iter().any(|e| e.code == "E0201"), "got {errs:?}");
     }
-}
-
-/// builtin primitive type names usable as a map key in `{string: T}`-style
-/// map types (codegen lowers these to `additionalProperties`)
-fn is_builtin_type_name(n: &str) -> bool {
-    matches!(n, "string" | "int" | "float" | "bool" | "none")
 }
