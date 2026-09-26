@@ -1,0 +1,37 @@
+type Ticket = { category: string, priority: string, summary: string }
+
+fn triage(body: string) -> Ticket uses LLM {
+    llm"""Classify this support ticket.
+
+    Ticket body:
+    {body}
+
+    Rules:
+    - category: one of "billing", "technical", "account", "other"
+    - priority: one of "low", "normal", "high", "urgent"
+    - summary: one sentence a support lead can act on"""
+    with {
+        schema: Ticket,
+        model: route{
+            simple: "openai:gpt-4.5-mini" when len(body) < 200,
+            strong: "anthropic:sonnet-4.6" otherwise,
+        },
+        budget: 0.01 USD,
+        retry: 2 with repair,
+    }
+}
+
+fn main() -> [Ticket] uses LLM {
+    let tickets = [
+        "Charged twice for the March invoice, need a refund ASAP.",
+        "The export button spins forever when my project has more than 500 rows.",
+        "How do I change my password?",
+    ]
+    par map(tickets) |(t)| -> triage(t)
+}
+
+test "classifier labels every ticket" {
+    let t = replay("traces/classifier.jsonl")
+    assert len(t.output) == 3
+    assert t.cost_usd < 0.03
+}
