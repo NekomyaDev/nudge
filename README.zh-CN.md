@@ -160,15 +160,40 @@ python3 out/hello.py
 
 默认情况下，所有内容都针对确定性假提供商运行：**无需 API 密钥，无需 token 消耗。**
 
-# 运行（无需 API 密钥 - 使用假提供商）
-export PYTHONPATH=$PWD/runtime
-python3 out/hello.py
+### 你的第一个决策（5 分钟）
 
-# 运行测试（零 token）
-nudgec test hello.ndg
+`decide{}` 就某个状态向决策模型提出类型化的问题 —— 一次批量调用，
+答案带概率和置信度。先从假提供商开始（无需服务器、无需密钥）：
+
+```sh
+cat > first-decision.ndg << 'NDEOF'
+fn route_ticket(t: string) -> string uses Decision {
+    let d = decide {
+        dept: "which team handles this?" choose [billing, technical, security],
+        urgent: "is this urgent?" yes/no
+    }
+    on t
+    route { auto:  d.dept.winner when d.dept.confidence > 0.5,
+            human: "escalate to a human" otherwise }
+}
+NDEOF
+
+nudgec check first-decision.ndg && nudgec build first-decision.ndg
+python3 out/first-decision.py   # 确定性、$0、离线
 ```
 
-默认情况下，所有内容都针对确定性假提供商运行：**无需 API 密钥，无需 token 消耗。**
+要使用**真实**决策模型（Laya / Jev 家族）回答，只需一行把注册表指向
+运行中的 `/v1/systemone` 服务器：
+
+```sh
+export NUDGE_DECISION_SERVERS='{"laya": {"base_url": "http://localhost:8000"}}'
+```
+
+对照真实 Laya 0.3.20 编码器的实测（同一程序、3 个问题）：
+`dept=technical p=0.866`、`churn=0.768`、`urgency=1.91` —— **每次决策
+约 51 毫秒**（含 HTTP），约为托管 Jev API 的 5 倍快。每个决策都会连同
+其延迟写入 NTF trace，重放为 $0，而 `NUDGE_DECISION_CACHE` 让你永远
+不会为同一个决策付两次费。参见[类型化决策](#类型化决策-v14)。
 
 ## 真实示例
 
@@ -249,6 +274,8 @@ python3 out/hello.py
 | 变量 | 用途 |
 |:---|:---|
 | `NUDGE_PROVIDER` | 提供商覆盖（`fake`、`openai`、`anthropic` 等）。`fake` 合成模式有效的输出——无需 API 密钥 |
+| `NUDGE_DECISION_SERVERS` | 决策提供者注册表（JSON）：`{"laya": {"base_url": "http://localhost:8000"}}`。未配置的命名提供者会报错——绝不静默回退到 fake |
+| `NUDGE_DECISION_CACHE` | 决策缓存路径：真实提供者的已验证答案跨运行持久化（重放优先） |
 | `NUDGE_API_KEY` / `NUDGE_BASE_URL` | OpenAI 兼容提供商的凭证和端点 |
 | `NUDGE_MCP_SERVERS` | MCP 服务器注册表 JSON（见上文） |
 | `NUDGE_TRACE` | 运行时将 JSONL 跟踪写入此路径 |
