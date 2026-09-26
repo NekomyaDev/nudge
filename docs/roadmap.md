@@ -45,11 +45,12 @@ Finish the "why did my agent do that?" answer beyond doubt.
 
 - **NTF open standard** — spec page + conformance suite; "OTel for LLM agents".
   Bridges exporting LangChain / LangGraph / CrewAI runs into NTF
-- **`nudgec trace-diff`** — agent regression testing as a CI primitive
+- ~~**`nudgec trace-diff`**~~ ✅ shipped (v1.2 report; now with `--fail-on-regression` as a CI gate) — agent regression testing as a CI primitive
 - **Property-based agent tests** — `test ... for_all ... in gen { ... }`:
   fuzz against injection and garbage input, shrink failing cases
-- **`nudge-ci` GitHub Action** (GitHub Marketplace) — agent regression CI in
-  any repo; a distribution channel disguised as a feature
+- ~~**`nudge-ci` GitHub Action**~~ ✅ shipped (`action.yml`, dogfooded in
+  `.github/workflows/agent-ci.yml`) — agent regression CI in any repo; a
+  distribution channel disguised as a feature. Marketplace listing pending
 - **Web playground** — WASM `nudgec` on GitHub Pages: try in the browser,
   see the trace. The top of the star funnel
 

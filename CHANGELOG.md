@@ -4,6 +4,13 @@ All notable changes to Nudge will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Added
+- **`nudge-ci` GitHub Action** (`action.yml`): agent regression CI in any repo — `nudgec check` + `nudgec test` (replay, $0) over a glob of `.ndg` programs, with optional `trace-diff` regression gate and `version`/`check-only` inputs; the repository now dogfoods it via `.github/workflows/agent-ci.yml`
+- `nudgec trace-diff a b --fail-on-regression`: exits 1 when the candidate trace costs more, uses more tokens, performs more repair rounds, or turns a passing llm call into a failure — turning trace diffing into a CI gate
+- `install.sh`: `NUDGE_VERSION` environment variable pins an exact release (or `main`) instead of the per-platform default
+
 ## [1.2.1] - 2026-09-26
 
 ### Open source

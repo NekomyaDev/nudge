@@ -94,6 +94,7 @@ python3 out/chatbot.py
 | **Real Providers** | OpenAI / Gemini / Groq / MiMo / Mistral / Anthropic / Ollama |
 | **Trace Viewer** | Local web UI: timeline, tokens, cost, repairs highlighted |
 | **Trace Diff** | Compare two traces: "what changed when I edited the prompt?" |
+| **Nudge CI** | GitHub Action: agent regression testing on every push, $0 |
 | **A2A & LSP & OTel** | Built in, not bolted on |
 
 </div>
@@ -270,6 +271,32 @@ Notes:
   stdin are not read in v1.2.x. External data enters through MCP tools.
 - The fake provider is deterministic and schema-aware; it is what makes
   `nudgec test` and the CI examples run without keys.
+
+## Agent CI (GitHub Action)
+
+Regression-test your agents on every push — replays recorded traces, so it
+costs **$0** and needs **no API keys**. Add `.github/workflows/agents.yml`:
+
+```yaml
+name: agents
+on: [push, pull_request]
+jobs:
+  agents:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: NekomyaDev/nudge@v1
+        with:
+          files: |
+            agents/**/*.ndg
+```
+
+Inputs: `files` (required, globs allowed), `version` (pin nudgec),
+`check-only` (skip replay), and `trace-diff: "baseline.jsonl candidate.jsonl"`
+— a regression gate that fails the build when the candidate trace spends
+more, repairs more, or turns a passing call into a failure. CI is where the
+trace/replay design pays off: the agent's behavior becomes a testable
+artifact, like any other.
 
 ## VS Code Extension
 

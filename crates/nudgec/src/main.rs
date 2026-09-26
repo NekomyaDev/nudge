@@ -11,7 +11,7 @@
 //!   nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json (v1.0, design §9)
 //!   nudgec lsp                serve the Language Server Protocol over stdio (v1.0, design §10)
 //!   nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace (v1.2)
-//!   nudgec trace-diff <a.jsonl> <b.jsonl>  compare two traces: totals + per-record deltas (v1.2)
+//!   nudgec trace-diff <a.jsonl> <b.jsonl> [--fail-on-regression]  compare two traces; with the flag, exit 1 on regression (v1.2)
 
 mod a2a;
 mod ast;
@@ -47,7 +47,7 @@ fn usage() -> ! {
     eprintln!("  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json");
     eprintln!("  nudgec lsp                serve the Language Server Protocol over stdio");
     eprintln!("  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace");
-    eprintln!("  nudgec trace-diff <a.jsonl> <b.jsonl>  compare two traces");
+    eprintln!("  nudgec trace-diff <a.jsonl> <b.jsonl> [--fail-on-regression]  compare traces; gate CI on regression");
     eprintln!("  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)");
     process::exit(64);
 }
@@ -75,11 +75,21 @@ fn main() {
         lsp::run();
         return;
     }
-    // `trace-diff` takes two trace files
-    if args.len() == 4 && args[1] == "trace-diff" {
+    // `trace-diff` takes two trace files; `--fail-on-regression` turns the
+    // report into a CI gate (exit 1 when the candidate regresses)
+    if args.len() >= 4 && args[1] == "trace-diff" {
         let a = read_src(&args[2]);
         let b = read_src(&args[3]);
         print!("{}", tracediff::diff(&a, &b));
+        if args.len() >= 5 && args[4] == "--fail-on-regression" {
+            let why = tracediff::regressions(&a, &b);
+            if !why.is_empty() {
+                for w in &why {
+                    eprintln!("regression: {w}");
+                }
+                process::exit(1);
+            }
+        }
         return;
     }
     // `debug` speaks DAP over stdio over a recorded trace (no file arg parsing)

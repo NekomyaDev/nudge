@@ -284,6 +284,28 @@ pip install nudge-runtime         # 来自 PyPI
 pip install ./runtime
 ```
 
+## Agent CI（GitHub Action）
+
+每次推送时对智能体做回归测试 — 回放已录制的 trace，**零 token**、**无需 API 密钥**。添加 `.github/workflows/agents.yml`：
+
+```yaml
+name: agents
+on: [push, pull_request]
+jobs:
+  agents:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: NekomyaDev/nudge@v1
+        with:
+          files: |
+            agents/**/*.ndg
+```
+
+输入：`files`（必填，支持通配符）、`version`（固定 nudgec 版本）、
+`check-only`（跳过回放），以及 `trace-diff: "baseline.jsonl candidate.jsonl"` —
+回归门禁：当候选 trace 花费更多、修复更多或把成功调用变成失败时，使构建失败。
+
 ## VS Code 扩展
 
 安装 [Nudge Language](https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang) 扩展以获得：
