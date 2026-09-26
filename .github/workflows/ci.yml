@@ -25,6 +25,8 @@ jobs:
           node-version: "22"
       - name: Run the compiler test suite
         run: cargo test --workspace
+      - name: Run the TS runtime tests
+        run: node --experimental-strip-types --test runtime/nudge_runtime.test.mjs
 
   lint:
     name: clippy + rustfmt
