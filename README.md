@@ -348,7 +348,7 @@ fn triage(t: string) -> string uses Decision {
 
 - One batched call per `decide` block; answers carry `winner/p/distribution/confidence`.
 - The **fake decision provider** (default) synthesizes deterministic seeded distributions — tests stay $0.
-- Live providers: `NUDGE_DECISION_SERVERS='{"laya": {"base_url": "http://localhost:8000"}}'`.
+- Live providers: `NUDGE_DECISION_SERVERS='{"laya": {"base_url": "http://localhost:8000"}}'` (HTTP `/v1/systemone`) or `{"valen": {"command": "python -m valen.inference ..."}}` (subprocess JSONL).
 - Decisions land in NTF traces (`decision.call`, with `latency_ms`); replay is $0; `trace-diff --fail-on-regression` gates latency growth.
 - `nudgec policy-sweep trace.jsonl --question dept --thresholds 0.5,0.8` re-cuts thresholds over recorded distributions — zero model calls.
 

@@ -206,7 +206,8 @@ test("decision cache: miss then hit, no second server call, cache field written"
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nudge_dcache_"));
   const trace = path.join(dir, "trace.jsonl");
   const cachePath = path.join(dir, "cache.json");
-  const saved = { ...process.env };
+  const savedVars = ["NUDGE_DECISION_SERVERS", "NUDGE_DECISION_CACHE", "NUDGE_TRACE"];
+  const saved = savedVars.map((k) => process.env[k]);
   process.env.NUDGE_DECISION_SERVERS = JSON.stringify({ laya: { base_url: `http://127.0.0.1:${port}` } });
   process.env.NUDGE_DECISION_CACHE = cachePath;
   process.env.NUDGE_TRACE = trace;
@@ -226,6 +227,41 @@ test("decision cache: miss then hit, no second server call, cache field written"
     assert.equal(serverCalls, 2);
   } finally {
     server.close();
-    process.env = saved;
+    savedVars.forEach((k, i) => {
+      if (saved[i] === undefined) delete process.env[k];
+      else process.env[k] = saved[i];
+    });
+  }
+});
+
+test("valen transport: subprocess JSONL contract, typed answers, trace record", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nudge_valen_"));
+  const trace = path.join(dir, "trace.jsonl");
+  const savedVars = ["NUDGE_DECISION_SERVERS", "NUDGE_TRACE"];
+  const saved = savedVars.map((k) => process.env[k]);
+  process.env.NUDGE_DECISION_SERVERS = JSON.stringify({
+    valen: { command: `node /tmp/mock_valen.mjs` },
+  });
+  process.env.NUDGE_TRACE = trace;
+  try {
+    const qs = [
+      { name: "dept", kind: "choice", prompt: "team?", options: ["billing", "technical"] },
+      { name: "churn", kind: "noul", prompt: "churn?" },
+      { name: "urgency", kind: "score", prompt: "urgent?", levels: ["low", "soon"] },
+    ];
+    const a = await decide(qs, "printer on fire", { model: "valen:preview" });
+    assert.equal(a.dept.winner, "billing");
+    assert.ok(Math.abs(a.dept.p - 0.9) < 1e-9);
+    assert.equal(a.churn.p, 0.9);
+    assert.ok(a.urgency.score > 0 && a.urgency.score < 1);
+    const recs = fs.readFileSync(trace, "utf8").trim().split("\n").map(JSON.parse)
+      .filter((r) => r.kind === "decision.call");
+    assert.equal(recs.length, 1);
+    assert.equal(recs[0].provider, "valen");
+  } finally {
+    savedVars.forEach((k, i) => {
+      if (saved[i] === undefined) delete process.env[k];
+      else process.env[k] = saved[i];
+    });
   }
 });
