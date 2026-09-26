@@ -18,10 +18,6 @@
   <a href="https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang"><img alt="VS Code" src="https://img.shields.io/badge/VS%20Code-Nudge%20Language-007ACC?logo=visualstudiocode"></a>
 </p>
 
-<p align="center">
-  <img src="assets/demo.gif" alt="nudgec check → build → run" width="720">
-</p>
-
 ---
 
 <p align="center">
