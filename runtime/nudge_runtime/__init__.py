@@ -2384,6 +2384,9 @@ def _http_decide(base_url, state, questions, opts):
         elif kind == "score" and ans.get("type") == "score":
             probs = ans.get("probabilities")
             levels = list(q["levels"])
+            # JSON object keys are strings on the wire — accept both
+            # {"0": p} and {0: p} framings, then validate coverage
+            probs = {int(k): v for k, v in probs.items()} if isinstance(probs, dict) else probs
             if not isinstance(probs, dict) or set(probs) != set(range(len(levels))):
                 raise RuntimeError(
                     f"question '{name}': score probabilities must cover rubric indices 0..{len(levels) - 1}"
