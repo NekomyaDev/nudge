@@ -64,7 +64,10 @@ for LLM calls (prompts, schemas, token counts, USD).
 
 Additive: `deadline_ms` (declared budget), `level` (calibration level, e.g.
 AnyJev `raw/L0/L1/L2`), `cache` (`"hit"` when the record's answers came from
-`NUDGE_DECISION_CACHE` rather than the wire — docs/decision.md §4).
+`NUDGE_DECISION_CACHE` rather than the wire — docs/decision.md §4), `batch`
+(`{size, wall_ms}` on records produced as part of a multi-state
+`predict_batch` call; per-record `latency_ms` is the batch average —
+docs/decision.md §4).
 `trace-diff` reports decision counts and total latency; `--fail-on-regression`
 gates latency growth and decision failures.
 

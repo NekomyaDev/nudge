@@ -136,6 +136,27 @@ bug, not a feature. Semantics (both backends):
   no-cache run's).
 - A missing or corrupt cache file is a cold start, never an error.
 
+### Batch multi-state: `predict_batch`
+
+`rt.predict_batch(questions, states, options)` decides the same questions
+about a whole list of states — one transport call:
+
+- **Valen** runs a single subprocess over a multi-record JSONL — the
+  model-load cost is paid once for the whole batch. Output lines are
+  matched back by `group_id`; a missing prediction for any record is a
+  hard error.
+- **HTTP** fans out per-state `/v1/systemone` requests with bounded
+  concurrency (8 workers) — the wire contract is single-state, so this
+  parallelizes rather than batches.
+- The decision cache is consulted per state: already-decided states are
+  skipped and only the misses hit the transport.
+- The fake provider and full replay work over the whole list with the
+  same ordering guarantees as single calls.
+- Returns answers in input order. One `decision.call` record per state;
+  miss records carry additive `batch: {size, wall_ms}` and a per-record
+  `latency_ms` that is the batch average (so trace-diff totals stay
+  meaningful).
+
 trace-diff note: cache hits drive `latency_ms` toward zero. The regression
 gate only fails on growth, so a hit can never fake a regression — but it
 can hide one: run latency gates on cache-cold traces.
