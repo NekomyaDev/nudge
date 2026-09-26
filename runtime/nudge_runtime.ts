@@ -6,8 +6,11 @@
 // budget walls, render, merge, USD, par helpers with NTF v1.1 branch labels,
 // fake streaming. Deferred: real providers, streamed prefix validation and
 // repair, OTel export (the Python runtime covers those today).
+import * as childProcess from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import * as process from "node:process";
 
 export function schema(s) {
@@ -704,9 +707,9 @@ export function decide(questions, state, options = {}) {
       );
     }
     const entry = JSON.parse(reg)[provider];
-    if (!entry || !entry.base_url) {
+    if (!entry || (!entry.base_url && !entry.command)) {
       throw new Error(
-        `decision provider '${provider}' has no base_url in NUDGE_DECISION_SERVERS`,
+        `decision provider '${provider}' needs a base_url or command in NUDGE_DECISION_SERVERS`,
       );
     }
     const cachePath = process.env.NUDGE_DECISION_CACHE;
@@ -719,9 +722,13 @@ export function decide(questions, state, options = {}) {
         return finished;
       }
     }
-    return httpDecide(entry.base_url, state, questions, options, started, {
+    const ctx = {
       model, provider, questions, options, started, cachePath, key,
-    });
+    };
+    if (entry.command) {
+      return valenDecide(entry.command, state, questions, options, started, ctx);
+    }
+    return httpDecide(entry.base_url, state, questions, options, started, ctx);
   }
   const answers = fakeDecide(questions, state, options);
   const finished = finishDecide(answers, options, started);
@@ -742,8 +749,143 @@ function finishDecide(answers, options, started) {
   return answers;
 }
 
-async function httpDecide(base_url, state, questions, options, started, ctx = null) {
-  const url = base_url.replace(/\/+$/, "") + "/v1/systemone";
+// Valen transport: run `command` with --data/--output JSONL files — the
+// documented `python -m valen.inference` interface (github.com/Liuziyu77/
+// Valen). Everything is a choice over criteria: noul maps to a yes/no
+// vote, score candidates are the rubric indices; mapped back to typed
+// nudge answers on the way out.
+function valenWireQuestions(questions) {
+  const out = {};
+  for (const q of questions) {
+    let criteria;
+    if (q.kind === "choice") {
+      criteria = Object.fromEntries(q.options.map((o) => [o, o]));
+    } else if (q.kind === "noul") {
+      criteria = { yes: "yes", no: "no" };
+    } else if (q.kind === "score") {
+      criteria = Object.fromEntries(q.levels.map((l, i) => [String(i), l]));
+    } else {
+      throw new Error(`unknown decision question kind '${q.kind}'`);
+    }
+    out[q.name] = { type: "choice", instructions: q.prompt || "", criteria };
+  }
+  return out;
+}
+
+function valenDecide(command, state, questions, options, started, ctx) {
+  const argv = typeof command === "string" ? command.split(/\s+/).filter(Boolean) : command;
+  if (!argv || !argv.length) {
+    throw new Error("decision provider 'valen': empty command in NUDGE_DECISION_SERVERS");
+  }
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nudge_valen_"));
+  const dataPath = path.join(tmp, "data.jsonl");
+  const outPath = path.join(tmp, "predictions.jsonl");
+  const record = {
+    group_id: `nudge-${crypto.randomUUID().slice(0, 12)}`,
+    request: {
+      state: {
+        messages: [{ role: "user", content: [{ type: "text", text: String(state) }] }],
+      },
+      questions: valenWireQuestions(questions),
+    },
+  };
+  fs.writeFileSync(dataPath, JSON.stringify(record) + "\n");
+  const timeoutS = ((options.deadline || 30000) / 1000.0 + 30.0) * 1000;
+  let proc;
+  try {
+    proc = childProcess.spawnSync(argv[0], [...argv.slice(1), "--data", dataPath, "--output", outPath],
+      { timeout: timeoutS, encoding: "utf8" });
+  } catch (e) {
+    throw new Error(`decision provider 'valen' failed to spawn: ${e.message || e}`);
+  }
+  if (proc.error && proc.error.code === "ETIMEDOUT") {
+    throw new Error(`decision provider 'valen' timed out after ${Math.round(timeoutS / 1000)} s`);
+  }
+  if (proc.status !== 0) {
+    const tail = ((proc.stderr || proc.stdout) || "").slice(-300);
+    throw new Error(`decision provider 'valen' failed (exit ${proc.status}): ${tail}`);
+  }
+  let result;
+  try {
+    const lines = fs.readFileSync(outPath, "utf8").split("\n").filter(Boolean);
+    result = JSON.parse(lines[0]);
+  } catch (e) {
+    throw new Error(`decision provider 'valen': unreadable output (${e.message || e})`);
+  }
+  const targets = result.targets;
+  if (!targets || typeof targets !== "object") {
+    throw new Error("decision provider 'valen': output has no `targets` object");
+  }
+  const out = {};
+  for (const q of questions) {
+    const name = q.name, kind = q.kind;
+    if (!(name in targets)) {
+      throw new Error(`decision provider 'valen' did not answer question '${name}'`);
+    }
+    const raw = targets[name] && targets[name].probabilities;
+    if (!raw || typeof raw !== "object") {
+      throw new Error(`question '${name}': valen target has no \`probabilities\` object`);
+    }
+    const probs = {};
+    for (const [k, v] of Object.entries(raw)) {
+      const p = Number(v);
+      if (Number.isNaN(p) || p < 0 || p > 1) {
+        throw new Error(`question '${name}': probabilities out of range or NaN`);
+      }
+      probs[k] = p;
+    }
+    let dist;
+    if (kind === "choice") {
+      const labels = q.options;
+      if (Object.keys(probs).sort().join() !== labels.slice().sort().join()) {
+        throw new Error(`question '${name}': valen probabilities must cover the declared options exactly`);
+      }
+      dist = Object.fromEntries(labels.map((l) => [l, probs[l]]));
+    } else if (kind === "noul") {
+      if (!("yes" in probs) || !("no" in probs)) {
+        throw new Error(`question '${name}': noul maps to yes/no criteria in valen`);
+      }
+      dist = { yes: probs.yes, no: probs.no };
+    } else {
+      const levels = q.levels;
+      const want = Array.from({ length: levels.length }, (_, i) => String(i)).sort().join();
+      if (Object.keys(probs).sort().join() !== want) {
+        throw new Error(`question '${name}': score probabilities must cover rubric indices 0..${levels.length - 1}`);
+      }
+      dist = Object.fromEntries(levels.map((l, i) => [l, probs[String(i)]]));
+    }
+    const total = Object.values(dist).reduce((a, b) => a + b, 0);
+    if (!(total > 0)) throw new Error(`question '${name}': probability distribution sums to ${total}`);
+    dist = Object.fromEntries(Object.entries(dist).map(([l, p]) => [l, p / total]));
+    let winner = null;
+    for (const l of Object.keys(dist)) if (winner === null || dist[l] > dist[winner]) winner = l;
+    const k = Object.keys(dist).length;
+    const confidence = k > 1 ? Math.max(0, (dist[winner] - 1 / k) / (1 - 1 / k)) : 1;
+    if (kind === "noul") {
+      out[name] = { p: dist.yes };
+    } else if (kind === "score") {
+      out[name] = {
+        score: Object.values(dist).reduce((acc, p, i) => acc + i * p, 0),
+        distribution: dist,
+      };
+    } else {
+      out[name] = { winner, p: dist[winner], distribution: dist, confidence };
+    }
+  }
+  const extra = Object.keys(targets).filter((n) => !questions.some((q) => q.name === n));
+  if (extra.length) {
+    throw new Error(`decision provider 'valen' answered unasked questions: ${extra.sort().join(", ")}`);
+  }
+  if (ctx && ctx.cachePath) decisionCachePut(ctx.cachePath, ctx.key, out);
+  const finished = finishDecide(out, options, started);
+  if (ctx) {
+    _emitTrace(decisionRecord(ctx.model, ctx.provider, ctx.questions, out,
+      ctx.options, ctx.started, false));
+  }
+  return finished;
+}
+
+async function httpDecide(base_url, state, questions, options, started, ctx = null) {  const url = base_url.replace(/\/+$/, "") + "/v1/systemone";
   const body = {
     state: { text: String(state) },
     questions: Object.fromEntries(

@@ -2260,33 +2260,172 @@ def _decision_cache_put(path, key, answers):
         os.replace(tmp, path)
 
 
-def _cached_or_http(questions, state, opts, model):
-    """NUDGE_DECISION_CACHE=<path> persists validated answers across runs
-    (representation cache: same state + questions + model = same decision,
-    zero calls). Returns (answers, cache_hit)."""
+def _valen_wire_questions(questions):
+    """Map nudge questions onto Valen's JSONL contract (github.com/Liuziyu77/
+    Valen): everything is a `choice` over `criteria`. noul becomes a
+    two-candidate yes/no vote; score candidates are the rubric indices —
+    both are mapped back to typed nudge answers on the way out."""
+    out = {}
+    for q in questions:
+        if q["kind"] == "choice":
+            criteria = {o: o for o in q["options"]}
+        elif q["kind"] == "noul":
+            criteria = {"yes": "yes", "no": "no"}
+        elif q["kind"] == "score":
+            criteria = {str(i): lvl for i, lvl in enumerate(q["levels"])}
+        else:
+            raise ValueError(f"unknown decision question kind '{q['kind']}'")
+        out[q["name"]] = {
+            "type": "choice",
+            "instructions": q.get("prompt", ""),
+            "criteria": criteria,
+        }
+    return out
+
+
+def _valen_decide(command, state, questions, opts):
+    """Valen transport: run `command` (as configured in NUDGE_DECISION_SERVERS)
+    with `--data`/`--output` JSONL files — the documented `python -m
+    valen.inference` interface. One record per decide call; batched
+    multi-state calls amortize the subprocess cost (roadmap item)."""
+    import shlex
+    import subprocess
+    import tempfile
+    import uuid
+
+    argv = shlex.split(str(command))
+    if not argv:
+        raise RuntimeError("decision provider 'valen': empty command in NUDGE_DECISION_SERVERS")
+    with tempfile.TemporaryDirectory(prefix="nudge_valen_") as tmp:
+        data_path = os.path.join(tmp, "data.jsonl")
+        out_path = os.path.join(tmp, "predictions.jsonl")
+        record = {
+            "group_id": f"nudge-{uuid.uuid4().hex[:12]}",
+            "request": {
+                "state": {
+                    "messages": [{
+                        "role": "user",
+                        "content": [{"type": "text", "text": str(state)}],
+                    }]
+                },
+                "questions": _valen_wire_questions(questions),
+            },
+        }
+        with open(data_path, "w", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        timeout_s = (opts.get("deadline") or 30000) / 1000.0 + 30.0
+        try:
+            proc = subprocess.run(
+                argv + ["--data", data_path, "--output", out_path],
+                capture_output=True, text=True, timeout=timeout_s,
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                f"decision provider 'valen' timed out after {int(timeout_s)} s"
+            ) from None
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"decision provider 'valen' failed (exit {proc.returncode}): "
+                f"{(proc.stderr or proc.stdout)[-300:]!r}"
+            )
+        try:
+            with open(out_path, "r", encoding="utf-8") as f:
+                lines = [l for l in f.read().splitlines() if l.strip()]
+            result = json.loads(lines[0])
+        except Exception as e:
+            raise RuntimeError(f"decision provider 'valen': unreadable output ({e})") from None
+    targets = result.get("targets")
+    if not isinstance(targets, dict):
+        raise RuntimeError("decision provider 'valen': output has no `targets` object")
+
+    out = {}
+    for q in questions:
+        name, kind = q["name"], q["kind"]
+        if name not in targets:
+            raise RuntimeError(f"decision provider 'valen' did not answer question '{name}'")
+        probs_raw = targets[name].get("probabilities")
+        if not isinstance(probs_raw, dict):
+            raise RuntimeError(f"question '{name}': valen target has no `probabilities` object")
+        probs = {k: float(v) for k, v in probs_raw.items()}
+        if any(p != p or not (0.0 <= p <= 1.0) for p in probs.values()):
+            raise RuntimeError(f"question '{name}': probabilities out of range or NaN")
+        if kind == "choice":
+            labels = list(q["options"])
+            if set(probs) != set(labels):
+                raise RuntimeError(
+                    f"question '{name}': valen probabilities must cover the declared options exactly"
+                )
+            dist = {l: probs[l] for l in labels}
+        elif kind == "noul":
+            if set(probs) != {"yes", "no"}:
+                raise RuntimeError(f"question '{name}': noul maps to yes/no criteria in valen")
+            dist = {"yes": probs["yes"], "no": probs["no"]}
+        else:  # score
+            levels = list(q["levels"])
+            if set(probs) != {str(i) for i in range(len(levels))}:
+                raise RuntimeError(
+                    f"question '{name}': score probabilities must cover rubric indices 0..{len(levels) - 1}"
+                )
+            dist = {levels[int(i)]: probs[str(i)] for i in range(len(levels))}
+        total = sum(dist.values())
+        if total <= 0.0:
+            raise RuntimeError(f"question '{name}': probability distribution sums to {total}")
+        dist = {l: p / total for l, p in dist.items()}
+        winner = max(dist, key=dist.get)
+        k = len(dist)
+        confidence = max(0.0, (dist[winner] - 1.0 / k) / (1.0 - 1.0 / k)) if k > 1 else 1.0
+        if kind == "noul":
+            out[name] = {"p": dist["yes"]}
+        elif kind == "score":
+            score = sum(i * p for i, p in enumerate(dist.values()))
+            out[name] = {"score": score, "distribution": dist}
+        else:
+            out[name] = {
+                "winner": winner,
+                "p": dist[winner],
+                "distribution": dist,
+                "confidence": confidence,
+            }
+    extra = set(targets) - {q["name"] for q in questions}
+    if extra:
+        raise RuntimeError(f"decision provider 'valen' answered unasked questions: {sorted(extra)}")
+    return out
+
+
+def _dispatch_decision(questions, state, opts, model):
+    """Resolve a configured real provider: `base_url` → HTTP /v1/systemone
+    (Laya, Jev), `command` → subprocess JSONL (Valen). Cache wrapping and
+    the not-configured errors live here so every transport gets both."""
     cache_path = os.environ.get("NUDGE_DECISION_CACHE")
     provider = model.split(":", 1)[0]
     registry_src = os.environ.get("NUDGE_DECISION_SERVERS")
     if not registry_src:
         raise RuntimeError(
             f"decision provider '{provider}' is not configured — set "
-            f"NUDGE_DECISION_SERVERS (JSON with base_url) or use the fake provider"
+            f"NUDGE_DECISION_SERVERS (JSON with base_url/command) or use the fake provider"
         )
     registry = json.loads(registry_src)
     entry = registry.get(provider) if isinstance(registry, dict) else None
-    if not (entry and entry.get("base_url")):
+    kind = "http" if entry and entry.get("base_url") else "valen" if entry and entry.get("command") else None
+    if not kind:
         raise RuntimeError(
-            f"decision provider '{provider}' has no base_url in NUDGE_DECISION_SERVERS"
+            f"decision provider '{provider}' needs a base_url or command in NUDGE_DECISION_SERVERS"
         )
     if not cache_path:
-        return _http_decide(entry["base_url"], state, questions, opts), False
+        return _run_decision(kind, entry, questions, state, opts), False
     key = _decision_cache_key(state, questions, model)
     hit = _decision_cache_get(cache_path, key)
     if hit is not None:
         return hit, True
-    answers = _http_decide(entry["base_url"], state, questions, opts)
+    answers = _run_decision(kind, entry, questions, state, opts)
     _decision_cache_put(cache_path, key, answers)
     return answers, False
+
+
+def _run_decision(kind, entry, questions, state, opts):
+    if kind == "http":
+        return _http_decide(entry["base_url"], state, questions, opts)
+    return _valen_decide(entry["command"], state, questions, opts)
 
 
 def decide(questions, state, options=None):
@@ -2325,7 +2464,7 @@ def decide(questions, state, options=None):
     elif provider == "fake" or os.environ.get("NUDGE_PROVIDER") == "fake":
         answers = _fake_decide(questions, state, opts)
     else:
-        answers, cache_hit = _cached_or_http(questions, state, opts, model)
+        answers, cache_hit = _dispatch_decision(questions, state, opts, model)
 
     latency_ms = int((time.monotonic() - started) * 1000)
     deadline = opts.get("deadline")

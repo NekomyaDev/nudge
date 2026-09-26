@@ -337,7 +337,7 @@ fn triage(t: string) -> string uses Decision {
 
 - 每个 `decide` 块一次批量调用；答案携带 `winner/p/distribution/confidence`。
 - **假决策提供者**（默认）生成确定性的种子分布 — 测试保持 $0。
-- 真实提供者：`NUDGE_DECISION_SERVERS='{"laya": {"base_url": ...}}'`。
+- 真实提供者：`NUDGE_DECISION_SERVERS='{"laya": {"base_url": ...}}'`（HTTP `/v1/systemone`）或 `{"valen": {"command": "python -m valen.inference ..."}}`（子进程 JSONL）。
 - 决策进入 NTF trace（`decision.call`，含 `latency_ms`）；重放 $0；`trace-diff --fail-on-regression` 门禁延迟回退。
 - `nudgec policy-sweep` 在已录制的分布上重切阈值 — 零模型调用。
 

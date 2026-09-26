@@ -93,6 +93,16 @@ let action = route {
   declared options; `nudgec test` stays $0 and byte-reproducible.
 - **HTTP `/v1/systemone`** — `NUDGE_DECISION_SERVERS='{"laya": {"base_url": "http://localhost:8000"}}'`;
   `model: "laya:multilingual"` selects the entry by prefix.
+- **Valen (subprocess JSONL)** — `NUDGE_DECISION_SERVERS='{"valen": {"command": "python -m valen.inference --checkpoint models/Valen-Preview-0923"}}'`.
+  The runtime writes a one-record JSONL (`request.state.messages` +
+  `questions` as `choice` over `criteria`) and reads `targets.*.probabilities`
+  back — the documented `python -m valen.inference --data/--output`
+  contract. Everything maps to a choice: noul becomes a yes/no vote
+  (answer `p` = P(yes)), score candidates are the rubric indices mapped
+  back to levels; distributions are renormalized and the winner/argmax
+  and confidence follow the same rules as the HTTP transport. The
+  subprocess cost is per call today — batched multi-state calls (next
+  roadmap item) amortize it via multi-record JSONL.
 - Adapter validation (both backends): ids preserved exactly; missing /
   extra / duplicate answers are hard errors; NaN, out-of-range and
   non-normalized distributions rejected (renormalization is explicit,
