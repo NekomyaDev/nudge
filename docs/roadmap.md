@@ -41,6 +41,8 @@ Finish the "why did my agent do that?" answer beyond doubt.
 
 ## v1.3 — Door 2: *testable* (create the agent-CI category)
 
+> **Contributor note (2026-09-26):** the compiler, runtime and VS Code extension now live in this public repository (Apache-2.0). Issues labeled `good first issue` / `help wanted` are the entry points; anything that previously needed private-source access is now fair game. See [CONTRIBUTING.md](../CONTRIBUTING.md).
+
 - **NTF open standard** — spec page + conformance suite; "OTel for LLM agents".
   Bridges exporting LangChain / LangGraph / CrewAI runs into NTF
 - **`nudgec trace-diff`** — agent regression testing as a CI primitive
