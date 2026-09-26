@@ -205,7 +205,7 @@ fn elem_of(t: &Ty) -> Ty {
 
 // ── effect inference (design §3.2, v1.4) ──────────────────────────
 
-const KNOWN_EFFECTS: [&str; 3] = ["LLM", "Tool", "IO"];
+const KNOWN_EFFECTS: [&str; 4] = ["LLM", "Tool", "IO", "Decision"];
 
 /// Collect the direct (non-transitive) effects of an expression, plus the
 /// names of user fns it calls (call-graph edges for the fixpoint).
@@ -218,6 +218,13 @@ fn direct_effects(
     match &e.kind {
         ExprKind::LlmCall { options, .. } => {
             effects.insert("LLM".into());
+            for (_, v) in options {
+                direct_effects(v, g, effects, calls);
+            }
+        }
+        ExprKind::DecideCall { state, options, .. } => {
+            effects.insert("Decision".into());
+            direct_effects(state, g, effects, calls);
             for (_, v) in options {
                 direct_effects(v, g, effects, calls);
             }
@@ -341,7 +348,7 @@ fn expr_has_effect_call(
     inferred: &HashMap<String, BTreeSet<String>>,
 ) -> bool {
     match &e.kind {
-        ExprKind::LlmCall { .. } => true,
+        ExprKind::LlmCall { .. } | ExprKind::DecideCall { .. } => true,
         ExprKind::Call { func, args, kwargs } => {
             let callee = match &func.kind {
                 ExprKind::Ident(n) => Some(n.clone()),
@@ -1116,7 +1123,25 @@ fn check_expr(
         // the block needs an `otherwise` fallback (E0702)
         ExprKind::Route { arms } => {
             let mut has_otherwise = false;
-            for (label, _, cond) in arms {
+            let mut unified: Option<Ty> = None;
+            for (label, value, cond) in arms {
+                // v1.4: arm VALUES are typed — every arm must agree on the
+                // result type (string arms keep model-routing semantics)
+                let vt = check_expr(value, locals, g, errs);
+                match &unified {
+                    None => unified = Some(vt),
+                    Some(first) => {
+                        if !assignable(&vt, first) && !assignable(first, &vt) {
+                            errs.push(CheckError {
+                                span: None,
+                                code: "E0201",
+                                msg: format!(
+                                    "route arm '{label}' yields {vt} but the block yields {first}"
+                                ),
+                            });
+                        }
+                    }
+                }
                 match cond {
                     Some(c) => {
                         let ct = check_expr(c, locals, g, errs);
@@ -1140,7 +1165,97 @@ fn check_expr(
                     msg: "route block needs an `otherwise` arm — no model is chosen when every `when` is false (design §4.4)".into(),
                 });
             }
-            Ty::Str
+            unified.unwrap_or(Ty::Str)
+        }
+        ExprKind::DecideCall {
+            questions,
+            state,
+            options,
+        } => {
+            check_expr(state, locals, g, errs);
+            for (key, val) in options {
+                match key.as_str() {
+                    "model" | "null_option" => {
+                        if !matches!(val.kind, ExprKind::Str(_)) {
+                            errs.push(CheckError {
+                                span: None,
+                                code: "E0806",
+                                msg: format!("decide option '{key}' must be a string"),
+                            });
+                        }
+                    }
+                    "deadline" => {
+                        let t = check_expr(val, locals, g, errs);
+                        if !matches!(t, Ty::Int | Ty::Float) {
+                            errs.push(CheckError {
+                                span: None,
+                                code: "E0806",
+                                msg: "decide option 'deadline' must be milliseconds (int), e.g. deadline: 50".into(),
+                            });
+                        }
+                    }
+                    other => errs.push(CheckError {
+                        span: None,
+                        code: "E0806",
+                        msg: format!(
+                            "unknown decide option '{other}' (known: model, deadline, null_option)"
+                        ),
+                    }),
+                }
+            }
+            let mut fields = Vec::new();
+            for (name, q) in questions {
+                let qf = match q {
+                    DecisionQ::Choice { options, .. } => {
+                        if options.is_empty() {
+                            errs.push(CheckError {
+                                span: None,
+                                code: "E0807",
+                                msg: format!("question '{name}' has no options"),
+                            });
+                        }
+                        // family capability surface: Laya rejects >~126
+                        // short-label options with a 422 and degrades past
+                        // ~20 (the W0005 lint fires below); hard-fail here
+                        if options.len() > 255 {
+                            errs.push(CheckError {
+                                span: None,
+                                code: "E0807",
+                                msg: format!(
+                                    "question '{name}' has {} options — the family hard limit is 255; narrow the candidate set",
+                                    options.len()
+                                ),
+                            });
+                        }
+                        vec![
+                            ("winner".to_string(), Ty::Str),
+                            ("p".to_string(), Ty::Float),
+                            ("distribution".to_string(), Ty::Unknown),
+                            ("confidence".to_string(), Ty::Float),
+                        ]
+                    }
+                    DecisionQ::Noul { .. } => vec![("p".to_string(), Ty::Float)],
+                    DecisionQ::Score { levels, .. } => {
+                        // ordinal rubric: 2..=10 levels is the family norm
+                        if levels.len() < 2 || levels.len() > 10 {
+                            errs.push(CheckError {
+                                span: None,
+                                code: "E0807",
+                                msg: format!(
+                                    "question '{name}' has {} rubric levels — a score rubric needs 2..=10",
+                                    levels.len()
+                                ),
+                            });
+                        }
+                        vec![
+                            ("score".to_string(), Ty::Float),
+                            ("distribution".to_string(), Ty::Unknown),
+                        ]
+                    }
+                };
+                fields.push((name.clone(), Ty::Record(qf)));
+            }
+            Ty::Record(fields)
         }
     }
 }
@@ -1509,6 +1624,87 @@ test "x" { for_all p in gen.injection() { let r = ask(p)
         let errs = check_src(r#"test "x" { for_all s in gen.str(4) { assert s == 1 } }"#);
         // s is a string; `s == 1` must surface an assignability error
         assert!(errs.iter().any(|e| e.code == "E0201"), "{errs:?}");
+    }
+
+    #[test]
+    fn decide_checks_clean_and_types_the_answer() {
+        let errs = check_src(
+            r#"
+fn triage(t: string) -> string uses Decision {
+    let d = decide {
+        dept: "which team?" choose [billing, technical],
+        risk: "churn?" yes/no,
+        urgency: "how urgent?" score [low, soon, critical]
+    } on t with { model: "laya:multilingual", deadline: 50 }
+    d.dept.winner
+}"#,
+        );
+        assert_eq!(errs, vec![], "{errs:?}");
+    }
+
+    #[test]
+    fn decide_infers_the_decision_effect() {
+        let errs = check_src(
+            "fn f(t: string) -> string { let d = decide { x: \"pick?\" choose [a, b] } on t\n    d.x.winner }",
+        );
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0301" && e.msg.contains("Decision")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn decide_answer_field_types_are_enforced() {
+        let errs = check_src(
+            r#"
+fn f(t: string) -> int uses Decision {
+    let d = decide { dept: "team?" choose [a, b] } on t
+    let n: int = d.dept.winner
+    n
+}"#,
+        );
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("annotated int")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn decide_capability_limits() {
+        // rubric out of range
+        let errs = check_src(
+            r#"fn f(t: string) -> float uses Decision { let d = decide { s: "rate?" score [a] } on t
+    d.s.score }"#,
+        );
+        assert!(errs.iter().any(|e| e.code == "E0807"), "{errs:?}");
+        // unknown option key
+        let errs2 = check_src(
+            r#"fn f(t: string) -> string uses Decision { let d = decide { x: "pick?" choose [a, b] } on t with { temperature: 0 }
+    d.x.winner }"#,
+        );
+        assert!(
+            errs2
+                .iter()
+                .any(|e| e.code == "E0806" && e.msg.contains("temperature")),
+            "{errs2:?}"
+        );
+    }
+
+    #[test]
+    fn route_arms_must_agree_on_type() {
+        let errs = check_src(
+            r#"
+fn resolve(t: string) -> string uses IO { t }
+fn f(c: bool) -> string uses IO {
+    route { a: resolve("x") when c, b: 42 otherwise }
+}"#,
+        );
+        assert!(
+            errs.iter().any(|e| e.msg.contains("route arm 'b' yields")),
+            "{errs:?}"
+        );
     }
     #[test]
     fn research_agent_checks_clean() {

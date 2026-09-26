@@ -18,6 +18,7 @@ pub const FAKE_CALL_COST: f64 = 0.001;
 struct Count {
     sites: usize,
     max_calls: usize,
+    decisions: usize,
     dynamic: bool,
 }
 
@@ -25,6 +26,7 @@ impl Count {
     fn add(&mut self, other: &Count) {
         self.sites += other.sites;
         self.max_calls += other.max_calls;
+        self.decisions += other.decisions;
         self.dynamic |= other.dynamic;
     }
 }
@@ -214,6 +216,12 @@ fn collect_calls(e: &Expr, in_par: bool, out: &mut Vec<(String, bool)>) {
                 }
             }
         }
+        ExprKind::DecideCall { state, options, .. } => {
+            collect_calls(state, in_par, out);
+            for (_, v) in options {
+                collect_calls(v, in_par, out);
+            }
+        }
     }
 }
 
@@ -248,6 +256,15 @@ fn count_expr(e: &Expr, in_par: bool, c: &mut Count) {
         ExprKind::ListLit(xs) | ExprKind::ParAll(xs) | ExprKind::ParRace(xs) => {
             for x in xs {
                 count_expr(x, in_par, c);
+            }
+        }
+        // one decide = one decision call (batched questions); state/option
+        // expressions still count their own llm sites
+        ExprKind::DecideCall { state, options, .. } => {
+            c.decisions += 1;
+            count_expr(state, in_par, c);
+            for (_, v) in options {
+                count_expr(v, in_par, c);
             }
         }
         ExprKind::Prompt { .. }

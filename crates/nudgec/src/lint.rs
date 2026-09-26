@@ -8,6 +8,9 @@
 //!   W0003 schema-silence  — a record `schema: T` whose fields never appear
 //!                           in the prompt text (the model can't guess the
 //!                           output contract it was never told)
+//!   W0005 option-count — a `decide` choice with >20 options: family
+//!   decision heads degrade past ~20 options (Laya rejects >126 with 422)
+//!   — narrow the candidate set first
 //!   W0004 schema-without-repair — a `schema` with no `retry: N with repair`:
 //!                           a violation raises at runtime instead of repairing
 
@@ -156,6 +159,23 @@ fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut V
             };
             lint_llm_call(ctx, body, options, *repair, records, out);
             walk_expr(ctx, prompt, records, out);
+            for (_, v) in options {
+                walk_expr(ctx, v, records, out);
+            }
+        }
+        ExprKind::DecideCall {
+            questions,
+            state,
+            options,
+        } => {
+            for (name, q) in questions {
+                if let crate::ast::DecisionQ::Choice { options: opts, .. } = q {
+                    if opts.len() > 20 {
+                        out.push(lint("W0005", format!("in {ctx}: question '{name}' has {} options — family decision heads degrade past ~20 (Laya rejects >126 with a 422); pre-filter the candidate set", opts.len())));
+                    }
+                }
+            }
+            walk_expr(ctx, state, records, out);
             for (_, v) in options {
                 walk_expr(ctx, v, records, out);
             }

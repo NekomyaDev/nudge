@@ -563,18 +563,72 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
             ts(r, aliases, sigs)
         ),
         ExprKind::Route { arms } => {
+            // v1.4: lazy arm values — strings keep model-routing semantics
             let parts = arms
                 .iter()
-                .map(|(label, model, cond)| match cond {
+                .map(|(label, value, cond)| match cond {
                     Some(c) => {
-                        format!("[{:?}, {:?}, () => {}]", label, model, ts(c, aliases, sigs))
+                        format!(
+                            "[{:?}, () => {}, () => {}]",
+                            label,
+                            ts(value, aliases, sigs),
+                            ts(c, aliases, sigs)
+                        )
                     }
-                    None => format!("[{:?}, {:?}, null]", label, model),
+                    None => format!("[{:?}, () => {}, null]", label, ts(value, aliases, sigs)),
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("rt.route({parts})")
         }
+        ExprKind::DecideCall {
+            questions,
+            state,
+            options,
+        } => {
+            let qs = questions
+                .iter()
+                .map(|(name, q)| match q {
+                    DecisionQ::Choice { prompt, options } => format!(
+                        "{{ name: {:?}, kind: \"choice\", prompt: {:?}, options: {:?} }}",
+                        name, prompt, options
+                    ),
+                    DecisionQ::Noul { prompt } => {
+                        format!(
+                            "{{ name: {:?}, kind: \"noul\", prompt: {:?} }}",
+                            name, prompt
+                        )
+                    }
+                    DecisionQ::Score { prompt, levels } => format!(
+                        "{{ name: {:?}, kind: \"score\", prompt: {:?}, levels: {:?} }}",
+                        name, prompt, levels
+                    ),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let opts = options
+                .iter()
+                .map(|(k, v)| format!("{}: {}", js_key(k), ts(v, aliases, sigs)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "rt.decide([{}], {}, {{ {} }})",
+                qs,
+                ts(state, aliases, sigs),
+                opts
+            )
+        }
+    }
+}
+
+fn js_key(k: &str) -> String {
+    let plain = !k.is_empty()
+        && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !k.chars().next().unwrap().is_ascii_digit();
+    if plain {
+        k.to_string()
+    } else {
+        format!("{k:?}")
     }
 }
 
@@ -805,12 +859,14 @@ mod tests {
         let src = "fn pick(flag: bool) -> string uses LLM {\n    llm\"\"\"hi\"\"\" with { model: route{ cheap: \"m1\" when flag, strong: \"m2\" otherwise } }\n}";
         let out = gen_ts(src);
         assert!(
-            out.contains("rt.route([\"cheap\", \"m1\", () => flag], [\"strong\", \"m2\", null])"),
+            out.contains(
+                "rt.route([\"cheap\", () => \"m1\", () => flag], [\"strong\", () => \"m2\", null])"
+            ),
             "got:\n{out}"
         );
         // annotation-stripped output stays valid JS
         assert!(
-            strip_ts(&out).contains("rt.route([\"cheap\", \"m1\", () => flag]"),
+            strip_ts(&out).contains("rt.route([\"cheap\", () => \"m1\", () => flag]"),
             "got:\n{out}"
         );
     }

@@ -37,6 +37,24 @@ pub enum BinOp {
     Not, // unary only
 }
 
+/// One question inside a `decide { ... }` block (v1.4 "Decision"):
+/// a choice over named options, a yes/no probability (noul), or an
+/// ordinal rubric score — the JEV-family question kinds.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DecisionQ {
+    Choice {
+        prompt: String,
+        options: Vec<String>,
+    },
+    Noul {
+        prompt: String,
+    },
+    Score {
+        prompt: String,
+        levels: Vec<String>,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind {
     Int(i64),
@@ -98,9 +116,22 @@ pub enum ExprKind {
 
     /// `route{ cheap: "m1" when cond, strong: "m2" otherwise }` (design §4.4):
     /// arms evaluated in order; the first true `when` wins, `otherwise` is
-    /// the fallback arm (cond = None). The model option value is a string.
+    /// the fallback arm (cond = None). A bare string arm value keeps the
+    /// model-routing semantics (v1.4 generalization: any expression —
+    /// value-level policy switch, e.g. on decision confidence).
     Route {
-        arms: Vec<(String, String, Option<Expr>)>,
+        arms: Vec<(String, Expr, Option<Expr>)>,
+    },
+
+    /// `decide { q: "..." choose [..] / noul / score [..], ... } on <state>
+    /// with { model, deadline, null_option }` (v1.4) — one batched call
+    /// against a JEV-family decision model. Evaluates to a record with one
+    /// field per question (choice: winner/p/distribution/confidence,
+    /// noul: p, score: score/distribution).
+    DecideCall {
+        questions: Vec<(String, DecisionQ)>,
+        state: Box<Expr>,
+        options: Vec<(String, Expr)>,
     },
 }
 

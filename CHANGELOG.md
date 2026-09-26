@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **`decide{}` — typed decisions as a language primitive (v1.4 "Decision", design §11 / `docs/decision.md`)**: `decide { q: "prompt" choose [..] / yes/no / score [..] } on <state> with { model, deadline }` compiles to one batched call against a JEV-family decision model (Laya / Jev share the `/v1/systemone` wire contract); the fake provider synthesizes deterministic seeded distributions so tests stay $0; answers carry winner/p/distribution/confidence (+ additive `level`, `deadline_missed`); new `Decision` effect with full inference/purity support (E0806/E0807, W0005 option-count lint)
+- `route{}` generalization: arm values are lazy expressions — bare strings keep model-routing semantics, any other value makes route a value-level policy switch (confidence thresholds)
+- deadline semantics: soft `deadline_missed` annotation by default, `NUDGE_DECISION_STRICT=1` makes overruns fatal; `NUDGE_DECISION_SERVERS` registry for live HTTP decision providers
+
+### Added (pre-1.4)
 - **Property-based agent tests** (design §6.4): `for_all x in gen.int/str/injection/bool { ... }` inside test blocks — deterministic seeded case sweep, shrink-to-minimal-counterexample, and checker rules E0801 (test-only), E0802 (generator validity), E0804 (property purity: no llm/tool/effectful calls). Python + TypeScript runtimes ship `rt.for_all`/`rt.forAll` with identical semantics; new example `examples/property-fuzz`
 - **NTF open standard**: `docs/ntf-spec.md` (frozen v1 spec page), a conformance corpus (`conformance/` — 17 cases with expected verdicts, wired into `cargo test` and a vendor-neutral `conformance/run.py` runner), and a LangChain → NTF bridge (`bridges/langchain_ntf.py`)
 - **`nudge-ci` GitHub Action** (`action.yml`): agent regression CI in any repo — `nudgec check` + `nudgec test` (replay, $0) over a glob of `.ndg` programs, with optional `trace-diff` regression gate and `version`/`check-only` inputs; the repository now dogfoods it via `.github/workflows/agent-ci.yml`

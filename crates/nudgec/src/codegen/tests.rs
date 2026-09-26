@@ -110,7 +110,7 @@ fn route_block_lowers_to_rt_route() {
     let src = "fn f(b: bool) -> string uses LLM { llm\"\"\"x\"\"\" with { model: route{ cheap: \"m1\" when b, strong: \"m2\" otherwise } } }";
     let out = gen(src);
     assert!(
-        out.contains("model=rt.route((\"cheap\", \"m1\", lambda: b), (\"strong\", \"m2\", None))"),
+        out.contains("model=rt.route((\"cheap\", lambda: \"m1\", lambda: b), (\"strong\", lambda: \"m2\", None))"),
         "got:\n{out}"
     );
 }

@@ -46,8 +46,13 @@ export function merge(l, r) {
 // User-defined model routing (design §4.4): arms are [label, model, cond]
 // triples; the first truthy condition wins, `null` is the otherwise arm.
 export function route(...arms) {
-  for (const [label, model, cond] of arms) {
-    if (cond === null || cond()) return model;
+  // v1.4: arm values are thunks — a string result keeps model-routing
+  // semantics, any other value makes the route a policy switch
+  for (const [label, value, cond] of arms) {
+    if (cond === null || cond()) {
+      const result = typeof value === "function" ? value() : value;
+      return result;
+    }
   }
   throw new Error("route block matched no arm and has no otherwise fallback");
 }
@@ -541,4 +546,196 @@ export function forAll(gen, args, prop, varName) {
       `${varName}=${JSON.stringify(minimal)} — ${msg || "property violated"} ` +
       `(first failure: ${JSON.stringify(firstCase)})`,
   );
+}
+
+// ── decisions: rt.decide (v1.4 "Decision") ──────────────────────────
+// TS parity of the Python decide: fake provider (deterministic FNV-seeded
+// distributions) by default; /v1/systemone HTTP transport for live
+// decision models (Laya serve / Jev share the wire contract).
+
+class DecisionTimeout extends Error {}
+
+function fnv1a(text) {
+  let h = 0xcbf29ce484222325n;
+  for (const b of Buffer.from(text, "utf8")) {
+    h ^= BigInt(b);
+    h = (h * 0x100000001b3n) & 0xffffffffffffffffn;
+  }
+  return h;
+}
+
+function fakeDistribution(seed, k) {
+  const weights = [];
+  let x = seed;
+  for (let i = 0; i < k; i++) {
+    x = (x * 6364136223846793005n + 1442695040888963407n) & 0xffffffffffffffffn;
+    weights.push(Number(x >> 11n) + 1.0);
+  }
+  const total = weights.reduce((a, b) => a + b, 0);
+  return weights.map((w) => w / total);
+}
+
+function fakeDecide(questions, state, opts) {
+  const out = {};
+  const stateText = String(state);
+  for (const q of questions) {
+    const seed = fnv1a(`${stateText}\x1f${q.name}\x1f${q.prompt || ""}\x1f${opts.model || "fake"}`);
+    if (q.kind === "choice") {
+      const dist = fakeDistribution(seed, q.options.length);
+      let winner = 0;
+      for (let i = 1; i < dist.length; i++) if (dist[i] > dist[winner]) winner = i;
+      const k = dist.length;
+      const confidence = k > 1 ? Math.max(0, (dist[winner] - 1 / k) / (1 - 1 / k)) : 1;
+      out[q.name] = {
+        winner: q.options[winner],
+        p: dist[winner],
+        distribution: Object.fromEntries(q.options.map((o, i) => [o, dist[i]])),
+        confidence,
+      };
+    } else if (q.kind === "noul") {
+      out[q.name] = { p: fakeDistribution(seed, 2)[0] };
+    } else if (q.kind === "score") {
+      const dist = fakeDistribution(seed, q.levels.length);
+      const score = dist.reduce((acc, p, i) => acc + i * p, 0);
+      out[q.name] = {
+        score,
+        distribution: Object.fromEntries(q.levels.map((l, i) => [l, dist[i]])),
+      };
+    } else {
+      throw new Error(`unknown decision question kind '${q.kind}'`);
+    }
+  }
+  return out;
+}
+
+export function decide(questions, state, options = {}) {
+  const model = String(options.model || "fake");
+  const provider = model.includes(":") ? model.split(":")[0] : model;
+  const started = Date.now();
+  const reg = process.env.NUDGE_DECISION_SERVERS;
+  if (provider !== "fake" && process.env.NUDGE_PROVIDER !== "fake") {
+    if (!reg) {
+      throw new Error(
+        `decision provider '${provider}' is not configured — set NUDGE_DECISION_SERVERS or use the fake provider`,
+      );
+    }
+    const entry = JSON.parse(reg)[provider];
+    if (entry && entry.base_url) {
+      return httpDecide(entry.base_url, state, questions, options, started);
+    }
+    throw new Error(
+      `decision provider '${provider}' has no base_url in NUDGE_DECISION_SERVERS`,
+    );
+  }
+  const answers = fakeDecide(questions, state, options);
+  return finishDecide(answers, options, started);
+}
+
+function finishDecide(answers, options, started) {
+  const latency = Date.now() - started;
+  if (options.deadline != null && latency > Number(options.deadline)) {
+    if (process.env.NUDGE_DECISION_STRICT === "1") {
+      throw new DecisionTimeout(
+        `decision took ${latency} ms over the ${Number(options.deadline)} ms deadline`,
+      );
+    }
+    for (const a of Object.values(answers)) a.deadline_missed = true;
+  }
+  return answers;
+}
+
+async function httpDecide(base_url, state, questions, options, started) {
+  const url = base_url.replace(/\/+$/, "") + "/v1/systemone";
+  const body = {
+    state: { text: String(state) },
+    questions: Object.fromEntries(
+      questions.map((q) => [
+        q.name,
+        q.kind === "choice"
+          ? { type: "choice", instructions: q.prompt || "", criteria: Object.fromEntries(q.options.map((o) => [o, o])) }
+          : q.kind === "noul"
+            ? { type: "noul", instructions: q.prompt || "" }
+            : { type: "score", instructions: q.prompt || "", criteria: q.levels },
+      ]),
+    ),
+  };
+  const headers = { "Content-Type": "application/json" };
+  if (process.env.NUDGE_DECISION_API_KEY) {
+    headers.Authorization = `Bearer ${process.env.NUDGE_DECISION_API_KEY}`;
+  }
+  const ctrl = AbortSignal.timeout(((options.deadline || 30000) / 1000.0 + 1.0) * 1000);
+  let payload;
+  try {
+    const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: ctrl });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
+    payload = await resp.json();
+  } catch (e) {
+    throw new Error(`decision server unreachable at ${url}: ${e.message || e}`);
+  }
+  const raw = payload.answers;
+  if (!raw || typeof raw !== "object") throw new Error("decision server response has no `answers` object");
+  const asked = Object.fromEntries(questions.map((q) => [q.name, q]));
+  const out = {};
+  const seen = new Set();
+  for (const [name, ans] of Object.entries(raw)) {
+    if (!(name in asked)) throw new Error(`decision server answered unasked question '${name}'`);
+    if (seen.has(name)) throw new Error(`decision server answered question '${name}' more than once`);
+    seen.add(name);
+    const q = asked[name];
+    if (q.kind === "choice" && ans.type === "choice") {
+      const probs = ans.probabilities;
+      const labels = q.options;
+      if (!probs || Object.keys(probs).sort().join() !== labels.slice().sort().join()) {
+        throw new Error(`question '${name}': probabilities must cover the declared options exactly`);
+      }
+      const vals = Object.values(probs).map(Number);
+      for (const p of vals) {
+        if (!(p >= 0 && p <= 1) || Number.isNaN(p)) {
+          throw new Error(`question '${name}': probabilities out of range or NaN`);
+        }
+      }
+      const total = vals.reduce((a, b) => a + b, 0);
+      if (total <= 0) throw new Error(`question '${name}': probability distribution sums to ${total}`);
+      const winner = ans.choice;
+      if (!(winner in probs)) throw new Error(`question '${name}': winner ${winner} is not one of the options`);
+      const dist = Object.fromEntries(labels.map((l) => [l, probs[l] / total]));
+      const k = labels.length;
+      const confidence =
+        k > 1 ? Math.max(0, (dist[winner] - 1 / k) / (1 - 1 / k)) : 1;
+      out[name] = { winner, p: dist[winner], distribution: dist, confidence: ans.confidence ?? confidence };
+    } else if (q.kind === "noul" && ans.type === "noul") {
+      const p = Number(ans.noul);
+      if (!(p >= 0 && p <= 1) || Number.isNaN(p)) {
+        throw new Error(`question '${name}': noul probability out of range or NaN`);
+      }
+      out[name] = { p };
+    } else if (q.kind === "score" && ans.type === "score") {
+      const probs = ans.probabilities;
+      const levels = q.levels;
+      const keys = Object.keys(probs).map(Number).sort((a, b) => a - b).join();
+      if (!probs || keys !== Array.from({ length: levels.length }, (_, i) => i).join()) {
+        throw new Error(`question '${name}': score probabilities must cover rubric indices 0..${levels.length - 1}`);
+      }
+      const dist0 = levels.map((_, i) => Number(probs[i]));
+      if (dist0.some((p) => p < 0 || Number.isNaN(p))) {
+        throw new Error(`question '${name}': rubric probabilities negative or NaN`);
+      }
+      const total = dist0.reduce((a, b) => a + b, 0);
+      if (total <= 0) throw new Error(`question '${name}': rubric distribution sums to ${total}`);
+      const dist = dist0.map((p) => p / total);
+      out[name] = {
+        score: dist.reduce((acc, p, i) => acc + i * p, 0),
+        distribution: Object.fromEntries(levels.map((l, i) => [l, dist[i]])),
+      };
+    } else {
+      throw new Error(`question '${name}': expected answer type '${q.kind}', got '${ans.type}'`);
+    }
+  }
+  for (const q of questions) {
+    if (!seen.has(q.name)) throw new Error(`decision server did not answer: ${q.name}`);
+  }
+  if (payload.model) for (const a of Object.values(out)) a.model = payload.model;
+  const level = payload.level || Object.values(raw)[0]?.level;
+  if (level) for (const a of Object.values(out)) a.level = level;
+  return finishDecide(out, options, started);
 }
