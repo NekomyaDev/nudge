@@ -34,6 +34,12 @@ An AI agent that translates text between languages. Demonstrates:
 - Quality scoring
 - Parallel translation (par map)
 
+### [RAG Agent](rag-agent/)
+A retrieval-augmented agent that answers only from retrieved context. Demonstrates:
+- MCP tool retrieval (`impl: mcp("kb").retrieve`)
+- Grounded answers with citations — and explicit refusal when evidence is thin
+- Budget-controlled synthesis with repair
+
 ## More Examples
 
 Compact single-file programs at the top of this directory, used by the compiler's CI and smoke tests:
@@ -68,6 +74,7 @@ python3 out/chatbot.py
 | Research Agent | ✅ | ✅ | ✅ | - | LLM |
 | Data Analyzer | ✅ | ✅ | ✅ | - | LLM |
 | Translator | ✅ | ✅ | ✅ | ✅ | LLM |
+| RAG Agent | ✅ | ✅ | ✅ | - | LLM, Tool |
 
 ## Contributing
 

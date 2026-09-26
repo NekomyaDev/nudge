@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        example: [chatbot, code-reviewer, data-analyzer, research-agent, translator]
+        example: [chatbot, code-reviewer, data-analyzer, rag-agent, research-agent, translator]
     steps:
       - uses: actions/checkout@v7
 
