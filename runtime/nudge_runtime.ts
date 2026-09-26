@@ -6,6 +6,7 @@
 // budget walls, render, merge, USD, par helpers with NTF v1.1 branch labels,
 // fake streaming. Deferred: real providers, streamed prefix validation and
 // repair, OTel export (the Python runtime covers those today).
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as process from "node:process";
 
@@ -611,6 +612,45 @@ function fakeDecide(questions, state, opts) {
 let _decisionReplayCache = null;
 let _decisionReplayIdx = 0;
 
+// NUDGE_DECISION_CACHE=<path> — persistent representation cache for real
+// providers: same state + question shape + model = same validated answers,
+// zero calls. Replay always takes precedence over the cache.
+function decisionCacheKey(state, questions, model) {
+  const shape = {
+    state: String(state),
+    model: String(model),
+    questions: questions.map((q) => {
+      const e = { name: q.name, kind: q.kind, prompt: q.prompt || "" };
+      if (q.options) e.options = q.options;
+      if (q.levels) e.levels = q.levels;
+      return e;
+    }),
+  };
+  return crypto.createHash("sha256").update(JSON.stringify(shape), "utf8").digest("hex");
+}
+
+function decisionCacheLoad(path) {
+  try {
+    const data = JSON.parse(fs.readFileSync(path, "utf8"));
+    return data && typeof data === "object" ? data : {};
+  } catch {
+    return {}; // missing/corrupt cache = cold start, never fatal
+  }
+}
+
+function decisionCacheGet(path, key) {
+  const entry = decisionCacheLoad(path)[key];
+  return entry ? JSON.parse(JSON.stringify(entry.answers)) : null;
+}
+
+function decisionCachePut(path, key, answers) {
+  const data = decisionCacheLoad(path);
+  data[key] = { answers, cached_at: Date.now() / 1000 };
+  const tmp = path + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(data));
+  fs.renameSync(tmp, path);
+}
+
 function _replayDecisionAnswers() {
   if (_decisionReplayCache === null) {
     _decisionReplayCache = fs
@@ -622,6 +662,24 @@ function _replayDecisionAnswers() {
       .map((r) => r.answers);
   }
   return _decisionReplayCache;
+}
+
+// frozen v1 + additive decision.call record (design §11.4)
+function decisionRecord(model, provider, questions, answers, options, started, cacheHit) {
+  const record = {
+    kind: "decision.call",
+    model,
+    provider,
+    questions: Object.fromEntries(questions.map((q) => [q.name, q])),
+    answers,
+    latency_ms: Date.now() - started,
+    outcome: Object.values(answers).some((a) => a.deadline_missed)
+      ? "deadline_missed"
+      : "ok",
+  };
+  if (options.deadline != null) record.deadline_ms = Number(options.deadline);
+  if (cacheHit) record.cache = "hit"; // additive: served from cache, not the wire
+  return record;
 }
 
 export function decide(questions, state, options = {}) {
@@ -646,29 +704,28 @@ export function decide(questions, state, options = {}) {
       );
     }
     const entry = JSON.parse(reg)[provider];
-    if (entry && entry.base_url) {
-      return httpDecide(entry.base_url, state, questions, options, started);
+    if (!entry || !entry.base_url) {
+      throw new Error(
+        `decision provider '${provider}' has no base_url in NUDGE_DECISION_SERVERS`,
+      );
     }
-    throw new Error(
-      `decision provider '${provider}' has no base_url in NUDGE_DECISION_SERVERS`,
-    );
+    const cachePath = process.env.NUDGE_DECISION_CACHE;
+    const key = cachePath ? decisionCacheKey(state, questions, model) : null;
+    if (cachePath) {
+      const hit = decisionCacheGet(cachePath, key);
+      if (hit) {
+        const finished = finishDecide(hit, options, started);
+        _emitTrace(decisionRecord(model, provider, questions, hit, options, started, true));
+        return finished;
+      }
+    }
+    return httpDecide(entry.base_url, state, questions, options, started, {
+      model, provider, questions, options, started, cachePath, key,
+    });
   }
   const answers = fakeDecide(questions, state, options);
   const finished = finishDecide(answers, options, started);
-  // frozen v1 + additive decision.call record (design §11.4)
-  const record = {
-    kind: "decision.call",
-    model,
-    provider,
-    questions: Object.fromEntries(questions.map((q) => [q.name, q])),
-    answers,
-    latency_ms: Date.now() - started,
-    outcome: Object.values(answers).some((a) => a.deadline_missed)
-      ? "deadline_missed"
-      : "ok",
-  };
-  if (options.deadline != null) record.deadline_ms = Number(options.deadline);
-  _emitTrace(record);
+  _emitTrace(decisionRecord(model, provider, questions, answers, options, started, false));
   return finished;
 }
 
@@ -685,7 +742,7 @@ function finishDecide(answers, options, started) {
   return answers;
 }
 
-async function httpDecide(base_url, state, questions, options, started) {
+async function httpDecide(base_url, state, questions, options, started, ctx = null) {
   const url = base_url.replace(/\/+$/, "") + "/v1/systemone";
   const body = {
     state: { text: String(state) },
@@ -778,5 +835,11 @@ async function httpDecide(base_url, state, questions, options, started) {
   if (payload.model) for (const a of Object.values(out)) a.model = payload.model;
   const level = payload.level || Object.values(raw)[0]?.level;
   if (level) for (const a of Object.values(out)) a.level = level;
-  return finishDecide(out, options, started);
+  if (ctx && ctx.cachePath) decisionCachePut(ctx.cachePath, ctx.key, out);
+  const finished = finishDecide(out, options, started);
+  if (ctx) {
+    _emitTrace(decisionRecord(ctx.model, ctx.provider, ctx.questions, out,
+      ctx.options, ctx.started, false));
+  }
+  return finished;
 }

@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Decision cache** (`NUDGE_DECISION_CACHE=<path>`): persists validated answers for real providers across runs — same state + question shape + model = same decision, zero calls; replay always takes precedence; served records carry the additive NTF field `cache: "hit"`; missing/corrupt cache files are cold starts, never errors (both backends). TS runtime now also writes `decision.call` records on the live HTTP path (parity with Python).
 - `nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8]`: re-cuts decision thresholds over recorded distributions — the "change a threshold, see the effect before deploy" loop with zero model calls
 - examples/triage-agent: batched decide{} + route{} confidence policy; examples CI matrix extended
 - **NTF `decision.call` records**: batched decisions land in traces (`model/provider/questions/answers/latency_ms/outcome` + additive `deadline_ms`, `level`); full replay consumes them in order with strict exhaustion (llm parity); `trace-diff` reports decision counts + total latency and `--fail-on-regression` gates latency growth and decision failures; conformance corpus extended to 25 cases

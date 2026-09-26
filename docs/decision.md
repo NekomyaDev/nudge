@@ -107,6 +107,29 @@ Soft by default: an overrun annotates every answer with
 `deadline_missed: true` (visible in the trace; policy can route on it).
 `NUDGE_DECISION_STRICT=1` makes overruns fatal.
 
+### Decision cache
+
+`NUDGE_DECISION_CACHE=<path>` persists validated answers for **real**
+providers across runs — a representation cache: the same state text +
+question shape + model is the same decision, so paying for it twice is a
+bug, not a feature. Semantics (both backends):
+
+- Key: SHA-256 over canonical JSON of `{state, model, questions}` — any
+  change to the state, an option list, a rubric, or the model changes the
+  key; formatting never does.
+- Only the HTTP transport is cached. The fake provider is already
+  deterministic and free — caching it would add file I/O for nothing.
+- Replay (`NUDGE_REPLAY=all`) always takes precedence over the cache, so a
+  recorded trace replays byte-identically even with a warm cache.
+- Records carry the additive field `cache: "hit"` when served from the
+  cache; misses are unmarked (a fresh run's trace looks exactly like a
+  no-cache run's).
+- A missing or corrupt cache file is a cold start, never an error.
+
+trace-diff note: cache hits drive `latency_ms` toward zero. The regression
+gate only fails on growth, so a hit can never fake a regression — but it
+can hide one: run latency gates on cache-cold traces.
+
 ## 5. Non-goals (v1.4)
 
 Generic type parameters, calibration training, speculative execution,
