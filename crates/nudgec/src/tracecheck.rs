@@ -26,6 +26,84 @@ fn required(kind: &str) -> Option<&'static [&'static str]> {
     }
 }
 
+/// Expected type per frozen-v1 field: presence is not enough — a
+/// `tokens.in` holding a string (or a hostile `<img onerror=...>`) must
+/// be rejected by trace-check, not just rendered escaped downstream.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Ty {
+    Str,
+    Num,
+    Obj,
+}
+
+fn field_type(kind: &str, field: &str) -> Option<Ty> {
+    match (kind, field) {
+        ("llm.call", "model")
+        | ("llm.call", "input")
+        | ("llm.call", "outcome")
+        | ("llm.call", "provider") => Some(Ty::Str),
+        ("llm.call", "cost_usd") | ("llm.call", "repair_round") => Some(Ty::Num),
+        ("llm.call", "params") | ("llm.call", "tokens") => Some(Ty::Obj),
+        // `output` is a string OR a structured object (typed answers)
+        ("tool.call", "tool") | ("fn.return", "fn") => Some(Ty::Str),
+        // dotted paths check nested fields — tokens.in must be a NUMBER,
+        // so a hostile `<img onerror=...>` string is rejected at check time
+        ("llm.call", "tokens.in") | ("llm.call", "tokens.out") => Some(Ty::Num),
+        _ => None,
+    }
+}
+
+fn type_check(kind: &str, rec: &Json) -> Vec<String> {
+    let mut errs = Vec::new();
+    let mut paths: Vec<(&str, Ty)> = Vec::new();
+    for f in required(kind).unwrap_or(&[]) {
+        if let Some(ty) = field_type(kind, f) {
+            paths.push((f, ty));
+        }
+    }
+    // nested dotted paths beyond the required list
+    for (f, ty) in [("tokens.in", Ty::Num), ("tokens.out", Ty::Num)] {
+        if field_type(kind, f).is_some() && !paths.iter().any(|(p, _)| *p == f) {
+            paths.push((f, ty));
+        }
+    }
+    for (f, ty) in paths {
+        // walk dotted path ("tokens.in" → rec["tokens"]["in"])
+        let mut cur = rec;
+        let mut found = true;
+        for part in f.split('.') {
+            match cur.get(part) {
+                Some(v) => cur = v,
+                None => {
+                    found = false;
+                    break;
+                }
+            }
+        }
+        if !found {
+            continue;
+        }
+        let v = cur;
+        let ok = match ty {
+            Ty::Str => v.as_str().is_some(),
+            Ty::Num => v.as_num().is_some(),
+            Ty::Obj => v.is_obj(),
+        };
+        if !ok {
+            let got = match v {
+                Json::Str(_) => "string",
+                Json::Num(_) => "number",
+                Json::Bool(_) => "boolean",
+                Json::Null => "null",
+                j if j.is_obj() => "object",
+                _ => "array",
+            };
+            errs.push(format!("`{f}` must be {ty:?}, got {got}"));
+        }
+    }
+    errs
+}
+
 /// One human-readable problem per violation; empty means the trace conforms.
 pub fn validate(text: &str) -> Vec<String> {
     let mut errs = Vec::new();
@@ -83,6 +161,9 @@ pub fn validate(text: &str) -> Vec<String> {
                             errs.push(format!("line {n}: {kind} record missing `{f}`"));
                         }
                     }
+                    for e in type_check(kind, &rec) {
+                        errs.push(format!("line {n}: {kind} record {e}"));
+                    }
                 }
             },
         }
@@ -109,6 +190,30 @@ mod tests {
             r#"{"v": 1, "seq": 3, "kind": "fn.return", "fn": "main", "output": {"x": 1}}"#,
         );
         assert_eq!(validate(&text), Vec::<String>::new());
+    }
+
+    #[test]
+    fn wrong_typed_frozen_v1_fields_are_reported() {
+        let text = format!(
+            "{}\n{}\n",
+            // tokens.in is a string (a hostile XSS payload must be caught
+            // here, not just escaped downstream) and cost_usd is a string
+            r#"{"v": 1, "seq": 1, "kind": "llm.call", "model": "m", "params": {}, "input": "p", "output": "o", "tokens": {"in": "<img src=x onerror=alert(1)>", "out": 1}, "cost_usd": "0.001", "repair_round": 0, "outcome": "ok", "provider": "fake"}"#,
+            r#"{"v": 1, "seq": 2, "kind": "tool.call", "tool": 7, "input": [], "output": []}"#,
+        );
+        let errs = validate(&text);
+        assert!(
+            errs.iter().any(|e| e.contains("`tokens.in` must be Num")),
+            "{errs:?}"
+        );
+        assert!(
+            errs.iter().any(|e| e.contains("`cost_usd` must be Num")),
+            "{errs:?}"
+        );
+        assert!(
+            errs.iter().any(|e| e.contains("`tool` must be Str")),
+            "{errs:?}"
+        );
     }
 
     #[test]

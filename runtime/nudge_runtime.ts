@@ -98,7 +98,7 @@ function _budgetCharge(cost, budget) {
 // type / properties / required / items / additionalProperties / enum.
 // Returns a list of human-readable violations (empty = valid).
 export function validateOutput(sch, v, path = "output") {
-  const errs: string[] = [];
+  const errs = [];
   if (!sch || typeof sch !== "object") return errs;
   if (sch.enum) {
     if (!sch.enum.includes(v)) errs.push(`${path}: ${JSON.stringify(v)} is not one of ${JSON.stringify(sch.enum)}`);
