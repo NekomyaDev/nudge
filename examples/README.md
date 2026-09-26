@@ -34,6 +34,21 @@ An AI agent that translates text between languages. Demonstrates:
 - Quality scoring
 - Parallel translation (par map)
 
+## More Examples
+
+Compact single-file programs at the top of this directory, used by the compiler's CI and smoke tests:
+
+- [`hello_llm.ndg`](hello_llm.ndg) — the smallest possible LLM program
+- [`checkpoint_agent.ndg`](checkpoint_agent.ndg) — resume a crashed run from its checkpoint (`nudgec resume`)
+- [`smoke_provider.ndg`](smoke_provider.ndg) — exercises provider plumbing (also runnable against live providers via the smoke workflows)
+- [`research_agent.ndg`](research_agent.ndg) — the compiler's own acceptance fixture: every `cargo test` run compiles and type-checks this file
+
+```sh
+nudgec test examples/hello_llm.ndg
+```
+
+Their replay fixtures live in [`traces/`](traces/).
+
 ## Quick Start
 
 ```sh

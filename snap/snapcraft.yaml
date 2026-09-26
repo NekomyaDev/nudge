@@ -17,7 +17,7 @@ description: |
     nudgec test hello.ndg     # Run tests
 
 contact: elaport0880@gmail.com
-license: Proprietary
+license: Apache-2.0
 issues: https://github.com/NekomyaDev/nudge/issues
 source-code: https://github.com/NekomyaDev/nudge
 website: https://github.com/NekomyaDev/nudge

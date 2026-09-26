@@ -1,5 +1,5 @@
-# Nudge - Binary Distribution
-# This repository contains prebuilt binaries and documentation only.
+# Nudge - compiler, runtime, extension and examples
+# Ignore build artifacts
 
 # Ignore build artifacts
 /target
@@ -37,3 +37,6 @@ desktop.ini
 *.pkg
 *.msi
 *.exe
+runtime/build/
+*.egg-info/
+.nudge/

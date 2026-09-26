@@ -1,11 +1,19 @@
+FROM rust:1-slim-bookworm AS compiler
+
+# Build nudgec from this repository's source
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+RUN cargo build --release -p nudgec
+
 FROM python:3.14-slim AS builder
 
-LABEL maintainer="NekomyaDev <elaport0880@gmail.com>"
+LABEL maintainer="NekomyaDev"
 LABEL description="Nudge - Typed, replayable, budget-aware programming language for LLM agents"
 LABEL version="1.2.1"
 LABEL org.opencontainers.image.source="https://github.com/NekomyaDev/nudge"
 LABEL org.opencontainers.image.description="Typed, replayable, budget-aware programming language for LLM agents"
-LABEL org.opencontainers.image.licenses="Proprietary"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
 LABEL org.opencontainers.image.vendor="NekomyaDev"
 LABEL org.opencontainers.image.title="Nudge"
 
@@ -19,20 +27,17 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Nudge
-ARG NUDGE_VERSION=v1.2.0
-RUN curl -fsSL https://raw.githubusercontent.com/NekomyaDev/nudge/main/install.sh | bash
-
 # Final stage
 FROM python:3.14-slim
 
-# Copy only necessary files from builder
-COPY --from=builder /usr/local/bin/nudgec /usr/local/bin/nudgec
+# Copy only necessary files from builder stages
+COPY --from=compiler /src/target/release/nudgec /usr/local/bin/nudgec
 COPY --from=builder /usr/bin/node /usr/bin/node
 COPY --from=builder /usr/lib/node_modules /usr/lib/node_modules
 
-# Copy runtime — installed from PyPI (the runtime is not vendored in this repo)
-RUN pip install --no-cache-dir nudge-runtime==1.1.0
+# Python runtime from this repository's source
+COPY runtime/nudge_runtime /opt/nudge_runtime
+RUN pip install --no-cache-dir /opt/nudge_runtime && rm -rf /opt/nudge_runtime
 
 # Update packages and fix vulnerabilities
 RUN apt-get update && \

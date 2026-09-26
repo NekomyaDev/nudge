@@ -11,8 +11,8 @@
 </p>
 
 <p align="center">
-  <img alt="版本" src="https://img.shields.io/badge/版本-1.2.0-blue">
-  <img alt="许可证" src="https://img.shields.io/badge/许可证-专有-red">
+  <img alt="版本" src="https://img.shields.io/badge/版本-1.2.1-blue">
+  <img alt="许可证" src="https://img.shields.io/badge/许可证-Apache--2.0-green">
   <img alt="平台" src="https://img.shields.io/badge/平台-Linux%20%7C%20macOS%20%7C%20Windows-green">
   <img alt="目标" src="https://img.shields.io/badge/目标-Python%20%7C%20TypeScript-yellow">
   <a href="https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang"><img alt="VS Code" src="https://img.shields.io/badge/VS%20Code-Nudge%20语言-007ACC?logo=visualstudiocode"></a>
@@ -191,9 +191,9 @@ nudgec test hello.ndg
 
 ## 许可证
 
-专有 — 参见 [LICENSE](LICENSE) 和 [LICENSE-BINARY](LICENSE-BINARY)。
+Apache-2.0 — 参见 [LICENSE](LICENSE)。
 
-Nudge 免费使用但闭源。有关许可咨询，请联系 [@NekomyaDev](https://github.com/NekomyaDev)。
+Nudge 已开源：编译器（`crates/nudgec`）、字节码虚拟机（`crates/nudge-runtime`）、Python 运行时（`runtime/`）和 VS Code 扩展（`editors/vscode/`）的源代码都在本仓库中。欢迎贡献 — 参见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ---
 

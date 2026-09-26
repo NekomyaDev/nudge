@@ -11,8 +11,8 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.2.0-blue">
-  <img alt="License" src="https://img.shields.io/badge/license-Proprietary-red">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.2.1-blue">
+  <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-green">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-green">
   <img alt="Target" src="https://img.shields.io/badge/target-Python%20%7C%20TypeScript-yellow">
   <a href="https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang"><img alt="VS Code" src="https://img.shields.io/badge/VS%20Code-Nudge%20Language-007ACC?logo=visualstudiocode"></a>
@@ -281,9 +281,28 @@ Traces record prompts, model outputs, and tool results verbatim — they can con
 
 ## License
 
-Proprietary — see [LICENSE](LICENSE) and [LICENSE-BINARY](LICENSE-BINARY).
+Apache-2.0 — see [LICENSE](LICENSE).
 
-Nudge is free to use but closed source. For licensing inquiries, contact [@NekomyaDev](https://github.com/NekomyaDev).
+Nudge is open source: the compiler (`crates/nudgec`), the bytecode VM experiment (`crates/nudge-runtime`), the Python runtime (`runtime/`), and the VS Code extension (`editors/vscode/`) all live in this repository. Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Building from Source
+
+Requires Rust 1.75+ (stable):
+
+```bash
+git clone https://github.com/NekomyaDev/nudge.git
+cd nudge
+cargo build --release -p nudgec   # compiler binary at target/release/nudgec
+cargo test --workspace            # compiler + VM tests
+```
+
+The Python runtime is standalone (pure stdlib, no dependencies):
+
+```bash
+pip install nudge-runtime         # from PyPI
+# or from this repo:
+pip install ./runtime
+```
 
 ---
 
