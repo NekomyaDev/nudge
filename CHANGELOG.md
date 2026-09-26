@@ -4,19 +4,14 @@ All notable changes to Nudge will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [1.2.1] - 2026-09-26
 
-### Added
+### Open source
 - **Nudge is now open source.** The compiler (`crates/nudgec`), the bytecode VM experiment (`crates/nudge-runtime`), the Python runtime (`runtime/nudge_runtime`), its TypeScript port (`runtime/nudge_runtime.ts`), and the VS Code extension source (`editors/vscode/`) now live in this repository
 - Language design documentation: `docs/design.md` (language spec) and `docs/roadmap.md`
-- Additional example agents: `hello_llm.ndg`, `checkpoint_agent.ndg`, `smoke_provider.ndg` (with replay fixtures under `examples/traces/`)
+- Additional example agents: `hello_llm.ndg`, `checkpoint_agent.ndg`, `smoke_provider.ndg`, `research_agent.ndg` (with replay fixtures under `examples/traces/`)
 - Rust CI workflow (`cargo test` + `rustfmt` + `clippy -D warnings`) and the tag-driven release workflow moved into this repository
-
-### Changed
 - License changed from proprietary (closed source, binaries under a separate distribution license) to **Apache-2.0** — the repository and the distributed binaries now share the same license
-- The Docker image builds `nudgec` from source and vendors the Python runtime from `runtime/` (no longer pulls the compiler via `install.sh` or the runtime from PyPI)
-
-## [1.2.1] - 2026-09-26
 
 ### Added
 - `nudgec --version` / `-V` prints the version and exits 0 (previously printed the usage banner and exited 64)
@@ -27,7 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 - Replay record index is reserved atomically under the replay lock — `par` fan-out no longer double-consumes records
-- Public Dockerfile installs `nudge-runtime` from PyPI (the broken `COPY runtime/` step is gone)
+- Docker image builds `nudgec` from source and vendors the Python runtime from `runtime/` (the broken `COPY runtime/` step is gone)
 
 ### Notes
 - Linux release assets and the Docker image (`nekomyadev/nudge:1.2.1`, `:latest`) ship the new compiler; the macOS/Windows tarballs on this release are unchanged from v1.2.0 and will be refreshed in a later release. macOS/Windows users can use Docker or `pip install nudge-runtime` meanwhile.
