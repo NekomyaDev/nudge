@@ -225,6 +225,42 @@ pub fn diff(a_text: &str, b_text: &str) -> String {
     out
 }
 
+/// Regression gate for CI: a candidate trace (b) regresses against a baseline
+/// (a) when it spends more, repairs more, or turns a successful llm call into
+/// a failure. Returned strings are the reasons; empty means clean.
+pub fn regressions(a_text: &str, b_text: &str) -> Vec<String> {
+    let a = parse_trace(a_text);
+    let b = parse_trace(b_text);
+    let (ta, tb) = (totals(&a), totals(&b));
+    let mut why = Vec::new();
+    if tb.cost > ta.cost + 1e-9 {
+        why.push(format!("cost rose ${:.4} -> ${:.4}", ta.cost, tb.cost));
+    }
+    if tb.repairs > ta.repairs {
+        why.push(format!(
+            "repair rounds rose {} -> {}",
+            ta.repairs, tb.repairs
+        ));
+    }
+    if tb.tin + tb.tout > ta.tin + ta.tout + 1e-9 {
+        why.push(format!(
+            "tokens rose {} -> {}",
+            ta.tin + ta.tout,
+            tb.tin + tb.tout
+        ));
+    }
+    let failures = |recs: &[Json]| {
+        recs.iter()
+            .filter(|r| s(r, "kind") == "llm.call" && s(r, "outcome") != "ok")
+            .count()
+    };
+    let (fa, fb) = (failures(&a), failures(&b));
+    if fb > fa {
+        why.push(format!("llm failures rose {fa} -> {fb}"));
+    }
+    why
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,6 +287,18 @@ mod tests {
         assert!(r.contains("tokens    15 -> 20 (+5)"), "{r}");
         assert!(r.contains("$0.0010 -> $0.0020 (+$0.0010)"), "{r}");
         assert!(r.contains("1 record(s) differ"), "{r}");
+    }
+
+    #[test]
+    fn regression_gate_flags_cost_tokens_and_failures() {
+        let a = format!("{}\n", llm(1, "\"x\"", 10, 5, 0.001));
+        let same = regressions(&a, &a);
+        assert!(same.is_empty(), "{same:?}");
+        let b = r#"{"v": 1, "seq": 1, "kind": "llm.call", "model": "m", "input": "p", "output": "y", "tokens": {"in": 10, "out": 50}, "cost_usd": 0.02, "repair_round": 0, "outcome": "error", "provider": "fake"}"#.to_owned() + "\n";
+        let why = regressions(&a, &b);
+        assert!(why.iter().any(|w| w.contains("cost rose")), "{why:?}");
+        assert!(why.iter().any(|w| w.contains("tokens rose")), "{why:?}");
+        assert!(why.iter().any(|w| w.contains("failures rose")), "{why:?}");
     }
 
     #[test]

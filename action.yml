@@ -1,0 +1,96 @@
+name: "Nudge CI"
+description: >-
+  Agent regression CI with Nudge. Type-checks and replays .ndg agent programs
+  against recorded traces — zero tokens, zero API keys — and (optionally)
+  fails the build when a candidate trace regresses on cost, tokens, repairs
+  or llm failures.
+branding:
+  icon: "play-circle"
+  color: "purple"
+
+inputs:
+  files:
+    description: "Newline- or space-separated list of .ndg files (globs allowed)"
+    required: true
+  version:
+    description: "nudgec version to install (e.g. v1.2.1, or 'main'); default: latest per-platform release"
+    required: false
+    default: ""
+  trace-diff:
+    description: >-
+      Optional regression gate: 'BASELINE CANDIDATE' (two trace files). With
+      this set, the action also runs `nudgec trace-diff ... --fail-on-regression`.
+    required: false
+    default: ""
+  check-only:
+    description: "Only run `nudgec check` (type/lint), skip `nudgec test` replay"
+    required: false
+    default: "false"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install nudgec
+      shell: bash
+      env:
+        NUDGE_VERSION: ${{ inputs.version }}
+      run: |
+        if ! command -v nudgec >/dev/null 2>&1 || [ -n "$NUDGE_VERSION" ]; then
+          curl -fsSL https://raw.githubusercontent.com/NekomyaDev/nudge/main/install.sh | bash
+        else
+          echo "nudgec already on PATH: $(nudgec --version 2>/dev/null || echo unknown)"
+        fi
+
+    - name: Resolve agent programs
+      shell: bash
+      env:
+        FILES: ${{ inputs.files }}
+      run: |
+        resolved=""
+        for pattern in $FILES; do
+          found=$(compgen -G "$pattern" || true)
+          for f in $found; do
+            resolved="$resolved $f"
+          done
+        done
+        if [ -z "${resolved// }" ]; then
+          echo "::error::No .ndg files matched: $FILES"
+          exit 1
+        fi
+        echo "NUDGE_CI_FILES=$resolved" >> "$GITHUB_ENV"
+
+    - name: Check
+      shell: bash
+      run: |
+        status=0
+        for f in $NUDGE_CI_FILES; do
+          echo "::group::nudgec check $f"
+          nudgec check "$f" || status=1
+          echo "::endgroup::"
+        done
+        exit $status
+
+    - name: Test (replay, $0)
+      if: inputs.check-only != 'true'
+      shell: bash
+      run: |
+        status=0
+        for f in $NUDGE_CI_FILES; do
+          echo "::group::nudgec test $f"
+          nudgec test "$f" || status=1
+          echo "::endgroup::"
+        done
+        exit $status
+
+    - name: Trace regression gate
+      if: inputs.trace-diff != ''
+      shell: bash
+      env:
+        PAIR: ${{ inputs.trace-diff }}
+      run: |
+        set -- $PAIR
+        if [ "$#" -ne 2 ]; then
+          echo "::error::trace-diff input must be 'BASELINE CANDIDATE' (two files), got: $PAIR"
+          exit 1
+        fi
+        nudgec trace-diff "$1" "$2" --fail-on-regression | tee "$GITHUB_STEP_SUMMARY"

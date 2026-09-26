@@ -5,6 +5,8 @@
 set -e
 
 REPO="NekomyaDev/nudge"
+# NUDGE_VERSION=v1.2.1 bash install.sh pins a release; NUDGE_VERSION=main tracks main.
+VERSION_OVERRIDE="${NUDGE_VERSION:-}"
 BINARY="nudgec"
 # VERSION is set per-platform below: v1.2.1 assets currently ship for linux,
 # while macOS/Windows remain on the v1.2.0 release assets.
@@ -17,17 +19,17 @@ case "$OS" in
     Linux*)
         PLATFORM="linux"
         ARCHIVE="tar.gz"
-        VERSION="v1.2.1"
+        VERSION="${VERSION_OVERRIDE:-v1.2.1}"
         ;;
     Darwin*)
         PLATFORM="macos"
         ARCHIVE="tar.gz"
-        VERSION="v1.2.0"
+        VERSION="${VERSION_OVERRIDE:-v1.2.0}"
         ;;
     MINGW*|MSYS*|CYGWIN*)
         PLATFORM="windows"
         ARCHIVE="zip"
-        VERSION="v1.2.0"
+        VERSION="${VERSION_OVERRIDE:-v1.2.0}"
         ;;
     *)
         echo "Error: Unsupported OS: $OS"
