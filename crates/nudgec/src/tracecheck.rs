@@ -192,6 +192,41 @@ mod tests {
         assert_eq!(validate(&text), Vec::<String>::new());
     }
 
+    /// The NTF conformance corpus (docs/ntf-spec.md) — every case must
+    /// produce exactly the verdict its expected.json declares, so the Rust
+    /// validator and the published suite can never drift apart.
+    #[test]
+    fn conformance_corpus_matches_expected_verdicts() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../conformance/cases");
+        let mut checked = 0;
+        for case in std::fs::read_dir(&dir).expect("corpus present") {
+            let case = case.expect("readable").path();
+            let text = std::fs::read_to_string(case.join("trace.jsonl")).unwrap();
+            let expected: crate::json::Json = std::fs::read_to_string(case.join("expected.json"))
+                .map(|t| crate::json::parse(&t).expect("expected.json parses"))
+                .unwrap();
+            let errs = validate(&text);
+            let valid = matches!(expected.get("valid"), Some(crate::json::Json::Bool(true)));
+            if valid {
+                assert!(errs.is_empty(), "{}: unexpected {errs:?}", case.display());
+            } else {
+                assert!(!errs.is_empty(), "{}: expected an error", case.display());
+                if let Some(crate::json::Json::Arr(subs)) = expected.get("errors_contain") {
+                    for sub in subs {
+                        let sub = sub.as_str().unwrap_or_default();
+                        assert!(
+                            errs.iter().any(|e| e.contains(sub)),
+                            "{}: errors {errs:?} must mention `{sub}`",
+                            case.display()
+                        );
+                    }
+                }
+            }
+            checked += 1;
+        }
+        assert!(checked >= 15, "corpus unexpectedly small: {checked}");
+    }
+
     #[test]
     fn wrong_typed_frozen_v1_fields_are_reported() {
         let text = format!(

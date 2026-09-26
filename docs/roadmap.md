@@ -43,8 +43,9 @@ Finish the "why did my agent do that?" answer beyond doubt.
 
 > **Contributor note (2026-09-26):** the compiler, runtime and VS Code extension now live in this public repository (Apache-2.0). Issues labeled `good first issue` / `help wanted` are the entry points; anything that previously needed private-source access is now fair game. See [CONTRIBUTING.md](../CONTRIBUTING.md).
 
-- **NTF open standard** — spec page + conformance suite; "OTel for LLM agents".
-  Bridges exporting LangChain / LangGraph / CrewAI runs into NTF
+- ~~**NTF open standard**~~ ✅ shipped (`docs/ntf-spec.md` + `conformance/`
+  corpus wired into cargo test; LangChain bridge in `bridges/`) — "OTel for
+  LLM agents". LangGraph / CrewAI bridges: community entry points
 - ~~**`nudgec trace-diff`**~~ ✅ shipped (v1.2 report; now with `--fail-on-regression` as a CI gate) — agent regression testing as a CI primitive
 - **Property-based agent tests** — `test ... for_all ... in gen { ... }`:
   fuzz against injection and garbage input, shrink failing cases
