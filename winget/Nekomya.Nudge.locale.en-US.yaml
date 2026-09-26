@@ -9,7 +9,7 @@ PublisherSupportUrl: https://github.com/NekomyaDev/nudge/issues
 Author: Nekomya
 PackageName: Nudge
 PackageUrl: https://github.com/NekomyaDev/nudge
-License: Proprietary
+License: Apache-2.0
 LicenseUrl: https://github.com/NekomyaDev/nudge/blob/main/LICENSE
 Copyright: Copyright (c) 2026 NEKOMYA
 ShortDescription: Typed, replayable, budget-aware programming language for LLM agents

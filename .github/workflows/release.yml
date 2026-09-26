@@ -9,9 +9,8 @@ name: release
 # secrets. VS Code Marketplace publish is gated the same way:
 # VSCODE_PUBLISH_ENABLED=true plus the VSCE_PAT secret.
 #
-# NOTE: The resulting binaries are proprietary. The MIT license in this
-# repository applies to the source code only; distributed binaries are
-# subject to the separate LICENSE-BINARY terms.
+# NOTE: Nudge is licensed under Apache-2.0; the built binaries are
+# distributed under the same license.
 
 on:
   push:

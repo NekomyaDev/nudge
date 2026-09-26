@@ -4,6 +4,18 @@ All notable changes to Nudge will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Added
+- **Nudge is now open source.** The compiler (`crates/nudgec`), the bytecode VM experiment (`crates/nudge-runtime`), the Python runtime (`runtime/nudge_runtime`), its TypeScript port (`runtime/nudge_runtime.ts`), and the VS Code extension source (`editors/vscode/`) now live in this repository
+- Language design documentation: `docs/design.md` (language spec) and `docs/roadmap.md`
+- Additional example agents: `hello_llm.ndg`, `checkpoint_agent.ndg`, `smoke_provider.ndg` (with replay fixtures under `examples/traces/`)
+- Rust CI workflow (`cargo test` + `rustfmt` + `clippy -D warnings`) and the tag-driven release workflow moved into this repository
+
+### Changed
+- License changed from proprietary (closed source, binaries under a separate distribution license) to **Apache-2.0** — the repository and the distributed binaries now share the same license
+- The Docker image builds `nudgec` from source and vendors the Python runtime from `runtime/` (no longer pulls the compiler via `install.sh` or the runtime from PyPI)
+
 ## [1.2.1] - 2026-09-26
 
 ### Added
