@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- `nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8]`: re-cuts decision thresholds over recorded distributions — the "change a threshold, see the effect before deploy" loop with zero model calls
+- examples/triage-agent: batched decide{} + route{} confidence policy; examples CI matrix extended
 - **NTF `decision.call` records**: batched decisions land in traces (`model/provider/questions/answers/latency_ms/outcome` + additive `deadline_ms`, `level`); full replay consumes them in order with strict exhaustion (llm parity); `trace-diff` reports decision counts + total latency and `--fail-on-regression` gates latency growth and decision failures; conformance corpus extended to 25 cases
 - **`decide{}` — typed decisions as a language primitive (v1.4 "Decision", design §11 / `docs/decision.md`)**: `decide { q: "prompt" choose [..] / yes/no / score [..] } on <state> with { model, deadline }` compiles to one batched call against a JEV-family decision model (Laya / Jev share the `/v1/systemone` wire contract); the fake provider synthesizes deterministic seeded distributions so tests stay $0; answers carry winner/p/distribution/confidence (+ additive `level`, `deadline_missed`); new `Decision` effect with full inference/purity support (E0806/E0807, W0005 option-count lint)
 - `route{}` generalization: arm values are lazy expressions — bare strings keep model-routing semantics, any other value makes route a value-level policy switch (confidence thresholds)

@@ -292,6 +292,30 @@ trace 是 JSONL 记录（`llm.call` / `tool.call` / `fn.return`），采用**冻
 是可供任何生产者/消费者测试的用例集。LangChain 桥接
 （[`bridges/langchain_ntf.py`](bridges/langchain_ntf.py)）可把其他框架的运行转换为 NTF。
 
+## 类型化决策（v1.4）
+
+Nudge 把来自**任何**来源的不确定性编译成可控程序 — LLM 生成或决策模型，共享同一套 effect 系统、trace 与重放。决策使用 `/v1/systemone` 线上协议（Laya `laya.serve` 与 TypeSafe Jev API 同协议）：
+
+```nudge
+fn triage(t: string) -> string uses Decision {
+    let d = decide {
+        dept:    "which team handles this?" choose [billing, technical, security],
+        churn:   "does the customer threaten to cancel?" yes/no,
+        urgency: "how urgent is this?" score [low, soon, critical]
+    }
+    on t
+    with { model: "laya:multilingual", deadline: 50 }
+}
+```
+
+- 每个 `decide` 块一次批量调用；答案携带 `winner/p/distribution/confidence`。
+- **假决策提供者**（默认）生成确定性的种子分布 — 测试保持 $0。
+- 真实提供者：`NUDGE_DECISION_SERVERS='{"laya": {"base_url": ...}}'`。
+- 决策进入 NTF trace（`decision.call`，含 `latency_ms`）；重放 $0；`trace-diff --fail-on-regression` 门禁延迟回退。
+- `nudgec policy-sweep` 在已录制的分布上重切阈值 — 零模型调用。
+
+完整契约见 [docs/decision.md](docs/decision.md)。
+
 ## Agent CI（GitHub Action）
 
 每次推送时对智能体做回归测试 — 回放已录制的 trace，**零 token**、**无需 API 密钥**。添加 `.github/workflows/agents.yml`：

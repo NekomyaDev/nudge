@@ -618,3 +618,13 @@ Out of scope (for now): cross-file schema lookup, severity configuration,
 `allow(w0002)` attributes. Conformance: unit tests in `lint.rs` cover all
 four rules, word-boundary matching, context strings, and the
 interpolation-word-count rule; an LSP test covers editor surfacing.
+
+## 11. Decisions (v1.4)
+
+Typed decisions are a language primitive: `decide { q: "…" choose [..] /
+yes/no / score [..] } on <state> with { model, deadline, null_option }` —
+one batched call against a JEV-family decision model (Laya / Jev share the
+`/v1/systemone` wire contract). The full contract lives in
+[decision.md](decision.md): question kinds, answer record shapes, checker
+rules (E0806/E0807, W0005), adapter validation, deadline semantics and the
+`policy-sweep` loop. Trace records (`decision.call`) and replay follow §6.
