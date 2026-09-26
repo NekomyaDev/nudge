@@ -284,6 +284,14 @@ pip install nudge-runtime         # 来自 PyPI
 pip install ./runtime
 ```
 
+## NTF — 开放 trace 格式
+
+trace 是 JSONL 记录（`llm.call` / `tool.call` / `fn.return`），采用**冻结的 v1 模式**：
+只允许增量变更，由 `nudgec trace-check` 验证。规范见
+[docs/ntf-spec.md](docs/ntf-spec.md)，[`conformance/`](conformance/)
+是可供任何生产者/消费者测试的用例集。LangChain 桥接
+（[`bridges/langchain_ntf.py`](bridges/langchain_ntf.py)）可把其他框架的运行转换为 NTF。
+
 ## Agent CI（GitHub Action）
 
 每次推送时对智能体做回归测试 — 回放已录制的 trace，**零 token**、**无需 API 密钥**。添加 `.github/workflows/agents.yml`：

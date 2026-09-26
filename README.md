@@ -95,6 +95,7 @@ python3 out/chatbot.py
 | **Trace Viewer** | Local web UI: timeline, tokens, cost, repairs highlighted |
 | **Trace Diff** | Compare two traces: "what changed when I edited the prompt?" |
 | **Nudge CI** | GitHub Action: agent regression testing on every push, $0 |
+| **NTF** | Open trace format (frozen v1) + conformance suite — logs you can replay |
 | **A2A & LSP & OTel** | Built in, not bolted on |
 
 </div>
@@ -271,6 +272,17 @@ Notes:
   stdin are not read in v1.2.x. External data enters through MCP tools.
 - The fake provider is deterministic and schema-aware; it is what makes
   `nudgec test` and the CI examples run without keys.
+
+## NTF — an open trace format
+
+Traces are JSONL records (`llm.call` / `tool.call` / `fn.return`) with a
+**frozen v1 schema**: additive-only changes, validated by
+`nudgec trace-check`. The spec lives at
+[docs/ntf-spec.md](docs/ntf-spec.md), and
+[`conformance/`](conformance/) is the corpus any producer or consumer can
+be tested against. A LangChain bridge ([`bridges/langchain_ntf.py`](bridges/langchain_ntf.py))
+converts other frameworks' runs into NTF, so replay, diffing and CI gates
+work on them too.
 
 ## Agent CI (GitHub Action)
 
