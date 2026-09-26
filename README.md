@@ -150,6 +150,12 @@ sudo mv nudgec /usr/local/bin/
 
 ### Your First Nudge Program
 
+Install the Python runtime that the generated code imports:
+
+```sh
+pip install nudge-runtime   # pure stdlib, no dependencies
+```
+
 ```sh
 # Create a program
 cat > hello.ndg << 'EOF'
@@ -171,7 +177,7 @@ nudgec build hello.ndg
 python3 out/hello.py
 ```
 
-Everything runs against a deterministic fake provider by default: **no API key, no token spend.**
+Everything runs against a deterministic fake provider by default: **no API key, no token spend.** Prefer building from source? See [Building from Source](#building-from-source).
 
 ## Backend Parity
 

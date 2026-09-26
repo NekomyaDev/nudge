@@ -11,3 +11,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+
+  # Rust workspace dependencies (crates/)
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
