@@ -2284,10 +2284,14 @@ def _valen_wire_questions(questions):
 
 
 def _valen_decide(command, state, questions, opts):
+    return _valen_decide_many(command, [str(state)], questions, opts)[0]
+
+
+def _valen_decide_many(command, states, questions, opts):
     """Valen transport: run `command` (as configured in NUDGE_DECISION_SERVERS)
     with `--data`/`--output` JSONL files — the documented `python -m
-    valen.inference` interface. One record per decide call; batched
-    multi-state calls amortize the subprocess cost (roadmap item)."""
+    valen.inference` interface. One JSONL record per state; a multi-state
+    batch pays the subprocess/model-load cost once."""
     import shlex
     import subprocess
     import tempfile
@@ -2296,23 +2300,30 @@ def _valen_decide(command, state, questions, opts):
     argv = shlex.split(str(command))
     if not argv:
         raise RuntimeError("decision provider 'valen': empty command in NUDGE_DECISION_SERVERS")
+    states = [str(s) for s in states]
+    if not states:
+        return []
     with tempfile.TemporaryDirectory(prefix="nudge_valen_") as tmp:
         data_path = os.path.join(tmp, "data.jsonl")
         out_path = os.path.join(tmp, "predictions.jsonl")
-        record = {
-            "group_id": f"nudge-{uuid.uuid4().hex[:12]}",
-            "request": {
-                "state": {
-                    "messages": [{
-                        "role": "user",
-                        "content": [{"type": "text", "text": str(state)}],
-                    }]
-                },
-                "questions": _valen_wire_questions(questions),
-            },
-        }
+        group_ids = []
         with open(data_path, "w", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            for state in states:
+                gid = f"nudge-{uuid.uuid4().hex[:12]}"
+                group_ids.append(gid)
+                record = {
+                    "group_id": gid,
+                    "request": {
+                        "state": {
+                            "messages": [{
+                                "role": "user",
+                                "content": [{"type": "text", "text": state}],
+                            }]
+                        },
+                        "questions": _valen_wire_questions(questions),
+                    },
+                }
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
         timeout_s = (opts.get("deadline") or 30000) / 1000.0 + 30.0
         try:
             proc = subprocess.run(
@@ -2331,9 +2342,24 @@ def _valen_decide(command, state, questions, opts):
         try:
             with open(out_path, "r", encoding="utf-8") as f:
                 lines = [l for l in f.read().splitlines() if l.strip()]
-            result = json.loads(lines[0])
+            by_group = {}
+            for line in lines:
+                rec = json.loads(line)
+                by_group[rec.get("group_id")] = rec
         except Exception as e:
             raise RuntimeError(f"decision provider 'valen': unreadable output ({e})") from None
+    missing_groups = [g for g in group_ids if g not in by_group]
+    if missing_groups:
+        raise RuntimeError(
+            f"decision provider 'valen' returned no prediction for {len(missing_groups)}/{len(group_ids)} record(s)"
+        )
+    return [
+        _valen_parse(by_group[gid], questions, i)
+        for i, gid in enumerate(group_ids)
+    ]
+
+
+def _valen_parse(result, questions, state_index):
     targets = result.get("targets")
     if not isinstance(targets, dict):
         raise RuntimeError("decision provider 'valen': output has no `targets` object")
@@ -2428,6 +2454,111 @@ def _run_decision(kind, entry, questions, state, opts):
     return _valen_decide(entry["command"], state, questions, opts)
 
 
+def _run_decision_many(kind, entry, questions, states, opts):
+    """Multi-state transport: Valen = one subprocess for the whole JSONL
+    (the amortization); HTTP = bounded-concurrency fan-out of per-state
+    /v1/systemone requests (the wire contract is single-state)."""
+    if kind == "valen":
+        return _valen_decide_many(entry["command"], states, questions, opts)
+    import urllib.parse
+
+    base = entry["base_url"]
+    if len(states) == 1:
+        return [_http_decide(base, states[0], questions, opts)]
+    workers = min(8, len(states))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = [pool.submit(_http_decide, base, s, questions, opts) for s in states]
+        return [f.result() for f in futs]
+
+
+def predict_batch(questions, states, options=None):
+    """Decide `questions` about every state in `states` — one call for the
+    whole list. Transport shape: Valen runs a single subprocess over the
+    multi-record JSONL; HTTP fans out per-state requests concurrently. The
+    decision cache is consulted per state, so already-decided states are
+    skipped. Returns answers in input order; one `decision.call` record per
+    state (miss records carry additive `batch: {size, wall_ms}` and an
+    average `latency_ms`, so trace-diff totals stay meaningful)."""
+    opts = dict(options or {})
+    model = str(opts.get("model", "fake"))
+    provider = model.split(":", 1)[0] if ":" in model else model
+    states = [str(s) for s in states]
+    if os.environ.get("NUDGE_PROVIDER") == "fake":
+        provider = "fake"
+    started = time.monotonic()
+    answers = [None] * len(states)
+
+    if os.environ.get("NUDGE_REPLAY") and _replay_mode() == "all":
+        outs = _replay_decision_answers()
+        with _REPLAY_LOCK:
+            for i in range(len(states)):
+                if _DECISION_REPLAY_STATE["idx"] >= len(outs) and not os.environ.get("NUDGE_RESUME"):
+                    raise ReplayMismatch(
+                        "program made more decide calls than the trace holds "
+                        "(decision replay exhaustion raises like llm replay)"
+                    )
+                if _DECISION_REPLAY_STATE["idx"] < len(outs):
+                    answers[i] = _attr(outs[_DECISION_REPLAY_STATE["idx"]])
+                    _DECISION_REPLAY_STATE["idx"] += 1
+        return answers
+
+    if provider == "fake":
+        for i, state in enumerate(states):
+            answers[i] = _attr(_fake_decide(questions, state, opts))
+        return answers
+
+    registry_src = os.environ.get("NUDGE_DECISION_SERVERS")
+    if not registry_src:
+        raise RuntimeError(
+            f"decision provider '{provider}' is not configured — set "
+            f"NUDGE_DECISION_SERVERS (JSON with base_url/command) or use the fake provider"
+        )
+    registry = json.loads(registry_src)
+    entry = registry.get(provider) if isinstance(registry, dict) else None
+    kind = "http" if entry and entry.get("base_url") else "valen" if entry and entry.get("command") else None
+    if not kind:
+        raise RuntimeError(
+            f"decision provider '{provider}' needs a base_url or command in NUDGE_DECISION_SERVERS"
+        )
+
+    cache_path = os.environ.get("NUDGE_DECISION_CACHE")
+    miss_idx = []
+    for i, state in enumerate(states):
+        if cache_path:
+            hit = _decision_cache_get(cache_path, _decision_cache_key(state, questions, model))
+            if hit is not None:
+                answers[i] = _attr(hit)
+                _write_decision_record(model, provider, questions, hit,
+                                       0, opts.get("deadline"), "ok", True)
+                continue
+        miss_idx.append(i)
+    wall_ms = 0
+    if miss_idx:
+        t0 = time.monotonic()
+        got = _run_decision_many(kind, entry, questions, [states[i] for i in miss_idx], opts)
+        wall_ms = int((time.monotonic() - t0) * 1000)
+        per_ms = max(1, wall_ms // len(miss_idx))
+        deadline = opts.get("deadline")
+        outcome = "ok"
+        if deadline is not None and wall_ms > int(deadline):
+            if os.environ.get("NUDGE_DECISION_STRICT") == "1":
+                raise DecisionTimeout(
+                    f"batch decision took {wall_ms} ms over the {int(deadline)} ms deadline"
+                )
+            outcome = "deadline_missed"
+        batch_meta = {"size": len(miss_idx), "wall_ms": wall_ms}
+        for pos, i in enumerate(miss_idx):
+            if outcome == "deadline_missed":
+                for a in got[pos].values():
+                    a["deadline_missed"] = True
+            answers[i] = _attr(got[pos])
+            if cache_path:
+                _decision_cache_put(cache_path, _decision_cache_key(states[i], questions, model), got[pos])
+            _write_decision_record(model, provider, questions, got[pos],
+                                   per_ms, deadline, outcome, False, batch=batch_meta)
+    return answers
+
+
 def decide(questions, state, options=None):
     """One batched decision over `questions` about `state`.
 
@@ -2484,7 +2615,7 @@ def decide(questions, state, options=None):
 
 
 def _write_decision_record(model, provider, questions, answers,
-                           latency_ms, deadline, outcome, cache_hit=False):
+                           latency_ms, deadline, outcome, cache_hit=False, batch=None):
     """One `decision.call` NTF record (design §11.4): questions keyed by
     name (the wire shape), answers as returned, measured latency."""
     if not os.environ.get("NUDGE_TRACE"):
@@ -2501,6 +2632,9 @@ def _write_decision_record(model, provider, questions, answers,
     if cache_hit:
         # additive: this record came from NUDGE_DECISION_CACHE, not the wire
         record["cache"] = "hit"
+    if batch is not None:
+        # additive: this record was produced as part of a multi-state batch
+        record["batch"] = batch
     if deadline is not None:
         record["deadline_ms"] = int(deadline)
     branch = _current_branch()

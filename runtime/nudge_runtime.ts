@@ -736,6 +736,103 @@ export function decide(questions, state, options = {}) {
   return finished;
 }
 
+// multi-state decisions: one transport call for the whole list. Valen =
+// single subprocess over multi-record JSONL (the amortization); HTTP =
+// per-state requests awaited in order. Cache consulted per state; one
+// decision.call record per state (miss records carry additive
+// batch: {size, wall_ms} and an average latency_ms).
+export function predictBatch(questions, statesInput, options = {}) {
+  const model = String(options.model || "fake");
+  const provider = model.includes(":") ? model.split(":")[0] : model;
+  const states = statesInput.map((s) => String(s));
+  const started = Date.now();
+  if (process.env.NUDGE_REPLAY) {
+    const outs = _replayDecisionAnswers();
+    return states.map((_, i) => {
+      if (_decisionReplayIdx >= outs.length) {
+        throw new Error(
+          `ReplayMismatch: program made more decide calls than the trace holds (${outs.length} records)`,
+        );
+      }
+      return outs[_decisionReplayIdx++];
+    });
+  }
+  const prov = process.env.NUDGE_PROVIDER === "fake" ? "fake" : provider;
+  if (prov === "fake") {
+    return states.map((s) => finishDecide(fakeDecide(questions, s, options), options, Date.now()));
+  }
+  const reg = process.env.NUDGE_DECISION_SERVERS;
+  if (!reg) {
+    throw new Error(
+      `decision provider '${provider}' is not configured — set NUDGE_DECISION_SERVERS or use the fake provider`,
+    );
+  }
+  const entry = JSON.parse(reg)[provider];
+  if (!entry || (!entry.base_url && !entry.command)) {
+    throw new Error(
+      `decision provider '${provider}' needs a base_url or command in NUDGE_DECISION_SERVERS`,
+    );
+  }
+  const kind = entry.command ? "valen" : "http";
+  const cachePath = process.env.NUDGE_DECISION_CACHE;
+  const answers = new Array(states.length).fill(null);
+  const missIdx = [];
+  for (let i = 0; i < states.length; i++) {
+    if (cachePath) {
+      const hit = decisionCacheGet(cachePath, decisionCacheKey(states[i], questions, model));
+      if (hit) {
+        answers[i] = finishDecide(hit, options, Date.now());
+        _emitTrace(decisionRecord(model, provider, questions, hit, options, Date.now(), true));
+        continue;
+      }
+    }
+    missIdx.push(i);
+  }
+  if (!missIdx.length) return answers;
+  const t0 = Date.now();
+  const emitAndFinish = (pos, result) => {
+    const wallMs = Date.now() - t0;
+    const perMs = Math.max(1, Math.floor(wallMs / missIdx.length));
+    const deadlineMissed =
+      options.deadline != null && wallMs > Number(options.deadline);
+    if (deadlineMissed && process.env.NUDGE_DECISION_STRICT === "1") {
+      throw new DecisionTimeout(
+        `batch decision took ${wallMs} ms over the ${Number(options.deadline)} ms deadline`,
+      );
+    }
+    if (deadlineMissed) for (const a of Object.values(result)) a.deadline_missed = true;
+    if (cachePath) decisionCachePut(cachePath, decisionCacheKey(states[missIdx[pos]], questions, model), result);
+    answers[missIdx[pos]] = finishDecide(result, options, Date.now());
+    _emitTrace({
+      kind: "decision.call",
+      model,
+      provider,
+      questions: Object.fromEntries(questions.map((q) => [q.name, q])),
+      answers: result,
+      latency_ms: perMs,
+      outcome: deadlineMissed ? "deadline_missed" : "ok",
+      ...(options.deadline != null ? { deadline_ms: Number(options.deadline) } : {}),
+      batch: { size: missIdx.length, wall_ms: wallMs },
+    });
+  };
+  if (kind === "valen") {
+    valenDecideMany(entry.command, missIdx.map((i) => states[i]), questions, options, t0, null)
+      .forEach((result, pos) => emitAndFinish(pos, result));
+    return answers;
+  }
+  const httpAll = async () => {
+    const out = [];
+    for (const i of missIdx) {
+      out.push(await httpDecide(entry.base_url, states[i], questions, options, t0, null));
+    }
+    return out;
+  };
+  return httpAll().then((out) => {
+    out.forEach((result, pos) => emitAndFinish(pos, result));
+    return answers;
+  });
+}
+
 function finishDecide(answers, options, started) {
   const latency = Date.now() - started;
   if (options.deadline != null && latency > Number(options.deadline)) {
@@ -773,23 +870,45 @@ function valenWireQuestions(questions) {
 }
 
 function valenDecide(command, state, questions, options, started, ctx) {
+  const out = valenDecideMany(command, [String(state)], questions, options, started, ctx)[0];
+  if (ctx && ctx.cachePath) decisionCachePut(ctx.cachePath, ctx.key, out);
+  const finished = finishDecide(out, options, started);
+  if (ctx) {
+    _emitTrace(decisionRecord(ctx.model, ctx.provider, ctx.questions, out,
+      ctx.options, ctx.started, false));
+  }
+  return finished;
+}
+
+function valenDecideMany(command, states, questions, options, started, ctx) {
   const argv = typeof command === "string" ? command.split(/\s+/).filter(Boolean) : command;
   if (!argv || !argv.length) {
     throw new Error("decision provider 'valen': empty command in NUDGE_DECISION_SERVERS");
   }
+  if (!states.length) return [];
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nudge_valen_"));
   const dataPath = path.join(tmp, "data.jsonl");
   const outPath = path.join(tmp, "predictions.jsonl");
-  const record = {
-    group_id: `nudge-${crypto.randomUUID().slice(0, 12)}`,
-    request: {
-      state: {
-        messages: [{ role: "user", content: [{ type: "text", text: String(state) }] }],
-      },
-      questions: valenWireQuestions(questions),
-    },
-  };
-  fs.writeFileSync(dataPath, JSON.stringify(record) + "\n");
+  const groupIds = [];
+  fs.writeFileSync(
+    dataPath,
+    states
+      .map((state) => {
+        const gid = `nudge-${crypto.randomUUID().slice(0, 12)}`;
+        groupIds.push(gid);
+        const record = {
+          group_id: gid,
+          request: {
+            state: {
+              messages: [{ role: "user", content: [{ type: "text", text: String(state) }] }],
+            },
+            questions: valenWireQuestions(questions),
+          },
+        };
+        return JSON.stringify(record);
+      })
+      .join("\n") + "\n",
+  );
   const timeoutS = ((options.deadline || 30000) / 1000.0 + 30.0) * 1000;
   let proc;
   try {
@@ -805,13 +924,26 @@ function valenDecide(command, state, questions, options, started, ctx) {
     const tail = ((proc.stderr || proc.stdout) || "").slice(-300);
     throw new Error(`decision provider 'valen' failed (exit ${proc.status}): ${tail}`);
   }
-  let result;
+  let byGroup;
   try {
-    const lines = fs.readFileSync(outPath, "utf8").split("\n").filter(Boolean);
-    result = JSON.parse(lines[0]);
+    byGroup = {};
+    for (const line of fs.readFileSync(outPath, "utf8").split("\n").filter(Boolean)) {
+      const rec = JSON.parse(line);
+      byGroup[rec.group_id] = rec;
+    }
   } catch (e) {
     throw new Error(`decision provider 'valen': unreadable output (${e.message || e})`);
   }
+  const missing = groupIds.filter((g) => !(g in byGroup));
+  if (missing.length) {
+    throw new Error(
+      `decision provider 'valen' returned no prediction for ${missing.length}/${groupIds.length} record(s)`,
+    );
+  }
+  return groupIds.map((gid, i) => valenParse(byGroup[gid], questions, i));
+}
+
+function valenParse(result, questions, stateIndex) {
   const targets = result.targets;
   if (!targets || typeof targets !== "object") {
     throw new Error("decision provider 'valen': output has no `targets` object");
@@ -876,13 +1008,7 @@ function valenDecide(command, state, questions, options, started, ctx) {
   if (extra.length) {
     throw new Error(`decision provider 'valen' answered unasked questions: ${extra.sort().join(", ")}`);
   }
-  if (ctx && ctx.cachePath) decisionCachePut(ctx.cachePath, ctx.key, out);
-  const finished = finishDecide(out, options, started);
-  if (ctx) {
-    _emitTrace(decisionRecord(ctx.model, ctx.provider, ctx.questions, out,
-      ctx.options, ctx.started, false));
-  }
-  return finished;
+  return out;
 }
 
 async function httpDecide(base_url, state, questions, options, started, ctx = null) {  const url = base_url.replace(/\/+$/, "") + "/v1/systemone";

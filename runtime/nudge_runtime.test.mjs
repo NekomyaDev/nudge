@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { validateOutput, llmCall, toolStub, forAll, decide } from "./nudge_runtime.ts";
+import { validateOutput, llmCall, toolStub, forAll, decide, predictBatch } from "./nudge_runtime.ts";
 
 const SCHEMA = {
   type: "object",
@@ -258,6 +258,50 @@ test("valen transport: subprocess JSONL contract, typed answers, trace record", 
       .filter((r) => r.kind === "decision.call");
     assert.equal(recs.length, 1);
     assert.equal(recs[0].provider, "valen");
+  } finally {
+    savedVars.forEach((k, i) => {
+      if (saved[i] === undefined) delete process.env[k];
+      else process.env[k] = saved[i];
+    });
+  }
+});
+
+// ── predictBatch (multi-state decisions) ─────────────────────────────
+test("predictBatch: one valen subprocess for N states, per-state records, order kept", async () => {
+  const marker = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "nudge_vmark_")), "calls");
+  const savedVars = ["NUDGE_DECISION_SERVERS", "NUDGE_TRACE", "NUDGE_DECISION_CACHE", "MOCK_VALEN_MARKER"];
+  const saved = savedVars.map((k) => process.env[k]);
+  process.env.NUDGE_DECISION_SERVERS = JSON.stringify({
+    valen: { command: `node /tmp/mock_valen.mjs` },
+  });
+  process.env.MOCK_VALEN_MARKER = marker;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nudge_batch_"));
+  process.env.NUDGE_TRACE = path.join(dir, "trace.jsonl");
+  try {
+    const qs = [
+      { name: "dept", kind: "choice", prompt: "team?", options: ["billing", "technical"] },
+      { name: "churn", kind: "noul", prompt: "churn?" },
+    ];
+    const states = ["t0", "t1", "t2"];
+    process.env.NUDGE_DECISION_CACHE = path.join(dir, "cache.json");
+    const res = await predictBatch(qs, states, { model: "valen:preview" });
+    assert.equal(res.length, 3);
+    assert.deepEqual(res.map((r) => r.dept.winner), ["billing", "billing", "billing"]);
+    assert.equal(fs.readFileSync(marker, "utf8").split("call").length - 1, 1, "one subprocess");
+    const recs = fs.readFileSync(process.env.NUDGE_TRACE, "utf8").trim().split("\n").map(JSON.parse);
+    assert.equal(recs.length, 3);
+    assert.ok(recs.every((r) => r.batch && r.batch.size === 3));
+
+    // cache absorbs a repeat; one new state = one more subprocess
+    await predictBatch(qs, states, { model: "valen:preview" });
+    assert.equal(fs.readFileSync(marker, "utf8").split("call").length - 1, 1);
+    await predictBatch(qs, [...states, "t3"], { model: "valen:preview" });
+    assert.equal(fs.readFileSync(marker, "utf8").split("call").length - 1, 2);
+
+    // fake path: deterministic, no subprocess
+    const fa = predictBatch(qs, states, {});
+    assert.equal(fa.length, 3);
+    assert.ok(fa[0].dept.winner);
   } finally {
     savedVars.forEach((k, i) => {
       if (saved[i] === undefined) delete process.env[k];

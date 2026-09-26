@@ -61,8 +61,10 @@ Finish the "why did my agent do that?" answer beyond doubt.
 
 - ~~**`decide{}` typed decisions**~~ ✅ shipped (`docs/decision.md`) — `choose`/`yes/no`/`score` questions batched in one call, `Decision` effect, fake provider for $0 tests, HTTP `/v1/systemone` adapter for Laya/Jev
 - ~~**Speed as a first-class metric**~~ ✅ shipped — `deadline` option, `latency_ms` in traces, latency regression gates in `trace-diff`
-- **Policy sweep** — `nudgec policy-sweep`: re-cut thresholds over recorded distributions, zero model calls
-- **More adapters** — AnyJev (in-process logits), Valen, MCP transport; calibration-level passthrough (`level` field already additive)
+- ~~**Policy sweep**~~ ✅ shipped — `nudgec policy-sweep`: re-cut thresholds over recorded distributions, zero model calls
+- ~~**More adapters**~~ ✅ shipped — Valen (subprocess JSONL, `command` entries); AnyJev (in-process logits) and MCP transport remain open
+- ~~**Batch multi-state**~~ ✅ shipped — `rt.predict_batch(questions, states, opts)`: one transport call for the whole list (Valen = single subprocess over multi-record JSONL; HTTP = bounded-concurrency fan-out), per-state cache hits skipped, one `decision.call` record per state with additive `batch: {size, wall_ms}`
+- **Decision cache** — `NUDGE_DECISION_CACHE`: representation cache, replay takes precedence, `cache: "hit"` records
 
 ## v1.5 — Door 3: *safe* (the moat — flagship engineering) 🛡️
 
