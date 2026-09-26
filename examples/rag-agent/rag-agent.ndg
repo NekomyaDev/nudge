@@ -1,0 +1,36 @@
+type Chunk = { doc: string, text: string, score: float @range(0, 1) }
+type Answer = { answer: string, citations: [string], grounded: bool, missing: [string] }
+
+tool retrieve(query: string, k: int) -> [Chunk] {
+    impl: mcp("kb").retrieve(query)
+    side_effects: none
+}
+
+fn answer_question(question: string, k: int) -> Answer uses LLM, Tool {
+    let chunks = retrieve(question, k)
+    llm"""Answer the question using ONLY the retrieved context.
+
+    Question: {question}
+
+    Retrieved context (doc, text, relevance):
+    {chunks}
+
+    Rules:
+    - Cite the source doc for every claim
+    - If the context is insufficient, set grounded=false and list
+      what information is missing
+    - Never invent facts that are not in the context"""
+    with { schema: Answer, model: "anthropic:sonnet-4.6", budget: 0.02 USD, retry: 2 with repair }
+}
+
+fn main() -> Answer uses LLM, Tool {
+    answer_question("How does Nudge prevent silent cost overruns?", 4)
+}
+
+test "rag answers stay grounded or refuse" {
+    let t = replay("traces/rag.jsonl")
+    assert t.output.answer != ""
+    assert t.output.grounded == true
+    assert len(t.output.citations) >= 1
+    assert t.cost_usd < 0.02
+}
