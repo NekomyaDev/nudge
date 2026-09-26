@@ -93,6 +93,51 @@ function _budgetCharge(cost, budget) {
   }
 }
 
+// ── schema validation (JSON-schema subset, parity with the python runtime) ──
+// Supports the same keywords the compiler emits for `type` aliases:
+// type / properties / required / items / additionalProperties / enum.
+// Returns a list of human-readable violations (empty = valid).
+export function validateOutput(sch, v, path = "output") {
+  const errs: string[] = [];
+  if (!sch || typeof sch !== "object") return errs;
+  if (sch.enum) {
+    if (!sch.enum.includes(v)) errs.push(`${path}: ${JSON.stringify(v)} is not one of ${JSON.stringify(sch.enum)}`);
+    return errs;
+  }
+  const t = sch.type;
+  if (t) {
+    const ok =
+      (t === "string" && typeof v === "string") ||
+      (t === "number" && typeof v === "number" && !Number.isInteger(v)) ||
+      (t === "integer" && Number.isInteger(v)) ||
+      (t === "boolean" && typeof v === "boolean") ||
+      (t === "object" && typeof v === "object" && v !== null && !Array.isArray(v)) ||
+      (t === "array" && Array.isArray(v)) ||
+      t === "any";
+    if (!ok) {
+      errs.push(`${path}: expected ${t}, got ${v === null ? "null" : Array.isArray(v) ? "array" : typeof v}`);
+      return errs;
+    }
+  }
+  if (t === "object") {
+    for (const k of sch.required || []) {
+      if (!(k in v)) errs.push(`${path}: missing required property '${k}'`);
+    }
+    for (const [k, sub] of Object.entries(sch.properties || {})) {
+      if (k in v) errs.push(...validateOutput(sub, v[k], `${path}.${k}`));
+    }
+    if (sch.additionalProperties === false) {
+      for (const k of Object.keys(v)) {
+        if (!(sch.properties || {})[k]) errs.push(`${path}: unexpected property '${k}'`);
+      }
+    }
+  }
+  if (t === "array" && sch.items) {
+    v.forEach((item, i) => errs.push(...validateOutput(sch.items, item, `${path}[${i}]`)));
+  }
+  return errs;
+}
+
 function _synth(sch) {
   if (!sch || typeof sch !== "object") return null;
   switch (sch.type) {
@@ -174,8 +219,18 @@ export function llmCall(opts) {
     if (_replayIdx >= outs.length) {
       throw new Error(`ReplayMismatch: program made more llm calls than the trace holds (${outs.length} records)`);
     }
+    const recorded = outs[_replayIdx++];
+    if (sch) {
+      // replay strictness (design §6.2, parity with the python runtime's
+      // _PrefixValidator): a recorded output that violates the declared
+      // schema means the program no longer matches the trace it replays
+      const violations = validateOutput(sch, recorded);
+      if (violations.length) {
+        throw new Error(`ReplayMismatch: recorded llm output violates the declared schema: ${violations.join("; ")}`);
+      }
+    }
     // replayed calls are not traced or charged (parity with the python runtime)
-    return outs[_replayIdx++];
+    return recorded;
   }
   // v1.1a: real providers are Python-only for now (OpenAI-compatible
   // adapter ships in nudge_runtime; the TS adapter lands with async codegen)
