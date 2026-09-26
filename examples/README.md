@@ -34,6 +34,12 @@ An AI agent that translates text between languages. Demonstrates:
 - Quality scoring
 - Parallel translation (par map)
 
+### [Support Ticket Classifier](classifier/)
+Classifies a batch of tickets with per-call model routing. Demonstrates:
+- `route{}` cost-aware model routing (cheap vs strong per ticket)
+- `par map` over a batch
+- Typed categories with repair
+
 ### [RAG Agent](rag-agent/)
 A retrieval-augmented agent that answers only from retrieved context. Demonstrates:
 - MCP tool retrieval (`impl: mcp("kb").retrieve`)
@@ -74,6 +80,7 @@ python3 out/chatbot.py
 | Research Agent | ✅ | ✅ | ✅ | - | LLM |
 | Data Analyzer | ✅ | ✅ | ✅ | - | LLM |
 | Translator | ✅ | ✅ | ✅ | ✅ | LLM |
+| Classifier | ✅ | ✅ | ✅ | ✅ | LLM |
 | RAG Agent | ✅ | ✅ | ✅ | - | LLM, Tool |
 
 ## Contributing
