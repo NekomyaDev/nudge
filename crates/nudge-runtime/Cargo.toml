@@ -1,0 +1,14 @@
+[package]
+name = "nudge-runtime"
+version = "0.1.0"
+description = "Nudge bytecode interpreter and runtime"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "nudge"
+path = "src/main.rs"
+
+[dependencies]
+rand = "0.8"

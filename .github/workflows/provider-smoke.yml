@@ -1,0 +1,50 @@
+name: provider-smoke
+
+# Manual, secret-gated end-to-end proof that the OpenAI-compatible provider
+# adapter (design §4.6, v1.1a) runs a real agent against a real model.
+# Trigger: Actions → provider-smoke → Run workflow → pick a provider.
+# Secrets: GEMINI_API_KEY and/or GROQ_API_KEY (free tiers, no card needed).
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "provider to smoke-test"
+        type: choice
+        default: groq
+        options: [groq, gemini, mimo]
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: cargo build --workspace
+      - name: point the smoke agent at the chosen provider
+        run: |
+          case "${{ inputs.provider }}" in
+            groq)   sed -i 's/model: "gemini:gemini-2.5-flash"/model: "groq:llama-3.3-70b-versatile"/' examples/smoke_provider.ndg ;;
+            mimo)   sed -i 's/model: "gemini:gemini-2.5-flash"/model: "mimo:mimo-v2.5-pro"/' examples/smoke_provider.ndg ;;
+            gemini) : ;;
+          esac
+      - name: run the smoke agent against the real provider
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          MIMO_API_KEY: ${{ secrets.MIMO_API_KEY }}
+          PYTHONPATH: runtime
+          NUDGE_TRACE: smoke-trace.jsonl
+        run: |
+          ./target/debug/nudgec check examples/smoke_provider.ndg
+          ./target/debug/nudgec build examples/smoke_provider.ndg
+          python3 out/smoke_provider.py
+          echo "--- trace ---"
+          cat smoke-trace.jsonl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smoke-trace
+          path: smoke-trace.jsonl
