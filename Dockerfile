@@ -2,7 +2,7 @@ FROM python:3.14-slim AS builder
 
 LABEL maintainer="NekomyaDev <elaport0880@gmail.com>"
 LABEL description="Nudge - Typed, replayable, budget-aware programming language for LLM agents"
-LABEL version="1.2.0"
+LABEL version="1.2.1"
 LABEL org.opencontainers.image.source="https://github.com/NekomyaDev/nudge"
 LABEL org.opencontainers.image.description="Typed, replayable, budget-aware programming language for LLM agents"
 LABEL org.opencontainers.image.licenses="Proprietary"
@@ -31,9 +31,8 @@ COPY --from=builder /usr/local/bin/nudgec /usr/local/bin/nudgec
 COPY --from=builder /usr/bin/node /usr/bin/node
 COPY --from=builder /usr/lib/node_modules /usr/lib/node_modules
 
-# Copy runtime
-COPY runtime/nudge_runtime /usr/local/lib/python3.13/site-packages/nudge_runtime
-ENV PYTHONPATH=/usr/local/lib/python3.13/site-packages
+# Copy runtime — installed from PyPI (the runtime is not vendored in this repo)
+RUN pip install --no-cache-dir nudge-runtime==1.1.0
 
 # Update packages and fix vulnerabilities
 RUN apt-get update && \

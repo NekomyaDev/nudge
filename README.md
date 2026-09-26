@@ -184,6 +184,87 @@ Everything runs against a deterministic fake provider by default: **no API key, 
 | Real providers | ✅ | ⬜ |
 | MCP tools, checkpoint/resume, OTel | ✅ | ⬜ |
 
+## MCP Integration
+
+Tools that declare `impl: mcp("server").tool` talk to real MCP servers over
+stdio. This section documents the contract as of v1.2.1.
+
+### Declaring and calling MCP tools
+
+```nudge
+type Result = { url: string, title: string }
+
+tool web_search(query: string) -> [Result] {
+    impl: mcp("search").web_search(query)
+    side_effects: none
+}
+
+fn main() -> string uses Tool {
+    let hits = web_search("nudge lang")
+    hits[0].title        # tool results support .field access (v1.2.1)
+}
+```
+
+The compiler lowers every call to the tool's declared parameters. As of
+v1.2.1, arguments are passed to the MCP server as a **named `arguments`
+object** (`{"query": "nudge lang"}`), which is what MCP `tools/call`
+expects — servers built on FastMCP and similar frameworks reject the older
+positional framing.
+
+### Server registry
+
+Live MCP calls resolve servers from the `NUDGE_MCP_SERVERS` environment
+variable (JSON):
+
+```sh
+export NUDGE_MCP_SERVERS='{"search": {"command": "mcp-server-websearch"}}'
+python3 out/hello.py
+```
+
+- `command` may be a string (shell-parsed) or an argv list.
+- A call to a tool whose server is missing from the registry **fails fast**
+  with a clear error.
+- A registry entry **without** a `command` returns `[]` for that tool in
+  live mode (no transport configured) — but the call is still recorded in
+  the trace, so replay works.
+- Unknown tool or server errors raise; nothing silently fakes a result.
+- An MCP server that reports `isError` raises a `RuntimeError` with the
+  server's content.
+- Text content that parses as JSON is returned decoded; other content
+  types are returned as-is.
+
+### Replay semantics
+
+Full replay (`NUDGE_REPLAY=trace.jsonl`) mocks both llm and tool calls from
+the trace. A program that makes **more** calls than the trace holds fails
+with `ReplayMismatch` — there is no silent empty-result mocking. Use
+`NUDGE_RESUME` to continue past the recorded prefix against a live provider.
+
+## Environment Variables
+
+Everything a compiled Nudge program reads comes from these variables:
+
+| Variable | Purpose |
+|:---|:---|
+| `NUDGE_PROVIDER` | Provider override (`fake`, `openai`, `anthropic`, …). `fake` synthesizes schema-valid outputs — no API key needed |
+| `NUDGE_API_KEY` / `NUDGE_BASE_URL` | Credentials and endpoint for OpenAI-compatible providers |
+| `NUDGE_MCP_SERVERS` | MCP server registry JSON (see above) |
+| `NUDGE_TRACE` | Write a JSONL trace to this path while running |
+| `NUDGE_REPLAY` | Load a trace and replay it (`NUDGE_REPLAY_MODE=all` for tools+llm, `llm` for llm-only) |
+| `NUDGE_RESUME` | Continue a crashed run from its checkpoint, consuming the recorded trace prefix |
+| `NUDGE_RUN_ID` | Checkpoint/run directory id (default: `run-<pid>`) |
+| `NUDGE_BUDGET` / `NUDGE_REPAIR_BUDGET` | Run-wide USD ceilings enforced across `par` fan-out |
+| `NUDGE_OTEL` | OTel endpoint for span export |
+| `NUDGE_FAKE_FAIL_FIRST` | Make the fake provider fail the first attempt (k times) — for testing repair loops |
+| `NUDGE_ALLOW_FAKE_RESUME` | Explicitly allow `NUDGE_RESUME` to continue on the fake provider |
+
+Notes:
+
+- A program's entry point is `fn main()` with **no parameters** — argv and
+  stdin are not read in v1.2.x. External data enters through MCP tools.
+- The fake provider is deterministic and schema-aware; it is what makes
+  `nudgec test` and the CI examples run without keys.
+
 ## VS Code Extension
 
 Install the [Nudge Language](https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang) extension for:

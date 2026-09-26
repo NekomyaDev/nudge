@@ -4,6 +4,23 @@ All notable changes to Nudge will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.2.1] - 2026-09-26
+
+### Added
+- `nudgec --version` / `-V` prints the version and exits 0 (previously printed the usage banner and exited 64)
+- Named-argument MCP calls: tool stubs now send MCP `tools/call` arguments as an object keyed by parameter name, so FastMCP-style servers work out of the box (previously a positional `{"args": [...]}` list that most servers reject)
+- Live tool results support `.field` access (AttrDict-wrapped), so branching on a tool result works
+- Map types: `{string: T}` lowers to `{type: object, additionalProperties: T}` and accepts any field access in the checker
+- README now documents the MCP transport contract and the full `NUDGE_*` environment variable reference
+
+### Fixed
+- Replay record index is reserved atomically under the replay lock — `par` fan-out no longer double-consumes records
+- Public Dockerfile installs `nudge-runtime` from PyPI (the broken `COPY runtime/` step is gone)
+
+### Notes
+- Linux release assets and the Docker image (`nekomyadev/nudge:1.2.1`, `:latest`) ship the new compiler; the macOS/Windows tarballs on this release are unchanged from v1.2.0 and will be refreshed in a later release. macOS/Windows users can use Docker or `pip install nudge-runtime` meanwhile.
+- PyPI: `nudge-runtime` 1.1.0
+
 ## [1.2.0] - 2026-07-29
 
 ### Added

@@ -6,7 +6,8 @@ set -e
 
 REPO="NekomyaDev/nudge"
 BINARY="nudgec"
-VERSION="v1.2.0"
+# VERSION is set per-platform below: v1.2.1 assets currently ship for linux,
+# while macOS/Windows remain on the v1.2.0 release assets.
 
 # Detect OS and architecture
 OS="$(uname -s)"
@@ -16,14 +17,17 @@ case "$OS" in
     Linux*)
         PLATFORM="linux"
         ARCHIVE="tar.gz"
+        VERSION="v1.2.1"
         ;;
     Darwin*)
         PLATFORM="macos"
         ARCHIVE="tar.gz"
+        VERSION="v1.2.0"
         ;;
     MINGW*|MSYS*|CYGWIN*)
         PLATFORM="windows"
         ARCHIVE="zip"
+        VERSION="v1.2.0"
         ;;
     *)
         echo "Error: Unsupported OS: $OS"
