@@ -2197,7 +2197,8 @@ def _fake_decide(questions, state, opts):
             out[name] = {
                 "winner": labels[winner_i],
                 "p": maxp,
-                "distribution": dict(zip(labels, dist)),
+                # NB: rt.zip shadows the builtin in this module — index, don't zip
+                "distribution": {labels[i]: dist[i] for i in range(len(labels))},
                 "confidence": confidence,
             }
         elif kind == "noul":
@@ -2207,7 +2208,7 @@ def _fake_decide(questions, state, opts):
             levels = list(q["levels"])
             dist = _fake_distribution(seed, len(levels))
             score = sum(i * p for i, p in enumerate(dist))
-            out[name] = {"score": score, "distribution": dict(zip(levels, dist))}
+            out[name] = {"score": score, "distribution": {levels[i]: dist[i] for i in range(len(levels))}}
         else:
             raise ValueError(f"unknown decision question kind '{kind}'")
     return out
@@ -2384,6 +2385,9 @@ def _http_decide(base_url, state, questions, opts):
         elif kind == "score" and ans.get("type") == "score":
             probs = ans.get("probabilities")
             levels = list(q["levels"])
+            # JSON object keys are strings on the wire — accept both
+            # {"0": p} and {0: p} framings, then validate coverage
+            probs = {int(k): v for k, v in probs.items()} if isinstance(probs, dict) else probs
             if not isinstance(probs, dict) or set(probs) != set(range(len(levels))):
                 raise RuntimeError(
                     f"question '{name}': score probabilities must cover rubric indices 0..{len(levels) - 1}"

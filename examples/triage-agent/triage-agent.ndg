@@ -1,0 +1,40 @@
+// Triage agent (v1.4 "Decision"): one batched decide{} call classifies a
+// support ticket, then route{} turns the confidence into a policy. The
+// fake decision provider keeps `nudgec test` at $0 — swap `model:` to
+// `laya:multilingual` (or any /v1/systemone server) for the real thing.
+
+type Triage = {
+    dept:    { winner: string, p: float, distribution: {string: float}, confidence: float },
+    churn:   { p: float },
+    urgency: { score: float, distribution: {string: float} }
+}
+
+fn triage(t: string) -> Triage uses Decision {
+    decide {
+        dept:    "which team should handle this ticket?" choose [billing, technical, security],
+        churn:   "does the customer threaten to cancel?" yes/no,
+        urgency: "how urgent is this?" score [low, soon, critical]
+    }
+    on t
+    with { model: "fake:default", deadline: 50 }
+}
+
+fn handle(t: string) -> string uses IO {
+    "handled"
+}
+
+fn main() -> string uses Decision, IO {
+    let d = triage("my laptop is broken and I want a refund")
+    route {
+        auto:   handle(d.dept.winner) when d.dept.confidence > 0.6,
+        security: handle("security queue") when d.dept.winner == "security",
+        review: handle("manual review") otherwise
+    }
+}
+
+test "triage stays deterministic and policy picks an arm" {
+    let d = triage("my laptop is broken and I want a refund")
+    assert d.dept.p <= 1
+    assert d.churn.p >= 0
+    assert d.dept.distribution.security >= 0
+}
