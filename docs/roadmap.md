@@ -57,7 +57,14 @@ Finish the "why did my agent do that?" answer beyond doubt.
 - **Web playground** — WASM `nudgec` on GitHub Pages: try in the browser,
   see the trace. The top of the star funnel
 
-## v1.4 — Door 3: *safe* (the moat — flagship engineering) 🛡️
+## v1.4 — Decision: the family in one language (IN PROGRESS)
+
+- ~~**`decide{}` typed decisions**~~ ✅ shipped (`docs/decision.md`) — `choose`/`yes/no`/`score` questions batched in one call, `Decision` effect, fake provider for $0 tests, HTTP `/v1/systemone` adapter for Laya/Jev
+- ~~**Speed as a first-class metric**~~ ✅ shipped — `deadline` option, `latency_ms` in traces, latency regression gates in `trace-diff`
+- **Policy sweep** — `nudgec policy-sweep`: re-cut thresholds over recorded distributions, zero model calls
+- **More adapters** — AnyJev (in-process logits), Valen, MCP transport; calibration-level passthrough (`level` field already additive)
+
+## v1.5 — Door 3: *safe* (the moat — flagship engineering) 🛡️
 
 The language thesis ships: **the language where agents are safe to deploy.**
 - **Capability-based tool security** — tools as capabilities; per-agent grants
@@ -79,7 +86,7 @@ The language thesis ships: **the language where agents are safe to deploy.**
 - Security conformance suite + a threat-model document; possibly a short
   industry-track paper
 
-## v1.5 — Doors 4+5: *provable & improving* (enterprise + compounding)
+## v1.6 — Doors 4+5: *provable & improving* (enterprise + compounding)
 
 - **Compliance** — `nudgec audit` reports over NTF traces; EU AI Act
   positioning: traces as audit evidence out of the box

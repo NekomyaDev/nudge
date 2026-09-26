@@ -796,17 +796,10 @@ impl Parser {
                 while !self.at(&Tok::RBrace) {
                     let label = self.ident()?;
                     self.expect(&Tok::Colon, "':' in route arm")?;
-                    let model = match self.peek().clone() {
-                        Tok::Str(m) => {
-                            self.bump();
-                            m
-                        }
-                        other => {
-                            return self.err(format!(
-                                "expected model string in route arm, found {other:?}"
-                            ))
-                        }
-                    };
+                    // v1.4: the arm value is any expression — a bare string
+                    // keeps the model-routing semantics, other expressions
+                    // make route a value-level policy switch
+                    let value = self.parse_expr()?;
                     let cond = if self.eat(&Tok::Ident("when".into())) {
                         Some(self.parse_expr()?)
                     } else if self.eat(&Tok::Ident("otherwise".into())) {
@@ -814,11 +807,128 @@ impl Parser {
                     } else {
                         return self.err("expected `when <cond>` or `otherwise` in route arm");
                     };
-                    arms.push((label, model, cond));
+                    arms.push((label, value, cond));
                     self.eat(&Tok::Comma);
                 }
                 self.expect(&Tok::RBrace, "'}' after route block")?;
                 Ok(self.ex_from(start, ExprKind::Route { arms }))
+            }
+            // `decide { q: "..." choose [a, b] / noul / score [..], ... }
+            // on <state> with { ... }` (v1.4) — contextual `decide`, only
+            // special directly before `{` (design §12 keyword policy)
+            Tok::Ident(s) if s == "decide" && self.peek2() == &Tok::LBrace => {
+                let start = self.pos();
+                self.bump(); // decide
+                self.bump(); // {
+                let mut questions = Vec::new();
+                while !self.at(&Tok::RBrace) {
+                    let name = self.ident()?;
+                    self.expect(&Tok::Colon, "':' after question name")?;
+                    let prompt = match self.peek().clone() {
+                        Tok::Str(p) => {
+                            self.bump();
+                            p
+                        }
+                        other => {
+                            return self
+                                .err(format!("expected question prompt string, found {other:?}"))
+                        }
+                    };
+                    let q = if self.eat(&Tok::Ident("choose".into())) {
+                        self.expect(&Tok::LBracket, "'[' after choose")?;
+                        let mut options = Vec::new();
+                        while !self.at(&Tok::RBracket) {
+                            match self.peek().clone() {
+                                // bare identifier or string — both are
+                                // labels (`choose [billing, "billing eu"]`)
+                                Tok::Ident(o) => {
+                                    self.bump();
+                                    options.push(o);
+                                }
+                                Tok::Str(o) => {
+                                    self.bump();
+                                    options.push(o);
+                                }
+                                other => {
+                                    return self.err(format!(
+                                        "expected option label in choose list, found {other:?}"
+                                    ))
+                                }
+                            }
+                            if !self.eat(&Tok::Comma) {
+                                break;
+                            }
+                        }
+                        self.expect(&Tok::RBracket, "']' after choose options")?;
+                        DecisionQ::Choice { prompt, options }
+                    } else if self.eat(&Tok::Ident("yes".into())) {
+                        self.expect(&Tok::Slash, "'/' in yes/no question")?;
+                        self.expect(&Tok::Ident("no".into()), "`no` after yes/")?;
+                        DecisionQ::Noul { prompt }
+                    } else if self.eat(&Tok::Ident("score".into())) {
+                        self.expect(&Tok::LBracket, "'[' after score")?;
+                        let mut levels = Vec::new();
+                        while !self.at(&Tok::RBracket) {
+                            match self.peek().clone() {
+                                Tok::Ident(l) => {
+                                    self.bump();
+                                    levels.push(l);
+                                }
+                                Tok::Str(l) => {
+                                    self.bump();
+                                    levels.push(l);
+                                }
+                                other => {
+                                    return self.err(format!(
+                                        "expected rubric level in score list, found {other:?}"
+                                    ))
+                                }
+                            }
+                            if !self.eat(&Tok::Comma) {
+                                break;
+                            }
+                        }
+                        self.expect(&Tok::RBracket, "']' after score levels")?;
+                        DecisionQ::Score { prompt, levels }
+                    } else {
+                        return self
+                            .err("expected `choose [..]`, `yes/no` or `score [..]` after the question prompt");
+                    };
+                    questions.push((name, q));
+                    self.eat(&Tok::Comma);
+                }
+                self.expect(&Tok::RBrace, "'}' after decide block")?;
+                // `on <state expr>` is required — a decision without state
+                // has nothing to decide about
+                if !self.eat(&Tok::Ident("on".into())) {
+                    return self.err("expected `on <state>` after decide block");
+                }
+                let state = self.parse_expr()?;
+                let mut options = Vec::new();
+                if self.at(&Tok::With) && self.peek2() == &Tok::LBrace {
+                    self.bump(); // with
+                    self.expect(&Tok::LBrace, "'{'")?;
+                    while !self.at(&Tok::RBrace) {
+                        let key = self.ident()?;
+                        self.expect(&Tok::Colon, "':' in with-block")?;
+                        let val = self.parse_expr()?;
+                        options.push((key, val));
+                        self.eat(&Tok::Comma);
+                    }
+                    self.expect(&Tok::RBrace, "'}'")?;
+                }
+                let span = Span {
+                    start,
+                    end: self.t[self.i - 1].end,
+                };
+                Ok(self.ex(
+                    span,
+                    ExprKind::DecideCall {
+                        questions,
+                        state: Box::new(state),
+                        options,
+                    },
+                ))
             }
             // `state` reads (`state.round`) inside agent fns (design §7);
             // codegen binds it to the agent's checkpointed state object
@@ -1177,6 +1287,53 @@ test "x" {
     }
 
     #[test]
+    fn decide_block_parses_all_question_kinds() {
+        let src = r#"
+fn triage(t: string) -> string uses Decision {
+    let d = decide {
+        dept: "which team?" choose [billing, technical],
+        risk: "churn?" yes/no,
+        urgency: "how urgent?" score [low, soon, critical],
+        named: "space options" choose ["billing eu", security]
+    } on t with { model: "laya:multilingual", deadline: 50 }
+    d.dept.winner
+}"#;
+        let items = parse_str(src);
+        let Some(Item::Fn { body, .. }) = items.first() else {
+            panic!("expected fn");
+        };
+        let StmtKind::Let { value, .. } = &body[0].kind else {
+            panic!("expected let");
+        };
+        let ExprKind::DecideCall {
+            questions, options, ..
+        } = &value.kind
+        else {
+            panic!("expected decide, got {:?}", value.kind);
+        };
+        assert_eq!(questions.len(), 4);
+        assert_eq!(questions[0].0, "dept");
+        assert!(
+            matches!(&questions[0].1, DecisionQ::Choice { options, .. } if options.len() == 2 && options[0] == "billing")
+        );
+        assert!(matches!(questions[1].1, DecisionQ::Noul { .. }));
+        assert!(matches!(&questions[2].1, DecisionQ::Score { levels, .. } if levels.len() == 3));
+        assert!(
+            matches!(&questions[3].1, DecisionQ::Choice { options, .. } if options[0] == "billing eu" && options[1] == "security")
+        );
+        assert_eq!(options.len(), 2);
+    }
+
+    #[test]
+    fn decide_without_on_is_an_error() {
+        let src = r#"
+fn f() -> string uses Decision {
+    let d = decide { x: "pick?" choose [a, b] }
+    d.x.winner
+}"#;
+        assert!(parse(lex(src).unwrap()).is_err());
+    }
+    #[test]
     fn test_block_with_asserts() {
         let src = r#"
 test "budget" {
@@ -1309,7 +1466,7 @@ test "budget" {
                         ExprKind::Route { arms } => {
                             assert_eq!(arms.len(), 2);
                             assert_eq!(arms[0].0, "cheap");
-                            assert_eq!(arms[0].1, "m1");
+                            assert!(matches!(&arms[0].1.kind, ExprKind::Str(m) if m == "m1"));
                             assert!(arms[0].2.is_some());
                             assert_eq!(arms[1].0, "strong");
                             assert!(arms[1].2.is_none());

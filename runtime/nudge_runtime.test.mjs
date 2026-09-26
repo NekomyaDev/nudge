@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { validateOutput, llmCall, toolStub, forAll } from "./nudge_runtime.ts";
+import { validateOutput, llmCall, toolStub, forAll, decide } from "./nudge_runtime.ts";
 
 const SCHEMA = {
   type: "object",
@@ -117,4 +117,44 @@ test("forAll case lists are deterministic (fixed seed)", () => {
   seen.length = 0;
   forAll("int", [0, 5], probe, "n");
   assert.equal(seen.join(","), once);
+});
+
+// ── rt.decide (v1.4 "Decision") ──────────────────────────────────────
+const DECIDE_QS = [
+  { name: "dept", kind: "choice", prompt: "team?", options: ["billing", "technical", "security"] },
+  { name: "risk", kind: "noul", prompt: "churn?" },
+  { name: "urgency", kind: "score", prompt: "urgent?", levels: ["low", "soon", "critical"] },
+];
+
+test("fake decide returns typed answers, deterministically", () => {
+  const a = decide(DECIDE_QS, "laptop broken", { model: "fake" });
+  const b = decide(DECIDE_QS, "laptop broken", {});
+  assert.equal(a.dept.winner, b.dept.winner);
+  assert.ok(a.dept.p > 0 && a.dept.p <= 1);
+  assert.equal(Object.keys(a.dept.distribution).length, 3);
+  assert.ok(a.risk.p >= 0 && a.risk.p <= 1);
+  assert.ok(a.urgency.score >= 0 && a.urgency.score <= 2);
+});
+
+test("fake decide distribution sums to 1 and winner is argmax", () => {
+  const a = decide(DECIDE_QS, "another state", {});
+  const sum = Object.values(a.dept.distribution).reduce((x, y) => x + y, 0);
+  assert.ok(Math.abs(sum - 1) < 1e-9, `sum ${sum}`);
+  assert.equal(a.dept.distribution[a.dept.winner], a.dept.p);
+});
+
+test("decide deadline miss annotates softly", () => {
+  const a = decide(DECIDE_QS, "laptop broken", { deadline: -1 });
+  assert.equal(a.dept.deadline_missed, true);
+});
+
+test("unconfigured provider raises with a clear message", () => {
+  const save = process.env.NUDGE_DECISION_SERVERS;
+  delete process.env.NUDGE_DECISION_SERVERS;
+  try {
+    assert.throws(() => decide(DECIDE_QS, "s", { model: "laya:multilingual" }),
+      /not configured/);
+  } finally {
+    if (save !== undefined) process.env.NUDGE_DECISION_SERVERS = save;
+  }
 });

@@ -1292,24 +1292,27 @@ def _run_with_branch(label, fn, x):
 
 
 def route(*arms):
-    """User-defined model routing (design §4.4, v0.4): arms are
-    ``(label, model, cond_fn_or_None)`` triples evaluated in order; the
-    first arm whose condition is truthy wins, the arm with ``None`` is the
-    ``otherwise`` fallback. The chosen label is picked up by the next
-    ``llm_call``/``llm_stream`` as an additive ``route`` trace field."""
+    """Route/policy selection (design §4.4, v0.4; generalized v1.4): arms
+    are ``(label, value_or_thunk, cond_fn_or_None)`` triples evaluated in
+    order; the first arm whose condition is truthy wins, the arm with
+    ``None`` is the ``otherwise`` fallback. A string value keeps the
+    model-routing semantics (the next ``llm_call`` picks the model up and
+    records the label as an additive ``route`` trace field); any other
+    value makes the route a value-level policy switch."""
     chosen = None
-    for label, model, cond in arms:
+    for label, value, cond in arms:
         if cond is None:
             if chosen is None:
-                chosen = (label, model)
+                chosen = (label, value)
             break
         if cond():
-            chosen = (label, model)
+            chosen = (label, value)
             break
     if chosen is None:
         raise RuntimeError("route block matched no arm and has no otherwise fallback")
     _LAST_ROUTE.choice = chosen
-    return chosen[1]
+    result = chosen[1]
+    return result() if callable(result) else result
 
 
 def _take_route_label():
@@ -2125,3 +2128,230 @@ def for_all(gen, args, prop, var):
         f"{var}={minimal!r} — {msg or 'property violated'} "
         f"(first failure: {case!r})"
     )
+
+
+# ── decisions: rt.decide (v1.4 "Decision", design §11) ──────────────
+# `decide { q: "..." choose [..] / yes/no / score [..] } on <state>` lowers
+# to one batched call against a JEV-family decision model (Laya / Jev speak
+# the same /v1/systemone contract; AnyJev and Valen fit the same shape).
+# Determinism first: the fake provider (default) synthesizes stable,
+# seeded distributions so `nudgec test` stays $0 and replayable — exactly
+# like the fake LLM provider.
+
+_DECISION_DEADLINE_SOFT = True  # NUDGE_DECISION_STRICT=1 turns overruns fatal
+
+
+class DecisionTimeout(RuntimeError):
+    """A decision exceeded its declared deadline. Soft by default: catch it
+    (or route around it) to take a fallback path; NUDGE_DECISION_STRICT=1
+    makes it fatal instead."""
+
+
+def _decision_seed(text):
+    # FNV-1a over the UTF-8 bytes — stable across runs, processes, and
+    # Python versions (unlike hash()).
+    h = 0xCBF29CE484222325
+    for b in text.encode("utf-8"):
+        h ^= b
+        h = (h * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+    return h
+
+
+def _fake_distribution(seed, k):
+    """Deterministic k-simplex point: seeded LCG walk, then normalize."""
+    x = seed
+    weights = []
+    for _ in range(k):
+        x = (x * 6364136223846793005 + 1442695040888963407) & 0xFFFFFFFFFFFFFFFF
+        weights.append((x >> 11) + 1.0)
+    total = sum(weights)
+    return [w / total for w in weights]
+
+
+def _fake_decide(questions, state, opts):
+    out = {}
+    state_text = str(state)
+    for q in questions:
+        name, kind = q["name"], q["kind"]
+        seed = _decision_seed(f"{state_text}\x1f{name}\x1f{q.get('prompt','')}\x1f{opts.get('model','fake')}")
+        if kind == "choice":
+            labels = list(q["options"])
+            dist = _fake_distribution(seed, len(labels))
+            winner_i = max(range(len(labels)), key=lambda i: dist[i])
+            maxp = dist[winner_i]
+            k = len(labels)
+            confidence = max(0.0, (maxp - 1.0 / k) / (1.0 - 1.0 / k)) if k > 1 else 1.0
+            out[name] = {
+                "winner": labels[winner_i],
+                "p": maxp,
+                "distribution": dict(zip(labels, dist)),
+                "confidence": confidence,
+            }
+        elif kind == "noul":
+            dist = _fake_distribution(seed, 2)
+            out[name] = {"p": dist[0]}
+        elif kind == "score":
+            levels = list(q["levels"])
+            dist = _fake_distribution(seed, len(levels))
+            score = sum(i * p for i, p in enumerate(dist))
+            out[name] = {"score": score, "distribution": dict(zip(levels, dist))}
+        else:
+            raise ValueError(f"unknown decision question kind '{kind}'")
+    return out
+
+
+def decide(questions, state, options=None):
+    """One batched decision over `questions` about `state`.
+
+    Provider resolution mirrors the LLM path: `model` prefix selects from
+    NUDGE_DECISION_SERVERS (JSON: {"laya": {"base_url": ...}, ...});
+    `fake` (the default) synthesizes deterministic distributions.
+    Faz-1 note: only the fake provider is wired here — the /v1/systemone
+    HTTP transport lands with the adapter (design §11.3)."""
+    opts = dict(options or {})
+    model = str(opts.get("model", "fake"))
+    provider = model.split(":", 1)[0] if ":" in model else model
+    started = time.monotonic()
+
+    # NUDGE_PROVIDER=fake explicitly overrides model prefixes (llm parity);
+    # an UNSET NUDGE_PROVIDER does not silently fake a named provider
+    if provider == "fake" or os.environ.get("NUDGE_PROVIDER") == "fake":
+        answers = _fake_decide(questions, state, opts)
+    else:
+        registry_src = os.environ.get("NUDGE_DECISION_SERVERS")
+        if not registry_src:
+            raise RuntimeError(
+                f"decision provider '{provider}' is not configured — set "
+                f"NUDGE_DECISION_SERVERS (JSON with base_url) or use the fake provider"
+            )
+        entry = json.loads(registry_src).get(provider)
+        if not (entry and entry.get("base_url")):
+            raise RuntimeError(
+                f"decision provider '{provider}' has no base_url in NUDGE_DECISION_SERVERS"
+            )
+        answers = _http_decide(entry["base_url"], state, questions, opts)
+
+    latency_ms = int((time.monotonic() - started) * 1000)
+    deadline = opts.get("deadline")
+    if deadline is not None and latency_ms > int(deadline):
+        if os.environ.get("NUDGE_DECISION_STRICT") == "1":
+            raise DecisionTimeout(
+                f"decision took {latency_ms} ms over the {int(deadline)} ms deadline"
+            )
+        # soft mode: annotate the answers so the trace/policy can see the miss
+        for a in answers.values():
+            a["deadline_missed"] = True
+    return _attr(answers)
+
+
+def _http_decide(base_url, state, questions, opts):
+    """POST /v1/systemone — the wire contract Laya's `laya.serve` and the
+    TypeSafe Jev API share. Validated per the adapter rules: ids preserved,
+    no silent normalization, non-finite/probability violations rejected."""
+    url = base_url.rstrip("/") + "/v1/systemone"
+    body = {
+        "state": {"text": str(state)},
+        "questions": {
+            q["name"]: (
+                {"type": "choice", "instructions": q.get("prompt", ""), "criteria": {o: o for o in q["options"]}}
+                if q["kind"] == "choice"
+                else {"type": "noul", "instructions": q.get("prompt", "")}
+                if q["kind"] == "noul"
+                else {"type": "score", "instructions": q.get("prompt", ""), "criteria": q["levels"]}
+            )
+            for q in questions
+        },
+    }
+    headers = {"Content-Type": "application/json"}
+    api_key = os.environ.get("NUDGE_DECISION_API_KEY")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
+    timeout_s = (opts.get("deadline") or 30000) / 1000.0 + 1.0
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            payload = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"decision server returned HTTP {e.code}: {e.read()[:200]!r}") from None
+    except Exception as e:
+        raise RuntimeError(f"decision server unreachable at {url}: {e}") from None
+
+    raw_answers = payload.get("answers")
+    if not isinstance(raw_answers, dict):
+        raise RuntimeError("decision server response has no `answers` object")
+    asked = {q["name"]: q for q in questions}
+    out = {}
+    # every asked question must come back exactly once — no silent success
+    seen = set()
+    for name, ans in raw_answers.items():
+        if name not in asked:
+            raise RuntimeError(f"decision server answered unasked question '{name}'")
+        if name in seen:
+            raise RuntimeError(f"decision server answered question '{name}' more than once")
+        seen.add(name)
+        q = asked[name]
+        kind = q["kind"]
+        if kind == "choice" and ans.get("type") == "choice":
+            probs = ans.get("probabilities")
+            if not isinstance(probs, dict) or set(probs) != set(q["options"]):
+                raise RuntimeError(
+                    f"question '{name}': probabilities must cover the declared options exactly "
+                    f"(got {sorted(probs) if isinstance(probs, dict) else type(probs).__name__})"
+                )
+            if any(not (0.0 <= float(p) <= 1.0) or p != p for p in probs.values()):
+                raise RuntimeError(f"question '{name}': probabilities out of range or NaN")
+            total = sum(float(p) for p in probs.values())
+            if total <= 0.0:
+                raise RuntimeError(f"question '{name}': probability distribution sums to {total}")
+            winner = ans.get("choice")
+            if winner not in probs:
+                raise RuntimeError(f"question '{name}': winner {winner!r} is not one of the options")
+            dist = {label: float(p) / total for label, p in probs.items()}
+            k = len(dist)
+            maxp = dist[winner]
+            confidence = max(0.0, (maxp - 1.0 / k) / (1.0 - 1.0 / k)) if k > 1 else 1.0
+            out[name] = {
+                "winner": winner,
+                "p": maxp,
+                "distribution": dist,
+                "confidence": ans.get("confidence", confidence),
+            }
+        elif kind == "noul" and ans.get("type") == "noul":
+            p = ans.get("noul")
+            if p is None or not (0.0 <= float(p) <= 1.0) or float(p) != float(p):
+                raise RuntimeError(f"question '{name}': noul probability out of range or NaN")
+            out[name] = {"p": float(p)}
+        elif kind == "score" and ans.get("type") == "score":
+            probs = ans.get("probabilities")
+            levels = list(q["levels"])
+            if not isinstance(probs, dict) or set(probs) != set(range(len(levels))):
+                raise RuntimeError(
+                    f"question '{name}': score probabilities must cover rubric indices 0..{len(levels) - 1}"
+                )
+            dist = {levels[int(i)]: float(p) for i, p in probs.items()}
+            if any(p < 0.0 or p != p for p in dist.values()):
+                raise RuntimeError(f"question '{name}': rubric probabilities negative or NaN")
+            total = sum(dist.values())
+            if total <= 0.0:
+                raise RuntimeError(f"question '{name}': rubric distribution sums to {total}")
+            dist = {label: p / total for label, p in dist.items()}
+            score = sum(i * p for i, p in enumerate(dist.values()))
+            out[name] = {"score": score, "distribution": dist}
+        else:
+            raise RuntimeError(
+                f"question '{name}': expected answer type '{kind}', got '{ans.get('type')}'"
+            )
+    missing = set(asked) - seen
+    if missing:
+        raise RuntimeError(f"decision server did not answer: {sorted(missing)}")
+    if payload.get("model"):
+        for a in out.values():
+            a["model"] = payload["model"]
+    level = payload.get("level") or (raw_answers and next(iter(raw_answers.values()), {}).get("level"))
+    if level:
+        for a in out.values():
+            a["level"] = level
+    return out

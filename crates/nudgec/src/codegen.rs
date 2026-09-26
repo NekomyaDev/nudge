@@ -452,13 +452,25 @@ fn bind_state_expr(e: &Expr, agent: &str) -> Expr {
         ExprKind::Route { arms } => ExprKind::Route {
             arms: arms
                 .iter()
-                .map(|(label, model, cond)| {
+                .map(|(label, value, cond)| {
                     (
                         label.clone(),
-                        model.clone(),
+                        bind_state_expr(value, agent),
                         cond.as_ref().map(|c| bind_state_expr(c, agent)),
                     )
                 })
+                .collect(),
+        },
+        ExprKind::DecideCall {
+            questions,
+            state,
+            options,
+        } => ExprKind::DecideCall {
+            questions: questions.clone(),
+            state: Box::new(bind_state_expr(state, agent)),
+            options: options
+                .iter()
+                .map(|(k, v)| (k.clone(), bind_state_expr(v, agent)))
                 .collect(),
         },
         leaf => leaf.clone(),
@@ -741,20 +753,67 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
         ExprKind::Merge { l, r } => format!("rt.merge({}, {})", py(l, aliases), py(r, aliases)),
         // design §4.4: route block — rt.route picks the first true arm
         ExprKind::Route { arms } => {
+            // v1.4: arm values are lazy — a bare string keeps model-routing
+            // semantics, other expressions evaluate only when their arm wins
             let parts = arms
                 .iter()
-                .map(|(label, model, cond)| match cond {
+                .map(|(label, value, cond)| match cond {
                     Some(c) => format!(
-                        "({}, {}, lambda: {})",
+                        "({}, lambda: {}, lambda: {})",
                         py_str(label),
-                        py_str(model),
+                        py(value, aliases),
                         py(c, aliases)
                     ),
-                    None => format!("({}, {}, None)", py_str(label), py_str(model)),
+                    None => format!("({}, lambda: {}, None)", py_str(label), py(value, aliases)),
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("rt.route({parts})")
+        }
+        ExprKind::DecideCall {
+            questions,
+            state,
+            options,
+        } => {
+            let py_list = |items: &[String]| -> String {
+                format!(
+                    "[{}]",
+                    items
+                        .iter()
+                        .map(|o| py_str(o))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            let qs = questions
+                .iter()
+                .map(|(name, q)| match q {
+                    DecisionQ::Choice { prompt, options } => format!(
+                        "{{\"name\": {}, \"kind\": \"choice\", \"prompt\": {}, \"options\": {}}}",
+                        py_str(name),
+                        py_str(prompt),
+                        py_list(options)
+                    ),
+                    DecisionQ::Noul { prompt } => format!(
+                        "{{\"name\": {}, \"kind\": \"noul\", \"prompt\": {}}}",
+                        py_str(name),
+                        py_str(prompt)
+                    ),
+                    DecisionQ::Score { prompt, levels } => format!(
+                        "{{\"name\": {}, \"kind\": \"score\", \"prompt\": {}, \"levels\": {}}}",
+                        py_str(name),
+                        py_str(prompt),
+                        py_list(levels)
+                    ),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let opts = options
+                .iter()
+                .map(|(k, v)| format!("\"{}\": {}", k, py(v, aliases)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("rt.decide([{qs}], {}, {{{opts}}})", py(state, aliases))
         }
     }
 }
