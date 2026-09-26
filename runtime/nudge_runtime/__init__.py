@@ -2214,18 +2214,94 @@ def _fake_decide(questions, state, opts):
     return out
 
 
+_DECISION_CACHE_LOCK = threading.Lock()
+
+
+def _decision_cache_key(state, questions, model):
+    """Stable cache key: state text + full question shape + model. Anything
+    that would change the answer changes the key; formatting never does."""
+    shape = {
+        "state": str(state),
+        "model": str(model),
+        "questions": [
+            {k: q[k] for k in ("name", "kind", "prompt", "options", "levels") if k in q}
+            for q in questions
+        ],
+    }
+    blob = json.dumps(shape, sort_keys=True, ensure_ascii=False)
+    import hashlib
+
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _decision_cache_load(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.loads(f.read())
+        return data if isinstance(data, dict) else {}
+    except Exception:  # missing/corrupt cache = cold start, never fatal
+        return {}
+
+
+def _decision_cache_get(path, key):
+    entry = _decision_cache_load(path).get(key)
+    # json round-trip already returned a fresh object; a defensive deep
+    # copy keeps callers from mutating the on-disk answer
+    return json.loads(json.dumps(entry["answers"])) if entry else None
+
+
+def _decision_cache_put(path, key, answers):
+    with _DECISION_CACHE_LOCK:
+        data = _decision_cache_load(path)
+        data[key] = {"answers": answers, "cached_at": time.time()}
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(json.dumps(data, ensure_ascii=False, sort_keys=True))
+        os.replace(tmp, path)
+
+
+def _cached_or_http(questions, state, opts, model):
+    """NUDGE_DECISION_CACHE=<path> persists validated answers across runs
+    (representation cache: same state + questions + model = same decision,
+    zero calls). Returns (answers, cache_hit)."""
+    cache_path = os.environ.get("NUDGE_DECISION_CACHE")
+    provider = model.split(":", 1)[0]
+    registry_src = os.environ.get("NUDGE_DECISION_SERVERS")
+    if not registry_src:
+        raise RuntimeError(
+            f"decision provider '{provider}' is not configured — set "
+            f"NUDGE_DECISION_SERVERS (JSON with base_url) or use the fake provider"
+        )
+    registry = json.loads(registry_src)
+    entry = registry.get(provider) if isinstance(registry, dict) else None
+    if not (entry and entry.get("base_url")):
+        raise RuntimeError(
+            f"decision provider '{provider}' has no base_url in NUDGE_DECISION_SERVERS"
+        )
+    if not cache_path:
+        return _http_decide(entry["base_url"], state, questions, opts), False
+    key = _decision_cache_key(state, questions, model)
+    hit = _decision_cache_get(cache_path, key)
+    if hit is not None:
+        return hit, True
+    answers = _http_decide(entry["base_url"], state, questions, opts)
+    _decision_cache_put(cache_path, key, answers)
+    return answers, False
+
+
 def decide(questions, state, options=None):
     """One batched decision over `questions` about `state`.
 
     Provider resolution mirrors the LLM path: `model` prefix selects from
     NUDGE_DECISION_SERVERS (JSON: {"laya": {"base_url": ...}, ...});
     `fake` (the default) synthesizes deterministic distributions.
-    Faz-1 note: only the fake provider is wired here — the /v1/systemone
-    HTTP transport lands with the adapter (design §11.3)."""
+    NUDGE_DECISION_CACHE=<path> caches real-provider answers across runs;
+    replay (NUDGE_REPLAY=all) always takes precedence over the cache."""
     opts = dict(options or {})
     model = str(opts.get("model", "fake"))
     provider = model.split(":", 1)[0] if ":" in model else model
     started = time.monotonic()
+    cache_hit = False
 
     # NUDGE_PROVIDER=fake explicitly overrides model prefixes (llm parity);
     # an UNSET NUDGE_PROVIDER does not silently fake a named provider
@@ -2249,18 +2325,7 @@ def decide(questions, state, options=None):
     elif provider == "fake" or os.environ.get("NUDGE_PROVIDER") == "fake":
         answers = _fake_decide(questions, state, opts)
     else:
-        registry_src = os.environ.get("NUDGE_DECISION_SERVERS")
-        if not registry_src:
-            raise RuntimeError(
-                f"decision provider '{provider}' is not configured — set "
-                f"NUDGE_DECISION_SERVERS (JSON with base_url) or use the fake provider"
-            )
-        entry = json.loads(registry_src).get(provider)
-        if not (entry and entry.get("base_url")):
-            raise RuntimeError(
-                f"decision provider '{provider}' has no base_url in NUDGE_DECISION_SERVERS"
-            )
-        answers = _http_decide(entry["base_url"], state, questions, opts)
+        answers, cache_hit = _cached_or_http(questions, state, opts, model)
 
     latency_ms = int((time.monotonic() - started) * 1000)
     deadline = opts.get("deadline")
@@ -2275,12 +2340,12 @@ def decide(questions, state, options=None):
         for a in answers.values():
             a["deadline_missed"] = True
     _write_decision_record(model, provider, questions, answers,
-                           latency_ms, deadline, outcome)
+                           latency_ms, deadline, outcome, cache_hit)
     return _attr(answers)
 
 
 def _write_decision_record(model, provider, questions, answers,
-                           latency_ms, deadline, outcome):
+                           latency_ms, deadline, outcome, cache_hit=False):
     """One `decision.call` NTF record (design §11.4): questions keyed by
     name (the wire shape), answers as returned, measured latency."""
     if not os.environ.get("NUDGE_TRACE"):
@@ -2294,6 +2359,9 @@ def _write_decision_record(model, provider, questions, answers,
         "latency_ms": latency_ms,
         "outcome": outcome,
     }
+    if cache_hit:
+        # additive: this record came from NUDGE_DECISION_CACHE, not the wire
+        record["cache"] = "hit"
     if deadline is not None:
         record["deadline_ms"] = int(deadline)
     branch = _current_branch()

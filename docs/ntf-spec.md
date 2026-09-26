@@ -63,8 +63,10 @@ for LLM calls (prompts, schemas, token counts, USD).
 | `outcome` | string | `"ok"` or an error tag (`deadline_missed`) |
 
 Additive: `deadline_ms` (declared budget), `level` (calibration level, e.g.
-AnyJev `raw/L0/L1/L2`). `trace-diff` reports decision counts and total
-latency; `--fail-on-regression` gates latency growth and decision failures.
+AnyJev `raw/L0/L1/L2`), `cache` (`"hit"` when the record's answers came from
+`NUDGE_DECISION_CACHE` rather than the wire — docs/decision.md §4).
+`trace-diff` reports decision counts and total latency; `--fail-on-regression`
+gates latency growth and decision failures.
 
 ### `fn.return` — a traced function boundary
 

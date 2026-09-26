@@ -188,3 +188,44 @@ test("decide writes a decision.call record; replay consumes it; exhaustion raise
     delete process.env.NUDGE_REPLAY;
   }
 });
+
+// ── decision cache (NUDGE_DECISION_CACHE) ────────────────────────────
+test("decision cache: miss then hit, no second server call, cache field written", async () => {
+  const http = await import("node:http");
+  const { promisify } = await import("node:util");
+  let serverCalls = 0;
+  const server = http.createServer((req, res) => {
+    serverCalls += 1;
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({
+      answers: { dept: { type: "choice", choice: "a", probabilities: { a: 0.7, b: 0.3 } } },
+    }));
+  });
+  await promisify(server.listen.bind(server))(0, "127.0.0.1");
+  const port = server.address().port;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nudge_dcache_"));
+  const trace = path.join(dir, "trace.jsonl");
+  const cachePath = path.join(dir, "cache.json");
+  const saved = { ...process.env };
+  process.env.NUDGE_DECISION_SERVERS = JSON.stringify({ laya: { base_url: `http://127.0.0.1:${port}` } });
+  process.env.NUDGE_DECISION_CACHE = cachePath;
+  process.env.NUDGE_TRACE = trace;
+  try {
+    const qs = [{ name: "dept", kind: "choice", prompt: "team?", options: ["a", "b"] }];
+    const first = await decide(qs, "same state", { model: "laya:multilingual" });
+    const second = await decide(qs, "same state", { model: "laya:multilingual" });
+    assert.equal(serverCalls, 1, "second call served from cache");
+    assert.equal(first.dept.winner, second.dept.winner);
+    const recs = fs.readFileSync(trace, "utf8").trim().split("\n").map(JSON.parse)
+      .filter((r) => r.kind === "decision.call");
+    assert.equal(recs.length, 2);
+    assert.equal(recs[0].cache, undefined);
+    assert.equal(recs[1].cache, "hit");
+    // a changed state must miss
+    await decide(qs, "different state", { model: "laya:multilingual" });
+    assert.equal(serverCalls, 2);
+  } finally {
+    server.close();
+    process.env = saved;
+  }
+});
