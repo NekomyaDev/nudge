@@ -2197,7 +2197,8 @@ def _fake_decide(questions, state, opts):
             out[name] = {
                 "winner": labels[winner_i],
                 "p": maxp,
-                "distribution": dict(zip(labels, dist)),
+                # NB: rt.zip shadows the builtin in this module — index, don't zip
+                "distribution": {labels[i]: dist[i] for i in range(len(labels))},
                 "confidence": confidence,
             }
         elif kind == "noul":
@@ -2207,7 +2208,7 @@ def _fake_decide(questions, state, opts):
             levels = list(q["levels"])
             dist = _fake_distribution(seed, len(levels))
             score = sum(i * p for i, p in enumerate(dist))
-            out[name] = {"score": score, "distribution": dict(zip(levels, dist))}
+            out[name] = {"score": score, "distribution": {levels[i]: dist[i] for i in range(len(levels))}}
         else:
             raise ValueError(f"unknown decision question kind '{kind}'")
     return out
