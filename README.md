@@ -183,6 +183,43 @@ python3 out/hello.py
 
 Everything runs against a deterministic fake provider by default: **no API key, no token spend.** Prefer building from source? See [Building from Source](#building-from-source).
 
+### Your First Decision (5 minutes)
+
+`decide{}` asks a decision model typed questions about a state — one
+batched call, answers with probabilities and confidence. Start with the
+fake provider (no server, no key):
+
+```sh
+cat > first-decision.ndg << 'NDEOF'
+fn route_ticket(t: string) -> string uses Decision {
+    let d = decide {
+        dept: "which team handles this?" choose [billing, technical, security],
+        urgent: "is this urgent?" yes/no
+    }
+    on t
+    route { auto:  d.dept.winner when d.dept.confidence > 0.5,
+            human: "escalate to a human" otherwise }
+}
+NDEOF
+
+nudgec check first-decision.ndg && nudgec build first-decision.ndg
+python3 out/first-decision.py   # deterministic, $0, offline
+```
+
+To answer with a **real** decision model (Laya / Jev family), point the
+registry at a running `/v1/systemone` server — one line:
+
+```sh
+export NUDGE_DECISION_SERVERS='{"laya": {"base_url": "http://localhost:8000"}}'
+```
+
+Measured against a live Laya 0.3.20 encoder (same program, 3 questions):
+`dept=technical p=0.866`, `churn=0.768`, `urgency=1.91` — **~51 ms per
+decision** including HTTP, roughly 5x faster than the hosted Jev API.
+Every decision lands in the NTF trace with its latency, replays are $0,
+and `NUDGE_DECISION_CACHE` stops you from ever paying for the same
+decision twice. See [Typed Decisions](#typed-decisions-v14).
+
 ## Backend Parity
 
 | Capability | Python | TypeScript |
@@ -257,6 +294,8 @@ Everything a compiled Nudge program reads comes from these variables:
 | Variable | Purpose |
 |:---|:---|
 | `NUDGE_PROVIDER` | Provider override (`fake`, `openai`, `anthropic`, …). `fake` synthesizes schema-valid outputs — no API key needed |
+| `NUDGE_DECISION_SERVERS` | Decision provider registry (JSON): `{"laya": {"base_url": "http://localhost:8000"}}`. Unconfigured named providers raise — no silent fake |
+| `NUDGE_DECISION_CACHE` | Path for the decision cache: validated answers for real providers persist across runs (replay takes precedence) |
 | `NUDGE_API_KEY` / `NUDGE_BASE_URL` | Credentials and endpoint for OpenAI-compatible providers |
 | `NUDGE_MCP_SERVERS` | MCP server registry JSON (see above) |
 | `NUDGE_TRACE` | Write a JSONL trace to this path while running |
