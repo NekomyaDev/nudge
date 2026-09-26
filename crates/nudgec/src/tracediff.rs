@@ -38,20 +38,24 @@ fn tokens_in_out(rec: &Json) -> (f64, f64) {
 struct Totals {
     llm: usize,
     tools: usize,
+    decisions: usize,
     tin: f64,
     tout: f64,
     cost: f64,
     repairs: usize,
+    latency: f64,
 }
 
 fn totals(recs: &[Json]) -> Totals {
     let mut t = Totals {
         llm: 0,
         tools: 0,
+        decisions: 0,
         tin: 0.0,
         tout: 0.0,
         cost: 0.0,
         repairs: 0,
+        latency: 0.0,
     };
     for r in recs {
         match s(r, "kind").as_str() {
@@ -66,6 +70,12 @@ fn totals(recs: &[Json]) -> Totals {
                 }
             }
             "tool.call" => t.tools += 1,
+            // v1.4: decision calls price in milliseconds, not dollars —
+            // latency is the metric the family competes on
+            "decision.call" => {
+                t.decisions += 1;
+                t.latency += num(r, "latency_ms");
+            }
             _ => {}
         }
     }
@@ -143,6 +153,14 @@ pub fn diff(a_text: &str, b_text: &str) -> String {
         ta.repairs,
         tb.repairs,
         delta(ta.repairs as f64, tb.repairs as f64, "")
+    ));
+    out.push_str(&format!(
+        "decisions {} -> {}   latency {:.0} ms -> {:.0} ms{}\n",
+        ta.decisions,
+        tb.decisions,
+        ta.latency,
+        tb.latency,
+        delta(ta.latency, tb.latency, " ms")
     ));
 
     // per-record comparison, aligned by position (seq is 1..=n in a valid trace)
@@ -258,6 +276,21 @@ pub fn regressions(a_text: &str, b_text: &str) -> Vec<String> {
     if fb > fa {
         why.push(format!("llm failures rose {fa} -> {fb}"));
     }
+    if tb.latency > ta.latency + 1e-9 {
+        why.push(format!(
+            "decision latency rose {:.0} ms -> {:.0} ms",
+            ta.latency, tb.latency
+        ));
+    }
+    let dfailures = |recs: &[Json]| {
+        recs.iter()
+            .filter(|r| s(r, "kind") == "decision.call" && s(r, "outcome") != "ok")
+            .count()
+    };
+    let (da, db) = (dfailures(&a), dfailures(&b));
+    if db > da {
+        why.push(format!("decision failures rose {da} -> {db}"));
+    }
     why
 }
 
@@ -313,6 +346,23 @@ mod tests {
         assert!(r.contains("only in A"), "{r}");
     }
 
+    #[test]
+    fn regression_gate_flags_latency_and_decision_failures() {
+        let d = |outcome: &str, latency: f64| {
+            format!(
+                r#"{{"v": 1, "seq": 1, "kind": "decision.call", "model": "m", "provider": "laya", "questions": {{}}, "answers": {{}}, "latency_ms": {latency}, "outcome": "{outcome}"}}"#
+            ) + "\n"
+        };
+        let a = d("ok", 30.0);
+        assert!(regressions(&a, &a).is_empty());
+        let b = d("error", 90.0);
+        let why = regressions(&a, &b);
+        assert!(why.iter().any(|w| w.contains("latency rose")), "{why:?}");
+        assert!(
+            why.iter().any(|w| w.contains("decision failures rose")),
+            "{why:?}"
+        );
+    }
     #[test]
     fn repair_counts_are_totalled() {
         let repaired = r#"{"v": 1, "seq": 1, "kind": "llm.call", "model": "m", "params": {}, "input": "p", "output": "o", "tokens": {"in": 1, "out": 1}, "cost_usd": 0.001, "repair_round": 2, "outcome": "ok", "provider": "fake"}"#;

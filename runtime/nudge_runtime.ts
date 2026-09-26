@@ -608,10 +608,36 @@ function fakeDecide(questions, state, opts) {
   return out;
 }
 
+let _decisionReplayCache = null;
+let _decisionReplayIdx = 0;
+
+function _replayDecisionAnswers() {
+  if (_decisionReplayCache === null) {
+    _decisionReplayCache = fs
+      .readFileSync(process.env.NUDGE_REPLAY, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map(JSON.parse)
+      .filter((r) => r.kind === "decision.call")
+      .map((r) => r.answers);
+  }
+  return _decisionReplayCache;
+}
+
 export function decide(questions, state, options = {}) {
   const model = String(options.model || "fake");
   const provider = model.includes(":") ? model.split(":")[0] : model;
   const started = Date.now();
+  // full replay: consume recorded answers in order, strict exhaustion
+  if (process.env.NUDGE_REPLAY) {
+    const outs = _replayDecisionAnswers();
+    if (_decisionReplayIdx >= outs.length) {
+      throw new Error(
+        `ReplayMismatch: program made more decide calls than the trace holds (${outs.length} records)`,
+      );
+    }
+    return _decisionReplayIdx < outs.length ? outs[_decisionReplayIdx++] : null;
+  }
   const reg = process.env.NUDGE_DECISION_SERVERS;
   if (provider !== "fake" && process.env.NUDGE_PROVIDER !== "fake") {
     if (!reg) {
@@ -628,7 +654,22 @@ export function decide(questions, state, options = {}) {
     );
   }
   const answers = fakeDecide(questions, state, options);
-  return finishDecide(answers, options, started);
+  const finished = finishDecide(answers, options, started);
+  // frozen v1 + additive decision.call record (design §11.4)
+  const record = {
+    kind: "decision.call",
+    model,
+    provider,
+    questions: Object.fromEntries(questions.map((q) => [q.name, q])),
+    answers,
+    latency_ms: Date.now() - started,
+    outcome: Object.values(answers).some((a) => a.deadline_missed)
+      ? "deadline_missed"
+      : "ok",
+  };
+  if (options.deadline != null) record.deadline_ms = Number(options.deadline);
+  _emitTrace(record);
+  return finished;
 }
 
 function finishDecide(answers, options, started) {

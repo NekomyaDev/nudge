@@ -22,6 +22,15 @@ fn required(kind: &str) -> Option<&'static [&'static str]> {
         ]),
         "tool.call" => Some(&["tool", "input", "output"]),
         "fn.return" => Some(&["fn", "output"]),
+        // v1.4 "Decision": batched decisions about a state (docs/ntf-spec.md)
+        "decision.call" => Some(&[
+            "model",
+            "provider",
+            "questions",
+            "answers",
+            "latency_ms",
+            "outcome",
+        ]),
         _ => None,
     }
 }
@@ -46,6 +55,11 @@ fn field_type(kind: &str, field: &str) -> Option<Ty> {
         ("llm.call", "params") | ("llm.call", "tokens") => Some(Ty::Obj),
         // `output` is a string OR a structured object (typed answers)
         ("tool.call", "tool") | ("fn.return", "fn") => Some(Ty::Str),
+        ("decision.call", "model")
+        | ("decision.call", "provider")
+        | ("decision.call", "outcome") => Some(Ty::Str),
+        ("decision.call", "latency_ms") => Some(Ty::Num),
+        ("decision.call", "questions") | ("decision.call", "answers") => Some(Ty::Obj),
         // dotted paths check nested fields — tokens.in must be a NUMBER,
         // so a hostile `<img onerror=...>` string is rejected at check time
         ("llm.call", "tokens.in") | ("llm.call", "tokens.out") => Some(Ty::Num),
