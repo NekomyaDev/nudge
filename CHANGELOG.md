@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Property-based agent tests** (design §6.4): `for_all x in gen.int/str/injection/bool { ... }` inside test blocks — deterministic seeded case sweep, shrink-to-minimal-counterexample, and checker rules E0801 (test-only), E0802 (generator validity), E0804 (property purity: no llm/tool/effectful calls). Python + TypeScript runtimes ship `rt.for_all`/`rt.forAll` with identical semantics; new example `examples/property-fuzz`
 - **NTF open standard**: `docs/ntf-spec.md` (frozen v1 spec page), a conformance corpus (`conformance/` — 17 cases with expected verdicts, wired into `cargo test` and a vendor-neutral `conformance/run.py` runner), and a LangChain → NTF bridge (`bridges/langchain_ntf.py`)
 - **`nudge-ci` GitHub Action** (`action.yml`): agent regression CI in any repo — `nudgec check` + `nudgec test` (replay, $0) over a glob of `.ndg` programs, with optional `trace-diff` regression gate and `version`/`check-only` inputs; the repository now dogfoods it via `.github/workflows/agent-ci.yml`
 - `nudgec trace-diff a b --fail-on-regression`: exits 1 when the candidate trace costs more, uses more tokens, performs more repair rounds, or turns a passing llm call into a failure — turning trace diffing into a CI gate

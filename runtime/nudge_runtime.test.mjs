@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { validateOutput, llmCall, toolStub } from "./nudge_runtime.ts";
+import { validateOutput, llmCall, toolStub, forAll } from "./nudge_runtime.ts";
 
 const SCHEMA = {
   type: "object",
@@ -86,4 +86,35 @@ test("tool replay exhaustion raises ReplayMismatch (not a silent [])", () => {
   } finally {
     delete process.env.NUDGE_REPLAY;
   }
+});
+
+// ── rt.forAll (property-based tests, design §6.4) ────────────────────
+test("forAll passes a true property over int/str/injection cases", () => {
+  forAll("int", [0, 10], (n) => {
+    if (n < 0 || n > 10) throw new Error("out of range");
+  }, "n");
+  forAll("str", [8], (s) => {
+    if (s.length > 8) throw new Error("too long");
+  }, "s");
+  forAll("injection", [], () => {}, "p");
+  forAll("bool", [], () => {}, "b");
+});
+
+test("forAll shrinks a failing int to a minimal counterexample", () => {
+  assert.throws(
+    () => forAll("int", [0, 10], (n) => {
+      if (n > 5) throw new Error("bad");
+    }, "n"),
+    /failed: n=6/,
+  );
+});
+
+test("forAll case lists are deterministic (fixed seed)", () => {
+  const seen = [];
+  const probe = (n) => { seen.push(n); };
+  forAll("int", [0, 5], probe, "n");
+  const once = seen.join(",");
+  seen.length = 0;
+  forAll("int", [0, 5], probe, "n");
+  assert.equal(seen.join(","), once);
 });

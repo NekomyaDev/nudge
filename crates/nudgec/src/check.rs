@@ -292,6 +292,9 @@ fn body_effects(
             StmtKind::Let { value, .. } => direct_effects(value, g, effects, calls),
             StmtKind::StateWrite { value, .. } => direct_effects(value, g, effects, calls),
             StmtKind::Assert(e) | StmtKind::ExprStmt(e) => direct_effects(e, g, effects, calls),
+            // for_all only survives checking inside test blocks, which
+            // carry no effect signature — nothing to contribute here
+            StmtKind::ForAll { .. } => {}
         }
     }
 }
@@ -317,6 +320,211 @@ type AgentCtx<'a> = Option<(&'a str, &'a [(String, TypeExpr, Expr)])>;
 /// the fn lives inside an `agent` block: `state` becomes a record local and
 /// state writes are validated against the declared fields. Outside an agent,
 /// a state write is E0701 (design §7).
+/// Generators available to `for_all` (design §6.4). Returns the Ty the
+/// loop variable binds to, or None for an unknown generator/arity (E0802).
+fn generator_ty(gen: &str, argc: usize) -> Option<Ty> {
+    match (gen, argc) {
+        ("int", 2) => Some(Ty::Int),
+        ("str", 1) => Some(Ty::Str),
+        ("injection", 0) => Some(Ty::Str),
+        ("bool", 0) => Some(Ty::Bool),
+        _ => None,
+    }
+}
+
+/// A `for_all` body must be pure: no direct `llm"""` and no direct tool
+/// call — properties run for dozens of cases and must stay deterministic
+/// and token-free (E0804). Calls to plain fns are allowed.
+fn expr_has_effect_call(
+    e: &Expr,
+    g: &Globals,
+    inferred: &HashMap<String, BTreeSet<String>>,
+) -> bool {
+    match &e.kind {
+        ExprKind::LlmCall { .. } => true,
+        ExprKind::Call { func, args, kwargs } => {
+            let callee = match &func.kind {
+                ExprKind::Ident(n) => Some(n.clone()),
+                _ => None,
+            };
+            let tool = callee
+                .as_deref()
+                .map(|n| g.tools.contains_key(n))
+                .unwrap_or(false);
+            // a call to a fn whose INFERRED effects are non-empty (directly
+            // or transitively) is an effect call even if it declares none
+            let effectful_fn = callee
+                .and_then(|n| inferred.get(&n))
+                .map(|eff| !eff.is_empty())
+                .unwrap_or(false);
+            tool || effectful_fn
+                || args.iter().any(|a| expr_has_effect_call(a, g, inferred))
+                || kwargs
+                    .iter()
+                    .any(|(_, v)| expr_has_effect_call(v, g, inferred))
+        }
+        ExprKind::ListLit(xs) => xs.iter().any(|a| expr_has_effect_call(a, g, inferred)),
+        ExprKind::Field { obj, .. } => expr_has_effect_call(obj, g, inferred),
+        ExprKind::Binary { l, r, .. } | ExprKind::Merge { l, r } => {
+            expr_has_effect_call(l, g, inferred) || expr_has_effect_call(r, g, inferred)
+        }
+        ExprKind::Unary { x, .. } => expr_has_effect_call(x, g, inferred),
+        ExprKind::ParMap {
+            coll, kwargs, body, ..
+        } => {
+            expr_has_effect_call(coll, g, inferred)
+                || kwargs
+                    .iter()
+                    .any(|(_, v)| expr_has_effect_call(v, g, inferred))
+                || expr_has_effect_call(body, g, inferred)
+        }
+        ExprKind::ParAll(xs) | ExprKind::ParRace(xs) => {
+            xs.iter().any(|a| expr_has_effect_call(a, g, inferred))
+        }
+        _ => false,
+    }
+}
+
+fn stmts_have_effect_call(
+    body: &[Stmt],
+    g: &Globals,
+    inferred: &HashMap<String, BTreeSet<String>>,
+) -> bool {
+    body.iter().any(|st| match &st.kind {
+        StmtKind::Let { value, .. } | StmtKind::StateWrite { value, .. } => {
+            expr_has_effect_call(value, g, inferred)
+        }
+        StmtKind::Assert(e) | StmtKind::ExprStmt(e) => expr_has_effect_call(e, g, inferred),
+        StmtKind::ForAll { args, body, .. } => {
+            args.iter().any(|a| expr_has_effect_call(a, g, inferred))
+                || stmts_have_effect_call(body, g, inferred)
+        }
+    })
+}
+
+/// Shared `for_all` checking (design §6.4): valid generator (E0802),
+/// test-block confinement (E0801), purity (E0804), then the body with the
+/// loop variable bound. `in_test` is false when one appears in fn/agent
+/// bodies.
+#[allow(clippy::too_many_arguments)]
+fn check_for_all(
+    var: &str,
+    gen: &str,
+    args: &[Expr],
+    body: &[Stmt],
+    locals: &HashMap<String, Ty>,
+    g: &Globals,
+    errs: &mut Vec<CheckError>,
+    in_test: bool,
+    inferred: &HashMap<String, BTreeSet<String>>,
+) {
+    if !in_test {
+        errs.push(CheckError {
+            span: None,
+            code: "E0801",
+            msg: "for_all is only allowed inside test blocks — properties are test artifacts, not runtime control flow".into(),
+        });
+        return;
+    }
+    for a in args {
+        let at = check_expr(a, locals, g, errs);
+        if !assignable(&at, &Ty::Int) {
+            errs.push(CheckError {
+                span: None,
+                code: "E0802",
+                msg: format!("gen.{gen} arguments must be int bounds, got {at}"),
+            });
+        }
+    }
+    let Some(vt) = generator_ty(gen, args.len()) else {
+        errs.push(CheckError {
+            span: None,
+            code: "E0802",
+            msg: format!(
+                "unknown generator 'gen.{gen}' — available: gen.int(lo, hi), gen.str(max_len), gen.injection(), gen.bool()"
+            ),
+        });
+        return;
+    };
+    if stmts_have_effect_call(body, g, inferred) {
+        errs.push(CheckError {
+            span: None,
+            code: "E0804",
+            msg: "for_all bodies must be pure — llm calls and tool calls are not allowed inside a property (deterministic + token-free)".into(),
+        });
+    }
+    let mut inner = locals.clone();
+    inner.insert(var.to_string(), vt);
+    check_test_body(body, &inner, g, errs, inferred);
+}
+
+/// Statement checking for test blocks and for_all bodies: lets with the
+/// annotation rule, asserts must be bool, state writes rejected (E0701),
+/// nested for_all recursion.
+fn check_test_body(
+    body: &[Stmt],
+    locals: &HashMap<String, Ty>,
+    g: &Globals,
+    errs: &mut Vec<CheckError>,
+    inferred: &HashMap<String, BTreeSet<String>>,
+) {
+    let mut locals = locals.clone();
+    for st in body {
+        let before = errs.len();
+        match &st.kind {
+            StmtKind::Let {
+                name, ty, value, ..
+            } => {
+                let vt = check_expr(value, &locals, g, errs);
+                if let Some(ann) = ty {
+                    let at = resolve(ann, g, &mut Vec::new(), errs);
+                    if !assignable(&vt, &at) {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0201",
+                            msg: format!("let '{name}' is annotated {at} but the value is {vt}"),
+                        });
+                    }
+                }
+                locals.insert(name.clone(), vt);
+            }
+            StmtKind::StateWrite { field, .. } => {
+                errs.push(CheckError {
+                    span: None,
+                    code: "E0701",
+                    msg: format!("state write 'state.{field}' outside an agent block — state exists only inside `agent` (design §7)"),
+                });
+            }
+            StmtKind::Assert(e) => {
+                let at = check_expr(e, &locals, g, errs);
+                if !assignable(&at, &Ty::Bool) {
+                    errs.push(CheckError {
+                        span: None,
+                        code: "E0201",
+                        msg: format!("assert expects a bool condition, got {at}"),
+                    });
+                }
+            }
+            StmtKind::ExprStmt(e) => {
+                check_expr(e, &locals, g, errs);
+            }
+            StmtKind::ForAll {
+                var,
+                gen,
+                args,
+                body,
+            } => {
+                check_for_all(var, gen, args, body, &locals, g, errs, true, inferred);
+            }
+        }
+        for e in &mut errs[before..] {
+            if e.span.is_none() {
+                e.span = Some(st.span);
+            }
+        }
+    }
+}
+
 fn check_fn_body(
     name: &str,
     params: &[Param],
@@ -410,6 +618,19 @@ fn check_fn_body(
             }
             StmtKind::ExprStmt(e) => {
                 last_ty = check_expr(e, &locals, g, errs);
+            }
+            StmtKind::ForAll {
+                var,
+                gen,
+                args,
+                body,
+            } => {
+                let _ = (var, gen, args, body);
+                errs.push(CheckError {
+                    span: None,
+                    code: "E0801",
+                    msg: "for_all is only allowed inside test blocks — properties are test artifacts, not runtime control flow".into(),
+                });
             }
         }
         // spanned AST (stage 1): statement-level diagnostics point at their
@@ -1052,6 +1273,45 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
         resolve(&body, &g, &mut vec![name], &mut errs);
     }
 
+    // ── effect inference (design §3.2) — computed after registration so
+    // g.tools/g.fns are populated, BEFORE bodies are checked: the for_all
+    // purity check needs it to reject calls to effectful fns (E0804);
+    // signature verification over the same map happens after item checking
+    let mut direct: HashMap<String, BTreeSet<String>> = HashMap::new();
+    let mut edges: HashMap<String, BTreeSet<String>> = HashMap::new();
+    for item in fn_items(items) {
+        if let Item::Fn { name, body, .. } = item {
+            let mut eff = BTreeSet::new();
+            let mut calls = BTreeSet::new();
+            body_effects(body, &g, &mut eff, &mut calls);
+            direct.insert(name.clone(), eff);
+            edges.insert(name.clone(), calls);
+        }
+    }
+    // propagate effects along the call graph to a fixpoint (cycles converge:
+    // sets are bounded by the 3 known effects)
+    let mut inferred = direct;
+    loop {
+        let mut changed = false;
+        for (name, callees) in &edges {
+            let mut add = BTreeSet::new();
+            for c in callees {
+                if let Some(eff) = inferred.get(c) {
+                    add.extend(eff.iter().cloned());
+                }
+            }
+            let entry = inferred.get_mut(name).unwrap();
+            for e in add {
+                if entry.insert(e) {
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
     for item in items {
         match item {
             Item::Fn {
@@ -1114,98 +1374,14 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                 }
             }
             Item::Test { body, .. } => {
-                let mut locals: HashMap<String, Ty> = HashMap::new();
-                for st in body {
-                    let before = errs.len();
-                    match &st.kind {
-                        StmtKind::Let {
-                            name, ty, value, ..
-                        } => {
-                            let vt = check_expr(value, &locals, &g, &mut errs);
-                            // same annotation rule as fn bodies (v1.4 fix:
-                            // test lets used to skip the assignability check)
-                            if let Some(ann) = ty {
-                                let at = resolve(ann, &g, &mut Vec::new(), &mut errs);
-                                if !assignable(&vt, &at) {
-                                    errs.push(CheckError {
-                                        span: None,
-                                        code: "E0201",
-                                        msg: format!(
-                                            "let '{name}' is annotated {at} but the value is {vt}"
-                                        ),
-                                    });
-                                }
-                            }
-                            locals.insert(name.clone(), vt);
-                        }
-                        StmtKind::StateWrite { field, .. } => {
-                            errs.push(CheckError {
-                                span: None,
-                                code: "E0701",
-                                msg: format!("state write 'state.{field}' outside an agent block — state exists only inside `agent` (design §7)"),
-                            });
-                        }
-                        StmtKind::Assert(e) => {
-                            let at = check_expr(e, &locals, &g, &mut errs);
-                            if !assignable(&at, &Ty::Bool) {
-                                errs.push(CheckError {
-                                    span: None,
-                                    code: "E0201",
-                                    msg: format!("assert expects a bool condition, got {at}"),
-                                });
-                            }
-                        }
-                        StmtKind::ExprStmt(e) => {
-                            check_expr(e, &locals, &g, &mut errs);
-                        }
-                    }
-                    for e in &mut errs[before..] {
-                        if e.span.is_none() {
-                            e.span = Some(st.span);
-                        }
-                    }
-                }
+                let locals: HashMap<String, Ty> = HashMap::new();
+                check_test_body(body, &locals, &g, &mut errs, &inferred);
             }
             Item::TypeAlias { .. } => {}
         }
     }
 
-    // ── effect inference + signature verification (design §3.2) ────
-    let mut direct: HashMap<String, BTreeSet<String>> = HashMap::new();
-    let mut edges: HashMap<String, BTreeSet<String>> = HashMap::new();
-    for item in fn_items(items) {
-        if let Item::Fn { name, body, .. } = item {
-            let mut eff = BTreeSet::new();
-            let mut calls = BTreeSet::new();
-            body_effects(body, &g, &mut eff, &mut calls);
-            direct.insert(name.clone(), eff);
-            edges.insert(name.clone(), calls);
-        }
-    }
-    // propagate effects along the call graph to a fixpoint (cycles converge:
-    // sets are bounded by the 3 known effects)
-    let mut inferred = direct;
-    loop {
-        let mut changed = false;
-        for (name, callees) in &edges {
-            let mut add = BTreeSet::new();
-            for c in callees {
-                if let Some(eff) = inferred.get(c) {
-                    add.extend(eff.iter().cloned());
-                }
-            }
-            let entry = inferred.get_mut(name).unwrap();
-            for e in add {
-                if entry.insert(e) {
-                    changed = true;
-                }
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-
+    // ── signature verification over the inferred effects (design §3.2) ────
     for item in fn_items(items) {
         if let Item::Fn {
             name,
@@ -1275,6 +1451,65 @@ mod tests {
         check(&parse(lex(src).unwrap()).unwrap())
     }
 
+    #[test]
+    fn for_all_in_test_block_checks_clean() {
+        let errs = check_src(
+            r#"
+fn helper(s: string) -> int { len(s) }
+
+test "props" {
+    for_all n in gen.int(0, 10) {
+        assert n <= 10
+    }
+    for_all s in gen.str(4) {
+        assert helper(s) >= 0
+    }
+    for_all p in gen.injection() {
+        assert len(p) >= 0
+    }
+}"#,
+        );
+        assert_eq!(errs, vec![], "{errs:?}");
+    }
+
+    #[test]
+    fn for_all_outside_test_block_is_e0801() {
+        let errs = check_src(
+            "fn f() -> int { for_all n in gen.int(0, 3) { assert n >= 0 }
+    1 }",
+        );
+        assert!(errs.iter().any(|e| e.code == "E0801"), "{errs:?}");
+    }
+
+    #[test]
+    fn unknown_generator_is_e0802() {
+        let errs = check_src(r#"test "x" { for_all n in gen.range(0, 3) { assert n >= 0 } }"#);
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0802" && e.msg.contains("gen.range")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn llm_and_tool_calls_in_properties_are_e0804() {
+        let llm_src = r#"
+fn ask(q: string) -> string uses LLM {
+    llm"""answer {q}""" with { schema: string, model: "m", budget: 0.01 USD }
+}
+
+test "x" { for_all p in gen.injection() { let r = ask(p)
+    assert len(r) >= 0 } }"#;
+        let errs = check_src(llm_src);
+        assert!(errs.iter().any(|e| e.code == "E0804"), "{errs:?}");
+    }
+
+    #[test]
+    fn gen_type_mismatch_is_e0802() {
+        let errs = check_src(r#"test "x" { for_all s in gen.str(4) { assert s == 1 } }"#);
+        // s is a string; `s == 1` must surface an assignability error
+        assert!(errs.iter().any(|e| e.code == "E0201"), "{errs:?}");
+    }
     #[test]
     fn research_agent_checks_clean() {
         let src = include_str!("../../../examples/research_agent.ndg");

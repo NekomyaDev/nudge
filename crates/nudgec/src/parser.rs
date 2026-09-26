@@ -371,6 +371,43 @@ impl Parser {
                 let e = self.parse_expr()?;
                 Ok(self.spanned(start, StmtKind::Assert(e)))
             }
+            // `for_all x in gen.int(0, 10) { ... }` (design §6.4) — parsed
+            // anywhere a statement fits; the checker confines it to test
+            // blocks (E0801) and rejects unknown generators (E0802).
+            Tok::ForAll => {
+                self.bump();
+                let var = self.ident()?;
+                self.expect(&Tok::In, "'in' after for_all variable")?;
+                match self.peek().clone() {
+                    Tok::Ident(g) if g == "gen" => {
+                        self.bump();
+                    }
+                    other => {
+                        return self.err(format!("expected `gen` after 'in', found {other:?}"))
+                    }
+                }
+                self.expect(&Tok::Dot, "'.' after gen")?;
+                let gen = self.ident()?;
+                self.expect(&Tok::LParen, "'(' before generator arguments")?;
+                let mut args = Vec::new();
+                while !self.at(&Tok::RParen) {
+                    args.push(self.parse_expr()?);
+                    if !self.eat(&Tok::Comma) {
+                        break;
+                    }
+                }
+                self.expect(&Tok::RParen, "')' after generator arguments")?;
+                let body = self.parse_block()?;
+                Ok(self.spanned(
+                    start,
+                    StmtKind::ForAll {
+                        var,
+                        gen,
+                        args,
+                        body,
+                    },
+                ))
+            }
             // `state.x = v` / `+=` / `-=` (design §7) — only valid inside
             // an agent block; the checker enforces that (E0701). Lookahead
             // past `state . field` keeps a bare `state.x` read an expression.
@@ -1090,6 +1127,53 @@ fn analyze(q: string) -> [Finding] uses LLM {
             },
             _ => panic!("expected fn"),
         }
+    }
+
+    #[test]
+    fn for_all_parses_into_test_block() {
+        let items = parse_str(
+            r#"test "props" {
+    for_all n in gen.int(0, 10) {
+        assert n <= 10
+    }
+    for_all s in gen.str(4) {
+        assert len(s) >= 0
+    }
+    for_all p in gen.injection() {
+        assert len(p) >= 0
+    }
+    for_all b in gen.bool() {
+        assert b == true
+    }
+}"#,
+        );
+        let Some(Item::Test { body, .. }) = items.first() else {
+            panic!("expected test item");
+        };
+        let mut found = Vec::new();
+        for st in body {
+            if let StmtKind::ForAll { var, gen, args, .. } = &st.kind {
+                found.push((var.clone(), gen.clone(), args.len()));
+            }
+        }
+        assert_eq!(
+            found,
+            vec![
+                ("n".into(), "int".into(), 2),
+                ("s".into(), "str".into(), 1),
+                ("p".into(), "injection".into(), 0),
+                ("b".into(), "bool".into(), 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn for_all_without_gen_is_an_error() {
+        let src = r#"
+test "x" {
+    for_all n in range(3) { assert n >= 0 }
+}"#;
+        assert!(parse(lex(src).unwrap()).is_err());
     }
 
     #[test]

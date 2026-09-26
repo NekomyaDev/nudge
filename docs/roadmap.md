@@ -47,8 +47,10 @@ Finish the "why did my agent do that?" answer beyond doubt.
   corpus wired into cargo test; LangChain bridge in `bridges/`) — "OTel for
   LLM agents". LangGraph / CrewAI bridges: community entry points
 - ~~**`nudgec trace-diff`**~~ ✅ shipped (v1.2 report; now with `--fail-on-regression` as a CI gate) — agent regression testing as a CI primitive
-- **Property-based agent tests** — `test ... for_all ... in gen { ... }`:
-  fuzz against injection and garbage input, shrink failing cases
+- ~~**Property-based agent tests**~~ ✅ shipped (design §6.4) —
+  `for_all x in gen.int/str/injection/bool { ... }` in test blocks, with a
+  seeded case sweep and shrink-to-minimal-counterexample; E0801/E0802/E0804
+  keep properties pure and $0
 - ~~**`nudge-ci` GitHub Action**~~ ✅ shipped (`action.yml`, dogfooded in
   `.github/workflows/agent-ci.yml`) — agent regression CI in any repo; a
   distribution channel disguised as a feature. Marketplace listing pending

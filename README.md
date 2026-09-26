@@ -96,6 +96,7 @@ python3 out/chatbot.py
 | **Trace Diff** | Compare two traces: "what changed when I edited the prompt?" |
 | **Nudge CI** | GitHub Action: agent regression testing on every push, $0 |
 | **NTF** | Open trace format (frozen v1) + conformance suite — logs you can replay |
+| **Property Tests** | `for_all x in gen { … }`: fuzz your agent logic (incl. an injection corpus), shrink failures |
 | **A2A & LSP & OTel** | Built in, not bolted on |
 
 </div>
