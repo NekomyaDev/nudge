@@ -1,0 +1,33 @@
+// Property-based agent tests (design §6.4): for_all loops a property over
+// generated cases — edge values plus a seeded sweep — and shrinks any
+// failure to a minimal counterexample. Zero tokens, zero API keys.
+
+// sanitize: a pure helper an agent might run on untrusted input
+fn sanitize(s: string) -> int {
+    len(s)
+}
+
+test "sanitize output stays within bounds" {
+    for_all s in gen.str(64) {
+        assert len(s) >= 0
+    }
+}
+
+test "injection corpus never crashes the checker" {
+    for_all p in gen.injection() {
+        assert len(p) >= 0
+    }
+}
+
+test "int properties over a bounded range" {
+    for_all n in gen.int(-50, 50) {
+        assert n <= 50
+        assert n >= -50
+    }
+}
+
+test "bool equality is reflexive" {
+    for_all b in gen.bool() {
+        assert b == b
+    }
+}

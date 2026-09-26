@@ -146,6 +146,14 @@ pub enum StmtKind {
     },
     Assert(Expr),
     ExprStmt(Expr),
+    /// `for_all x in gen.int(0, 10) { ... }` (design §6.4, v1.3) — a
+    /// property-based test case loop; only valid inside test blocks.
+    ForAll {
+        var: String,
+        gen: String,
+        args: Vec<Expr>,
+        body: Vec<Stmt>,
+    },
 }
 
 /// A statement with its source span attached (spanned AST, stage 1).

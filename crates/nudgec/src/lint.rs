@@ -206,6 +206,8 @@ fn walk_stmt(ctx: &str, s: &Stmt, records: &[(String, Vec<String>)], out: &mut V
             walk_expr(ctx, value, records, out)
         }
         StmtKind::Assert(e) | StmtKind::ExprStmt(e) => walk_expr(ctx, e, records, out),
+        // properties are pure (E0804) — prompt lints don't apply inside
+        StmtKind::ForAll { .. } => {}
     }
 }
 

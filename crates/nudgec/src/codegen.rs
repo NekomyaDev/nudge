@@ -217,6 +217,9 @@ fn emit_body(body: &[Stmt], aliases: &HashSet<String>, agent: Option<&str>) -> S
             // MVP return rule: the fn's final expression is its return value.
             StmtKind::ExprStmt(e) if i == last => format!("return {}", py(e, aliases)),
             StmtKind::ExprStmt(e) => py(e, aliases),
+            StmtKind::ForAll { .. } => {
+                "# error: for_all outside a test block (E0801)\n    pass".to_string()
+            }
         };
         out.push_str("    ");
         out.push_str(&line);
@@ -227,8 +230,19 @@ fn emit_body(body: &[Stmt], aliases: &HashSet<String>, agent: Option<&str>) -> S
 
 /// Test bodies (design §6.3): no implicit return — asserts do the work.
 fn emit_test_body(body: &[Stmt], aliases: &HashSet<String>) -> String {
+    emit_stmts(body, aliases, "    ", &mut 0)
+}
+
+/// Statement list emitter shared by test blocks and `for_all` property
+/// bodies (design §6.4); `indent` grows one level per nested for_all.
+fn emit_stmts(
+    body: &[Stmt],
+    aliases: &HashSet<String>,
+    indent: &str,
+    prop_id: &mut usize,
+) -> String {
     if body.is_empty() {
-        return "    pass\n".into();
+        return format!("{indent}pass\n");
     }
     let mut out = String::new();
     for st in body {
@@ -270,8 +284,29 @@ fn emit_test_body(body: &[Stmt], aliases: &HashSet<String>) -> String {
             }
             StmtKind::Assert(e) => format!("assert {}", py(e, aliases)),
             StmtKind::ExprStmt(e) => py(e, aliases),
+            StmtKind::ForAll {
+                var,
+                gen,
+                args,
+                body,
+            } => {
+                let id = *prop_id;
+                *prop_id += 1;
+                let arg_list = args
+                    .iter()
+                    .map(|a| py(a, aliases))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let inner_indent = format!("{indent}    ");
+                let inner = emit_stmts(body, aliases, &inner_indent, prop_id);
+                format!(
+                    "def _prop_{id}({var}):\n{inner}{indent}rt.for_all(\"{gen}\", [{arg_list}], _prop_{id}, \"{var}\")"
+                )
+            }
         };
-        out.push_str("    ");
+        // for_all lines arrive pre-indented (inner body at the nested
+        // level, the rt.for_all call at `indent`) — push verbatim
+        out.push_str(indent);
         out.push_str(&line);
         out.push('\n');
     }
@@ -303,6 +338,17 @@ pub fn bind_state(body: &[Stmt], agent: &str) -> Vec<Stmt> {
                 },
                 StmtKind::Assert(e) => StmtKind::Assert(bind_state_expr(e, agent)),
                 StmtKind::ExprStmt(e) => StmtKind::ExprStmt(bind_state_expr(e, agent)),
+                StmtKind::ForAll {
+                    var,
+                    gen,
+                    args,
+                    body,
+                } => StmtKind::ForAll {
+                    var: var.clone(),
+                    gen: gen.clone(),
+                    args: args.iter().map(|a| bind_state_expr(a, agent)).collect(),
+                    body: bind_state(body, agent),
+                },
             };
             Stmt {
                 kind,

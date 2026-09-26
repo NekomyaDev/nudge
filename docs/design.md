@@ -266,6 +266,49 @@ Any trace is automatically a property-test input. Snapshot update: `nudge test -
 
 MVP lowering (v1.5): test blocks compile to `nudge_test_<slug>()` Python functions; `nudgec test <file.ndg>` type-checks, emits, and runs them (the `nudge test` runner follows at v0.1). `replay(path)` returns a `Trace`: `.cost_usd` sums `llm.call` costs, `.output` is the last `fn.return` value with dot access (`t.output.findings`). Unsupported record versions raise `ReplayMismatch`.
 
+
+### 6.4 Property-Based Tests (v1.3)
+
+```
+test "never satisfied above 5" {
+    for_all n in gen.int(0, 100) {
+        assert n <= 5
+    }
+}
+```
+
+`for_all x in gen.<name>(args) { ... }` runs the property body over a
+deterministic case set — edge values plus a seeded sweep (50 draws, fixed
+seed, reproducible byte-for-byte across machines and CI) — and **shrinks**
+the first failure to a minimal counterexample before raising: the failure
+above reports `n=6`, not the random case that happened to hit it.
+
+Generators (frozen v1):
+
+| Generator | Arity | Binds | Case set |
+|:---|:---|:---|:---|
+| `gen.int(lo, hi)` | 2 | int | range edges + seeded sweep; shrink = greedy descent toward the smallest failing value |
+| `gen.str(max_len)` | 1 | string | "", "a", max-length, alphabet samples; shrink = halving prefixes |
+| `gen.injection()` | 0 | string | fixed adversarial corpus: prompt-injection classics, template/brace tricks, quote escapes, script tags, control chars; shrink = prefix |
+| `gen.bool()` | 0 | bool | true, false |
+
+Rules (enforced by the checker):
+
+- **E0801** — `for_all` is only allowed inside test blocks; it is a test
+  artifact, not runtime control flow.
+- **E0802** — unknown generator or wrong arity/bound types.
+- **E0804** — property bodies must be **pure**: no `llm"""` calls, no tool
+  calls, and no calls to fns whose inferred effects are non-empty.
+  Properties run dozens of cases; they must stay deterministic and $0.
+- Nested `for_all` is allowed in the Python backend (the loop product);
+  one level is the documented TS surface.
+
+Lowering: the body becomes a `def _prop_<id>(x)` closure passed to
+`rt.for_all(gen, args, prop, var)` (Python) / `rt.forAll(...)` (TypeScript);
+the runtimes own case generation, the seeded PRNG and shrinkage. Both
+backends fail with the same message shape:
+`for_all n in gen.int(0, 100) failed: n=6 — ... (first failure: 50)`.
+
 ## 7. Agent State and Checkpoints
 
 ```

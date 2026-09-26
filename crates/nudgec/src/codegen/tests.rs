@@ -1370,3 +1370,19 @@ fn route_choice_lands_in_the_trace() {
     assert!(text.contains("\"route\": \"cheap\""), "trace:\n{text}");
     assert!(text.contains("\"model\": \"m1\""), "trace:\n{text}");
 }
+
+#[test]
+fn for_all_lowers_to_rt_for_all() {
+    let src = r#"
+test "props" {
+    for_all n in gen.int(0, 10) {
+        assert n <= 10
+    }
+}"#;
+    let py = gen(src);
+    assert!(
+        py.contains("rt.for_all(\"int\", [0, 10], _prop_0, \"n\")"),
+        "{py}"
+    );
+    assert!(py.contains("def _prop_0(n):"), "{py}");
+}

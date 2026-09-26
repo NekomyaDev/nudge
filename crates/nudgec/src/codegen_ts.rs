@@ -75,7 +75,7 @@ pub fn emit_ts(items: &[Item]) -> String {
                     "function {name}({ps}): {} {{\n",
                     ty_ts(ret, &aliases)
                 ));
-                out.push_str(&emit_body(body, &aliases, &sigs, None));
+                out.push_str(&emit_body(body, &aliases, &sigs, None, &mut 0));
                 out.push('}');
                 if name == "main" {
                     has_main = true;
@@ -112,7 +112,8 @@ pub fn emit_ts(items: &[Item]) -> String {
                     "function nudge_test_{}(): void {{\n",
                     crate::codegen::unique_slug(&slug_ts(name), &mut test_slugs)
                 ));
-                out.push_str(&emit_body(body, &aliases, &sigs, None));
+                let mut prop_id = 0;
+                out.push_str(&emit_body(body, &aliases, &sigs, None, &mut prop_id));
                 out.push('}');
             }
             Item::Agent { name, state, fns } => {
@@ -158,6 +159,7 @@ pub fn emit_ts(items: &[Item]) -> String {
                             &aliases,
                             &sigs,
                             Some((name.as_str(), list_fields.as_slice())),
+                            &mut 0,
                         ));
                         out.push('}');
                         if fn_name == "main" {
@@ -184,6 +186,7 @@ fn emit_body(
     // agent name + its LIST-typed state fields: JS `array += [x]` coerces
     // to a string — list state writes must emit .concat (python parity)
     agent: Option<(&str, &[String])>,
+    prop_id: &mut usize,
 ) -> String {
     if body.is_empty() {
         return String::new();
@@ -235,6 +238,43 @@ fn emit_body(
             ),
             StmtKind::ExprStmt(e) if i == last => format!("return {};", ts(e, aliases, sigs)),
             StmtKind::ExprStmt(e) => format!("{};", ts(e, aliases, sigs)),
+            StmtKind::ForAll {
+                var,
+                gen,
+                args,
+                body,
+            } => {
+                *prop_id += 1;
+                let arg_list = args
+                    .iter()
+                    .map(|a| ts(a, aliases, sigs))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let mut inner = String::new();
+                for st in body {
+                    let line = match &st.kind {
+                        StmtKind::Let { name, value, .. } => {
+                            format!("const {name} = {};", ts(value, aliases, sigs))
+                        }
+                        StmtKind::Assert(e) => format!(
+                            "if (!({})) throw new Error(\"assertion failed\");",
+                            ts(e, aliases, sigs)
+                        ),
+                        StmtKind::ExprStmt(e) => format!("{};", ts(e, aliases, sigs)),
+                        StmtKind::StateWrite { field, .. } => format!(
+                            "// error: state write 'state.{field}' outside an agent block (E0701)"
+                        ),
+                        // one nesting level is the documented v1 surface
+                        StmtKind::ForAll { .. } => "// error: nested for_all (E0805)".to_string(),
+                    };
+                    inner.push_str("    ");
+                    inner.push_str(&line);
+                    inner.push('\n');
+                }
+                format!(
+                    "rt.forAll(\"{gen}\", [{arg_list}], ({var}) => {{\n{inner}    }}, \"{var}\");"
+                )
+            }
         };
         out.push_str("  ");
         out.push_str(&line);
