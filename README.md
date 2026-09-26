@@ -97,6 +97,7 @@ python3 out/chatbot.py
 | **Nudge CI** | GitHub Action: agent regression testing on every push, $0 |
 | **NTF** | Open trace format (frozen v1) + conformance suite — logs you can replay |
 | **Property Tests** | `for_all x in gen { … }`: fuzz your agent logic (incl. an injection corpus), shrink failures |
+| **Typed Decisions** | `decide { … choose / yes/no / score }`: batched JEV-family decisions with distributions, confidence, deadlines |
 | **A2A & LSP & OTel** | Built in, not bolted on |
 
 </div>
@@ -284,6 +285,35 @@ Traces are JSONL records (`llm.call` / `tool.call` / `fn.return`) with a
 be tested against. A LangChain bridge ([`bridges/langchain_ntf.py`](bridges/langchain_ntf.py))
 converts other frameworks' runs into NTF, so replay, diffing and CI gates
 work on them too.
+
+## Typed Decisions (v1.4)
+
+Nudge compiles uncertainty from **any** source — LLM generation or a
+decision model — with the same effect system, traces and replay. Decisions
+talk the `/v1/systemone` wire contract that Laya's `laya.serve` and the
+TypeSafe Jev API share:
+
+```nudge
+fn triage(t: string) -> string uses Decision {
+    let d = decide {
+        dept:    "which team handles this?" choose [billing, technical, security],
+        churn:   "does the customer threaten to cancel?" yes/no,
+        urgency: "how urgent is this?" score [low, soon, critical]
+    }
+    on t
+    with { model: "laya:multilingual", deadline: 50 }   // ms — the family prices in time, not dollars
+    route { auto: resolve(d.dept.winner) when d.dept.confidence > 0.8,
+            review: escalate(d) otherwise }
+}
+```
+
+- One batched call per `decide` block; answers carry `winner/p/distribution/confidence`.
+- The **fake decision provider** (default) synthesizes deterministic seeded distributions — tests stay $0.
+- Live providers: `NUDGE_DECISION_SERVERS='{"laya": {"base_url": "http://localhost:8000"}}'`.
+- Decisions land in NTF traces (`decision.call`, with `latency_ms`); replay is $0; `trace-diff --fail-on-regression` gates latency growth.
+- `nudgec policy-sweep trace.jsonl --question dept --thresholds 0.5,0.8` re-cuts thresholds over recorded distributions — zero model calls.
+
+See [docs/decision.md](docs/decision.md) for the full contract.
 
 ## Agent CI (GitHub Action)
 

@@ -26,6 +26,7 @@ mod lexer;
 mod lint;
 mod lsp;
 mod parser;
+mod policysweep;
 mod tracecheck;
 mod tracediff;
 mod traceview;
@@ -48,6 +49,7 @@ fn usage() -> ! {
     eprintln!("  nudgec lsp                serve the Language Server Protocol over stdio");
     eprintln!("  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace");
     eprintln!("  nudgec trace-diff <a.jsonl> <b.jsonl> [--fail-on-regression]  compare traces; gate CI on regression");
+    eprintln!("  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8]");
     eprintln!("  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)");
     process::exit(64);
 }
@@ -123,7 +125,9 @@ fn main() {
         let src = read_src(&args[2]);
         traceview::run(&args[2], &src, port, no_open);
     }
-    if args.len() != 3 {
+    // policy-sweep takes the trace plus flags (len > 3); everything else
+    // is exactly <cmd> <file>
+    if args.len() != 3 && args[1] != "policy-sweep" {
         usage();
     }
     // `resume` takes a run_id, not a source file
@@ -422,6 +426,47 @@ fn main() {
                 }
                 process::exit(1);
             }
+        }
+        // v1.4: policy sweep — re-cut decision thresholds over recorded
+        // distributions; zero model calls (design §11.5)
+        "policy-sweep" => {
+            let src = read_src(&args[2]);
+            let mut question = String::new();
+            let mut metric = "confidence".to_string();
+            let mut thresholds: Vec<f64> = vec![0.5, 0.8, 0.95];
+            let mut i = 3; // args[2] is the trace file
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--question" | "-q" => {
+                        i += 1;
+                        question = args.get(i).cloned().unwrap_or_default();
+                    }
+                    "--metric" | "-m" => {
+                        i += 1;
+                        metric = args.get(i).cloned().unwrap_or(metric);
+                    }
+                    "--thresholds" | "-t" => {
+                        i += 1;
+                        thresholds = args
+                            .get(i)
+                            .map(|s| s.split(',').filter_map(|v| v.trim().parse().ok()).collect())
+                            .unwrap_or(thresholds);
+                    }
+                    other => {
+                        eprintln!("unknown policy-sweep flag '{other}' (use --question, --metric, --thresholds)");
+                        process::exit(64);
+                    }
+                }
+                i += 1;
+            }
+            if question.is_empty() {
+                eprintln!("usage: nudgec policy-sweep <trace.jsonl> --question <name> [--metric confidence|p] [--thresholds 0.5,0.8]");
+                process::exit(64);
+            }
+            print!(
+                "{}",
+                policysweep::sweep(&src, &question, &metric, &thresholds)
+            );
         }
         // design §9 (v1.0): A2A agent-card export — one card per agent
         // block, or a single card wrapping the file's top-level fns
