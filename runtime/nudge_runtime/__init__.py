@@ -88,6 +88,24 @@ from pathlib import Path
 __version__ = "1.1.0"
 
 
+def _version_key(v):
+    parts = re.findall(r"\d+", str(v))[:3]
+    return tuple(int(x) for x in parts) if len(parts) == 3 else (0, 0, 0)
+
+
+def require_runtime(compiler_version):
+    """Generated programs call this with the nudgec version that produced
+    them (B6). A runtime older than the compiler may lack language
+    features the program uses — warn loudly instead of failing subtly.
+    Never raises: the program still runs, just with a visible caveat."""
+    if _version_key(__version__) < _version_key(compiler_version):
+        sys.stderr.write(
+            f"warning: nudge-runtime {__version__} is older than the nudgec "
+            f"{compiler_version} that generated this program — some features "
+            f"may be missing; upgrade with: pip install -U nudge-runtime\n"
+        )
+
+
 # ── schemas ──────────────────────────────────────────────────────────
 
 class Schema(dict):

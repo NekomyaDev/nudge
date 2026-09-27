@@ -13,6 +13,28 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as process from "node:process";
 
+export const __version__ = "1.1.0";
+
+function versionKey(v) {
+  const parts = String(v).match(/\d+/g) || [];
+  const [a, b, c] = parts.map(Number);
+  return [a || 0, b || 0, c || 0];
+}
+
+// Generated programs call this with the nudgec version that produced
+// them (B6). Older runtime = possibly missing features; warn, never throw.
+export function compatibilityCheck(compilerVersion) {
+  const me = versionKey(__version__);
+  const comp = versionKey(compilerVersion);
+  if (me[0] < comp[0] || (me[0] === comp[0] && me[1] < comp[1]) ||
+      (me[0] === comp[0] && me[1] === comp[1] && me[2] < comp[2])) {
+    process.stderr.write(
+      `warning: nudge_runtime ${__version__} is older than the nudgec ${compilerVersion} ` +
+        `that generated this program — some features may be missing\n`,
+    );
+  }
+}
+
 export function schema(s) {
   return s;
 }
