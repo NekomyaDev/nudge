@@ -33,6 +33,7 @@ mod policysweep;
 mod recipes;
 mod tracecheck;
 mod tracediff;
+mod traceexplain;
 mod traceview;
 
 use std::{env, fs, process};
@@ -56,6 +57,7 @@ fn usage() -> ! {
     eprintln!("  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json");
     eprintln!("  nudgec lsp                serve the Language Server Protocol over stdio");
     eprintln!("  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace");
+    eprintln!("  nudgec explain <t.jsonl>    human report over a trace: totals, failures, low-confidence answers");
     eprintln!("  nudgec trace-diff <a.jsonl> <b.jsonl> [--fail-on-regression]  compare traces; gate CI on regression");
     eprintln!("  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8]");
     eprintln!("  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)");
@@ -122,6 +124,11 @@ fn main() {
                 process::exit(1);
             }
         }
+        return;
+    }
+    // `explain` turns a recorded trace into a human report
+    if args.len() == 3 && args[1] == "explain" {
+        print!("{}", traceexplain::explain(&read_src(&args[2])));
         return;
     }
     // `debug` speaks DAP over stdio over a recorded trace (no file arg parsing)
