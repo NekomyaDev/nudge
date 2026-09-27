@@ -20,12 +20,30 @@ use crate::ast::{Expr, ExprKind, Item, Stmt, StmtKind, TypeExpr};
 pub struct Lint {
     pub code: &'static str,
     pub msg: String,
+    /// B5: an insertion-based auto-fix. `at` is a byte offset in the
+    /// source; fixes are applied bottom-up so offsets never shift.
+    pub fix: Option<Fix>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Fix {
+    pub at: usize,
+    pub insert: String,
 }
 
 fn lint(code: &'static str, msg: impl Into<String>) -> Lint {
     Lint {
         code,
         msg: msg.into(),
+        fix: None,
+    }
+}
+
+fn lint_fixable(code: &'static str, msg: impl Into<String>, fix: Fix) -> Lint {
+    Lint {
+        code,
+        msg: msg.into(),
+        fix: Some(fix),
     }
 }
 
@@ -83,23 +101,43 @@ fn prompt_words(body: &str) -> usize {
 
 fn lint_llm_call(
     ctx: &str,
-    prompt_body: Option<&str>,
+    prompt: &Expr,
     options: &[(String, Expr)],
     repair: bool,
     records: &[(String, Vec<String>)],
     out: &mut Vec<Lint>,
 ) {
+    // insertion point for with-block options: right after the last
+    // option expression (a leading comma keeps it always valid)
+    let with_fix = |insert: String| -> Option<Fix> {
+        options.last().map(|(_, v)| Fix {
+            at: v.span.end,
+            insert,
+        })
+    };
     // W0001: uncapped cost
     if !options.iter().any(|(k, _)| k == "budget") {
-        out.push(lint("W0001", format!("in {ctx}: llm call has no `budget` option — cost is uncapped; add `budget: N USD` to the with-block")));
+        let msg = format!("in {ctx}: llm call has no `budget` option — cost is uncapped; add `budget: N USD` to the with-block");
+        match with_fix(", budget: 0.02 USD".to_string()) {
+            Some(f) => out.push(lint_fixable("W0001", msg, f)),
+            None => out.push(lint("W0001", msg)),
+        }
     }
     // W0004: schema without repair — a validation failure raises instead
     // of entering the repair loop. Applies to streaming too: `stream let`
     // shares the §4.2 repair loop (an early-abort counts as a violation).
     if options.iter().any(|(k, _)| k == "schema") && !repair {
-        out.push(lint("W0004", format!("in {ctx}: `schema` without `retry: N with repair` — a schema violation raises at runtime instead of being repaired; add a repair loop or accept the crash")));
+        let msg = format!("in {ctx}: `schema` without `retry: N with repair` — a schema violation raises at runtime instead of being repaired; add a repair loop or accept the crash");
+        match with_fix(", retry: 2 with repair".to_string()) {
+            Some(f) => out.push(lint_fixable("W0004", msg, f)),
+            None => out.push(lint("W0004", msg)),
+        }
     }
-    let Some(body) = prompt_body else { return };
+    let body = match &prompt.kind {
+        ExprKind::Prompt { body, .. } => body.as_str(),
+        ExprKind::Str(s) => s.as_str(),
+        _ => return,
+    };
     // W0002: vague prompt
     if prompt_words(body) < 4 {
         out.push(lint("W0002", format!("in {ctx}: prompt is fewer than 4 words — vague instructions produce vague output; state the task and the expected shape")));
@@ -132,13 +170,19 @@ fn lint_llm_call(
                 .filter(|f| words.iter().any(|w| w == &f.to_lowercase()))
                 .count();
             if !fields.is_empty() && mentioned == 0 {
-                out.push(lint(
+                let fix = Fix {
+                    // before the closing """ of the prompt
+                    at: prompt.span.end - 3,
+                    insert: format!("\n    return JSON with fields: {}", fields.join(", ")),
+                };
+                out.push(lint_fixable(
                     "W0003",
                     format!(
                         "in {ctx}: schema `{schema}` fields ({}) never appear in the prompt — tell the model the output contract, e.g. \"return JSON with fields: {}\"",
                         fields.join(", "),
                         fields.join(", ")
                     ),
+                    fix,
                 ));
             }
         }
@@ -152,12 +196,7 @@ fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut V
             options,
             repair,
         } => {
-            let body = match &prompt.as_ref().kind {
-                ExprKind::Prompt { body, .. } => Some(body.as_str()),
-                ExprKind::Str(s) => Some(s.as_str()),
-                _ => None,
-            };
-            lint_llm_call(ctx, body, options, *repair, records, out);
+            lint_llm_call(ctx, prompt, options, *repair, records, out);
             walk_expr(ctx, prompt, records, out);
             for (_, v) in options {
                 walk_expr(ctx, v, records, out);
@@ -295,8 +334,76 @@ pub fn lint_items(items: &[Item]) -> Vec<Lint> {
     deduped
 }
 
+/// Apply every fix bottom-up (insertions only — existing offsets stay
+/// valid). Deduplicates fixes at identical offsets.
+pub fn apply_fixes(src: &str, lints: &[Lint]) -> String {
+    let mut fixes: Vec<&Fix> = lints.iter().filter_map(|l| l.fix.as_ref()).collect();
+    fixes.sort_by_key(|f| std::cmp::Reverse(f.at));
+    let mut out = src.to_string();
+    let mut i = 0usize;
+    while i < fixes.len() {
+        // fixes sharing an offset (e.g. W0001 + W0004 on the same with-block)
+        // merge into one insertion
+        let at = fixes[i].at;
+        let mut insert = String::new();
+        while i < fixes.len() && fixes[i].at == at {
+            let part = &fixes[i].insert;
+            // inserts carry their own leading comma — don't double it
+            if !insert.is_empty() && !part.starts_with(',') {
+                insert.push_str(", ");
+            }
+            insert.push_str(part);
+            i += 1;
+        }
+        let at = at.min(out.len());
+        out.insert_str(at, &insert);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::lexer::lex;
+    use crate::parser::parse;
+
+    const FIXABLE: &str = concat!(
+        "type Answer = { summary: string, confidence: float }\n",
+        "\n",
+        "fn run(text: string) -> Answer uses LLM {\n",
+        "    llm\"\"\"Summarize the text.\"\"\"\n",
+        "    with { schema: Answer, model: \"openai:gpt-4o-mini\" }\n",
+        "}\n",
+    );
+
+    #[test]
+    fn apply_fixes_makes_the_sample_lint_clean_and_compilable() {
+        let items = parse(lex(FIXABLE).unwrap()).unwrap();
+        let lints = lint_items(&items);
+        assert_eq!(lints.len(), 4, "W0001/W0002/W0003/W0004 all fire");
+        let fixed = apply_fixes(FIXABLE, &lints);
+        // the fixed program parses and lints clean
+        let items2 = parse(lex(&fixed).unwrap()).unwrap();
+        assert!(
+            lint_items(&items2).is_empty(),
+            "remaining: {:?}",
+            lint_items(&items2)
+                .iter()
+                .map(|l| &l.code)
+                .collect::<Vec<_>>()
+        );
+        // W0002's fix is nil (can't write your prompt for you) but W0002
+        // itself is gone because the W0003 insertion added words
+    }
+
+    #[test]
+    fn fixes_sharing_an_offset_merge_without_double_commas() {
+        let items = parse(lex(FIXABLE).unwrap()).unwrap();
+        let lints = lint_items(&items);
+        let fixed = apply_fixes(FIXABLE, &lints);
+        assert!(!fixed.contains(",, "), "{fixed}");
+        assert!(!fixed.contains(", ,"), "{fixed}");
+    }
+
     use super::*;
 
     fn lints(src: &str) -> Vec<Lint> {

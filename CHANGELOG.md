@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **`nudgec lint <file.ndg> [--fix]` (B5)**: lints as a standalone command with auto-fixes — W0001 inserts a budget, W0004 inserts `retry: 2 with repair`, W0003 appends the schema field list to the prompt (all insertion-based, applied bottom-up, same-offset fixes merge); the re-lint after fixing shows what's left; W0002 stays manual (a prompt is yours to write)
 - **CONTRIBUTING.md (D6)**: repo map, ground rules (additive-on-main, tests required, no runtime deps), good-first-contribution list (bridges, conformance vendors, recipes, lessons)
 - **Community bridges (D5)**: `bridges/langgraph_ntf.py` + `bridges/crewai_ntf.py` with tested, framework-free conversion helpers (graph steps → `fn.return`, CrewAI tasks/tools → `llm.call`/`tool.call`); helper output validates as frozen-v1 NTF; callback tracers wanted in #69
 - **JEV conformance page (D4)**: `docs/jev-conformance.md` — how decision-model vendors validate against the conformance suite and get listed (Laya verified live; Jev/Valen contract-verified)
