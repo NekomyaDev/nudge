@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Version compatibility (B6)**: generated programs now stamp the real nudgec version (was hardcoded `0.1.0`) and call a guarded compatibility hook — `rt.require_runtime("x.y.z")` (Python, via `hasattr`) / `rt.compatibilityCheck?.("x.y.z")` (TS, optional call). Runtimes older than the compiler warn loudly ("some features may be missing; upgrade") instead of failing subtly; old runtimes without the hook skip it silently
 - **`nudgec check <file.ndg> --watch`**: re-check on every save — a dependency-free 300 ms mtime poll that spawns the real `nudgec check` per change, so flags, lints and error hints stay identical to a plain run; Ctrl-C stops
 - **`nudgec fmt <file.ndg> [--check]`**: safe formatter — re-indents from the token stream's brace depth, trims trailing whitespace, collapses blank-line runs; never reorders or re-flows code, keeps `llm"""` bodies verbatim; idempotent, and `--check` exits 1 for CI
 - **`nudgec trace-html <trace.jsonl> [--out file.html]`**: exports the trace viewer as a static single-file HTML — trace data inlined as a JS string, no server, no network, no external assets; open it anywhere (e-mail, PR review, docs)
