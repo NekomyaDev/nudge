@@ -129,6 +129,14 @@ sudo mv nudgec /usr/local/bin/
 # 解压 zip 并添加到 PATH
 ```
 
+### 或者脚手架一个项目
+
+```sh
+nudgec init my-agent --list        # 浏览模板（hello、triage、rag-agent 等）
+nudgec init my-agent --template triage
+cd my-agent && nudgec check my-agent.ndg && nudgec build my-agent.ndg
+```
+
 ### 你的第一个 Nudge 程序
 
 安装生成的代码所导入的 Python 运行时：
