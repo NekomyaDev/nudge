@@ -292,6 +292,7 @@ python3 out/hello.py
 | `NUDGE_DECISION_SERVERS` | 决策提供者注册表（JSON）：`{"laya": {"base_url": "http://localhost:8000"}}`。未配置的命名提供者会报错——绝不静默回退到 fake |
 | `NUDGE_PRICING` | 真实提供者的 JSON 价格表：`{"my-model": [1.0, 2.0]}`（每 1M 输入/输出 token 的美元价格）。扩展内置价格表 |
 | `NUDGE_RETRY_TRANSIENT` | 对瞬时提供者错误（429/5xx）的重试次数，默认 3；`0` 禁用 |
+| `NUDGE_TOOL_GRANTS` | 执行层工具策略（JSON）：`{"web_search": ["*"], "kb/*": ["retrieve"], "shell": []}` —— 未授权的工具会抛出 `ToolDenied` 并记录拒绝（`outcome: "denied"`）；有策略即默认拒绝 |
 | `NUDGE_BACKOFF_BASE` | 指数退避基数（秒），默认 5s、25s、125s |
 | `NUDGE_DECISION_CACHE` | 决策缓存路径：真实提供者的已验证答案跨运行持久化（重放优先） |
 | `NUDGE_API_KEY` / `NUDGE_BASE_URL` | OpenAI 兼容提供商的凭证和端点 |

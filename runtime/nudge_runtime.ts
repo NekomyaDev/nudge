@@ -351,6 +351,56 @@ export function llmStream(opts) {
   return out;
 }
 
+// C5: NUDGE_TOOL_GRANTS — execution-layer capability policy. Keys: tool
+// name, "server/tool", "server/*" or "*"; values: fnmatch rules (["*"]
+// allows). No env = unrestricted; policy present without a matching key
+// fails closed. Denials are traced with outcome "denied".
+export class ToolDenied extends Error {
+  constructor(msg) {
+    super(msg);
+    this.name = "ToolDenied";
+  }
+}
+
+let _toolGrantsCache = null;
+
+function toolGrants() {
+  if (_toolGrantsCache === null) {
+    let grants = {};
+    const raw = process.env.NUDGE_TOOL_GRANTS;
+    if (raw) {
+      try {
+        const data = JSON.parse(raw);
+        if (data && typeof data === "object") grants = data;
+      } catch (e) {
+        process.stderr.write(`warning: NUDGE_TOOL_GRANTS ignored (${e.message})\n`);
+      }
+    }
+    _toolGrantsCache = grants;
+  }
+  return _toolGrantsCache;
+}
+
+function toolAllowed(name, server) {
+  const grants = toolGrants();
+  if (!Object.keys(grants).length) return true;
+  const keys = [name];
+  if (server) keys.push(`${server}/${name}`, `${server}/*`);
+  const matches = (rules) => rules.some((r) => wildcardMatch(name, r));
+  for (const key of keys) {
+    if (key in grants) return matches(grants[key]);
+  }
+  if ("*" in grants) return matches(grants["*"]);
+  return false;
+}
+
+function wildcardMatch(name, rule) {
+  if (rule === "*") return true;
+  // minimal glob: '*' matches any run of characters
+  const rx = new RegExp(`^${String(rule).replace(/[.*+?^${}()|[\]\\]/g, (c) => (c === "*" ? ".*" : `\\${c}`))}$`);
+  return rx.test(name);
+}
+
 export function toolStub(name, args = [], opts = {}) {
   // full-replay parity with the python runtime: tool calls are mocked from
   // the trace and write NO record (the trace stays untouched during replay)
@@ -366,6 +416,15 @@ export function toolStub(name, args = [], opts = {}) {
       );
     }
     return recorded[i];
+  }
+  if (!toolAllowed(name, opts.server)) {
+    const record = { kind: "tool.call", tool: name, input: args, output: null, outcome: "denied" };
+    if (opts.server) record.server = opts.server;
+    if (_branchId !== null) record.branch = _branchId;
+    _emitTrace(record);
+    throw new ToolDenied(
+      `tool '${name}'${opts.server ? ` on server '${opts.server}'` : ""} is not granted by NUDGE_TOOL_GRANTS`,
+    );
   }
   const record = { kind: "tool.call", tool: name, input: args, output: [] };
   if (opts.server) record.server = opts.server;

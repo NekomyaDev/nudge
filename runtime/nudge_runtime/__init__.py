@@ -445,6 +445,54 @@ def _mcp_call(server, name, args, cfg):
     return content
 
 
+class ToolDenied(PermissionError):
+    """NUDGE_TOOL_GRANTS refused this tool call (C5). A policy-level
+    refusal at the execution layer — injected instructions cannot invoke
+    ungranted tools because the runtime refuses, not because a prompt
+    asked nicely. The refusal is traced (outcome "denied")."""
+
+
+_TOOL_GRANTS_CACHE = None
+
+
+def _tool_grants():
+    """NUDGE_TOOL_GRANTS (C5): JSON policy mapping keys to fnmatch rules.
+    Keys: tool name ("web_search"), server-qualified ("kb/retrieve"),
+    server-wide ("kb/*") or "*" (default policy). Values: ["*"] allow,
+    specific patterns allow those tools, [] denies. No env = unrestricted
+    (today's behavior). A policy present without a matching key = deny
+    (fail closed)."""
+    global _TOOL_GRANTS_CACHE
+    if _TOOL_GRANTS_CACHE is None:
+        grants = None
+        raw = os.environ.get("NUDGE_TOOL_GRANTS")
+        if raw:
+            try:
+                data = json.loads(raw)
+                grants = data if isinstance(data, dict) else None
+            except Exception as e:
+                print(f"warning: NUDGE_TOOL_GRANTS ignored ({e})", file=sys.stderr)
+        _TOOL_GRANTS_CACHE = grants or {}
+    return _TOOL_GRANTS_CACHE
+
+
+def _tool_allowed(name, server):
+    import fnmatch
+
+    grants = _tool_grants()
+    if not grants:
+        return True
+    keys = [name]
+    if server:
+        keys += [f"{server}/{name}", f"{server}/*"]
+    for key in keys:
+        if key in grants:
+            return any(fnmatch.fnmatch(name, r) for r in grants[key])
+    if "*" in grants:
+        return any(fnmatch.fnmatch(name, r) for r in grants["*"])
+    return False
+
+
 def tool_stub(name, args=None, server=None):
     """Tool call (design §8).
 
@@ -478,6 +526,27 @@ def tool_stub(name, args=None, server=None):
         if _replay_tool_available(name):
             return _replay_tool_output(name)
         # resume past the recorded prefix: fall through to a live call
+    if not _tool_allowed(name, server):
+        record = {
+            "kind": "tool.call",
+            "tool": name,
+            "input": _jsonable(
+                args if isinstance(args, dict) else list(args) if args is not None else []
+            ),
+            "output": None,
+            "outcome": "denied",
+        }
+        if server is not None:
+            record["server"] = server
+        branch = _current_branch()
+        if branch:
+            record["branch"] = branch
+        _emit_trace(record)
+        raise ToolDenied(
+            f"tool '{name}'"
+            + (f" on server '{server}'" if server else "")
+            + " is not granted by NUDGE_TOOL_GRANTS"
+        )
     if registry is not None and registry[server].get("command"):
         result = _mcp_call(server, name, args, registry[server])
     else:

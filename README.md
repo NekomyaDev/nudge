@@ -312,6 +312,7 @@ Everything a compiled Nudge program reads comes from these variables:
 | `NUDGE_DECISION_SERVERS` | Decision provider registry (JSON): `{"laya": {"base_url": "http://localhost:8000"}}`. Unconfigured named providers raise — no silent fake |
 | `NUDGE_PRICING` | JSON pricing table for real providers: `{"my-model": [1.0, 2.0]}` (USD per 1M in/out tokens). Extends the built-in table — unknown models stop recording $0 |
 | `NUDGE_RETRY_TRANSIENT` | Retries for transient provider errors (429/5xx), default 3; `0` disables |
+| `NUDGE_TOOL_GRANTS` | Execution-layer tool policy (JSON): `{"web_search": ["*"], "kb/*": ["retrieve"], "shell": []}` — ungranted tools raise `ToolDenied` and the denial is traced (`outcome: "denied"`); policy present = fail closed |
 | `NUDGE_BACKOFF_BASE` | Exponential backoff base in seconds (5s, 25s, 125s by default) |
 | `NUDGE_DECISION_CACHE` | Path for the decision cache: validated answers for real providers persist across runs (replay takes precedence) |
 | `NUDGE_API_KEY` / `NUDGE_BASE_URL` | Credentials and endpoint for OpenAI-compatible providers |
