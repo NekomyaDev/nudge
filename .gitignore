@@ -40,3 +40,4 @@ desktop.ini
 runtime/build/
 *.egg-info/
 .nudge/
+runtime/npm/nudge_runtime.ts

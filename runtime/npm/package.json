@@ -1,0 +1,12 @@
+{
+  "name": "@nekomyadev/nudge-runtime",
+  "version": "1.1.0",
+  "description": "TypeScript runtime for the Nudge language — typed LLM/decision calls, schema validation, replay, NTF traces. Pure JS, zero dependencies.",
+  "type": "module",
+  "main": "nudge_runtime.ts",
+  "files": ["nudge_runtime.ts", "README.md"],
+  "keywords": ["nudge", "llm", "agents", "jev", "decisions", "mcp", "ntf"],
+  "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "https://github.com/NekomyaDev/nudge" },
+  "engines": { "node": ">=18" }
+}
