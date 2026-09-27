@@ -290,6 +290,7 @@ python3 out/hello.py
 |:---|:---|
 | `NUDGE_PROVIDER` | 提供商覆盖（`fake`、`openai`、`anthropic` 等）。`fake` 合成模式有效的输出——无需 API 密钥 |
 | `NUDGE_DECISION_SERVERS` | 决策提供者注册表（JSON）：`{"laya": {"base_url": "http://localhost:8000"}}`。未配置的命名提供者会报错——绝不静默回退到 fake |
+| `NUDGE_PRICING` | 真实提供者的 JSON 价格表：`{"my-model": [1.0, 2.0]}`（每 1M 输入/输出 token 的美元价格）。扩展内置价格表 |
 | `NUDGE_DECISION_CACHE` | 决策缓存路径：真实提供者的已验证答案跨运行持久化（重放优先） |
 | `NUDGE_API_KEY` / `NUDGE_BASE_URL` | OpenAI 兼容提供商的凭证和端点 |
 | `NUDGE_MCP_SERVERS` | MCP 服务器注册表 JSON（见上文） |
