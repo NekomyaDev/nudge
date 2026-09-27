@@ -7,6 +7,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **CONTRIBUTING.md (D6)**: repo map, ground rules (additive-on-main, tests required, no runtime deps), good-first-contribution list (bridges, conformance vendors, recipes, lessons)
+- **Community bridges (D5)**: `bridges/langgraph_ntf.py` + `bridges/crewai_ntf.py` with tested, framework-free conversion helpers (graph steps → `fn.return`, CrewAI tasks/tools → `llm.call`/`tool.call`); helper output validates as frozen-v1 NTF; callback tracers wanted in #69
+- **JEV conformance page (D4)**: `docs/jev-conformance.md` — how decision-model vendors validate against the conformance suite and get listed (Laya verified live; Jev/Valen contract-verified)
 - **npm package prep (D3)**: `runtime/npm/` — `@nekomyadev/nudge-runtime` package manifest (zero-dep TS runtime); `npm-publish.yml` workflow publishes on `nudge-runtime-*` tags (requires the `NPM_TOKEN` secret) and smoke-loads the API before publishing
 - **`nudgec mcp <file.ndg> [--fns a,b]` (D2)**: expose a program's functions as **MCP tools** over stdio (JSON-RPC 2.0, protocol 2024-11-05) — any MCP-speaking agent (Claude, Cursor, …) can call Nudge's typed decision functions; `initialize`/`tools/list`/`tools/call` implemented, tool input uses the same `{input}` contract as `nudgec serve`/`eval`; stdlib-only driver
 - **`nudgec serve <file.ndg> [--fn <name>] [--port N]` (D1)**: run a program's function as a local HTTP API — `POST /run` with `{input: <string | [args]>}` returns `{ok, result}` (typed records JSON-ified), `GET /health` for probes; stdlib `http.server` only, zero dependencies; traces/providers behave exactly like a normal run
