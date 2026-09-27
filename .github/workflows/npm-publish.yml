@@ -14,10 +14,13 @@ jobs:
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org/
-      - name: Sync runtime into the package dir
-        run: cp runtime/nudge_runtime.ts runtime/npm/nudge_runtime.ts
+      - name: Build package (compile the single TS runtime to js + d.ts)
+        run: |
+          cd runtime/npm
+          npm install --no-save typescript@5
+          npx tsc ../nudge_runtime.ts --outDir . --target es2022 --module nodenext --moduleResolution nodenext --declaration --skipLibCheck
       - name: Smoke: package loads and exposes the API
-        run: node --experimental-strip-types -e "import('./runtime/npm/nudge_runtime.ts').then(m => { if (!m.llmCall || !m.decide || !m.predictBatch || !m.forAll) process.exit(1); })"
+        run: node -e "import('./runtime/npm/nudge_runtime.js').then(m => { if (!m.llmCall || !m.decide || !m.predictBatch || !m.forAll) process.exit(1); })"
       - name: Publish
         run: npm publish runtime/npm --access public
         env:

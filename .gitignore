@@ -41,3 +41,5 @@ runtime/build/
 *.egg-info/
 .nudge/
 runtime/npm/nudge_runtime.ts
+runtime/npm/nudge_runtime.js
+runtime/npm/nudge_runtime.d.ts
