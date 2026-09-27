@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **`nudgec serve <file.ndg> [--fn <name>] [--port N]` (D1)**: run a program's function as a local HTTP API — `POST /run` with `{input: <string | [args]>}` returns `{ok, result}` (typed records JSON-ified), `GET /health` for probes; stdlib `http.server` only, zero dependencies; traces/providers behave exactly like a normal run
 - **`nudgec runs [--run <run_id>]` (C8)**: inspect the local agent run store — list every run in `.nudge/runs/` (program/trace/checkpoint present?) or show one run's program path, checkpoint state fields and trace record count; pairs with `nudgec resume`
 - **OTLP/JSON export (C7)**: `NUDGE_OTEL_ENDPOINT=<url>` POSTs the standard OTLP/JSON collector payload (`resourceSpans`, `service.name: nudge-program`) alongside the existing `NUDGE_OTEL` file export — best effort by default (observability never breaks the program), `NUDGE_OTEL_STRICT=1` makes failures fatal
 - **Output guards (C6)**: `NUDGE_GUARD=pii` masks secrets (`sk-…`/`ghp_…`/`AKIA…`), emails, IP addresses and long digit runs in every string an LLM produced — applied before the value reaches the program and before the trace record is written, with the additive `guard: [...]` field recording what ran (both backends)
