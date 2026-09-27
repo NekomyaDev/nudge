@@ -36,6 +36,7 @@ mod tracecheck;
 mod tracediff;
 mod traceexplain;
 mod traceview;
+mod watch;
 
 use std::{env, fs, process};
 
@@ -52,6 +53,7 @@ fn usage() -> ! {
     eprintln!("  nudgec check <file.ndg>   type-check (E0101–E0302)");
     eprintln!("  nudgec build <file.ndg>   check, then emit Python to out/<name>.py");
     eprintln!("  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts");
+    eprintln!("  nudgec check <file.ndg> --watch   re-check on every file change (Ctrl-C to stop)");
     eprintln!("  nudgec cost  <file.ndg>   static cost report per fn");
     eprintln!("  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn");
     eprintln!("  nudgec resume <run_id>    continue a crashed run from its last checkpoint");
@@ -128,6 +130,18 @@ fn main() {
             }
         }
         return;
+    }
+    // `check --watch` re-runs the checker on every file change (B4)
+    if args.len() >= 3 && args[1] == "check" && args.iter().any(|a| a == "--watch") {
+        let file = match args
+            .iter()
+            .skip(1)
+            .find(|a| !a.starts_with('-') && a.as_str() != "check")
+        {
+            Some(f) => f.clone(),
+            None => usage(),
+        };
+        watch::run(&file);
     }
     // `fmt` normalizes indentation; --check reports without writing
     if args.len() >= 3 && args[1] == "fmt" {
