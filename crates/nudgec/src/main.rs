@@ -30,6 +30,7 @@ mod learn;
 mod lexer;
 mod lint;
 mod lsp;
+mod mcpserver;
 mod parser;
 mod policysweep;
 mod recipes;
@@ -72,6 +73,7 @@ fn usage() -> ! {
         "  nudgec compare <results_a.jsonl> <results_b.jsonl>  two eval runs: which rows flipped"
     );
     eprintln!("  nudgec runs  [--run <run_id>]   list recorded agent runs / show one run's state and trace");
+    eprintln!("  nudgec mcp   <file.ndg> [--fns a,b]   expose program fns as MCP tools over stdio");
     eprintln!("  nudgec serve <file.ndg> [--fn <name>] [--port N]   run a program fn as a local HTTP API (POST /run, GET /health)");
     eprintln!("  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8]  score a program over a dataset");
     eprintln!("  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)");
@@ -267,6 +269,7 @@ fn main() {
     if args.len() != 3
         && args[1] != "policy-sweep"
         && args[1] != "serve"
+        && args[1] != "mcp"
         && args[1] != "eval"
         && args[1] != "compare"
         && args[1] != "runs"
@@ -754,6 +757,60 @@ fn main() {
                 process::exit(1);
             }
             match process::Command::new("python3").arg(&server_path).status() {
+                Ok(st) => process::exit(st.code().unwrap_or(0)),
+                Err(e) => {
+                    eprintln!("error: cannot run python3: {e}");
+                    process::exit(1);
+                }
+            }
+        }
+        "mcp" => {
+            // D2: expose the program's fns as MCP tools over stdio
+            let mut fns = String::new();
+            let mut i = 3usize;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--fns" | "-f" => {
+                        i += 1;
+                        fns = args.get(i).cloned().unwrap_or_default();
+                    }
+                    other => {
+                        eprintln!("error: unknown mcp argument '{other}'");
+                        process::exit(64);
+                    }
+                }
+                i += 1;
+            }
+            let items = match compile(&src) {
+                Ok(items) => items,
+                Err((msg, at)) => {
+                    eprintln!("error[E0002]: {msg} at byte {at}");
+                    print_hint("E0002");
+                    process::exit(1);
+                }
+            };
+            let stem = std::path::Path::new(&args[2])
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("out");
+            fs::create_dir_all("out").unwrap_or(());
+            let module_path = std::path::Path::new("out").join(format!("{stem}.py"));
+            if let Err(e) = fs::write(&module_path, codegen::emit(&items)) {
+                eprintln!("error: cannot write {}: {e}", module_path.display());
+                process::exit(1);
+            }
+            let abs = module_path.canonicalize().unwrap_or_else(|e| {
+                eprintln!("error: cannot resolve {}: {e}", module_path.display());
+                process::exit(1);
+            });
+            let driver_path = std::path::Path::new("out").join(format!("{stem}_mcp.py"));
+            let driver_src =
+                mcpserver::driver(&abs.to_string_lossy(), env!("CARGO_PKG_VERSION"), &fns);
+            if let Err(e) = fs::write(&driver_path, driver_src) {
+                eprintln!("error: cannot write {}: {e}", driver_path.display());
+                process::exit(1);
+            }
+            match process::Command::new("python3").arg(&driver_path).status() {
                 Ok(st) => process::exit(st.code().unwrap_or(0)),
                 Err(e) => {
                     eprintln!("error: cannot run python3: {e}");
