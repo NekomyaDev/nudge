@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **`nudgec fmt <file.ndg> [--check]`**: safe formatter — re-indents from the token stream's brace depth, trims trailing whitespace, collapses blank-line runs; never reorders or re-flows code, keeps `llm"""` bodies verbatim; idempotent, and `--check` exits 1 for CI
 - **`nudgec trace-html <trace.jsonl> [--out file.html]`**: exports the trace viewer as a static single-file HTML — trace data inlined as a JS string, no server, no network, no external assets; open it anywhere (e-mail, PR review, docs)
 - **`nudgec explain <trace.jsonl>`**: human report over a recorded run — totals (calls, tokens, cost, decision latency, cache hits, repairs) plus the records a human should look at: failures, deadline misses and the weakest typed answers under 0.5; an explicit "nothing to review" line when the run is clean
 - **docs/recipes/ — the recipe book**: six copy-pasteable patterns (typed extraction, fallback-model routing, human escalation, injection guard, cost-capped call with repair, par-map fan-out); every recipe is type-checked by a compiler test so the book can never drift from the grammar

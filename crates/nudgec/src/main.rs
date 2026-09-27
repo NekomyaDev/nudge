@@ -20,6 +20,7 @@ mod codegen;
 mod codegen_ts;
 mod cost;
 mod dap;
+mod fmt;
 mod fuzz;
 mod hints;
 mod init;
@@ -41,6 +42,7 @@ use std::{env, fs, process};
 fn usage() -> ! {
     eprintln!("nudgec {} — the Nudge compiler", env!("CARGO_PKG_VERSION"));
     eprintln!("usage:");
+    eprintln!("  nudgec fmt   <file.ndg> [--check]   normalize indentation, trim trailing ws, collapse blanks");
     eprintln!("  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)");
     eprintln!(
         "  nudgec learn [lesson]     the language in six terminal lessons (run bare for the index)"
@@ -124,6 +126,48 @@ fn main() {
                 }
                 process::exit(1);
             }
+        }
+        return;
+    }
+    // `fmt` normalizes indentation; --check reports without writing
+    if args.len() >= 3 && args[1] == "fmt" {
+        let check = args.iter().any(|a| a == "--check");
+        let file = match args
+            .iter()
+            .skip(1)
+            .find(|a| !a.starts_with('-') && a.as_str() != "fmt")
+        {
+            Some(f) => f.clone(),
+            None => usage(),
+        };
+        let src = read_src(&file);
+        let action = || -> Result<bool, String> {
+            if check {
+                crate::fmt::needs_formatting(&src)
+            } else {
+                crate::fmt::fmt(&src).map(|out| {
+                    let changed = out != src;
+                    if changed {
+                        fs::write(&file, &out).map_err(|e| format!("cannot write {file}: {e}"))?;
+                    }
+                    Ok(changed)
+                })?
+            }
+        };
+        match action() {
+            Err(e) => {
+                eprintln!("error: {e}");
+                process::exit(1);
+            }
+            Ok(true) => {
+                if check {
+                    println!("{file}: needs formatting");
+                    process::exit(1);
+                } else {
+                    println!("{file}: formatted");
+                }
+            }
+            Ok(false) => println!("{file}: already formatted"),
         }
         return;
     }
