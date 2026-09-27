@@ -4,6 +4,7 @@
 //! highlighting, and a detail pane per record. Zero dependencies: the server
 //! is a stdlib TcpListener, the UI is a single embedded HTML file.
 
+use crate::json::Json;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::process;
@@ -11,6 +12,26 @@ use std::process;
 const INDEX_HTML: &str = include_str!("traceview.html");
 
 pub const DEFAULT_PORT: u16 = 8321;
+
+/// Static single-file export (B2): the same viewer UI with the trace
+/// inlined — no server, no network; open the file anywhere.
+pub fn static_html(trace_src: &str, file_label: &str) -> String {
+    let data = crate::json::dumps(&Json::Str(trace_src.to_string()));
+    let head = format!(
+        r#"<script>window.__TRACE__ = {data}; window.__FILE__ = {};</script>"#,
+        crate::json::dumps(&Json::Str(file_label.to_string()))
+    );
+    INDEX_HTML
+        .replace(
+            r#"fetch("/trace").then(r => r.text()).then(t => {"#,
+            r#"Promise.resolve(window.__TRACE__).then(t => {"#,
+        )
+        .replace(
+            "document.getElementById(\"file\").textContent = location.pathname === \"/\" ? (window.__FILE__ || \"\") : \"\";",
+            "document.getElementById(\"file\").textContent = window.__FILE__ || \"\";",
+        )
+        .replace("<script>", &format!("{head}\n<script>"))
+}
 
 fn open_browser(url: &str) {
     let (cmd, arg): (&str, &str) = if cfg!(target_os = "macos") {
@@ -103,6 +124,32 @@ mod tests {
         assert!(r.contains("content-type: text/plain\r\n"));
         assert!(r.contains("content-length: 5\r\n"));
         assert!(r.ends_with("hello"));
+    }
+
+    #[test]
+    fn static_export_inlines_data_and_drops_the_server() {
+        let src = r#"{"v": 1, "seq": 1, "kind": "fn.return", "fn": "f", "output": "x"}"#;
+        let html = static_html(src, "t.jsonl");
+        assert!(html.contains("window.__TRACE__"), "data inlined");
+        assert!(
+            html.contains("\"{\\\"v\\\": 1"),
+            "trace escaped as a JS string"
+        );
+        assert!(
+            !html.contains(r#"fetch("/trace")"#),
+            "server dependency removed"
+        );
+        assert!(
+            html.contains("Promise.resolve(window.__TRACE__)"),
+            "loader patched"
+        );
+        assert!(
+            html.contains("window.__FILE__ = \"t.jsonl\""),
+            "label embedded"
+        );
+        // still self-contained: no external assets
+        assert!(!html.contains("https://"));
+        assert!(!html.contains("<script src"));
     }
 
     #[test]
