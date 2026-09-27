@@ -56,6 +56,7 @@ fn usage() -> ! {
     eprintln!("  nudgec trace-check <t.jsonl> validate a trace against the frozen v1 schema");
     eprintln!("  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json");
     eprintln!("  nudgec lsp                serve the Language Server Protocol over stdio");
+    eprintln!("  nudgec trace-html <t.jsonl> [--out file.html]  static single-file viewer (no server, works offline)");
     eprintln!("  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace");
     eprintln!("  nudgec explain <t.jsonl>    human report over a trace: totals, failures, low-confidence answers");
     eprintln!("  nudgec trace-diff <a.jsonl> <b.jsonl> [--fail-on-regression]  compare traces; gate CI on regression");
@@ -124,6 +125,38 @@ fn main() {
                 process::exit(1);
             }
         }
+        return;
+    }
+    // `trace-html` exports the viewer as a static single file
+    if args.len() >= 3 && args[1] == "trace-html" {
+        let src = read_src(&args[2]);
+        let problems = tracecheck::validate(&src);
+        if !problems.is_empty() {
+            for p in &problems {
+                eprintln!("error: {p}");
+            }
+            eprintln!("error: trace does not conform to the frozen v1 schema — run `nudgec trace-check` for details");
+            process::exit(1);
+        }
+        let out = if args.len() == 5 && (args[3] == "--out" || args[3] == "-o") {
+            args[4].clone()
+        } else if args.len() == 3 {
+            std::path::Path::new(&args[2])
+                .file_stem()
+                .map(|s| format!("{}.html", s.to_string_lossy()))
+                .unwrap_or_else(|| "trace.html".to_string())
+        } else {
+            usage();
+        };
+        let html = traceview::static_html(&src, &args[2]);
+        if let Err(e) = fs::write(&out, &html) {
+            eprintln!("error: cannot write {out}: {e}");
+            process::exit(1);
+        }
+        println!(
+            "wrote {out} ({} record(s)) — open it in any browser",
+            src.lines().filter(|l| !l.trim().is_empty()).count()
+        );
         return;
     }
     // `explain` turns a recorded trace into a human report
