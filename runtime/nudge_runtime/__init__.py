@@ -758,6 +758,33 @@ _MODEL_PRICING = {
 }
 
 
+_PRICING_ENV_CACHE = None
+
+
+def _env_pricing():
+    """NUDGE_PRICING (C3): user-supplied pricing table, JSON object mapping
+    bare model name -> [usd_per_1M_in, usd_per_1M_out] (or {in, out}).
+    Entries override nothing in _MODEL_PRICING — they extend it, so new
+    models get real recorded costs without editing the runtime."""
+    global _PRICING_ENV_CACHE
+    if _PRICING_ENV_CACHE is None:
+        table = {}
+        raw = os.environ.get("NUDGE_PRICING")
+        if raw:
+            try:
+                data = json.loads(raw)
+                if isinstance(data, dict):
+                    for k, v in data.items():
+                        if isinstance(v, (list, tuple)) and len(v) == 2:
+                            table[k] = (float(v[0]), float(v[1]))
+                        elif isinstance(v, dict):
+                            table[k] = (float(v.get("in", 0.0)), float(v.get("out", 0.0)))
+            except Exception as e:
+                print(f"warning: NUDGE_PRICING ignored ({e})", file=sys.stderr)
+        _PRICING_ENV_CACHE = table
+    return _PRICING_ENV_CACHE
+
+
 def _split_model(model):
     """`gemini:gemini-2.5-flash` -> ("gemini", "gemini-2.5-flash");
     a bare name -> (None, model)."""
@@ -1044,7 +1071,8 @@ def _pricing_unknown(provider, model):
     suspicious — i.e. cost_usd will be a $0 placeholder, not a real free call."""
     if provider in _PRICING_UNKNOWN_OK:
         return False
-    return _MODEL_PRICING.get(_split_model(model)[1]) is None
+    bare = _split_model(model)[1]
+    return _MODEL_PRICING.get(bare) is None and _env_pricing().get(bare) is None
 
 
 def _call_cost(provider, model, in_t, out_t):
@@ -1053,7 +1081,8 @@ def _call_cost(provider, model, in_t, out_t):
     when the $0 is a missing table entry rather than a genuinely free call)."""
     if provider == "fake":
         return FAKE_CALL_COST
-    prices = _MODEL_PRICING.get(_split_model(model)[1])
+    bare = _split_model(model)[1]
+    prices = _env_pricing().get(bare) or _MODEL_PRICING.get(bare)
     if prices is None:
         if _pricing_unknown(provider, model):
             bare = _split_model(model)[1]
