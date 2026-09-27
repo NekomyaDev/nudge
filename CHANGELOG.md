@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **`nudgec eval <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8]`**: score a program over a dataset — per-row pass/fail against expected values (dotted path extraction for records), accuracy report, failure listing with actual outputs, and a `--min-accuracy` CI gate (exit 1 below threshold); runs with whatever provider is configured, fake for $0
 - **Version compatibility (B6)**: generated programs now stamp the real nudgec version (was hardcoded `0.1.0`) and call a guarded compatibility hook — `rt.require_runtime("x.y.z")` (Python, via `hasattr`) / `rt.compatibilityCheck?.("x.y.z")` (TS, optional call). Runtimes older than the compiler warn loudly ("some features may be missing; upgrade") instead of failing subtly; old runtimes without the hook skip it silently
 - **`nudgec check <file.ndg> --watch`**: re-check on every save — a dependency-free 300 ms mtime poll that spawns the real `nudgec check` per change, so flags, lints and error hints stay identical to a plain run; Ctrl-C stops
 - **`nudgec fmt <file.ndg> [--check]`**: safe formatter — re-indents from the token stream's brace depth, trims trailing whitespace, collapses blank-line runs; never reorders or re-flows code, keeps `llm"""` bodies verbatim; idempotent, and `--check` exits 1 for CI
