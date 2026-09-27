@@ -152,6 +152,14 @@ sudo mv nudgec /usr/local/bin/
 # Extract zip and add to PATH
 ```
 
+### Or scaffold a project
+
+```sh
+nudgec init my-agent --list        # browse templates (hello, triage, rag-agent, ...)
+nudgec init my-agent --template triage
+cd my-agent && nudgec check my-agent.ndg && nudgec build my-agent.ndg
+```
+
 ### Your First Nudge Program
 
 Install the Python runtime that the generated code imports:
