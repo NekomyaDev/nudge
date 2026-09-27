@@ -21,6 +21,7 @@ mod codegen_ts;
 mod cost;
 mod dap;
 mod fuzz;
+mod hints;
 mod init;
 mod json;
 mod learn;
@@ -67,6 +68,12 @@ fn read_src(path: &str) -> String {
             eprintln!("error: cannot read {path}: {e}");
             process::exit(1);
         }
+    }
+}
+
+fn print_hint(code: &str) {
+    if let Some(h) = hints::hint(code) {
+        eprintln!("  hint: {h}");
     }
 }
 
@@ -194,6 +201,7 @@ fn main() {
             }
             Err(e) => {
                 eprintln!("error[E0001]: {} at byte {}", e.msg, e.at);
+                print_hint("E0001");
                 process::exit(1);
             }
         },
@@ -206,6 +214,7 @@ fn main() {
             }
             Err((msg, at)) => {
                 eprintln!("error[E0002]: {msg} at byte {at}");
+                print_hint("E0002");
                 process::exit(1);
             }
         },
@@ -220,9 +229,15 @@ fn main() {
                         match e.span {
                             Some(sp) => {
                                 let (l, c) = line_col(&src, sp.start);
-                                eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
+                                {
+                                    eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
+                                    print_hint(e.code);
+                                }
                             }
-                            None => eprintln!("error[{}]: {}", e.code, e.msg),
+                            None => {
+                                eprintln!("error[{}]: {}", e.code, e.msg);
+                                print_hint(e.code);
+                            }
                         }
                     }
                     process::exit(1);
@@ -230,6 +245,7 @@ fn main() {
             }
             Err((msg, at)) => {
                 eprintln!("error[E0002]: {msg} at byte {at}");
+                print_hint("E0002");
                 process::exit(1);
             }
         },
@@ -243,7 +259,10 @@ fn main() {
                 let errs = check::check(&items);
                 if !errs.is_empty() {
                     for e in &errs {
-                        eprintln!("error[{}]: {}", e.code, e.msg);
+                        {
+                            eprintln!("error[{}]: {}", e.code, e.msg);
+                            print_hint(e.code);
+                        }
                     }
                     process::exit(1);
                 }
@@ -251,6 +270,7 @@ fn main() {
             }
             Err((msg, at)) => {
                 eprintln!("error[E0002]: {msg} at byte {at}");
+                print_hint("E0002");
                 process::exit(1);
             }
         },
@@ -263,9 +283,15 @@ fn main() {
                         match e.span {
                             Some(sp) => {
                                 let (l, c) = line_col(&src, sp.start);
-                                eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
+                                {
+                                    eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
+                                    print_hint(e.code);
+                                }
                             }
-                            None => eprintln!("error[{}]: {}", e.code, e.msg),
+                            None => {
+                                eprintln!("error[{}]: {}", e.code, e.msg);
+                                print_hint(e.code);
+                            }
                         }
                     }
                     process::exit(1);
@@ -291,6 +317,7 @@ fn main() {
             }
             Err((msg, at)) => {
                 eprintln!("error[E0002]: {msg} at byte {at}");
+                print_hint("E0002");
                 process::exit(1);
             }
         },
@@ -302,9 +329,15 @@ fn main() {
                         match e.span {
                             Some(sp) => {
                                 let (l, c) = line_col(&src, sp.start);
-                                eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
+                                {
+                                    eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
+                                    print_hint(e.code);
+                                }
                             }
-                            None => eprintln!("error[{}]: {}", e.code, e.msg),
+                            None => {
+                                eprintln!("error[{}]: {}", e.code, e.msg);
+                                print_hint(e.code);
+                            }
                         }
                     }
                     process::exit(1);
@@ -330,6 +363,7 @@ fn main() {
             }
             Err((msg, at)) => {
                 eprintln!("error[E0002]: {msg} at byte {at}");
+                print_hint("E0002");
                 process::exit(1);
             }
         },
@@ -341,9 +375,15 @@ fn main() {
                         match e.span {
                             Some(sp) => {
                                 let (l, c) = line_col(&src, sp.start);
-                                eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
+                                {
+                                    eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
+                                    print_hint(e.code);
+                                }
                             }
-                            None => eprintln!("error[{}]: {}", e.code, e.msg),
+                            None => {
+                                eprintln!("error[{}]: {}", e.code, e.msg);
+                                print_hint(e.code);
+                            }
                         }
                     }
                     process::exit(1);
@@ -395,6 +435,7 @@ fn main() {
             }
             Err((msg, at)) => {
                 eprintln!("error[E0002]: {msg} at byte {at}");
+                print_hint("E0002");
                 process::exit(1);
             }
         },
@@ -515,6 +556,7 @@ fn main() {
             }
             Err((msg, at)) => {
                 eprintln!("error[E0002]: {msg} at byte {at}");
+                print_hint("E0002");
                 process::exit(1);
             }
         },

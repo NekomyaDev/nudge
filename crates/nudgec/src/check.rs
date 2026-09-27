@@ -104,10 +104,13 @@ fn resolve(
                         ty
                     }
                     None => {
+                        let did = crate::hints::closest(name, g.aliases.keys())
+                            .map(|c| format!(", did you mean '{c}'?"))
+                            .unwrap_or_default();
                         errs.push(CheckError {
                             span: None,
                             code: "E0101",
-                            msg: format!("unknown type '{name}'"),
+                            msg: format!("unknown type '{name}'{did}"),
                         });
                         Ty::Unknown
                     }
@@ -730,10 +733,14 @@ fn check_expr(
                 let known =
                     g.fns.contains_key(n) || g.tools.contains_key(n) || g.aliases.contains_key(n);
                 if !known {
+                    let registry = g.fns.keys().chain(g.tools.keys()).chain(g.aliases.keys());
+                    let did = crate::hints::closest(n, registry)
+                        .map(|c| format!(", did you mean '{c}'?"))
+                        .unwrap_or_default();
                     errs.push(CheckError {
                         span: None,
                         code: "E0101",
-                        msg: format!("unknown identifier '{n}'"),
+                        msg: format!("unknown identifier '{n}'{did}"),
                     });
                 }
                 Ty::Unknown
@@ -899,10 +906,14 @@ fn check_expr(
                     return resolve(ret, g, &mut Vec::new(), errs);
                 }
                 // a call to a name that is neither builtin nor declared
+                let registry = g.fns.keys().chain(g.tools.keys());
+                let did = crate::hints::closest(name, registry)
+                    .map(|c| format!(", did you mean '{c}'?"))
+                    .unwrap_or_default();
                 errs.push(CheckError {
                     span: None,
                     code: "E0101",
-                    msg: format!("unknown identifier '{name}' (called but never declared)"),
+                    msg: format!("unknown identifier '{name}' (called but never declared){did}"),
                 });
             }
             Ty::Unknown
@@ -918,10 +929,13 @@ fn check_expr(
                 match fs.iter().find(|(k, _)| k == name) {
                     Some((_, t)) => t.clone(),
                     None => {
+                        let did = crate::hints::closest(name, fs.iter().map(|(k, _)| k))
+                            .map(|c| format!(", did you mean '{c}'?"))
+                            .unwrap_or_default();
                         errs.push(CheckError {
                             span: None,
                             code: "E0101",
-                            msg: format!("record has no field '{name}'"),
+                            msg: format!("record has no field '{name}'{did}"),
                         });
                         Ty::Unknown
                     }
@@ -1561,6 +1575,32 @@ mod tests {
     use super::*;
     use crate::lexer::lex;
     use crate::parser::parse;
+
+    #[test]
+    fn unknown_names_get_did_you_mean_suggestions() {
+        let errs = check_src(
+            "fn handler(s: string) -> int { len(s) }\nfn main() -> int { handlr(\"x\") }",
+        );
+        assert!(
+            errs.iter()
+                .any(|e| e.msg.contains("did you mean 'handler'")),
+            "got {errs:?}"
+        );
+        let errs =
+            check_src("type Greet = { message: string }\nfn f(g: Greet) -> string { g.mesage }");
+        assert!(
+            errs.iter()
+                .any(|e| e.msg.contains("did you mean 'message'")),
+            "got {errs:?}"
+        );
+        // far-off names get no suggestion (no noise)
+        let errs = check_src("fn main() -> int { zzzzqqq() }");
+        assert!(
+            errs.iter()
+                .any(|e| e.msg.contains("never declared") && !e.msg.contains("did you mean")),
+            "got {errs:?}"
+        );
+    }
 
     fn check_src(src: &str) -> Vec<CheckError> {
         check(&parse(lex(src).unwrap()).unwrap())
