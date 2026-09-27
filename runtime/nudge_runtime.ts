@@ -243,6 +243,39 @@ export function parRace(thunks) {
   return results[0];
 }
 
+// C6: NUDGE_GUARD=pii — mask secrets, emails, IPs and long digit runs in
+// model output. Applied to the returned value; the trace record carries
+// the additive `guard` field so masking is auditable.
+const GUARD_PATTERNS = [
+  ["secret", /(?:sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16})/g, "[secret]"],
+  ["email", /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[email]"],
+  ["ip", /\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "[ip]"],
+  ["number", /\b\d{7,}\b/g, "[number]"],
+];
+
+export function applyOutputGuards(value) {
+  const guards = (process.env.NUDGE_GUARD || "").split(",").map((g) => g.trim()).filter(Boolean);
+  if (!guards.includes("pii")) return [value, []];
+  const applied = [];
+  const walk = (v) => {
+    if (typeof v === "string") {
+      let nv = v;
+      for (const [name, rx, repl] of GUARD_PATTERNS) {
+        const n2 = nv.replace(rx, repl);
+        if (n2 !== nv && !applied.includes(name)) applied.push(name);
+        nv = n2;
+      }
+      return nv;
+    }
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === "object") {
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]));
+    }
+    return v;
+  };
+  return [walk(value), applied];
+}
+
 export function llmCall(opts) {
   const { prompt, model = null, schema: sch = null, budget = null } = opts;
   if (process.env.NUDGE_REPLAY) {
@@ -270,7 +303,8 @@ export function llmCall(opts) {
       (prefix && ["openai", "gemini", "groq", "ollama"].includes(prefix))) {
     throw new Error("nudge_runtime.ts: real providers run on the Python runtime at v1.1a — compile with `nudgec build` for provider access");
   }
-  const out = sch ? _synth(sch) : `[fake:${model}] ${prompt}`;
+  const raw = sch ? _synth(sch) : `[fake:${model}] ${prompt}`;
+  const [out, guardApplied] = applyOutputGuards(raw);
   // frozen v1 trace schema (design §6.1): the same field set the python
   // runtime emits — `nudgec trace-check` validates these as required
   const record = {
@@ -289,6 +323,7 @@ export function llmCall(opts) {
     provider: "fake",
   };
   if (_branchId !== null) record.branch = _branchId;
+  if (guardApplied.length) record.guard = guardApplied;
   _emitTrace(record);
   _budgetCharge(FAKE_CALL_COST, budget);
   return out;

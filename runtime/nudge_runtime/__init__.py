@@ -1903,6 +1903,53 @@ def _fake_answer(prompt, model, sch):
     return f"[fake:{model or 'default'}] {str(prompt)[:80]}"
 
 
+# ── output guards (C6) ───────────────────────────────────────────────
+
+_GUARD_RES = None
+
+
+def _guard_patterns():
+    global _GUARD_RES
+    if _GUARD_RES is None:
+        _GUARD_RES = [
+            ("secret", re.compile(r"(?:sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16})"), "[secret]"),
+            ("email", re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"), "[email]"),
+            ("ip", re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), "[ip]"),
+            ("number", re.compile(r"\b\d{7,}\b"), "[number]"),
+        ]
+    return _GUARD_RES
+
+
+def _apply_output_guards(value):
+    """NUDGE_GUARD (C6): comma-separated output guards; ``pii`` masks
+    secrets, emails, IP addresses and long digit runs in every string the
+    model produced. Returns (guarded_value, applied_guard_names) — the
+    additive NTF field ``guard`` records what ran, so masking is auditable
+    and never silent."""
+    guards = [g.strip() for g in os.environ.get("NUDGE_GUARD", "").split(",") if g.strip()]
+    if "pii" not in guards:
+        return value, []
+    applied = []
+
+    def walk(v):
+        if isinstance(v, str):
+            nv = v
+            for name, rx, repl in _guard_patterns():
+                nv2 = rx.sub(repl, nv)
+                if nv2 != nv and name not in applied:
+                    applied.append(name)
+                nv = nv2
+            return nv
+        if isinstance(v, dict):
+            return {k: walk(x) for k, x in v.items()}
+        if isinstance(v, (list, tuple)):
+            return [walk(x) for x in v]
+        return v
+
+    out = walk(value)
+    return out, applied
+
+
 def llm_call(prompt, model=None, schema=None, retry=0, repair=False,
              budget=None, cache=None, tags=None):
     """One typed LLM call (design §4).
@@ -1989,16 +2036,24 @@ def llm_call(prompt, model=None, schema=None, retry=0, repair=False,
         else:
             out, in_t, out_t = _complete_reserved(provider, model, prompt, schema)
         if schema is None:
+            out, guard_applied = _apply_output_guards(out)
             if provider != "replay":
-                _trace_call(model, prompt, out, 0, "ok", extra=route_extra,
+                extra = dict(route_extra) if route_extra else None
+                if guard_applied:
+                    extra = {**(extra or {}), "guard": guard_applied}
+                _trace_call(model, prompt, out, 0, "ok", extra=extra,
                             provider=provider, tokens={"in": in_t, "out": out_t},
                             cost=_call_cost(provider, model, in_t, out_t))
                 charge_site(_call_cost(provider, model, in_t, out_t))
             return out
         errors = validate(schema, out)
         if not errors:
+            out, guard_applied = _apply_output_guards(out)
             if provider != "replay":
-                _trace_call(model, prompt, out, round_no, "ok", extra=route_extra,
+                extra = dict(route_extra) if route_extra else None
+                if guard_applied:
+                    extra = {**(extra or {}), "guard": guard_applied}
+                _trace_call(model, prompt, out, round_no, "ok", extra=extra,
                             provider=provider, tokens={"in": in_t, "out": out_t},
                             cost=_call_cost(provider, model, in_t, out_t))
                 charge_site(_call_cost(provider, model, in_t, out_t))
