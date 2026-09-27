@@ -1,0 +1,19 @@
+// Recipe: cheap-first model routing — small inputs go to the cheap
+// model, everything else to the strong one. `model:` accepts a route{}
+// with a guaranteed `otherwise` arm.
+
+fn summarize(body: string) -> string uses LLM {
+    llm"""Summarize this text in two sentences.
+
+    Text:
+    {body}"""
+    with {
+        schema: string,
+        model: route{
+            cheap: "openai:gpt-4.5-mini" when len(body) < 500,
+            strong: "anthropic:sonnet-4.6" otherwise,
+        },
+        budget: 0.01 USD,
+        retry: 2 with repair
+    }
+}

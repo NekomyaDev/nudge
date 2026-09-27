@@ -1,0 +1,21 @@
+// Recipe: budget wall + automatic repair — the call may spend at most
+// the declared budget; schema violations get repaired (bounded retries)
+// before the value is returned. `nudgec cost` reports the static plan.
+
+type Sentiment = { label: string, confidence: float @range(0, 1) }
+
+fn classify(review: string) -> Sentiment uses LLM {
+    llm"""Classify the review sentiment.
+
+    Review:
+    {review}
+
+    label: one of "positive", "negative", "neutral"
+    confidence: your confidence in the label, 0.0 to 1.0"""
+    with {
+        schema: Sentiment,
+        model: "openai:gpt-4.5-mini",
+        budget: 0.005 USD,
+        retry: 2 with repair
+    }
+}

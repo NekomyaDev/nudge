@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **docs/recipes/ — the recipe book**: six copy-pasteable patterns (typed extraction, fallback-model routing, human escalation, injection guard, cost-capped call with repair, par-map fan-out); every recipe is type-checked by a compiler test so the book can never drift from the grammar
 - **Human compiler errors**: every E-code now prints a one-line plain-language `hint:` under the message, and unknown identifiers/types/fields get `did you mean 'x'?` suggestions (prefix-aware edit distance) — the compiler helps instead of scolding
 - **`nudgec learn [lesson]`**: the language in six terminal lessons (hello → types → decide{} → route{} → $0 tests → traces/replay) — every lesson program is type-checked by the test suite against the compiler shipping it, so lessons can never drift from the grammar
 - **`nudgec init <name> [--template <t>] [--force]`**: scaffold a project from the repo's own examples (hello, triage, chatbot, classifier, code-reviewer, data-analyzer, rag-agent, research-agent, translator, property-fuzz) — writes `<name>.ndg` + a README with the check/build/test/run loop; `--list` browses templates

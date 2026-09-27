@@ -1,0 +1,18 @@
+// Recipe: fan out over a list — par map runs the function on every item
+// concurrently; every branch is traced (NTF records carry their lane
+// label) and results arrive in input order.
+
+type Answer = { answer: string, confidence: float @range(0, 1) }
+
+fn ask(q: string) -> Answer uses LLM {
+    llm"""Answer the question in one sentence.
+
+    Question:
+    {q}"""
+    with { schema: Answer, model: "anthropic:sonnet-4.6", budget: 0.01 USD,
+        retry: 2 with repair }
+}
+
+fn faq(questions: [string]) -> [Answer] uses LLM {
+    par map(questions) |(q)| -> ask(q)
+}

@@ -1,0 +1,19 @@
+// Recipe: prove pure code survives adversarial input — for_all feeds
+// the built-in injection corpus (and a seeded string sweep) through the
+// function and shrinks any crash to a minimal counterexample. $0.
+
+fn sanitize_len(s: string) -> int {
+    len(s)
+}
+
+test "injection corpus never crashes the sanitizer" {
+    for_all p in gen.injection() {
+        assert sanitize_len(p) >= 0
+    }
+}
+
+test "random strings stay within bounds" {
+    for_all s in gen.str(64) {
+        assert sanitize_len(s) <= 64
+    }
+}
