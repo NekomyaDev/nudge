@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **`nudgec runs [--run <run_id>]` (C8)**: inspect the local agent run store — list every run in `.nudge/runs/` (program/trace/checkpoint present?) or show one run's program path, checkpoint state fields and trace record count; pairs with `nudgec resume`
 - **OTLP/JSON export (C7)**: `NUDGE_OTEL_ENDPOINT=<url>` POSTs the standard OTLP/JSON collector payload (`resourceSpans`, `service.name: nudge-program`) alongside the existing `NUDGE_OTEL` file export — best effort by default (observability never breaks the program), `NUDGE_OTEL_STRICT=1` makes failures fatal
 - **Output guards (C6)**: `NUDGE_GUARD=pii` masks secrets (`sk-…`/`ghp_…`/`AKIA…`), emails, IP addresses and long digit runs in every string an LLM produced — applied before the value reaches the program and before the trace record is written, with the additive `guard: [...]` field recording what ran (both backends)
 - **Tool capability grants (C5, first v1.5 'safe' increment)**: `NUDGE_TOOL_GRANTS` (JSON) enforces an execution-layer policy — keys are tool names, `server/tool`, `server/*` or `*`; values are glob rules. Ungranted calls raise `ToolDenied` and the denial lands in the trace (`outcome: "denied"`); a present policy fails closed; no policy = today's behavior. Injected instructions cannot invoke ungranted tools because the runtime refuses — not because a prompt asked (both backends)
