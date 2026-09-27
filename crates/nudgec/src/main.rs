@@ -273,6 +273,7 @@ fn main() {
         && args[1] != "eval"
         && args[1] != "compare"
         && args[1] != "runs"
+        && args[1] != "lint"
     {
         usage();
     }
@@ -816,6 +817,55 @@ fn main() {
                     eprintln!("error: cannot run python3: {e}");
                     process::exit(1);
                 }
+            }
+        }
+        "lint" => {
+            // B5: lint with auto-fix
+            let check = args.iter().any(|a| a == "--fix");
+            let file = match args
+                .iter()
+                .skip(1)
+                .find(|a| !a.starts_with('-') && a.as_str() != "lint")
+            {
+                Some(f) => f.clone(),
+                None => usage(),
+            };
+            let items = match compile(&src) {
+                Ok(items) => items,
+                Err((msg, at)) => {
+                    eprintln!("error[E0002]: {msg} at byte {at}");
+                    print_hint("E0002");
+                    process::exit(1);
+                }
+            };
+            let lints = lint::lint_items(&items);
+            if check {
+                if lints.iter().any(|l| l.fix.is_some()) {
+                    let fixed = lint::apply_fixes(&src, &lints);
+                    if let Err(e) = fs::write(&file, &fixed) {
+                        eprintln!("error: cannot write {file}: {e}");
+                        process::exit(1);
+                    }
+                    println!(
+                        "{file}: applied fixes — re-run nudgec lint {} to see what's left",
+                        file
+                    );
+                    let remaining = lint::lint_items(&compile(&fixed).unwrap_or(items));
+                    for l in &remaining {
+                        eprintln!("warning[{}]: {}", l.code, l.msg);
+                    }
+                } else {
+                    println!("{file}: nothing to auto-fix");
+                }
+            } else {
+                for l in &lints {
+                    eprintln!("warning[{}]: {}", l.code, l.msg);
+                }
+                println!(
+                    "{} lint(s); run nudgec lint {} --fix to apply auto-fixes",
+                    lints.len(),
+                    file
+                );
             }
         }
         "trace-check" => {
