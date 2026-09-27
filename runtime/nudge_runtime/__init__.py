@@ -816,6 +816,46 @@ def _real_provider_for(model):
     return env, bare
 
 
+def _transient_attempts():
+    """C4: retries for transient provider errors (429/5xx). 0 disables."""
+    try:
+        return max(0, int(os.environ.get("NUDGE_RETRY_TRANSIENT", "3")))
+    except ValueError:
+        return 3
+
+
+def _backoff_sleep(attempt):
+    """Exponential backoff between transient retries: base * 5^attempt
+    (5s, 25s, 125s by default — free-tier 429 headroom)."""
+    try:
+        base = float(os.environ.get("NUDGE_BACKOFF_BASE", "5.0"))
+    except ValueError:
+        base = 5.0
+    time.sleep(base * (5 ** attempt))
+
+
+def _urlopen_retry(req, provider, timeout=120):
+    """Shared transport loop: transient HTTP errors (429, 5xx) back off
+    and retry; 4xx and unreachable hosts fail immediately."""
+    import urllib.error
+    import urllib.request
+    attempts = _transient_attempts()
+    last_err = None
+    for attempt in range(attempts + 1):
+        try:
+            return urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", "replace")[:500]
+            last_err = RuntimeError(f"{provider} provider HTTP {e.code}: {detail}")
+            if (e.code == 429 or e.code >= 500) and attempt < attempts:
+                _backoff_sleep(attempt)
+                continue
+            raise last_err
+        except urllib.error.URLError as e:
+            raise RuntimeError(f"{provider} provider unreachable: {e.reason}")
+    raise last_err  # pragma: no cover — loop always returns or raises
+
+
 def _openai_chat(provider, model, prompt):
     """One non-streaming chat completion against an OpenAI-compatible API.
     Returns (text, prompt_tokens, completion_tokens)."""
@@ -838,22 +878,8 @@ def _openai_chat(provider, model, prompt):
         },
     )
     data = None
-    last_err = None
-    # 429s are routine on free tiers — back off and retry (5s, 25s, 125s)
-    for attempt in range(4):
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                data = json.loads(resp.read())
-            break
-        except urllib.error.HTTPError as e:
-            detail = e.read().decode("utf-8", "replace")[:500]
-            last_err = RuntimeError(f"{provider} provider HTTP {e.code}: {detail}")
-            if e.code == 429 and attempt < 3:
-                time.sleep(5 * (5 ** attempt))
-                continue
-            raise last_err
-        except urllib.error.URLError as e:
-            raise RuntimeError(f"{provider} provider unreachable: {e.reason}")
+    with _urlopen_retry(req, provider) as resp:
+        data = json.loads(resp.read())
     try:
         text = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
@@ -886,21 +912,8 @@ def _anthropic_chat(provider, model, prompt):
         },
     )
     data = None
-    last_err = None
-    for attempt in range(4):
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                data = json.loads(resp.read())
-            break
-        except urllib.error.HTTPError as e:
-            detail = e.read().decode("utf-8", "replace")[:500]
-            last_err = RuntimeError(f"{provider} provider HTTP {e.code}: {detail}")
-            if e.code == 429 and attempt < 3:
-                time.sleep(5 * (5 ** attempt))
-                continue
-            raise last_err
-        except urllib.error.URLError as e:
-            raise RuntimeError(f"{provider} provider unreachable: {e.reason}")
+    with _urlopen_retry(req, provider) as resp:
+        data = json.loads(resp.read())
     try:
         blocks = [b.get("text", "") for b in data["content"] if b.get("type") == "text"]
         text = "".join(blocks)
@@ -917,21 +930,7 @@ def _sse_events(req, provider):
     yield parsed ``data: {...}`` payloads until ``[DONE]`` or EOF."""
     import urllib.error
     import urllib.request
-    resp = None
-    last_err = None
-    for attempt in range(4):
-        try:
-            resp = urllib.request.urlopen(req, timeout=120)
-            break
-        except urllib.error.HTTPError as e:
-            detail = e.read().decode("utf-8", "replace")[:500]
-            last_err = RuntimeError(f"{provider} provider HTTP {e.code}: {detail}")
-            if e.code == 429 and attempt < 3:
-                time.sleep(5 * (5 ** attempt))
-                continue
-            raise last_err
-        except urllib.error.URLError as e:
-            raise RuntimeError(f"{provider} provider unreachable: {e.reason}")
+    resp = _urlopen_retry(req, provider)
     with resp:
         for raw in resp:
             line = raw.decode("utf-8", "replace").strip()

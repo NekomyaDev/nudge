@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Transient-error retry with backoff (C4)**: all provider transports share one `_urlopen_retry` loop — 429 **and 5xx** back off exponentially (`NUDGE_BACKOFF_BASE`, default 5s → 25s → 125s) up to `NUDGE_RETRY_TRANSIENT` (default 3, `0` disables); 4xx and unreachable hosts fail immediately; previously only 429 was retried, openai/anthropic/SSE each had a private copy
 - **`NUDGE_PRICING` (C3)**: user-supplied pricing table for real providers — JSON `{"model": [usd_per_1M_in, usd_per_1M_out]}`; extends the built-in table so new models record real costs instead of `$0` + W9001; invalid JSON is ignored with a warning (Python runtime; TS runtime is fake-only today)
 - **`nudgec compare <results_a.jsonl> <results_b.jsonl>`**: two eval runs side by side — accuracy delta plus the rows that improved or regressed (the "what changed when I switched models?" report)
 - **`nudgec eval <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8]`**: score a program over a dataset — per-row pass/fail against expected values (dotted path extraction for records), accuracy report, failure listing with actual outputs, and a `--min-accuracy` CI gate (exit 1 below threshold); runs with whatever provider is configured, fake for $0
