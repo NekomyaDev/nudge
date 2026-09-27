@@ -21,6 +21,7 @@ mod codegen_ts;
 mod cost;
 mod dap;
 mod fuzz;
+mod init;
 mod json;
 mod lexer;
 mod lint;
@@ -36,6 +37,7 @@ use std::{env, fs, process};
 fn usage() -> ! {
     eprintln!("nudgec {} — the Nudge compiler", env!("CARGO_PKG_VERSION"));
     eprintln!("usage:");
+    eprintln!("  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)");
     eprintln!("  nudgec lex   <file.ndg>   dump token stream");
     eprintln!("  nudgec parse <file.ndg>   dump AST");
     eprintln!("  nudgec check <file.ndg>   type-check (E0101–E0302)");
@@ -71,6 +73,14 @@ fn main() {
     if args.len() == 2 && (args[1] == "--version" || args[1] == "-V") {
         println!("nudgec {}", env!("CARGO_PKG_VERSION"));
         process::exit(0);
+    }
+    // `init` scaffolds a project — no source file involved
+    if args.len() >= 2 && args[1] == "init" {
+        if let Err(e) = init::run(&args[2..]) {
+            eprintln!("error: {e}");
+            process::exit(1);
+        }
+        return;
     }
     // `lsp` takes no file argument — it serves JSON-RPC over stdio
     if args.len() == 2 && args[1] == "lsp" {
