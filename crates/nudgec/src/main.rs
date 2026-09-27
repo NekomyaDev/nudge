@@ -20,6 +20,7 @@ mod codegen;
 mod codegen_ts;
 mod cost;
 mod dap;
+mod eval;
 mod fmt;
 mod fuzz;
 mod hints;
@@ -65,6 +66,7 @@ fn usage() -> ! {
     eprintln!("  nudgec explain <t.jsonl>    human report over a trace: totals, failures, low-confidence answers");
     eprintln!("  nudgec trace-diff <a.jsonl> <b.jsonl> [--fail-on-regression]  compare traces; gate CI on regression");
     eprintln!("  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8]");
+    eprintln!("  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8]  score a program over a dataset");
     eprintln!("  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)");
     process::exit(64);
 }
@@ -255,7 +257,7 @@ fn main() {
     }
     // policy-sweep takes the trace plus flags (len > 3); everything else
     // is exactly <cmd> <file>
-    if args.len() != 3 && args[1] != "policy-sweep" {
+    if args.len() != 3 && args[1] != "policy-sweep" && args[1] != "eval" {
         usage();
     }
     // `resume` takes a run_id, not a source file
@@ -577,6 +579,74 @@ fn main() {
             }
         }
         // design §6 (v1.0): validate a trace against the frozen v1 schema
+        "eval" => {
+            // C1: run a fn over a JSONL dataset, score it, optional CI gate
+            if args.len() < 3 {
+                eprintln!("usage: nudgec eval <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8]");
+                process::exit(64);
+            }
+            let items = match compile(&src) {
+                Ok(items) => {
+                    let errs = check::check(&items);
+                    if !errs.is_empty() {
+                        for e in &errs {
+                            match e.span {
+                                Some(sp) => {
+                                    let (l, c) = line_col(&src, sp.start);
+                                    eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
+                                }
+                                None => eprintln!("error[{}]: {}", e.code, e.msg),
+                            }
+                            print_hint(e.code);
+                        }
+                        process::exit(1);
+                    }
+                    print_lints(&items);
+                    items
+                }
+                Err((msg, at)) => {
+                    eprintln!("error[E0002]: {msg} at byte {at}");
+                    print_hint("E0002");
+                    process::exit(1);
+                }
+            };
+            let mut dataset: Option<String> = None;
+            let mut fname = String::from("main");
+            let mut path = String::new();
+            let mut min_acc: Option<f64> = None;
+            let mut i = 3usize;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--dataset" | "-d" => {
+                        i += 1;
+                        dataset = args.get(i).cloned();
+                    }
+                    "--fn" | "-f" => {
+                        i += 1;
+                        fname = args.get(i).cloned().unwrap_or_default();
+                    }
+                    "--path" | "-p" => {
+                        i += 1;
+                        path = args.get(i).cloned().unwrap_or_default();
+                    }
+                    "--min-accuracy" | "-a" => {
+                        i += 1;
+                        min_acc = args.get(i).and_then(|v| v.parse::<f64>().ok());
+                    }
+                    other => {
+                        eprintln!("error: unknown eval argument '{other}'");
+                        process::exit(64);
+                    }
+                }
+                i += 1;
+            }
+            let Some(dataset) = dataset else {
+                eprintln!("error: eval needs --dataset <rows.jsonl>");
+                process::exit(64);
+            };
+            let code = eval::run_cli(&items, &args[2], &dataset, &fname, &path, min_acc);
+            process::exit(code);
+        }
         "trace-check" => {
             let problems = tracecheck::validate(&src);
             if problems.is_empty() {
