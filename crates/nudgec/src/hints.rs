@@ -95,9 +95,11 @@ mod tests {
 
     #[test]
     fn closest_suggests_typos_and_prefixes_but_not_far_names() {
-        let cands = ["triage".to_string(),
+        let cands = [
+            "triage".to_string(),
             "translate".to_string(),
-            "handle".to_string()];
+            "handle".to_string(),
+        ];
         assert_eq!(closest("triagee", cands.iter()).as_deref(), Some("triage"));
         assert_eq!(closest("tran", cands.iter()).as_deref(), Some("translate"));
         assert_eq!(closest("zzzzzz", cands.iter()), None);

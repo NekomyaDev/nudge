@@ -1,0 +1,23 @@
+// Recipe: typed extraction — pin an LLM's output to a record type.
+// The runtime validates (and repairs) every response against `schema`,
+// so downstream code sees typed fields, never free text.
+
+type Invoice = {
+    vendor: string,
+    total: float @range(0, 1000000),
+    currency: string,
+    due_date: string
+}
+
+fn extract(doc: string) -> Invoice uses LLM {
+    llm"""Extract the invoice fields as JSON.
+
+    Invoice text:
+    {doc}
+
+    vendor: company name as written
+    total: numeric grand total
+    currency: ISO code
+    due_date: payment due date (YYYY-MM-DD, or "unknown")"""
+    with { schema: Invoice, model: "anthropic:sonnet-4.6", budget: 0.02 USD, retry: 2 with repair }
+}

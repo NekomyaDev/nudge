@@ -30,6 +30,7 @@ mod lint;
 mod lsp;
 mod parser;
 mod policysweep;
+mod recipes;
 mod tracecheck;
 mod tracediff;
 mod traceview;

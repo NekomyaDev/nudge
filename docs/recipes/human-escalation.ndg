@@ -1,0 +1,19 @@
+// Recipe: automate the confident, escalate the rest — a decide{} call
+// plus a route{} policy. High confidence auto-dispatches; anything else
+// goes to a human queue. This is the "safe to deploy" shape.
+
+fn handle(t: string) -> string uses IO {
+    t
+}
+
+fn dispatch(ticket: string) -> string uses Decision, IO {
+    let d = decide {
+        dept: "which team should handle this?" choose [billing, technical, security]
+    }
+    on ticket
+    with { model: "fake:default", deadline: 50 }
+    route {
+        auto:  handle(d.dept.winner) when d.dept.confidence > 0.8,
+        human: handle("manual review") otherwise
+    }
+}
