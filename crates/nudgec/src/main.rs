@@ -33,6 +33,7 @@ mod lsp;
 mod parser;
 mod policysweep;
 mod recipes;
+mod runs;
 mod tracecheck;
 mod tracediff;
 mod traceexplain;
@@ -69,6 +70,7 @@ fn usage() -> ! {
     eprintln!(
         "  nudgec compare <results_a.jsonl> <results_b.jsonl>  two eval runs: which rows flipped"
     );
+    eprintln!("  nudgec runs  [--run <run_id>]   list recorded agent runs / show one run's state and trace");
     eprintln!("  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8]  score a program over a dataset");
     eprintln!("  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)");
     process::exit(64);
@@ -260,11 +262,16 @@ fn main() {
     }
     // policy-sweep takes the trace plus flags (len > 3); everything else
     // is exactly <cmd> <file>
-    if args.len() != 3 && args[1] != "policy-sweep" && args[1] != "eval" && args[1] != "compare" {
+    if args.len() != 3
+        && args[1] != "policy-sweep"
+        && args[1] != "eval"
+        && args[1] != "compare"
+        && args[1] != "runs"
+    {
         usage();
     }
     // `resume` takes a run_id, not a source file
-    let src = if args[1] == "resume" {
+    let src = if args[1] == "resume" || args[1] == "runs" {
         String::new()
     } else {
         read_src(&args[2])
@@ -660,6 +667,18 @@ fn main() {
                 "{}",
                 eval::compare(&read_src(&args[2]), &read_src(&args[3]))
             );
+        }
+        "runs" => {
+            // C8: inspect the local run store
+            let detail = if args.len() == 4 && args[2] == "--run" {
+                Some(args[3].as_str())
+            } else if args.len() != 2 {
+                eprintln!("usage: nudgec runs [--run <run_id>]");
+                process::exit(64);
+            } else {
+                None
+            };
+            process::exit(runs::run(detail));
         }
         "trace-check" => {
             let problems = tracecheck::validate(&src);
