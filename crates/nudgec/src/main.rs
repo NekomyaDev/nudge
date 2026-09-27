@@ -66,6 +66,9 @@ fn usage() -> ! {
     eprintln!("  nudgec explain <t.jsonl>    human report over a trace: totals, failures, low-confidence answers");
     eprintln!("  nudgec trace-diff <a.jsonl> <b.jsonl> [--fail-on-regression]  compare traces; gate CI on regression");
     eprintln!("  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8]");
+    eprintln!(
+        "  nudgec compare <results_a.jsonl> <results_b.jsonl>  two eval runs: which rows flipped"
+    );
     eprintln!("  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8]  score a program over a dataset");
     eprintln!("  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)");
     process::exit(64);
@@ -257,7 +260,7 @@ fn main() {
     }
     // policy-sweep takes the trace plus flags (len > 3); everything else
     // is exactly <cmd> <file>
-    if args.len() != 3 && args[1] != "policy-sweep" && args[1] != "eval" {
+    if args.len() != 3 && args[1] != "policy-sweep" && args[1] != "eval" && args[1] != "compare" {
         usage();
     }
     // `resume` takes a run_id, not a source file
@@ -646,6 +649,17 @@ fn main() {
             };
             let code = eval::run_cli(&items, &args[2], &dataset, &fname, &path, min_acc);
             process::exit(code);
+        }
+        "compare" => {
+            // C2: two eval runs, row-level flips
+            if args.len() != 4 {
+                eprintln!("usage: nudgec compare <results_a.jsonl> <results_b.jsonl>");
+                process::exit(64);
+            }
+            print!(
+                "{}",
+                eval::compare(&read_src(&args[2]), &read_src(&args[3]))
+            );
         }
         "trace-check" => {
             let problems = tracecheck::validate(&src);

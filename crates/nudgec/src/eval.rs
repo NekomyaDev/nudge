@@ -221,6 +221,88 @@ pub fn report(results_src: &str, min_accuracy: Option<f64>) -> String {
     out
 }
 
+/// C2: compare two eval runs (same dataset, different model/prompt/
+/// program) — the rows that flipped are the whole story.
+pub fn compare(a_src: &str, b_src: &str) -> String {
+    let parse_rows = |src: &str| -> std::collections::BTreeMap<usize, bool> {
+        let mut m = std::collections::BTreeMap::new();
+        for line in src.lines().filter(|l| !l.trim().is_empty()) {
+            if let Ok(rec) = parse(line) {
+                if let Some(row) = rec.get("row").and_then(Json::as_num) {
+                    m.insert(
+                        row as usize,
+                        matches!(rec.get("ok"), Some(Json::Bool(true))),
+                    );
+                }
+            }
+        }
+        m
+    };
+    let a = parse_rows(a_src);
+    let b = parse_rows(b_src);
+    let acc = |m: &std::collections::BTreeMap<usize, bool>| {
+        if m.is_empty() {
+            (0usize, 0usize)
+        } else {
+            (m.values().filter(|v| **v).count(), m.len())
+        }
+    };
+    let (ap, at) = acc(&a);
+    let (bp, bt) = acc(&b);
+    let pct = |p: usize, t: usize| {
+        if t == 0 {
+            "n/a".to_string()
+        } else {
+            format!("{:.1}%", p as f64 / t as f64 * 100.0)
+        }
+    };
+    let mut out = format!(
+        "compare: base {}/{} ({}) vs candidate {}/{} ({})\n",
+        ap,
+        at,
+        pct(ap, at),
+        bp,
+        bt,
+        pct(bp, bt)
+    );
+    let mut improved = Vec::new();
+    let mut regressed = Vec::new();
+    for (row, aok) in &a {
+        match b.get(row) {
+            Some(bok) if !*aok && *bok => improved.push(*row),
+            Some(bok) if *aok && !*bok => regressed.push(*row),
+            _ => {}
+        }
+    }
+    if !improved.is_empty() {
+        out.push_str(&format!(
+            "improved ({}): {}",
+            improved.len(),
+            join_rows(&improved)
+        ));
+        out.push('\n');
+    }
+    if !regressed.is_empty() {
+        out.push_str(&format!(
+            "regressed ({}): {}",
+            regressed.len(),
+            join_rows(&regressed)
+        ));
+        out.push('\n');
+    }
+    if improved.is_empty() && regressed.is_empty() {
+        out.push_str("no row-level changes between the two runs\n");
+    }
+    out
+}
+
+fn join_rows(rows: &[usize]) -> String {
+    rows.iter()
+        .map(|r| r.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,6 +336,39 @@ mod tests {
         );
         let rep = report(&src, Some(0.5));
         assert!(!rep.contains("gate:"), "{rep}");
+    }
+
+    #[test]
+    fn compare_reports_flips_in_both_directions() {
+        let a = concat!(
+            r#"{"row": 1, "ok": true, "expected": "x", "got": "x"}"#,
+            "\n",
+            r#"{"row": 2, "ok": false, "expected": "y", "got": "z"}"#,
+            "\n",
+            r#"{"row": 3, "ok": true, "expected": "w", "got": "w"}"#,
+            "\n",
+        );
+        let b = concat!(
+            r#"{"row": 1, "ok": true, "expected": "x", "got": "x"}"#,
+            "\n",
+            r#"{"row": 2, "ok": true, "expected": "y", "got": "y"}"#,
+            "\n",
+            r#"{"row": 3, "ok": false, "expected": "w", "got": "v"}"#,
+            "\n",
+        );
+        let rep = compare(a, b);
+        assert!(
+            rep.contains("base 2/3 (66.7%) vs candidate 2/3 (66.7%)"),
+            "{rep}"
+        );
+        assert!(rep.contains("improved (1): 2"), "{rep}");
+        assert!(rep.contains("regressed (1): 3"), "{rep}");
+    }
+
+    #[test]
+    fn compare_of_identical_runs_is_calm() {
+        let a = r#"{"row": 1, "ok": true, "expected": "x", "got": "x"}"#;
+        assert!(compare(a, a).contains("no row-level changes"));
     }
 
     #[test]
