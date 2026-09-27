@@ -152,6 +152,13 @@ sudo mv nudgec /usr/local/bin/
 # Extract zip and add to PATH
 ```
 
+### Or take the 10-minute tour
+
+```sh
+nudgec learn          # six terminal lessons: hello, types, decide, policy, test, trace
+nudgec learn decide   # jump straight to typed decisions
+```
+
 ### Or scaffold a project
 
 ```sh

@@ -23,6 +23,7 @@ mod dap;
 mod fuzz;
 mod init;
 mod json;
+mod learn;
 mod lexer;
 mod lint;
 mod lsp;
@@ -38,6 +39,9 @@ fn usage() -> ! {
     eprintln!("nudgec {} — the Nudge compiler", env!("CARGO_PKG_VERSION"));
     eprintln!("usage:");
     eprintln!("  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)");
+    eprintln!(
+        "  nudgec learn [lesson]     the language in six terminal lessons (run bare for the index)"
+    );
     eprintln!("  nudgec lex   <file.ndg>   dump token stream");
     eprintln!("  nudgec parse <file.ndg>   dump AST");
     eprintln!("  nudgec check <file.ndg>   type-check (E0101–E0302)");
@@ -77,6 +81,14 @@ fn main() {
     // `init` scaffolds a project — no source file involved
     if args.len() >= 2 && args[1] == "init" {
         if let Err(e) = init::run(&args[2..]) {
+            eprintln!("error: {e}");
+            process::exit(1);
+        }
+        return;
+    }
+    // `learn` prints tutorial lessons — no source file involved
+    if args.len() >= 2 && args[1] == "learn" {
+        if let Err(e) = learn::run(&args[2..]) {
             eprintln!("error: {e}");
             process::exit(1);
         }

@@ -129,6 +129,13 @@ sudo mv nudgec /usr/local/bin/
 # 解压 zip 并添加到 PATH
 ```
 
+### 或者来个 10 分钟导览
+
+```sh
+nudgec learn          # 六节终端课程：hello、types、decide、policy、test、trace
+nudgec learn decide   # 直接跳到类型化决策
+```
+
 ### 或者脚手架一个项目
 
 ```sh
