@@ -1,0 +1,24 @@
+name: npm publish
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    if: startsWith(github.ref, 'refs/tags/nudge-runtime-')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org/
+      - name: Sync runtime into the package dir
+        run: cp runtime/nudge_runtime.ts runtime/npm/nudge_runtime.ts
+      - name: Smoke: package loads and exposes the API
+        run: node --experimental-strip-types -e "import('./runtime/npm/nudge_runtime.ts').then(m => { if (!m.llmCall || !m.decide || !m.predictBatch || !m.forAll) process.exit(1); })"
+      - name: Publish
+        run: npm publish runtime/npm --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
