@@ -654,7 +654,9 @@ def _otel_export(record: dict) -> None:
     """OTel-compatible span export (design §6, v0.3d): when ``NUDGE_OTEL``
     names a path, every trace record also lands there as a JSON-lines span
     (trace_id per process, span_id per record, record fields as
-    attributes). File export only — OTLP transport lands post-MVP."""
+    attributes). ``NUDGE_OTEL_ENDPOINT`` additionally POSTs the standard
+    OTLP/JSON collector payload (C7) — best effort unless
+    ``NUDGE_OTEL_STRICT=1``."""
     path = os.environ.get("NUDGE_OTEL")
     if not path:
         return
@@ -677,6 +679,35 @@ def _otel_export(record: dict) -> None:
     with _TRACE_LOCK:
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(span, ensure_ascii=False) + "\n")
+    endpoint = os.environ.get("NUDGE_OTEL_ENDPOINT")
+    if endpoint:
+        # OTLP/JSON over HTTP (C7): the standard collector payload shape —
+        # one resourceSpans group per call, span as built above. Best
+        # effort by design: observability must never break the program.
+        payload = {
+            "resourceSpans": [{
+                "resource": {"attributes": [{
+                    "key": "service.name",
+                    "value": {"stringValue": "nudge-program"},
+                }]},
+                "scopeSpans": [{
+                    "scope": {"name": "nudge_runtime"},
+                    "spans": [dict(span, traceId = bytes.fromhex(_OTEL_TRACE_ID).hex())],
+                }],
+            }]
+        }
+        try:
+            import urllib.request
+            req = urllib.request.Request(
+                endpoint if "://" in endpoint else "http://" + endpoint,
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=2).read()
+        except Exception as e:
+            if os.environ.get("NUDGE_OTEL_STRICT") == "1":
+                raise RuntimeError(f"OTLP export to {endpoint} failed: {e}") from None
 
 
 def _trace_call(model, prompt, out, repair_round, outcome, extra=None,
