@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { validateOutput, llmCall, toolStub, forAll, decide, predictBatch } from "./nudge_runtime.ts";
+import { validateOutput, llmCall, toolStub, forAll, decide, predictBatch, route } from "./nudge_runtime.ts";
 
 const SCHEMA = {
   type: "object",
@@ -341,5 +341,27 @@ test("predictBatch: one valen subprocess for N states, per-state records, order 
       if (saved[i] === undefined) delete process.env[k];
       else process.env[k] = saved[i];
     });
+  }
+});
+
+test("route: picks arm and attaches route label to trace record", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nudge_route_"));
+  const traceFile = path.join(dir, "trace.jsonl");
+  const prevTrace = process.env.NUDGE_TRACE;
+  process.env.NUDGE_TRACE = traceFile;
+  try {
+    const chosenModel = route(
+      ["cheap", () => "m-cheap", () => true],
+      ["strong", () => "m-strong", null]
+    );
+    assert.equal(chosenModel, "m-cheap");
+    llmCall({ prompt: "hello", model: chosenModel });
+    const recs = fs.readFileSync(traceFile, "utf8").trim().split("\n").map(JSON.parse);
+    assert.equal(recs.length, 1);
+    assert.equal(recs[0].model, "m-cheap");
+    assert.equal(recs[0].route, "cheap");
+  } finally {
+    if (prevTrace === undefined) delete process.env.NUDGE_TRACE;
+    else process.env.NUDGE_TRACE = prevTrace;
   }
 });

@@ -69,6 +69,14 @@ export function merge(l, r) {
   return r;
 }
 
+let _lastRouteLabel = null;
+
+export function _takeRouteLabel() {
+  const l = _lastRouteLabel;
+  _lastRouteLabel = null;
+  return l;
+}
+
 // User-defined model routing (design §4.4): arms are [label, model, cond]
 // triples; the first truthy condition wins, `null` is the otherwise arm.
 export function route(...arms) {
@@ -76,6 +84,7 @@ export function route(...arms) {
   // semantics, any other value makes the route a policy switch
   for (const [label, value, cond] of arms) {
     if (cond === null || cond()) {
+      _lastRouteLabel = label;
       const result = typeof value === "function" ? value() : value;
       return result;
     }
@@ -322,6 +331,8 @@ export function llmCall(opts) {
     outcome: "ok",
     provider: "fake",
   };
+  const routeLabel = _takeRouteLabel();
+  if (routeLabel !== null) record.route = routeLabel;
   if (_branchId !== null) record.branch = _branchId;
   if (guardApplied.length) record.guard = guardApplied;
   _emitTrace(record);
@@ -380,6 +391,8 @@ export function llmStream(opts) {
     streamed: true,
     chunks,
   };
+  const routeLabel = _takeRouteLabel();
+  if (routeLabel !== null) record.route = routeLabel;
   if (_branchId !== null) record.branch = _branchId;
   _emitTrace(record);
   _budgetCharge(FAKE_CALL_COST, budget);
