@@ -31,7 +31,7 @@ tar xzf "$FILENAME"
 
 # Install
 sudo mv nudgec /usr/local/bin/
-chmod +x /usr/local/bin/nudgec
+sudo chmod +x /usr/local/bin/nudgec
 
 # Cleanup
 rm -rf "$TMPDIR"

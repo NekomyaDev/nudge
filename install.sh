@@ -95,12 +95,11 @@ fi
 echo "Installing to /usr/local/bin..."
 if [ -w /usr/local/bin ]; then
     mv "$BINARY" /usr/local/bin/
+    chmod +x /usr/local/bin/$BINARY
 else
     sudo mv "$BINARY" /usr/local/bin/
+    sudo chmod +x /usr/local/bin/$BINARY
 fi
-
-# Make executable
-chmod +x /usr/local/bin/$BINARY
 
 echo ""
 echo "Nudge ${VERSION} installed successfully!"
