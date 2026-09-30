@@ -201,7 +201,11 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             }
             match (&args[0], &args[1]) {
                 (Value::String(s), Value::String(sub)) => match s.find(sub.as_str()) {
-                    Some(idx) => Ok(Value::Int(idx as i64)),
+                    // char index, not byte offset — aligns with str.substring and str.length
+                    Some(byte_idx) => {
+                        let char_idx = s[..byte_idx].chars().count() as i64;
+                        Ok(Value::Int(char_idx))
+                    }
                     None => Ok(Value::Int(-1)),
                 },
                 _ => Err("str.index_of: arguments must be strings".to_string()),

@@ -101,6 +101,27 @@ mod tests {
     }
 
     #[test]
+    fn test_str_index_of() {
+        let result = stdlib::string::execute(
+            "str.index_of",
+            vec![
+                Value::String("héllo".to_string()),
+                Value::String("l".to_string()),
+            ],
+        );
+        assert_eq!(result.unwrap(), Value::Int(2));
+
+        let not_found = stdlib::string::execute(
+            "str.index_of",
+            vec![
+                Value::String("hello".to_string()),
+                Value::String("z".to_string()),
+            ],
+        );
+        assert_eq!(not_found.unwrap(), Value::Int(-1));
+    }
+
+    #[test]
     fn test_str_upper_lower() {
         let result = stdlib::string::execute("str.upper", vec![Value::String("hello".to_string())]);
         assert_eq!(result.unwrap(), Value::String("HELLO".to_string()));
