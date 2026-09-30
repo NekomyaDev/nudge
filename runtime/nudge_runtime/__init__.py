@@ -85,7 +85,7 @@ import uuid
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from pathlib import Path
 
-__version__ = "1.1.0"
+__version__ = "1.2.1"
 
 
 def _version_key(v):

@@ -13,7 +13,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as process from "node:process";
 
-export const __version__ = "1.1.0";
+export const __version__ = "1.2.1";
 
 function versionKey(v) {
   const parts = String(v).match(/\d+/g) || [];

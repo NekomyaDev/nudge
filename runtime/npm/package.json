@@ -1,6 +1,6 @@
 {
   "name": "@nekomyadev/nudge-runtime",
-  "version": "1.1.2",
+  "version": "1.2.1",
   "description": "Runtime for the Nudge language — typed LLM/decision calls, schema validation, replay, NTF traces. Zero dependencies.",
   "type": "module",
   "main": "nudge_runtime.js",
