@@ -18,7 +18,7 @@ pub struct Parser {
     line: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)] // lexer vocabulary: not all tokens reach the parser yet
 enum Token {
     // Literals
@@ -112,29 +112,32 @@ impl Parser {
                     while i < chars.len() && chars[i].is_ascii_digit() {
                         i += 1;
                     }
-                    if i < chars.len() && chars[i] == '.' {
+                    if i + 1 < chars.len() && chars[i] == '.' && chars[i + 1].is_ascii_digit() {
                         i += 1;
                         while i < chars.len() && chars[i].is_ascii_digit() {
                             i += 1;
                         }
                         let s: String = chars[start..i].iter().collect();
-                        tokens.push(Token::Float(s.parse().unwrap()));
+                        tokens.push(Token::Float(s.parse().unwrap_or(0.0)));
                     } else {
                         let s: String = chars[start..i].iter().collect();
-                        tokens.push(Token::Int(s.parse().unwrap()));
+                        tokens.push(Token::Int(s.parse().unwrap_or(0)));
                     }
                 }
                 '"' => {
                     i += 1;
                     let start = i;
                     while i < chars.len() && chars[i] != '"' {
-                        if chars[i] == '\\' {
+                        if chars[i] == '\\' && i + 1 < chars.len() {
                             i += 1;
                         }
                         i += 1;
                     }
-                    let s: String = chars[start..i].iter().collect();
-                    i += 1; // skip closing quote
+                    let end = i.min(chars.len());
+                    let s: String = chars[start..end].iter().collect();
+                    if i < chars.len() {
+                        i += 1; // skip closing quote
+                    }
                     tokens.push(Token::String(s));
                 }
                 'a'..='z' | 'A'..='Z' | '_' => {
@@ -851,5 +854,18 @@ while x < 10 {
         let source = "let x = 1 + 2 * 3";
         let program = parse(source).unwrap();
         assert_eq!(program.body.len(), 1);
+    }
+
+    #[test]
+    fn test_tokenize_int_dot_method() {
+        let tokens = Parser::tokenize("1.to_string()");
+        assert_eq!(tokens[0], Token::Int(1));
+        assert_eq!(tokens[1], Token::Dot);
+    }
+
+    #[test]
+    fn test_tokenize_unterminated_string_backslash() {
+        let tokens = Parser::tokenize(r#""abc\"#);
+        assert_eq!(tokens[0], Token::String("abc\\".to_string()));
     }
 }

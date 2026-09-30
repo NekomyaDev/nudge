@@ -297,6 +297,24 @@ impl VM {
                             None => return Err("Integer overflow in modulo".to_string()),
                         }
                     }
+                    (Value::Float(a), Value::Float(b)) => {
+                        if *b == 0.0 {
+                            return Err("Division by zero".to_string());
+                        }
+                        Value::Float(a % b)
+                    }
+                    (Value::Int(a), Value::Float(b)) => {
+                        if *b == 0.0 {
+                            return Err("Division by zero".to_string());
+                        }
+                        Value::Float(*a as f64 % b)
+                    }
+                    (Value::Float(a), Value::Int(b)) => {
+                        if *b == 0 {
+                            return Err("Division by zero".to_string());
+                        }
+                        Value::Float(a % *b as f64)
+                    }
                     _ => return Err(format!("Cannot modulo {:?} and {:?}", a, b)),
                 };
                 self.stack.push(result);
@@ -649,6 +667,17 @@ impl VM {
                     (Value::Map(map), Value::String(key)) => {
                         map.get(key).cloned().unwrap_or(Value::None)
                     }
+                    (Value::String(s), Value::Int(i)) => {
+                        let chars: Vec<char> = s.chars().collect();
+                        if *i < 0 || *i >= chars.len() as i64 {
+                            return Err(format!(
+                                "Index {} out of bounds for string of length {}",
+                                i,
+                                chars.len()
+                            ));
+                        }
+                        Value::String(chars[*i as usize].to_string())
+                    }
                     _ => return Err(format!("Cannot index {:?} with {:?}", collection, index)),
                 };
                 self.stack.push(result);
@@ -937,5 +966,71 @@ mod tests {
         let mut vm = VM::new(program);
         assert!(vm.run().is_ok());
         assert_eq!(vm.stack[0], Value::Float(2.5));
+    }
+
+    #[test]
+    fn test_mixed_mod() {
+        let program = make_program(
+            vec![
+                Instruction {
+                    op: OpCode::Push,
+                    arg: Some(0),
+                    line: 1,
+                }, // 10 (Int)
+                Instruction {
+                    op: OpCode::Push,
+                    arg: Some(1),
+                    line: 1,
+                }, // 3.0 (Float)
+                Instruction {
+                    op: OpCode::Mod,
+                    arg: None,
+                    line: 1,
+                },
+                Instruction {
+                    op: OpCode::Halt,
+                    arg: None,
+                    line: 1,
+                },
+            ],
+            vec![Constant::Int(10), Constant::Float(3.0)],
+        );
+
+        let mut vm = VM::new(program);
+        assert!(vm.run().is_ok());
+        assert_eq!(vm.stack[0], Value::Float(1.0));
+    }
+
+    #[test]
+    fn test_string_indexing() {
+        let program = make_program(
+            vec![
+                Instruction {
+                    op: OpCode::Push,
+                    arg: Some(0),
+                    line: 1,
+                }, // "hello"
+                Instruction {
+                    op: OpCode::Push,
+                    arg: Some(1),
+                    line: 1,
+                }, // 1
+                Instruction {
+                    op: OpCode::Index,
+                    arg: None,
+                    line: 1,
+                },
+                Instruction {
+                    op: OpCode::Halt,
+                    arg: None,
+                    line: 1,
+                },
+            ],
+            vec![Constant::String("hello".to_string()), Constant::Int(1)],
+        );
+
+        let mut vm = VM::new(program);
+        assert!(vm.run().is_ok());
+        assert_eq!(vm.stack[0], Value::String("e".to_string()));
     }
 }
