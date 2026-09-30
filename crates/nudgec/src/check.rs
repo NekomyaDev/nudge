@@ -392,6 +392,12 @@ fn expr_has_effect_call(
         ExprKind::ParAll(xs) | ExprKind::ParRace(xs) => {
             xs.iter().any(|a| expr_has_effect_call(a, g, inferred))
         }
+        ExprKind::Route { arms } => arms.iter().any(|(_, value, cond)| {
+            expr_has_effect_call(value, g, inferred)
+                || cond
+                    .as_ref()
+                    .is_some_and(|c| expr_has_effect_call(c, g, inferred))
+        }),
         _ => false,
     }
 }
@@ -1657,6 +1663,17 @@ fn ask(q: string) -> string uses LLM {
 test "x" { for_all p in gen.injection() { let r = ask(p)
     assert len(r) >= 0 } }"#;
         let errs = check_src(llm_src);
+        assert!(errs.iter().any(|e| e.code == "E0804"), "{errs:?}");
+
+        let route_src = r#"
+test "r" { for_all p in gen.injection() {
+    let r = route {
+        a: llm"""go""" with { model: "m" } when true,
+        b: "ok" otherwise,
+    }
+    assert len(r) >= 0
+} }"#;
+        let errs = check_src(route_src);
         assert!(errs.iter().any(|e| e.code == "E0804"), "{errs:?}");
     }
 
