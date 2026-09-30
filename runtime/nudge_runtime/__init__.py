@@ -179,6 +179,10 @@ def validate(sch, value, path="$"):
     elif t == "integer":
         if not isinstance(value, int) or isinstance(value, bool):
             return [f"{path}: expected integer, got {_kind(value)}"]
+        if "minimum" in sch and value < sch["minimum"]:
+            errs.append(f"{path}: {value} < minimum {sch['minimum']}")
+        if "maximum" in sch and value > sch["maximum"]:
+            errs.append(f"{path}: {value} > maximum {sch['maximum']}")
     elif t == "boolean":
         if not isinstance(value, bool):
             return [f"{path}: expected boolean, got {_kind(value)}"]

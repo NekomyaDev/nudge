@@ -159,6 +159,22 @@ export function validateOutput(sch, v, path = "output") {
       return errs;
     }
   }
+  if (t === "string" && sch.format === "uri") {
+    try {
+      const u = new URL(v);
+      if (!u.protocol || !u.host) errs.push(`${path}: not a valid uri: ${JSON.stringify(v)}`);
+    } catch {
+      errs.push(`${path}: not a valid uri: ${JSON.stringify(v)}`);
+    }
+  }
+  if (t === "number" || t === "integer") {
+    if (sch.minimum !== undefined && v < sch.minimum) {
+      errs.push(`${path}: ${v} < minimum ${sch.minimum}`);
+    }
+    if (sch.maximum !== undefined && v > sch.maximum) {
+      errs.push(`${path}: ${v} > maximum ${sch.maximum}`);
+    }
+  }
   if (t === "object") {
     for (const k of sch.required || []) {
       if (!(k in v)) errs.push(`${path}: missing required property '${k}'`);
@@ -170,6 +186,10 @@ export function validateOutput(sch, v, path = "output") {
       for (const k of Object.keys(v)) {
         if (!(sch.properties || {})[k]) errs.push(`${path}: unexpected property '${k}'`);
       }
+    } else if (typeof sch.additionalProperties === "object" && sch.additionalProperties !== null) {
+      for (const [k, val] of Object.entries(v)) {
+        if (!(sch.properties || {})[k]) errs.push(...validateOutput(sch.additionalProperties, val, `${path}.${k}`));
+      }
     }
   }
   if (t === "array" && sch.items) {
@@ -180,6 +200,7 @@ export function validateOutput(sch, v, path = "output") {
 
 function _synth(sch) {
   if (!sch || typeof sch !== "object") return null;
+  if (sch.enum && sch.enum.length) return sch.enum[0];
   switch (sch.type) {
     case "object": {
       const out = {};
@@ -193,10 +214,15 @@ function _synth(sch) {
       // shapes exercise the same cardinality on both backends
       return [_synth(sch.items), _synth(sch.items), _synth(sch.items)];
     case "string":
+      if (sch.format === "uri") return "https://example.com/fake";
       return "fake-text";
     case "integer":
+      if (sch.minimum !== undefined) return Math.trunc(sch.minimum);
       return 1;
     case "number":
+      if (sch.minimum !== undefined && sch.maximum !== undefined) return (sch.minimum + sch.maximum) / 2;
+      if (sch.minimum !== undefined) return Number(sch.minimum);
+      if (sch.maximum !== undefined) return Number(sch.maximum);
       return 0.5;
     case "boolean":
       return true;

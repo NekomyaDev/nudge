@@ -58,6 +58,17 @@ test("validateOutput: integer vs number and enum", () => {
   assert.equal(validateOutput({ enum: ["a", "b"] }, "c").length, 1);
 });
 
+test("validateOutput: bounds, uri format, and additionalProperties schema", () => {
+  assert.deepEqual(validateOutput({ type: "integer", minimum: 0, maximum: 10 }, 5), []);
+  assert.equal(validateOutput({ type: "integer", minimum: 0, maximum: 10 }, -1).length, 1);
+  assert.equal(validateOutput({ type: "integer", minimum: 0, maximum: 10 }, 11).length, 1);
+  assert.deepEqual(validateOutput({ type: "string", format: "uri" }, "https://example.com/foo"), []);
+  assert.equal(validateOutput({ type: "string", format: "uri" }, "not-a-uri").length, 1);
+  const dictSchema = { type: "object", additionalProperties: { type: "number" } };
+  assert.deepEqual(validateOutput(dictSchema, { a: 1, b: 2 }), []);
+  assert.equal(validateOutput(dictSchema, { a: "wrong" }).length, 1);
+});
+
 test("replayed llm output violating the schema raises ReplayMismatch", () => {
   const tmp = tracePath([
     { kind: "llm.call", output: { answer: "ok", confidence: 0.9 } },
