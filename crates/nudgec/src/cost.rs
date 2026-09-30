@@ -210,7 +210,8 @@ fn collect_calls(e: &Expr, in_par: bool, out: &mut Vec<(String, bool)>) {
             collect_calls(body, true, out);
         }
         ExprKind::Route { arms } => {
-            for (_, _, cond) in arms {
+            for (_, val, cond) in arms {
+                collect_calls(val, in_par, out);
                 if let Some(x) = cond {
                     collect_calls(x, in_par, out);
                 }
@@ -301,7 +302,8 @@ fn count_expr(e: &Expr, in_par: bool, c: &mut Count) {
             count_expr(body, true, c);
         }
         ExprKind::Route { arms } => {
-            for (_, _, cond) in arms {
+            for (_, val, cond) in arms {
+                count_expr(val, in_par, c);
                 if let Some(x) = cond {
                     count_expr(x, in_par, c);
                 }
@@ -396,5 +398,20 @@ mod tests {
         let src = "fn g(x: string) -> string uses LLM {\n    llm\"\"\"go {x}\"\"\" with { model: \"m\" }\n}\nfn f(xs: [string]) -> [string] uses LLM {\n    par map xs |x| -> g(x)\n}";
         let r = report(&parse(lex(src).unwrap()).unwrap());
         assert!(r.contains("× collection size via par map"), "got:\n{r}");
+    }
+
+    #[test]
+    fn llm_sites_inside_route_arms_are_counted() {
+        let src = r#"fn f(n: int) -> string uses LLM {
+    route {
+        fast: llm"""fast""" with { model: "m" } when n < 5,
+        full: llm"""full""" with { model: "m" } otherwise,
+    }
+}"#;
+        let r = report(&parse(lex(src).unwrap()).unwrap());
+        assert!(
+            r.contains("f: 2 llm call site(s), min $0.002, max $0.002"),
+            "got:\n{r}"
+        );
     }
 }

@@ -271,7 +271,8 @@ fn direct_effects(
             direct_effects(r, g, effects, calls);
         }
         ExprKind::Route { arms } => {
-            for (_, _, cond) in arms {
+            for (_, value, cond) in arms {
+                direct_effects(value, g, effects, calls);
                 if let Some(c) = cond {
                     direct_effects(c, g, effects, calls);
                 }
