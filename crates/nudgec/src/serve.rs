@@ -52,14 +52,16 @@ class H(BaseHTTPRequestHandler):
         if self.path != "/run":
             self.send_error(404)
             return
-        n = int(self.headers.get("Content-Length", 0))
+        try:
+            n = int(self.headers.get("Content-Length", 0))
+        except (ValueError, TypeError):
+            n = 0
         try:
             req = json.loads(self.rfile.read(n) or b"{}")
         except Exception as e:
             self._json(400, {"ok": False, "error": f"bad JSON: {e}"})
             return
-        inp = req.get("input")
-        args = inp if isinstance(inp, list) else [inp]
+        args = [] if "input" not in req else (req["input"] if isinstance(req["input"], list) else [req["input"]])
         try:
             self._json(200, {"ok": True, "result": _plain(fn(*args))})
         except Exception as e:

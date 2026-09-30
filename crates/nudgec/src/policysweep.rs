@@ -73,12 +73,14 @@ total latency {total_latency:.0} ms, {missed} non-ok outcome(s)\n"
     }
     // the minimal failing case is the interesting one: the first row below
     // the lowest threshold is what a human would review first
-    let lowest = thresholds.iter().cloned().fold(f64::INFINITY, f64::min);
-    if let Some(r) = rows.iter().rev().find(|r| r.value < lowest) {
-        out.push_str(&format!(
-            "first human-review case: {metric}={:.3} (just below the lowest threshold {lowest:.2})\n",
-            r.value
-        ));
+    if !thresholds.is_empty() {
+        let lowest = thresholds.iter().cloned().fold(f64::INFINITY, f64::min);
+        if let Some(r) = rows.iter().rev().find(|r| r.value < lowest) {
+            out.push_str(&format!(
+                "first human-review case: {metric}={:.3} (just below the lowest threshold {lowest:.2})\n",
+                r.value
+            ));
+        }
     }
     out
 }
@@ -126,5 +128,12 @@ mod tests {
     fn sweep_on_missing_metric_or_question_is_helpful() {
         assert!(sweep(&trace(), "dept", "nope", &[0.5]).contains("has no `nope`"));
         assert!(sweep("{}", "dept", "confidence", &[0.5]).contains("no decision.call records"));
+    }
+
+    #[test]
+    fn sweep_with_empty_thresholds_does_not_panic() {
+        let out = sweep(&trace(), "dept", "confidence", &[]);
+        assert!(out.contains("4 recorded decision(s)"));
+        assert!(!out.contains("first human-review case"));
     }
 }

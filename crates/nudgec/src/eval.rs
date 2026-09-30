@@ -97,12 +97,13 @@ pub fn run_cli(
         }
     };
     let results_path = out_dir.join(format!("{stem}_eval_results.jsonl"));
+    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
     let driver_src = EVAL_DRIVER_PY
-        .replace("__MODULE__", &abs.to_string_lossy())
-        .replace("__DATASET__", dataset)
-        .replace("__FN__", fname)
-        .replace("__PATH__", path)
-        .replace("__OUT__", &results_path.to_string_lossy());
+        .replace("__MODULE__", &esc(&abs.to_string_lossy()))
+        .replace("__DATASET__", &esc(dataset))
+        .replace("__FN__", &esc(fname))
+        .replace("__PATH__", &esc(path))
+        .replace("__OUT__", &esc(&results_path.to_string_lossy()));
     let driver = out_dir.join(format!("{stem}_nudge_eval.py"));
     if let Err(e) = fs::write(&driver, driver_src) {
         eprintln!("error: cannot write {}: {e}", driver.display());

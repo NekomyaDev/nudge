@@ -34,21 +34,22 @@ def _tools():
         fn = getattr(m, name)
         if not callable(fn) or not hasattr(fn, "__code__"):
             continue
-        # generated fns are *args wrappers — param names aren't recoverable,
-        # so the schema uses the same `input` contract as nudgec serve/eval
+        is_nullary = getattr(fn, "__code__", None) and fn.__code__.co_argcount == 0
+        schema = {
+            "type": "object",
+            "properties": {
+                "input": {
+                    "description": "state text, or a JSON array of positional arguments",
+                    "type": ["string", "array"],
+                }
+            },
+        }
+        if not is_nullary:
+            schema["required"] = ["input"]
         out.append({
             "name": name,
             "description": (inspect.getdoc(fn) or f"Nudge function '{name}'").strip(),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "input": {
-                        "description": "state text, or a JSON array of positional arguments",
-                        "type": ["string", "array"],
-                    }
-                },
-                "required": ["input"],
-            },
+            "inputSchema": schema,
         })
     return out
 
@@ -88,7 +89,7 @@ while True:
             continue
         try:
             inp = args.get("input")
-            pos = inp if isinstance(inp, list) else [inp]
+            pos = [] if "input" not in args else (inp if isinstance(inp, list) else [inp])
             result = _plain(fn(*pos))
             _reply(rid, {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False, default=str)}]})
         except Exception as e:
@@ -99,8 +100,9 @@ while True:
 
 /// Returns the driver source for `file`'s emitted module.
 pub fn driver(module_path: &str, version: &str, fns: &str) -> String {
+    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
     MCP_PY
-        .replace("__MODULE__", module_path)
-        .replace("__VERSION__", version)
-        .replace("__FNS__", fns)
+        .replace("__MODULE__", &esc(module_path))
+        .replace("__VERSION__", &esc(version))
+        .replace("__FNS__", &esc(fns))
 }

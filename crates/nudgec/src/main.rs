@@ -735,9 +735,10 @@ fn main() {
                 process::exit(1);
             });
             let server_path = std::path::Path::new("out").join(format!("{stem}_server.py"));
+            let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
             let server_src = serve::SERVER_PY
-                .replace("__MODULE__", &abs.to_string_lossy())
-                .replace("__FN__", &fname)
+                .replace("__MODULE__", &esc(&abs.to_string_lossy()))
+                .replace("__FN__", &esc(&fname))
                 .replace("__PORT__", &port.to_string());
             if let Err(e) = fs::write(&server_path, server_src) {
                 eprintln!("error: cannot write {}: {e}", server_path.display());
