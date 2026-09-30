@@ -121,10 +121,22 @@ pub fn explain(text: &str) -> String {
             "tool.call" => {
                 tools += 1;
                 if s(r, "outcome") == "error" {
+                    let tool = {
+                        let t = s(r, "tool");
+                        if t.is_empty() {
+                            s(r, "fn")
+                        } else {
+                            t
+                        }
+                    };
+                    let server = s(r, "server");
+                    let server_part = if server.is_empty() {
+                        String::new()
+                    } else {
+                        format!("server={server}  ")
+                    };
                     failures.push(format!(
-                        "  tool.call #{line_no}  server={}  fn={}  {}",
-                        s(r, "server"),
-                        s(r, "fn"),
+                        "  tool.call #{line_no}  {server_part}tool={tool}  {}",
                         preview(r.get("error").unwrap_or(r), 90),
                     ));
                 }
@@ -246,6 +258,11 @@ mod tests {
         let rep = explain(&bad);
         assert!(rep.contains("failures (fix these first):"), "{rep}");
         assert!(rep.contains("tool.call #1"), "{rep}");
+        assert!(rep.contains("tool=retrieve"), "{rep}");
+
+        let bad_tool = r#"{"kind": "tool.call", "tool": "search", "outcome": "error", "error": "conn reset"}"#.to_string();
+        let rep2 = explain(&bad_tool);
+        assert!(rep2.contains("tool=search"), "{rep2}");
 
         let clean = explain(&decision(0.9, "billing", "ok"));
         assert!(clean.contains("nothing to review: no failures"), "{clean}");

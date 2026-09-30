@@ -131,9 +131,23 @@ pub fn run_in(base: &std::path::Path, rest: &[String]) -> Result<(), String> {
 
     let program_path = dir.join(format!("{name}.ndg"));
     std::fs::write(&program_path, src).map_err(|e| format!("cannot write {name}.ndg: {e}"))?;
+    let (tpl_label, tpl_url) = match template.as_str() {
+        "hello" => (
+            "examples/hello_llm.ndg".to_string(),
+            "../examples/hello_llm.ndg".to_string(),
+        ),
+        "triage" => (
+            "examples/triage-agent".to_string(),
+            "../examples/triage-agent/".to_string(),
+        ),
+        other => (
+            format!("examples/{other}"),
+            format!("../examples/{other}/"),
+        ),
+    };
     let readme = format!(
         "# {name}\n\nScaffolded by `nudgec init --template {template}` — {desc}\n\n\
-         The full example lives in [`examples/{tpl}`](../examples/{tpl}/) in the Nudge repo.\n\n\
+         The full example lives in [`{tpl_label}`]({tpl_url}) in the Nudge repo.\n\n\
          ## Commands\n\n```sh\n\
          nudgec check {name}.ndg    # type-check\n\
          nudgec build {name}.ndg    # compile to out/{name}.py\n\
@@ -142,10 +156,7 @@ pub fn run_in(base: &std::path::Path, rest: &[String]) -> Result<(), String> {
          ```\n\n\
          Everything runs against a deterministic fake provider by default — no API key, no token spend.\n\
          Point a live LLM provider with `NUDGE_PROVIDER`/keys; for decision templates set\n\
-         `NUDGE_DECISION_SERVERS` (see docs/decision.md).\n",
-        name = name,
-        tpl = template,
-        desc = desc
+         `NUDGE_DECISION_SERVERS` (see docs/decision.md).\n"
     );
     std::fs::write(dir.join("README.md"), readme)
         .map_err(|e| format!("cannot write README.md: {e}"))?;
@@ -194,7 +205,14 @@ mod tests {
         let readme = std::fs::read_to_string(base.join("demo/README.md")).unwrap();
         assert!(readme.contains("nudgec check demo.ndg"));
         assert!(readme.contains("decision models"));
+        assert!(readme.contains("examples/triage-agent"));
         let _ = std::fs::remove_dir_all(&base);
+
+        let base_hello = tmpdir("scaffold_hello");
+        run_in(&base_hello, &["hello_demo".to_string()]).unwrap();
+        let readme_hello = std::fs::read_to_string(base_hello.join("hello_demo/README.md")).unwrap();
+        assert!(readme_hello.contains("examples/hello_llm.ndg"));
+        let _ = std::fs::remove_dir_all(&base_hello);
     }
 
     #[test]

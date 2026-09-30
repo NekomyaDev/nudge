@@ -173,7 +173,16 @@ pub fn diff(a_text: &str, b_text: &str) -> String {
                 let label = match kind.as_str() {
                     "llm.call" => format!("llm.call {}", s(ra, "model")),
                     "tool.call" => format!("tool.call {}", s(ra, "tool")),
-                    _ => format!("{} {}", kind, s(ra, "fn")),
+                    "decision.call" => format!("decision.call {}", s(ra, "model")),
+                    "fn.return" => format!("fn.return {}", s(ra, "fn")),
+                    _ => {
+                        let name = s(ra, "fn");
+                        if name.is_empty() {
+                            kind.clone()
+                        } else {
+                            format!("{kind} {name}")
+                        }
+                    }
                 };
                 let mut lines: Vec<String> = Vec::new();
                 if s(ra, "kind") != s(rb, "kind") {
@@ -204,6 +213,14 @@ pub fn diff(a_text: &str, b_text: &str) -> String {
                     lines.push(format!(
                         "  cost      ${ca:.4} -> ${cb:.4}{}",
                         cost_delta(ca, cb)
+                    ));
+                }
+                let la = num(ra, "latency_ms");
+                let lb = num(rb, "latency_ms");
+                if (la - lb).abs() > 1e-12 && (la > 0.0 || lb > 0.0) {
+                    lines.push(format!(
+                        "  latency   {la:.0} ms -> {lb:.0} ms{}",
+                        delta(la, lb, " ms")
                     ));
                 }
                 let oa = ra.get("output");
