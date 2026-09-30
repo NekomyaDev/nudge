@@ -132,6 +132,10 @@ def validate(sch, value, path="$"):
     errs = []
     if not isinstance(sch, dict) or not sch:
         return errs
+    if "enum" in sch:
+        if value not in sch["enum"]:
+            errs.append(f"{path}: {value!r} is not one of {sch['enum']!r}")
+        return errs
     t = sch.get("type")
     if t == "object":
         if not isinstance(value, dict):
@@ -139,9 +143,19 @@ def validate(sch, value, path="$"):
         for req in sch.get("required", []):
             if req not in value:
                 errs.append(f"{path}.{req}: missing required field")
-        for key, sub in sch.get("properties", {}).items():
+        props = sch.get("properties", {})
+        for key, sub in props.items():
             if key in value:
                 errs += validate(sub, value[key], f"{path}.{key}")
+        if sch.get("additionalProperties") is False:
+            for k in value:
+                if k not in props:
+                    errs.append(f"{path}: unexpected property {k!r}")
+        elif isinstance(sch.get("additionalProperties"), dict):
+            sub = sch["additionalProperties"]
+            for k, val in value.items():
+                if k not in props:
+                    errs += validate(sub, val, f"{path}.{k}")
     elif t == "array":
         if not isinstance(value, list):
             return [f"{path}: expected array, got {_kind(value)}"]
@@ -182,6 +196,8 @@ def _synth(sch):
     """Synthesize a schema-conforming value (the fake provider's answer)."""
     if not isinstance(sch, dict):
         return None
+    if "enum" in sch and sch["enum"]:
+        return sch["enum"][0]
     t = sch.get("type")
     if t == "object":
         return {k: _synth(s) for k, s in sch.get("properties", {}).items()}
