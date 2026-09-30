@@ -8,8 +8,8 @@ smoke/
 node_modules/
 __pycache__/
 *.pyc
-.DS_Store
-trace.jsonl
+/trace.jsonl
+!conformance/cases/**/trace.jsonl
 .nudge/store/
 traces/local/
 

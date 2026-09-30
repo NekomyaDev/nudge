@@ -1,0 +1,2 @@
+{"v": 1, "seq": 1, "kind": "tool.call", "tool": "search", "input": "query", "output": "results"}
+{"v": 1, "seq": 2, "kind": "fn.return", "fn": "main", "output": {"result": 42}}
