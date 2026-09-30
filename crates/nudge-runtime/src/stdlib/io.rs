@@ -156,16 +156,20 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             if args.len() == 1 {
                 if let Value::String(prompt) = &args[0] {
                     print!("{}", prompt);
-                    io::stdout().flush().unwrap();
+                    let _ = io::stdout().flush();
                 }
             }
             let mut input = String::new();
-            io::stdin().read_line(&mut input).unwrap();
+            io::stdin()
+                .read_line(&mut input)
+                .map_err(|e| format!("io.read_line: cannot read from stdin: {}", e))?;
             Ok(Value::String(input.trim().to_string()))
         }
 
         "io.flush" => {
-            io::stdout().flush().unwrap();
+            io::stdout()
+                .flush()
+                .map_err(|e| format!("io.flush: cannot flush stdout: {}", e))?;
             Ok(Value::None)
         }
 

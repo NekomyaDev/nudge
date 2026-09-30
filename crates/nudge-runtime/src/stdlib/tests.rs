@@ -240,4 +240,38 @@ mod tests {
         let result = stdlib::execute("io.exists", vec![Value::String("/tmp".to_string())]);
         assert_eq!(result.unwrap(), Value::Bool(true));
     }
+
+    #[test]
+    fn test_str_pad_negative_width() {
+        let left = stdlib::string::execute(
+            "str.pad_left",
+            vec![
+                Value::String("hello".to_string()),
+                Value::Int(-5),
+                Value::String(" ".to_string()),
+            ],
+        );
+        assert_eq!(left.unwrap(), Value::String("hello".to_string()));
+
+        let right = stdlib::string::execute(
+            "str.pad_right",
+            vec![
+                Value::String("hello".to_string()),
+                Value::Int(-5),
+                Value::String(" ".to_string()),
+            ],
+        );
+        assert_eq!(right.unwrap(), Value::String("hello".to_string()));
+    }
+
+    #[test]
+    fn test_math_pow_edge_cases() {
+        // Negative exponent produces float
+        let result = stdlib::math::execute("math.pow", vec![Value::Int(2), Value::Int(-1)]);
+        assert_eq!(result.unwrap(), Value::Float(0.5));
+
+        // Overflow falls back to float without panicking
+        let result = stdlib::math::execute("math.pow", vec![Value::Int(2), Value::Int(100)]);
+        assert!(matches!(result.unwrap(), Value::Float(_)));
+    }
 }

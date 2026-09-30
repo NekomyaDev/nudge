@@ -105,7 +105,19 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 return Err("math.pow requires 2 arguments (base, exp)".to_string());
             }
             match (&args[0], &args[1]) {
-                (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.pow(*b as u32))),
+                (Value::Int(a), Value::Int(b)) => {
+                    if *b < 0 {
+                        Ok(Value::Float((*a as f64).powi(*b as i32)))
+                    } else if let Ok(exp) = u32::try_from(*b) {
+                        if let Some(v) = a.checked_pow(exp) {
+                            Ok(Value::Int(v))
+                        } else {
+                            Ok(Value::Float((*a as f64).powf(*b as f64)))
+                        }
+                    } else {
+                        Ok(Value::Float((*a as f64).powf(*b as f64)))
+                    }
+                }
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a.powf(*b))),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float((*a as f64).powf(*b))),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a.powi(*b as i32))),
@@ -273,9 +285,9 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                     if min >= max {
                         return Err("math.random_int: min must be less than max".to_string());
                     }
-                    let range = max - min;
-                    let val = min + (rand::random::<u64>() % range as u64) as i64;
-                    Ok(Value::Int(val))
+                    let range = (*max as i128) - (*min as i128);
+                    let val = *min as i128 + (rand::random::<u128>() % range as u128) as i128;
+                    Ok(Value::Int(val as i64))
                 }
                 _ => Err("math.random_int: arguments must be integers".to_string()),
             }

@@ -255,13 +255,28 @@ impl VM {
                         if *b == 0 {
                             return Err("Division by zero".to_string());
                         }
-                        Value::Int(a / b)
+                        match a.checked_div(*b) {
+                            Some(v) => Value::Int(v),
+                            None => return Err("Integer overflow in division".to_string()),
+                        }
                     }
                     (Value::Float(a), Value::Float(b)) => {
                         if *b == 0.0 {
                             return Err("Division by zero".to_string());
                         }
                         Value::Float(a / b)
+                    }
+                    (Value::Int(a), Value::Float(b)) => {
+                        if *b == 0.0 {
+                            return Err("Division by zero".to_string());
+                        }
+                        Value::Float(*a as f64 / b)
+                    }
+                    (Value::Float(a), Value::Int(b)) => {
+                        if *b == 0 {
+                            return Err("Division by zero".to_string());
+                        }
+                        Value::Float(a / *b as f64)
                     }
                     _ => return Err(format!("Cannot divide {:?} and {:?}", a, b)),
                 };
@@ -277,7 +292,10 @@ impl VM {
                         if *b == 0 {
                             return Err("Division by zero".to_string());
                         }
-                        Value::Int(a % b)
+                        match a.checked_rem(*b) {
+                            Some(v) => Value::Int(v),
+                            None => return Err("Integer overflow in modulo".to_string()),
+                        }
                     }
                     _ => return Err(format!("Cannot modulo {:?} and {:?}", a, b)),
                 };
@@ -288,7 +306,7 @@ impl VM {
             OpCode::Neg => {
                 let a = self.pop()?;
                 let result = match a {
-                    Value::Int(v) => Value::Int(-v),
+                    Value::Int(v) => Value::Int(v.checked_neg().unwrap_or(v)),
                     Value::Float(v) => Value::Float(-v),
                     _ => return Err(format!("Cannot negate {:?}", a)),
                 };
@@ -562,10 +580,12 @@ impl VM {
                     Value::String(s) => {
                         print!("{}", s);
                         use std::io::{self, Write};
-                        io::stdout().flush().unwrap();
+                        let _ = io::stdout().flush();
 
                         let mut input = String::new();
-                        io::stdin().read_line(&mut input).unwrap();
+                        io::stdin()
+                            .read_line(&mut input)
+                            .map_err(|e| format!("ReadLine error: {e}"))?;
                         let input = input.trim().to_string();
 
                         self.stack.push(Value::String(input));
@@ -697,8 +717,12 @@ impl VM {
         match (a, b) {
             (Value::Int(a), Value::Int(b)) => a == b,
             (Value::Float(a), Value::Float(b)) => a == b,
+            (Value::Int(a), Value::Float(b)) => (*a as f64) == *b,
+            (Value::Float(a), Value::Int(b)) => *a == (*b as f64),
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::List(a), Value::List(b)) => a == b,
+            (Value::Map(a), Value::Map(b)) => a == b,
             (Value::None, Value::None) => true,
             _ => false,
         }
@@ -721,6 +745,14 @@ impl VM {
             } else {
                 0
             }),
+            (Value::Int(a), Value::Float(b)) => {
+                let fa = *a as f64;
+                Ok(if fa < *b { -1 } else if fa > *b { 1 } else { 0 })
+            }
+            (Value::Float(a), Value::Int(b)) => {
+                let fb = *b as f64;
+                Ok(if *a < fb { -1 } else if *a > fb { 1 } else { 0 })
+            }
             (Value::String(a), Value::String(b)) => Ok(a.cmp(b) as i32),
             _ => Err(format!("Cannot compare {:?} and {:?}", a, b)),
         }
@@ -839,5 +871,71 @@ mod tests {
         let mut vm = VM::new(program);
         assert!(vm.run().is_ok());
         assert_eq!(vm.stack[0], Value::Bool(true));
+    }
+
+    #[test]
+    fn test_mixed_comparison() {
+        let program = make_program(
+            vec![
+                Instruction {
+                    op: OpCode::Push,
+                    arg: Some(0),
+                    line: 1,
+                }, // 5 (Int)
+                Instruction {
+                    op: OpCode::Push,
+                    arg: Some(1),
+                    line: 1,
+                }, // 5.0 (Float)
+                Instruction {
+                    op: OpCode::Eq,
+                    arg: None,
+                    line: 1,
+                },
+                Instruction {
+                    op: OpCode::Halt,
+                    arg: None,
+                    line: 1,
+                },
+            ],
+            vec![Constant::Int(5), Constant::Float(5.0)],
+        );
+
+        let mut vm = VM::new(program);
+        assert!(vm.run().is_ok());
+        assert_eq!(vm.stack[0], Value::Bool(true));
+    }
+
+    #[test]
+    fn test_mixed_div() {
+        let program = make_program(
+            vec![
+                Instruction {
+                    op: OpCode::Push,
+                    arg: Some(0),
+                    line: 1,
+                }, // 10 (Int)
+                Instruction {
+                    op: OpCode::Push,
+                    arg: Some(1),
+                    line: 1,
+                }, // 4.0 (Float)
+                Instruction {
+                    op: OpCode::Div,
+                    arg: None,
+                    line: 1,
+                }, // 10 / 4.0 = 2.5
+                Instruction {
+                    op: OpCode::Halt,
+                    arg: None,
+                    line: 1,
+                },
+            ],
+            vec![Constant::Int(10), Constant::Float(4.0)],
+        );
+
+        let mut vm = VM::new(program);
+        assert!(vm.run().is_ok());
+        assert_eq!(vm.stack[0], Value::Float(2.5));
     }
 }

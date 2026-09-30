@@ -325,7 +325,7 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             }
             match (&args[0], &args[1], &args[2]) {
                 (Value::String(s), Value::Int(width), Value::String(pad)) => {
-                    let width = *width as usize;
+                    let width = (*width).max(0) as usize;
                     // char-based width: byte len pads short for non-ASCII
                     let char_len = s.chars().count();
                     if char_len >= width {
@@ -347,7 +347,7 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             }
             match (&args[0], &args[1], &args[2]) {
                 (Value::String(s), Value::Int(width), Value::String(pad)) => {
-                    let width = *width as usize;
+                    let width = (*width).max(0) as usize;
                     // char-based width: byte len pads short for non-ASCII
                     let char_len = s.chars().count();
                     if char_len >= width {
