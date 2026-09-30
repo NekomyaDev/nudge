@@ -28,6 +28,32 @@ mod tests {
     }
 
     #[test]
+    fn test_io_delete_dir_and_list_dir_sorted() {
+        let temp_dir = std::env::temp_dir().join(format!("nudge_io_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let f2 = temp_dir.join("b.txt");
+        let f1 = temp_dir.join("a.txt");
+        std::fs::write(&f2, "b").unwrap();
+        std::fs::write(&f1, "a").unwrap();
+
+        let res = stdlib::io::execute("io.list_dir", vec![Value::String(temp_dir.to_str().unwrap().to_string())]).unwrap();
+        assert_eq!(
+            res,
+            Value::List(vec![
+                Value::String("a.txt".to_string()),
+                Value::String("b.txt".to_string()),
+            ])
+        );
+
+        stdlib::io::execute("io.delete", vec![Value::String(f1.to_str().unwrap().to_string())]).unwrap();
+        stdlib::io::execute("io.delete", vec![Value::String(f2.to_str().unwrap().to_string())]).unwrap();
+        // io.delete on the empty directory itself succeeds
+        let del_dir = stdlib::io::execute("io.delete", vec![Value::String(temp_dir.to_str().unwrap().to_string())]);
+        assert!(del_dir.is_ok());
+    }
+
+    #[test]
     fn test_io_exists() {
         let result = stdlib::io::execute("io.exists", vec![Value::String("/tmp".to_string())]);
         assert!(result.is_ok());

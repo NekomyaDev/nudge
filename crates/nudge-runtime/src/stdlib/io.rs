@@ -106,7 +106,12 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 Value::String(s) => s.clone(),
                 _ => return Err("io.delete: path must be a string".to_string()),
             };
-            match fs::remove_file(&path) {
+            let res = if fs::metadata(&path).map(|m| m.is_dir()).unwrap_or(false) {
+                fs::remove_dir(&path)
+            } else {
+                fs::remove_file(&path)
+            };
+            match res {
                 Ok(()) => Ok(Value::None),
                 Err(e) => Err(format!("io.delete: cannot delete '{}': {}", path, e)),
             }
@@ -125,10 +130,11 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                     let mut result = Vec::new();
                     for entry in entries.flatten() {
                         if let Some(name) = entry.file_name().to_str() {
-                            result.push(Value::String(name.to_string()));
+                            result.push(name.to_string());
                         }
                     }
-                    Ok(Value::List(result))
+                    result.sort();
+                    Ok(Value::List(result.into_iter().map(Value::String).collect()))
                 }
                 Err(e) => Err(format!("io.list_dir: cannot list '{}': {}", path, e)),
             }
