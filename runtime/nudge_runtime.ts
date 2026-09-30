@@ -139,7 +139,7 @@ export function validateOutput(sch, v, path = "output") {
   if (t) {
     const ok =
       (t === "string" && typeof v === "string") ||
-      (t === "number" && typeof v === "number" && !Number.isInteger(v)) ||
+      (t === "number" && typeof v === "number") ||
       (t === "integer" && Number.isInteger(v)) ||
       (t === "boolean" && typeof v === "boolean") ||
       (t === "object" && typeof v === "object" && v !== null && !Array.isArray(v)) ||

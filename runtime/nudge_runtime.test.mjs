@@ -52,6 +52,8 @@ test("validateOutput: flags unexpected properties when additionalProperties is f
 test("validateOutput: integer vs number and enum", () => {
   assert.deepEqual(validateOutput({ type: "integer" }, 3), []);
   assert.equal(validateOutput({ type: "integer" }, 3.5).length, 1);
+  assert.deepEqual(validateOutput({ type: "number" }, 3), []);
+  assert.deepEqual(validateOutput({ type: "number" }, 3.5), []);
   assert.deepEqual(validateOutput({ enum: ["a", "b"] }, "b"), []);
   assert.equal(validateOutput({ enum: ["a", "b"] }, "c").length, 1);
 });
