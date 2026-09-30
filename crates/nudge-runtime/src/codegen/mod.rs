@@ -624,4 +624,42 @@ mod tests {
         // Should have: NewList, Push(1), ListPush, Push(2), ListPush, Push(3), ListPush, Store(list), Halt
         assert_eq!(program.functions[0].instructions.len(), 9);
     }
+
+    #[test]
+    fn test_compile_and_run_function_call() {
+        let source = r#"
+fn add(a, b) {
+    return a + b
+}
+
+let x = add(10, 32)
+"#;
+        let program_def = crate::parser::parse(source).unwrap();
+        let mut compiler = Compiler::new();
+        let program = compiler.compile_program(&program_def);
+
+        let mut vm = crate::vm::VM::new(program);
+        assert!(vm.run().is_ok());
+    }
+
+    #[test]
+    fn test_compile_and_run_explicit_main_calling_function() {
+        let source = r#"
+fn add(a, b) {
+    return a + b
+}
+
+fn main() {
+    let x = add(10, 32)
+    return x
+}
+"#;
+        let program_def = crate::parser::parse(source).unwrap();
+        let mut compiler = Compiler::new();
+        let program = compiler.compile_program(&program_def);
+
+        let mut vm = crate::vm::VM::new(program);
+        assert!(vm.run().is_ok());
+        assert_eq!(vm.stack()[0], crate::vm::Value::Int(42));
+    }
 }

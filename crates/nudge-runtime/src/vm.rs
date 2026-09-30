@@ -121,12 +121,24 @@ impl VM {
             .insert("math".to_string(), Value::Map(math_module));
         vm.globals.insert("str".to_string(), Value::Map(str_module));
 
+        // Register program functions as globals
+        for (i, func) in vm.program.functions.iter().enumerate() {
+            vm.globals
+                .entry(func.name.clone())
+                .or_insert(Value::Function(i as u32));
+        }
+
         vm
     }
 
     /// Enable trace emission
     pub fn enable_trace(&mut self) {
         self.trace_enabled = true;
+    }
+
+    /// Get current stack values
+    pub fn stack(&self) -> &[Value] {
+        &self.stack
     }
 
     /// Run the program
@@ -1098,5 +1110,76 @@ mod tests {
         let mut vm = VM::new(program);
         assert!(vm.run().is_ok());
         assert_eq!(vm.stack[0], Value::String("e".to_string()));
+    }
+
+    #[test]
+    fn test_user_function_call() {
+        let program = Program {
+            version: 1,
+            constants: vec![Constant::String("double".to_string()), Constant::Int(21)],
+            functions: vec![
+                Function {
+                    name: "double".to_string(),
+                    arity: 1,
+                    locals: 1,
+                    instructions: vec![
+                        Instruction {
+                            op: OpCode::Load,
+                            arg: Some(0),
+                            line: 1,
+                        },
+                        Instruction {
+                            op: OpCode::Dup,
+                            arg: None,
+                            line: 1,
+                        },
+                        Instruction {
+                            op: OpCode::Add,
+                            arg: None,
+                            line: 1,
+                        },
+                        Instruction {
+                            op: OpCode::Return,
+                            arg: None,
+                            line: 1,
+                        },
+                    ],
+                    effects: vec![],
+                },
+                Function {
+                    name: "main".to_string(),
+                    arity: 0,
+                    locals: 0,
+                    instructions: vec![
+                        Instruction {
+                            op: OpCode::LoadGlobal,
+                            arg: Some(0), // "double"
+                            line: 2,
+                        },
+                        Instruction {
+                            op: OpCode::Push,
+                            arg: Some(1), // 21
+                            line: 2,
+                        },
+                        Instruction {
+                            op: OpCode::Call,
+                            arg: Some(1),
+                            line: 2,
+                        },
+                        Instruction {
+                            op: OpCode::Halt,
+                            arg: None,
+                            line: 2,
+                        },
+                    ],
+                    effects: vec![],
+                },
+            ],
+            entry_point: 1,
+        };
+
+        let mut vm = VM::new(program);
+        assert!(vm.run().is_ok());
+        assert_eq!(vm.stack[0], Value::Int(42));
     }
 }
