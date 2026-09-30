@@ -38,6 +38,15 @@ fn main() {
             println!("nudge {}", env!("CARGO_PKG_VERSION"));
         }
 
+        "--help" | "-h" => {
+            println!("nudge {} — Nudge runtime", env!("CARGO_PKG_VERSION"));
+            println!("usage:");
+            println!("  nudge run <file.ndg>     Run a compiled Nudge program");
+            println!("  nudge build <file.ndg>   Compile Nudge to bytecode");
+            println!("  nudge check <file.ndg>   Type-check a Nudge program");
+            println!("  nudge --version          Show version");
+        }
+
         "run" => {
             if args.len() != 3 {
                 eprintln!("error: nudge run requires a file argument");

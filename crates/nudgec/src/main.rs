@@ -44,39 +44,20 @@ mod watch;
 
 use std::{env, fs, process};
 
+fn print_usage_to(to_stderr: bool) {
+    let msg = format!(
+        "nudgec {} — the Nudge compiler\nusage:\n  nudgec fmt   <file.ndg> [--check]   normalize indentation, trim trailing ws, collapse blanks\n  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)\n  nudgec learn [lesson]     the language in six terminal lessons (run bare for the index)\n  nudgec lex   <file.ndg>   dump token stream\n  nudgec parse <file.ndg>   dump AST\n  nudgec check <file.ndg>   type-check (E0101–E0302)\n  nudgec build <file.ndg>   check, then emit Python to out/<name>.py\n  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts\n  nudgec check <file.ndg> --watch   re-check on every file change (Ctrl-C to stop)\n  nudgec cost  <file.ndg>   static cost report per fn\n  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn\n  nudgec resume <run_id>    continue a crashed run from its last checkpoint\n  nudgec trace-check <t.jsonl> validate a trace against the frozen v1 schema\n  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json\n  nudgec lsp                serve the Language Server Protocol over stdio\n  nudgec trace-html <t.jsonl> [--out file.html]  static single-file viewer (no server, works offline)\n  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace\n  nudgec explain <t.jsonl>    human report over a trace: totals, failures, low-confidence answers\n  nudgec trace-diff <a.jsonl> <b.jsonl> [--fail-on-regression]  compare traces; gate CI on regression\n  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8]\n  nudgec compare <results_a.jsonl> <results_b.jsonl>  two eval runs: which rows flipped\n  nudgec runs  [--run <run_id>]   list recorded agent runs / show one run's state and trace\n  nudgec mcp   <file.ndg> [--fns a,b]   expose program fns as MCP tools over stdio\n  nudgec serve <file.ndg> [--fn <name>] [--port N]   run a program fn as a local HTTP API (POST /run, GET /health)\n  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8]  score a program over a dataset\n  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)",
+        env!("CARGO_PKG_VERSION")
+    );
+    if to_stderr {
+        eprintln!("{msg}");
+    } else {
+        println!("{msg}");
+    }
+}
+
 fn usage() -> ! {
-    eprintln!("nudgec {} — the Nudge compiler", env!("CARGO_PKG_VERSION"));
-    eprintln!("usage:");
-    eprintln!("  nudgec fmt   <file.ndg> [--check]   normalize indentation, trim trailing ws, collapse blanks");
-    eprintln!("  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)");
-    eprintln!(
-        "  nudgec learn [lesson]     the language in six terminal lessons (run bare for the index)"
-    );
-    eprintln!("  nudgec lex   <file.ndg>   dump token stream");
-    eprintln!("  nudgec parse <file.ndg>   dump AST");
-    eprintln!("  nudgec check <file.ndg>   type-check (E0101–E0302)");
-    eprintln!("  nudgec build <file.ndg>   check, then emit Python to out/<name>.py");
-    eprintln!("  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts");
-    eprintln!("  nudgec check <file.ndg> --watch   re-check on every file change (Ctrl-C to stop)");
-    eprintln!("  nudgec cost  <file.ndg>   static cost report per fn");
-    eprintln!("  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn");
-    eprintln!("  nudgec resume <run_id>    continue a crashed run from its last checkpoint");
-    eprintln!("  nudgec trace-check <t.jsonl> validate a trace against the frozen v1 schema");
-    eprintln!("  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json");
-    eprintln!("  nudgec lsp                serve the Language Server Protocol over stdio");
-    eprintln!("  nudgec trace-html <t.jsonl> [--out file.html]  static single-file viewer (no server, works offline)");
-    eprintln!("  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace");
-    eprintln!("  nudgec explain <t.jsonl>    human report over a trace: totals, failures, low-confidence answers");
-    eprintln!("  nudgec trace-diff <a.jsonl> <b.jsonl> [--fail-on-regression]  compare traces; gate CI on regression");
-    eprintln!("  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8]");
-    eprintln!(
-        "  nudgec compare <results_a.jsonl> <results_b.jsonl>  two eval runs: which rows flipped"
-    );
-    eprintln!("  nudgec runs  [--run <run_id>]   list recorded agent runs / show one run's state and trace");
-    eprintln!("  nudgec mcp   <file.ndg> [--fns a,b]   expose program fns as MCP tools over stdio");
-    eprintln!("  nudgec serve <file.ndg> [--fn <name>] [--port N]   run a program fn as a local HTTP API (POST /run, GET /health)");
-    eprintln!("  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8]  score a program over a dataset");
-    eprintln!("  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)");
+    print_usage_to(true);
     process::exit(64);
 }
 
@@ -102,6 +83,11 @@ fn main() {
     // which broke version detection in scripts)
     if args.len() == 2 && (args[1] == "--version" || args[1] == "-V") {
         println!("nudgec {}", env!("CARGO_PKG_VERSION"));
+        process::exit(0);
+    }
+    // `--help` / `-h`: print usage and exit 0
+    if args.len() == 2 && (args[1] == "--help" || args[1] == "-h") {
+        print_usage_to(false);
         process::exit(0);
     }
     // `init` scaffolds a project — no source file involved
