@@ -58,10 +58,10 @@ pub fn report(items: &[Item]) -> String {
         }
     }
 
-    // direct counts + call graph (plain name → (callee, reached inside par map))
+    // direct counts + call graph (display name → (callee, reached inside par map))
     let mut direct: HashMap<&str, Count> = HashMap::new();
     let mut graph: HashMap<&str, Vec<(String, bool)>> = HashMap::new();
-    for (_, plain, body) in &fns {
+    for (display, _, body) in &fns {
         let mut c = Count::default();
         for st in body.iter() {
             match &st.kind {
@@ -72,7 +72,7 @@ pub fn report(items: &[Item]) -> String {
                 StmtKind::ForAll { .. } => {}
             }
         }
-        direct.insert(plain.as_str(), c);
+        direct.insert(display.as_str(), c);
         let mut edges = Vec::new();
         for st in body.iter() {
             match &st.kind {
@@ -82,14 +82,14 @@ pub fn report(items: &[Item]) -> String {
                 StmtKind::ForAll { .. } => {}
             }
         }
-        graph.insert(plain.as_str(), edges);
+        graph.insert(display.as_str(), edges);
     }
 
     let mut out = String::from("cost report (fake pricing, $0.001 per call)\n");
     let mut total = Count::default();
-    for (display, plain, _) in &fns {
-        let c = &direct[plain.as_str()];
-        let t = transitive(plain, &direct, &graph);
+    for (display, _, _) in &fns {
+        let c = &direct[display.as_str()];
+        let t = transitive(display.as_str(), &direct, &graph);
         line(&mut out, display, c, &t);
         total.add(c);
     }
@@ -114,11 +114,21 @@ fn transitive(
         if !seen.insert(name) {
             continue;
         }
-        if let Some(c) = direct.get(name) {
+        if let Some(c) = direct.get(name).or_else(|| {
+            direct
+                .iter()
+                .find(|(k, _)| k.split('.').last() == Some(name))
+                .map(|(_, v)| v)
+        }) {
             t.add(c);
             t.dynamic |= via_par;
         }
-        if let Some(edges) = graph.get(name) {
+        if let Some(edges) = graph.get(name).or_else(|| {
+            graph
+                .iter()
+                .find(|(k, _)| k.split('.').last() == Some(name))
+                .map(|(_, v)| v)
+        }) {
             for (callee, par) in edges {
                 stack.push((callee.as_str(), via_par || *par));
             }
@@ -411,6 +421,36 @@ mod tests {
         let r = report(&parse(lex(src).unwrap()).unwrap());
         assert!(
             r.contains("f: 2 llm call site(s), min $0.002, max $0.002"),
+            "got:\n{r}"
+        );
+    }
+
+    #[test]
+    fn multiple_agents_same_method_name_do_not_collide() {
+        let src = r#"agent A {
+    state { x: int = 0 }
+    fn step() -> string uses LLM {
+        llm"""step a""" with { model: "m" }
+    }
+}
+agent B {
+    state { y: int = 0 }
+    fn step() -> string uses LLM {
+        llm"""step b1""" with { model: "m" }
+        llm"""step b2""" with { model: "m" }
+    }
+}"#;
+        let r = report(&parse(lex(src).unwrap()).unwrap());
+        assert!(
+            r.contains("A.step: 1 llm call site(s), min $0.001, max $0.001"),
+            "got:\n{r}"
+        );
+        assert!(
+            r.contains("B.step: 2 llm call site(s), min $0.002, max $0.002"),
+            "got:\n{r}"
+        );
+        assert!(
+            r.contains("total: 3 llm call site(s), min $0.003, max $0.003"),
             "got:\n{r}"
         );
     }
