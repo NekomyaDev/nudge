@@ -260,7 +260,9 @@ mod tests {
         assert!(rep.contains("tool.call #1"), "{rep}");
         assert!(rep.contains("tool=retrieve"), "{rep}");
 
-        let bad_tool = r#"{"kind": "tool.call", "tool": "search", "outcome": "error", "error": "conn reset"}"#.to_string();
+        let bad_tool =
+            r#"{"kind": "tool.call", "tool": "search", "outcome": "error", "error": "conn reset"}"#
+                .to_string();
         let rep2 = explain(&bad_tool);
         assert!(rep2.contains("tool=search"), "{rep2}");
 

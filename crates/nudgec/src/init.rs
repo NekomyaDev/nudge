@@ -140,10 +140,7 @@ pub fn run_in(base: &std::path::Path, rest: &[String]) -> Result<(), String> {
             "examples/triage-agent".to_string(),
             "../examples/triage-agent/".to_string(),
         ),
-        other => (
-            format!("examples/{other}"),
-            format!("../examples/{other}/"),
-        ),
+        other => (format!("examples/{other}"), format!("../examples/{other}/")),
     };
     let readme = format!(
         "# {name}\n\nScaffolded by `nudgec init --template {template}` — {desc}\n\n\
@@ -210,7 +207,8 @@ mod tests {
 
         let base_hello = tmpdir("scaffold_hello");
         run_in(&base_hello, &["hello_demo".to_string()]).unwrap();
-        let readme_hello = std::fs::read_to_string(base_hello.join("hello_demo/README.md")).unwrap();
+        let readme_hello =
+            std::fs::read_to_string(base_hello.join("hello_demo/README.md")).unwrap();
         assert!(readme_hello.contains("examples/hello_llm.ndg"));
         let _ = std::fs::remove_dir_all(&base_hello);
     }

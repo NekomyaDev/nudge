@@ -742,6 +742,9 @@ mod tests {
     fn read_frame_case_insensitive_header() {
         let raw = b"content-length: 17\r\n\r\n{\"jsonrpc\":\"2.0\"}";
         let mut cur = std::io::Cursor::new(raw);
-        assert_eq!(read_frame(&mut cur).as_deref(), Some("{\"jsonrpc\":\"2.0\"}"));
+        assert_eq!(
+            read_frame(&mut cur).as_deref(),
+            Some("{\"jsonrpc\":\"2.0\"}")
+        );
     }
 }

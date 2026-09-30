@@ -142,7 +142,9 @@ mod tests {
         let trace = format!("{}\n{}", trace(), "{\"v\":1,\"seq\":5,\"kind\":\"decision.call\",\"answers\":{\"dept\":{\"confidence\":0.45}},\"latency_ms\":10,\"outcome\":\"ok\"}");
         let out = sweep(&trace, "dept", "confidence", &[0.5]);
         assert!(
-            out.contains("first human-review case: confidence=0.450 (just below the lowest threshold 0.50)"),
+            out.contains(
+                "first human-review case: confidence=0.450 (just below the lowest threshold 0.50)"
+            ),
             "{out}"
         );
     }

@@ -6,14 +6,24 @@ on:
     paths: ["examples/**", ".github/workflows/examples.yml"]
   pull_request:
     paths: ["examples/**", ".github/workflows/examples.yml"]
-
-env:
-  # The Python runtime (nudge_runtime) ships inside the published image,
-  # so check/build/test all run there.
-  NUDGE_IMAGE: nekomyadev/nudge:1.2.0
+  workflow_dispatch:
 
 jobs:
+  build:
+    name: build compiler
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build nudgec
+        run: cargo build --release -p nudgec
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nudgec
+          path: target/release/nudgec
+
   check-build-test:
+    needs: build
     name: check / build / test (${{ matrix.example }})
     runs-on: ubuntu-latest
     strategy:
@@ -21,13 +31,22 @@ jobs:
       matrix:
         example: [chatbot, classifier, code-reviewer, data-analyzer, property-fuzz, rag-agent, research-agent, translator, triage-agent]
     steps:
-      - uses: actions/checkout@v7
-
-      - name: Pull nudge image
-        run: docker pull "$NUDGE_IMAGE"
-
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - uses: actions/download-artifact@v4
+        with:
+          name: nudgec
+          path: /tmp/bin
+      - name: Install nudgec & runtime
+        run: |
+          chmod +x /tmp/bin/nudgec
+          sudo mv /tmp/bin/nudgec /usr/local/bin/nudgec
+          pip install -e runtime
       - name: nudgec check / build / test (fake provider, no API key)
         working-directory: examples/${{ matrix.example }}
+        env:
+          NUDGE_PROVIDER: fake
         run: |
-          docker run --rm -v "$PWD:/workspace" -w "/workspace" -e NUDGE_PROVIDER=fake "$NUDGE_IMAGE" \
-            sh -c "nudgec check ${{ matrix.example }}.ndg && nudgec build ${{ matrix.example }}.ndg && nudgec test ${{ matrix.example }}.ndg"
+          nudgec check ${{ matrix.example }}.ndg && nudgec build ${{ matrix.example }}.ndg && nudgec test ${{ matrix.example }}.ndg

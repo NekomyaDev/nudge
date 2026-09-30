@@ -530,6 +530,20 @@ fn main() {
                 if std::env::var("NUDGE_PROVIDER").is_err() {
                     cmd.env("NUDGE_PROVIDER", "fake");
                 }
+                if std::env::var("PYTHONPATH")
+                    .map(|s| s.is_empty())
+                    .unwrap_or(true)
+                {
+                    for candidate in &["runtime", "../runtime", "../../runtime"] {
+                        let p = std::path::Path::new(candidate);
+                        if p.join("nudge_runtime").is_dir() {
+                            if let Ok(abs_rt) = p.canonicalize() {
+                                cmd.env("PYTHONPATH", abs_rt);
+                                break;
+                            }
+                        }
+                    }
+                }
                 match cmd.status() {
                     Ok(status) => process::exit(status.code().unwrap_or(1)),
                     Err(e) => {

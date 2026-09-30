@@ -609,7 +609,11 @@ impl VM {
                         vals.push(self.pop()?);
                     }
                     vals.reverse();
-                    let s = vals.iter().map(|v| format!("{v}")).collect::<Vec<_>>().join(" ");
+                    let s = vals
+                        .iter()
+                        .map(|v| format!("{v}"))
+                        .collect::<Vec<_>>()
+                        .join(" ");
                     println!("{s}");
                 }
                 self.advance_ip();
@@ -799,11 +803,23 @@ impl VM {
             }),
             (Value::Int(a), Value::Float(b)) => {
                 let fa = *a as f64;
-                Ok(if fa < *b { -1 } else if fa > *b { 1 } else { 0 })
+                Ok(if fa < *b {
+                    -1
+                } else if fa > *b {
+                    1
+                } else {
+                    0
+                })
             }
             (Value::Float(a), Value::Int(b)) => {
                 let fb = *b as f64;
-                Ok(if *a < fb { -1 } else if *a > fb { 1 } else { 0 })
+                Ok(if *a < fb {
+                    -1
+                } else if *a > fb {
+                    1
+                } else {
+                    0
+                })
             }
             (Value::String(a), Value::String(b)) => Ok(a.cmp(b) as i32),
             _ => Err(format!("Cannot compare {:?} and {:?}", a, b)),

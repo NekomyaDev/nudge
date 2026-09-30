@@ -37,7 +37,11 @@ mod tests {
         std::fs::write(&f2, "b").unwrap();
         std::fs::write(&f1, "a").unwrap();
 
-        let res = stdlib::io::execute("io.list_dir", vec![Value::String(temp_dir.to_str().unwrap().to_string())]).unwrap();
+        let res = stdlib::io::execute(
+            "io.list_dir",
+            vec![Value::String(temp_dir.to_str().unwrap().to_string())],
+        )
+        .unwrap();
         assert_eq!(
             res,
             Value::List(vec![
@@ -46,9 +50,16 @@ mod tests {
             ])
         );
 
-        stdlib::io::execute("io.delete", vec![Value::String(f1.to_str().unwrap().to_string())]).unwrap();
+        stdlib::io::execute(
+            "io.delete",
+            vec![Value::String(f1.to_str().unwrap().to_string())],
+        )
+        .unwrap();
         // io.delete on a non-empty directory succeeds recursively
-        let del_dir = stdlib::io::execute("io.delete", vec![Value::String(temp_dir.to_str().unwrap().to_string())]);
+        let del_dir = stdlib::io::execute(
+            "io.delete",
+            vec![Value::String(temp_dir.to_str().unwrap().to_string())],
+        );
         assert!(del_dir.is_ok());
         assert!(!temp_dir.exists());
     }
@@ -262,10 +273,7 @@ mod tests {
                 Value::String("world".to_string()),
             ],
         );
-        assert_eq!(
-            result2.unwrap(),
-            Value::String("{1} world".to_string())
-        );
+        assert_eq!(result2.unwrap(), Value::String("{1} world".to_string()));
     }
 
     #[test]
@@ -315,10 +323,14 @@ mod tests {
         assert!(matches!(result.unwrap(), Value::Float(_)));
 
         // Large integer exponent exceeding i32 doesn't truncate
-        let result = stdlib::math::execute("math.pow", vec![Value::Float(2.0), Value::Int(5_000_000_000)]);
+        let result = stdlib::math::execute(
+            "math.pow",
+            vec![Value::Float(2.0), Value::Int(5_000_000_000)],
+        );
         assert_eq!(result.unwrap(), Value::Float(f64::INFINITY));
 
-        let result_neg = stdlib::math::execute("math.pow", vec![Value::Int(2), Value::Int(-5_000_000_000)]);
+        let result_neg =
+            stdlib::math::execute("math.pow", vec![Value::Int(2), Value::Int(-5_000_000_000)]);
         assert_eq!(result_neg.unwrap(), Value::Float(0.0));
     }
 }

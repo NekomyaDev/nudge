@@ -23,7 +23,7 @@ jobs:
           npm install --no-save typescript@5
           npx tsc nudge_runtime.ts --outDir . --target es2022 --module nodenext --moduleResolution nodenext --declaration --skipLibCheck
           rm nudge_runtime.ts
-      - name: Smoke: package loads and exposes the API
+      - name: "Smoke: package loads and exposes the API"
         run: node -e "import('./runtime/npm/nudge_runtime.js').then(m => { if (!m.llmCall || !m.decide || !m.predictBatch || !m.forAll) process.exit(1); })"
       - name: Publish
         run: npm publish runtime/npm --access public
