@@ -47,10 +47,10 @@ mod tests {
         );
 
         stdlib::io::execute("io.delete", vec![Value::String(f1.to_str().unwrap().to_string())]).unwrap();
-        stdlib::io::execute("io.delete", vec![Value::String(f2.to_str().unwrap().to_string())]).unwrap();
-        // io.delete on the empty directory itself succeeds
+        // io.delete on a non-empty directory succeeds recursively
         let del_dir = stdlib::io::execute("io.delete", vec![Value::String(temp_dir.to_str().unwrap().to_string())]);
         assert!(del_dir.is_ok());
+        assert!(!temp_dir.exists());
     }
 
     #[test]

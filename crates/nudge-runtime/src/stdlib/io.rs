@@ -107,7 +107,7 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 _ => return Err("io.delete: path must be a string".to_string()),
             };
             let res = if fs::metadata(&path).map(|m| m.is_dir()).unwrap_or(false) {
-                fs::remove_dir(&path)
+                fs::remove_dir_all(&path)
             } else {
                 fs::remove_file(&path)
             };
