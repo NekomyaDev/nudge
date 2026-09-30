@@ -107,7 +107,11 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             match (&args[0], &args[1]) {
                 (Value::Int(a), Value::Int(b)) => {
                     if *b < 0 {
-                        Ok(Value::Float((*a as f64).powi(*b as i32)))
+                        if let Ok(exp) = i32::try_from(*b) {
+                            Ok(Value::Float((*a as f64).powi(exp)))
+                        } else {
+                            Ok(Value::Float((*a as f64).powf(*b as f64)))
+                        }
                     } else if let Ok(exp) = u32::try_from(*b) {
                         if let Some(v) = a.checked_pow(exp) {
                             Ok(Value::Int(v))
@@ -120,7 +124,13 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 }
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a.powf(*b))),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float((*a as f64).powf(*b))),
-                (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a.powi(*b as i32))),
+                (Value::Float(a), Value::Int(b)) => {
+                    if let Ok(exp) = i32::try_from(*b) {
+                        Ok(Value::Float(a.powi(exp)))
+                    } else {
+                        Ok(Value::Float(a.powf(*b as f64)))
+                    }
+                }
                 _ => Err("math.pow: arguments must be numbers".to_string()),
             }
         }

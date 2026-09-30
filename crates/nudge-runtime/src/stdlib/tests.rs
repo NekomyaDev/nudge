@@ -313,5 +313,12 @@ mod tests {
         // Overflow falls back to float without panicking
         let result = stdlib::math::execute("math.pow", vec![Value::Int(2), Value::Int(100)]);
         assert!(matches!(result.unwrap(), Value::Float(_)));
+
+        // Large integer exponent exceeding i32 doesn't truncate
+        let result = stdlib::math::execute("math.pow", vec![Value::Float(2.0), Value::Int(5_000_000_000)]);
+        assert_eq!(result.unwrap(), Value::Float(f64::INFINITY));
+
+        let result_neg = stdlib::math::execute("math.pow", vec![Value::Int(2), Value::Int(-5_000_000_000)]);
+        assert_eq!(result_neg.unwrap(), Value::Float(0.0));
     }
 }
