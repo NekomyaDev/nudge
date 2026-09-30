@@ -565,15 +565,19 @@ fn main() {
             };
             let program = read("program");
             let trace = read("trace");
-            match process::Command::new("python3")
-                .arg(program.trim())
-                .env("NUDGE_PROVIDER", "fake")
+            let mut cmd = process::Command::new("python3");
+            cmd.arg(program.trim())
                 .env("NUDGE_RUN_ID", run)
                 .env("NUDGE_REPLAY", trace.trim())
                 .env("NUDGE_RESUME", "1")
-                .env("NUDGE_TRACE", trace.trim())
-                .status()
-            {
+                .env("NUDGE_TRACE", trace.trim());
+            if std::env::var("NUDGE_PROVIDER").is_err() {
+                cmd.env("NUDGE_PROVIDER", "fake");
+            }
+            if std::env::var("NUDGE_ALLOW_FAKE_RESUME").is_err() {
+                cmd.env("NUDGE_ALLOW_FAKE_RESUME", "1");
+            }
+            match cmd.status() {
                 Ok(status) => process::exit(status.code().unwrap_or(1)),
                 Err(e) => {
                     eprintln!("error: cannot run python3: {e}");
