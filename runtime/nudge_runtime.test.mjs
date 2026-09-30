@@ -234,13 +234,45 @@ test("decision cache: miss then hit, no second server call, cache field written"
   }
 });
 
+const mockValenScript = path.join(os.tmpdir(), "nudge_mock_valen.mjs");
+fs.writeFileSync(
+  mockValenScript,
+  `import fs from "node:fs";
+const args = process.argv.slice(2);
+const dataPath = args[args.indexOf("--data") + 1];
+const outPath = args[args.indexOf("--output") + 1];
+if (process.env.MOCK_VALEN_MARKER) {
+  fs.appendFileSync(process.env.MOCK_VALEN_MARKER, "call\\n");
+}
+const raw = fs.readFileSync(dataPath, "utf8");
+const lines = raw.trim().split("\\n").filter(Boolean);
+const outLines = lines.map((l) => {
+  const rec = JSON.parse(l);
+  const targets = {};
+  for (const [name, q] of Object.entries(rec.request.questions || {})) {
+    if (name === "dept") {
+      targets[name] = { probabilities: { billing: 0.9, technical: 0.1 } };
+    } else if (name === "churn") {
+      targets[name] = { probabilities: { yes: 0.9, no: 0.1 } };
+    } else if (name === "urgency") {
+      targets[name] = { probabilities: { "0": 0.3, "1": 0.7 } };
+    } else {
+      targets[name] = { probabilities: { yes: 0.9, no: 0.1 } };
+    }
+  }
+  return JSON.stringify({ group_id: rec.group_id, targets });
+});
+fs.writeFileSync(outPath, outLines.join("\\n") + "\\n");
+`
+);
+
 test("valen transport: subprocess JSONL contract, typed answers, trace record", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nudge_valen_"));
   const trace = path.join(dir, "trace.jsonl");
   const savedVars = ["NUDGE_DECISION_SERVERS", "NUDGE_TRACE"];
   const saved = savedVars.map((k) => process.env[k]);
   process.env.NUDGE_DECISION_SERVERS = JSON.stringify({
-    valen: { command: `node /tmp/mock_valen.mjs` },
+    valen: { command: `node ${mockValenScript}` },
   });
   process.env.NUDGE_TRACE = trace;
   try {
@@ -272,7 +304,7 @@ test("predictBatch: one valen subprocess for N states, per-state records, order 
   const savedVars = ["NUDGE_DECISION_SERVERS", "NUDGE_TRACE", "NUDGE_DECISION_CACHE", "MOCK_VALEN_MARKER"];
   const saved = savedVars.map((k) => process.env[k]);
   process.env.NUDGE_DECISION_SERVERS = JSON.stringify({
-    valen: { command: `node /tmp/mock_valen.mjs` },
+    valen: { command: `node ${mockValenScript}` },
   });
   process.env.MOCK_VALEN_MARKER = marker;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nudge_batch_"));
