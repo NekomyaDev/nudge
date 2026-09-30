@@ -308,12 +308,30 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             }
             match &args[0] {
                 Value::String(template) => {
-                    let mut result = template.clone();
-                    for (i, arg) in args[1..].iter().enumerate() {
-                        let placeholder = format!("{{{}}}", i);
-                        result = result.replace(&placeholder, &format!("{}", arg));
+                    let mut out = String::with_capacity(template.len());
+                    let chars: Vec<char> = template.chars().collect();
+                    let mut i = 0;
+                    while i < chars.len() {
+                        if chars[i] == '{' {
+                            let mut j = i + 1;
+                            while j < chars.len() && chars[j].is_ascii_digit() {
+                                j += 1;
+                            }
+                            if j > i + 1 && j < chars.len() && chars[j] == '}' {
+                                let idx_str: String = chars[i + 1..j].iter().collect();
+                                if let Ok(idx) = idx_str.parse::<usize>() {
+                                    if idx + 1 < args.len() {
+                                        out.push_str(&format!("{}", args[idx + 1]));
+                                        i = j + 1;
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                        out.push(chars[i]);
+                        i += 1;
                     }
-                    Ok(Value::String(result))
+                    Ok(Value::String(out))
                 }
                 _ => Err("str.format: first argument must be a string".to_string()),
             }

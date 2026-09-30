@@ -252,6 +252,20 @@ mod tests {
             result.unwrap(),
             Value::String("Hello, Alice! You are 25 years old.".to_string())
         );
+
+        // Single pass: an argument value containing {1} must not be re-scanned and substituted
+        let result2 = stdlib::string::execute(
+            "str.format",
+            vec![
+                Value::String("{0} {1}".to_string()),
+                Value::String("{1}".to_string()),
+                Value::String("world".to_string()),
+            ],
+        );
+        assert_eq!(
+            result2.unwrap(),
+            Value::String("{1} world".to_string())
+        );
     }
 
     #[test]
