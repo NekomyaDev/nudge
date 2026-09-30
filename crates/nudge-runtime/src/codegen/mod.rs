@@ -296,7 +296,7 @@ impl Compiler {
                 for arg in args {
                     self.compile_expr(arg, *line);
                 }
-                self.emit(OpCode::Print, None, *line);
+                self.emit(OpCode::Print, Some(args.len() as u32), *line);
             }
             Stmt::Assign { name, value, line } => {
                 self.compile_expr(value, *line);

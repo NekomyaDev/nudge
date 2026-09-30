@@ -587,8 +587,18 @@ impl VM {
             }
 
             OpCode::Print => {
-                let value = self.pop()?;
-                println!("{}", value);
+                let count = inst.arg.unwrap_or(1) as usize;
+                if count == 0 {
+                    println!();
+                } else {
+                    let mut vals = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        vals.push(self.pop()?);
+                    }
+                    vals.reverse();
+                    let s = vals.iter().map(|v| format!("{v}")).collect::<Vec<_>>().join(" ");
+                    println!("{s}");
+                }
                 self.advance_ip();
             }
 
@@ -833,6 +843,62 @@ mod tests {
 
         let mut vm = VM::new(program);
         assert!(vm.run().is_ok());
+    }
+
+    #[test]
+    fn test_print_multi_args() {
+        let program = make_program(
+            vec![
+                Instruction {
+                    op: OpCode::Push,
+                    arg: Some(0),
+                    line: 1,
+                },
+                Instruction {
+                    op: OpCode::Push,
+                    arg: Some(1),
+                    line: 1,
+                },
+                Instruction {
+                    op: OpCode::Print,
+                    arg: Some(2),
+                    line: 1,
+                },
+                Instruction {
+                    op: OpCode::Halt,
+                    arg: None,
+                    line: 1,
+                },
+            ],
+            vec![Constant::String("hello".to_string()), Constant::Int(42)],
+        );
+
+        let mut vm = VM::new(program);
+        assert!(vm.run().is_ok());
+        assert!(vm.stack.is_empty());
+    }
+
+    #[test]
+    fn test_print_zero_args() {
+        let program = make_program(
+            vec![
+                Instruction {
+                    op: OpCode::Print,
+                    arg: Some(0),
+                    line: 1,
+                },
+                Instruction {
+                    op: OpCode::Halt,
+                    arg: None,
+                    line: 1,
+                },
+            ],
+            vec![],
+        );
+
+        let mut vm = VM::new(program);
+        assert!(vm.run().is_ok());
+        assert!(vm.stack.is_empty());
     }
 
     #[test]
