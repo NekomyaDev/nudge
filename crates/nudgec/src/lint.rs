@@ -249,7 +249,8 @@ fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut V
             walk_expr(ctx, body, records, out);
         }
         ExprKind::Route { arms } => {
-            for (_, _, cond) in arms {
+            for (_, val, cond) in arms {
+                walk_expr(ctx, val, records, out);
                 if let Some(c) = cond {
                     walk_expr(ctx, c, records, out);
                 }
@@ -491,5 +492,17 @@ mod tests {
     fn interpolations_do_not_count_as_words() {
         assert_eq!(prompt_words("summarize {text} briefly please"), 3);
         assert_eq!(prompt_words(""), 0);
+    }
+
+    #[test]
+    fn route_arm_expressions_are_linted() {
+        let src = r#"fn f(n: int) -> string uses LLM {
+    route {
+        fast: llm"""summarize this text please""" with { model: "fake" } when n < 5,
+        full: "done" otherwise,
+    }
+}"#;
+        let ls = lints(src);
+        assert!(ls.iter().any(|l| l.code == "W0001"), "{ls:?}");
     }
 }
