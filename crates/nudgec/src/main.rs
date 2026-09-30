@@ -525,11 +525,12 @@ fn main() {
                 // exactly like they will under `nudge test`. NUDGE_PROGRAM
                 // points agent-state registration at the emitted module,
                 // not this driver (resume correctness, design §7).
-                match process::Command::new("python3")
-                    .arg(&driver)
-                    .env("NUDGE_PROGRAM", &abs)
-                    .status()
-                {
+                let mut cmd = process::Command::new("python3");
+                cmd.arg(&driver).env("NUDGE_PROGRAM", &abs);
+                if std::env::var("NUDGE_PROVIDER").is_err() {
+                    cmd.env("NUDGE_PROVIDER", "fake");
+                }
+                match cmd.status() {
                     Ok(status) => process::exit(status.code().unwrap_or(1)),
                     Err(e) => {
                         eprintln!("error: cannot run python3: {e}");

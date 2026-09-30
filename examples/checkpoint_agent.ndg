@@ -25,3 +25,8 @@ agent Researcher {
         state.notes
     }
 }
+
+test "researcher step produces a note" {
+    let note = step("urban heat islands")
+    assert len(note) > 0
+}

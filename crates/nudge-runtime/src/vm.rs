@@ -137,6 +137,7 @@ impl VM {
     }
 
     /// Get current stack values
+    #[allow(dead_code)]
     pub fn stack(&self) -> &[Value] {
         &self.stack
     }
