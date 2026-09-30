@@ -117,7 +117,7 @@ fn transitive(
         if let Some(c) = direct.get(name).or_else(|| {
             direct
                 .iter()
-                .find(|(k, _)| k.split('.').last() == Some(name))
+                .find(|(k, _)| k.split('.').next_back() == Some(name))
                 .map(|(_, v)| v)
         }) {
             t.add(c);
@@ -126,7 +126,7 @@ fn transitive(
         if let Some(edges) = graph.get(name).or_else(|| {
             graph
                 .iter()
-                .find(|(k, _)| k.split('.').last() == Some(name))
+                .find(|(k, _)| k.split('.').next_back() == Some(name))
                 .map(|(_, v)| v)
         }) {
             for (callee, par) in edges {
