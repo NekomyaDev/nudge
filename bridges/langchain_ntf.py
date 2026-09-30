@@ -110,6 +110,8 @@ class NTFTracer:
         record = llm_result_to_ntf(prompt=pending.get("input", ""),
                                    output="", model="unknown",
                                    provider=self.provider, outcome="error")
+        if error is not None:
+            record["error"] = str(error)
         record["seq"] = self._next_seq()
         with open(self.path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")

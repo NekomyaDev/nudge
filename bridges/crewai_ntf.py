@@ -22,7 +22,7 @@ def task_to_ntf(seq, agent_role, task_description, output, error=None):
         "model": f"crewai:{agent_role}",
         "params": {"temperature": 0},
         "input": str(task_description),
-        "output": output if isinstance(output, str) else repr(output),
+        "output": output if isinstance(output, (str, int, float, list, dict)) or output is None else str(output),
         "tokens": {"in": 0, "out": 0},
         "cost_usd": 0.0,
         "repair_round": 0,
