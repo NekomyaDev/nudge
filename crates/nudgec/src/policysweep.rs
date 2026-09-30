@@ -75,7 +75,7 @@ total latency {total_latency:.0} ms, {missed} non-ok outcome(s)\n"
     // the lowest threshold is what a human would review first
     if !thresholds.is_empty() {
         let lowest = thresholds.iter().cloned().fold(f64::INFINITY, f64::min);
-        if let Some(r) = rows.iter().rev().find(|r| r.value < lowest) {
+        if let Some(r) = rows.iter().find(|r| r.value < lowest) {
             out.push_str(&format!(
                 "first human-review case: {metric}={:.3} (just below the lowest threshold {lowest:.2})\n",
                 r.value
@@ -135,5 +135,15 @@ mod tests {
         let out = sweep(&trace(), "dept", "confidence", &[]);
         assert!(out.contains("4 recorded decision(s)"));
         assert!(!out.contains("first human-review case"));
+    }
+
+    #[test]
+    fn sweep_picks_first_borderline_human_review_case() {
+        let trace = format!("{}\n{}", trace(), "{\"v\":1,\"seq\":5,\"kind\":\"decision.call\",\"answers\":{\"dept\":{\"confidence\":0.45}},\"latency_ms\":10,\"outcome\":\"ok\"}");
+        let out = sweep(&trace, "dept", "confidence", &[0.5]);
+        assert!(
+            out.contains("first human-review case: confidence=0.450 (just below the lowest threshold 0.50)"),
+            "{out}"
+        );
     }
 }

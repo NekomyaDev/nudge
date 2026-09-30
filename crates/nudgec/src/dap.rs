@@ -292,8 +292,14 @@ fn read_frame(input: &mut impl Read) -> Option<String> {
     }
     let len = header
         .lines()
-        .find_map(|l| l.strip_prefix("Content-Length:"))
-        .and_then(|v| v.trim().parse::<usize>().ok())
+        .find_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            if k.trim().eq_ignore_ascii_case("Content-Length") {
+                v.trim().parse::<usize>().ok()
+            } else {
+                None
+            }
+        })
         // hostile/malformed Content-Length must not become an unchecked
         // heap allocation — cap at 64 MiB, larger frames are protocol abuse
         .filter(|len| *len <= 64 * 1024 * 1024)?;
@@ -413,5 +419,12 @@ mod tests {
             s.contains("\"success\": false") && s.contains("not implemented"),
             "{s}"
         );
+    }
+
+    #[test]
+    fn read_frame_case_insensitive_header() {
+        let raw = b"content-length: 7\r\n\r\n{\"a\":1}";
+        let mut cur = std::io::Cursor::new(raw);
+        assert_eq!(read_frame(&mut cur).as_deref(), Some("{\"a\":1}"));
     }
 }
