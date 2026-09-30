@@ -37,8 +37,7 @@ if fn is None or not callable(fn):
 
 results = []
 for i, row in enumerate(rows):
-    inp = row.get("input")
-    args = inp if isinstance(inp, list) else [inp]
+    args = [] if "input" not in row else (row["input"] if isinstance(row["input"], list) else [row["input"]])
     got, ok, err = None, False, None
     try:
         got = _plain(fn(*args))
