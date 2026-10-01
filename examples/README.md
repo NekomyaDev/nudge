@@ -46,6 +46,13 @@ A retrieval-augmented agent that answers only from retrieved context. Demonstrat
 - Grounded answers with citations — and explicit refusal when evidence is thin
 - Budget-controlled synthesis with repair
 
+### [Dungeon Crawler RPG](dungeon-crawler/)
+A turn-based RPG adventure game engine written purely in Nudge. Demonstrates:
+- Pure Nudge game logic and turn-based combat mechanics
+- Stateful hero progression (HP, ATK, DEF, Potions, Gold, XP, Level)
+- Value-level policy switching with `route{}` (armor mitigation, critical hits, branching outcomes)
+- Merchant trading, weapon & armor forging, and shrine restoration
+
 ## More Examples
 
 Compact single-file programs at the top of this directory, used by the compiler's CI and smoke tests:
@@ -82,6 +89,7 @@ python3 out/chatbot.py
 | Translator | ✅ | ✅ | ✅ | ✅ | LLM |
 | Classifier | ✅ | ✅ | ✅ | ✅ | LLM |
 | RAG Agent | ✅ | ✅ | ✅ | - | LLM, Tool |
+| Dungeon Crawler | - | - | - | - | Pure |
 
 ## Contributing
 

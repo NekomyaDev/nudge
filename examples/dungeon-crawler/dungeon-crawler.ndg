@@ -1,0 +1,348 @@
+// The Crypt of Shadows — A Turn-Based RPG Dungeon Crawler in pure Nudge.
+// Features stateful hero mechanics, turn-based combat with armor mitigation,
+// critical strikes, potion brewing & merchant trading, blacksmith forging,
+// health shrines, and a boss battle against the Dread Wyrm.
+
+fn calc_damage(attacker_atk: int, defender_def: int) -> int {
+    route {
+        min_damage: 1 when attacker_atk <= defender_def,
+        normal_damage: attacker_atk - defender_def otherwise
+    }
+}
+
+fn calc_crit(base_atk: int, is_crit: bool) -> int {
+    route {
+        critical: base_atk * 2 when is_crit,
+        regular: base_atk otherwise
+    }
+}
+
+fn xp_required(level: int) -> int {
+    level * 50
+}
+
+fn room_title(room_id: int) -> string {
+    route {
+        r1: "Catacomb Gate" when room_id == 1,
+        r2: "Goblin Outpost" when room_id == 2,
+        r3: "Blacksmith Anvil" when room_id == 3,
+        r4: "Sunken Shrine" when room_id == 4,
+        r5: "Throne of the Dread Wyrm" when room_id == 5,
+        default_room: "Dark Corridor" otherwise
+    }
+}
+
+agent DungeonHero {
+    state {
+        hp: int = 100,
+        max_hp: int = 100,
+        atk: int = 20,
+        def_val: int = 8,
+        potions: int = 2,
+        gold: int = 25,
+        exp: int = 0,
+        level: int = 1,
+        score: int = 0,
+        current_room: int = 0,
+        is_alive: bool = true,
+        boss_defeated: bool = false,
+        inventory: [string] = ["Iron Sword", "Traveler Cloak"],
+        log_entries: [string] = []
+    }
+
+    fn get_hp() -> int {
+        state.hp
+    }
+
+    fn get_max_hp() -> int {
+        state.max_hp
+    }
+
+    fn get_atk() -> int {
+        state.atk
+    }
+
+    fn get_def() -> int {
+        state.def_val
+    }
+
+    fn get_gold() -> int {
+        state.gold
+    }
+
+    fn get_potions() -> int {
+        state.potions
+    }
+
+    fn get_level() -> int {
+        state.level
+    }
+
+    fn get_exp() -> int {
+        state.exp
+    }
+
+    fn get_score() -> int {
+        state.score
+    }
+
+    fn get_room() -> int {
+        state.current_room
+    }
+
+    fn is_hero_alive() -> bool {
+        state.is_alive
+    }
+
+    fn is_boss_slain() -> bool {
+        state.boss_defeated
+    }
+
+    fn reset_hero() -> bool {
+        state.hp = 100
+        state.max_hp = 100
+        state.atk = 20
+        state.def_val = 8
+        state.potions = 2
+        state.gold = 25
+        state.exp = 0
+        state.level = 1
+        state.score = 0
+        state.current_room = 0
+        state.is_alive = true
+        state.boss_defeated = false
+        state.inventory = ["Iron Sword", "Traveler Cloak"]
+        state.log_entries = ["A new brave hero enters the Crypt of Shadows."]
+        true
+    }
+
+    fn drink_potion() -> int {
+        let can_drink = state.potions > 0 and state.hp < state.max_hp
+        let heal_power = 40
+        let new_hp_raw = state.hp + heal_power
+        let capped_hp = route {
+            maxed: state.max_hp when new_hp_raw > state.max_hp,
+            normal: new_hp_raw otherwise
+        }
+        state.hp = route {
+            healed: capped_hp when can_drink,
+            untouched: state.hp otherwise
+        }
+        state.potions -= route {
+            used: 1 when can_drink,
+            keep: 0 otherwise
+        }
+        state.log_entries += route {
+            drank: ["Hero drank a glowing potion and restored health!"] when can_drink,
+            wasted: ["Potion was not used."] otherwise
+        }
+        state.hp
+    }
+
+    fn buy_potion(price: int) -> bool {
+        let can_afford = state.gold >= price
+        state.gold -= route {
+            paid: price when can_afford,
+            zero: 0 otherwise
+        }
+        state.potions += route {
+            added: 1 when can_afford,
+            none_added: 0 otherwise
+        }
+        state.log_entries += route {
+            success: ["Bought a health potion from the hooded merchant."] when can_afford,
+            fail: ["Not enough gold coins for a potion."] otherwise
+        }
+        can_afford
+    }
+
+    fn forge_weapon(cost: int, atk_gain: int) -> int {
+        let can_forge = state.gold >= cost
+        state.gold -= route {
+            spent: cost when can_forge,
+            no_spent: 0 otherwise
+        }
+        state.atk += route {
+            buffed: atk_gain when can_forge,
+            no_buff: 0 otherwise
+        }
+        state.inventory += route {
+            new_item: ["Rune-etched Broadsword"] when can_forge,
+            no_item: [] otherwise
+        }
+        state.log_entries += route {
+            sharpened: ["Forged a deadlier weapon at the subterranean anvil!"] when can_forge,
+            missed: ["Could not afford the blacksmith fee."] otherwise
+        }
+        state.atk
+    }
+
+    fn reinforce_armor(cost: int, def_gain: int) -> int {
+        let can_reinforce = state.gold >= cost
+        state.gold -= route {
+            spent: cost when can_reinforce,
+            no_spent: 0 otherwise
+        }
+        state.def_val += route {
+            buffed: def_gain when can_reinforce,
+            no_buff: 0 otherwise
+        }
+        state.inventory += route {
+            new_item: ["Hardened Dwarven Plate"] when can_reinforce,
+            no_item: [] otherwise
+        }
+        state.def_val
+    }
+
+    fn pray_at_shrine() -> int {
+        state.hp = state.max_hp
+        state.log_entries += ["Prayed at the Sunken Shrine. Wounds were miraculously healed!"]
+        state.hp
+    }
+
+    fn fight_encounter(m_hp: int, m_atk: int, m_def: int, gold_drop: int, xp_drop: int, is_lucky: bool) -> bool {
+        let effective_hero_atk = calc_crit(state.atk, is_lucky)
+        let hero_dmg_round = calc_damage(effective_hero_atk, m_def)
+        let monster_dmg_round = calc_damage(m_atk, state.def_val)
+        
+        let rounds_to_defeat = route {
+            instant: 1 when hero_dmg_round >= m_hp,
+            two_hits: 2 when hero_dmg_round * 2 >= m_hp,
+            three_hits: 3 otherwise
+        }
+        
+        let total_dmg_suffered = monster_dmg_round * rounds_to_defeat
+        state.hp -= total_dmg_suffered
+        state.is_alive = state.hp > 0
+        
+        let hero_won = (hero_dmg_round * 3 >= m_hp) and state.is_alive
+        
+        state.gold += route {
+            reward_gold: gold_drop when hero_won,
+            no_gold: 0 otherwise
+        }
+        state.exp += route {
+            reward_xp: xp_drop when hero_won,
+            no_xp: 0 otherwise
+        }
+        state.score += route {
+            score_gain: (gold_drop * 5) + (xp_drop * 2) when hero_won,
+            no_score: 0 otherwise
+        }
+        
+        // Level-up mechanic
+        let required_xp = xp_required(state.level)
+        let can_level_up = state.exp >= required_xp
+        state.level += route {
+            up: 1 when can_level_up,
+            same: 0 otherwise
+        }
+        state.max_hp += route {
+            health_up: 25 when can_level_up,
+            same_hp: 0 otherwise
+        }
+        state.atk += route {
+            strength_up: 4 when can_level_up,
+            same_atk: 0 otherwise
+        }
+        
+        state.log_entries += route {
+            victory_log: ["Monster defeated! Spoils and experience collected."] when hero_won,
+            defeat_log: ["The hero took a mortal blow in the dark depths."] otherwise
+        }
+        hero_won
+    }
+
+    fn run_campaign() -> string {
+        let r0 = reset_hero()
+        
+        // Room 1: Catacomb Gate - Crypt Crawler
+        state.current_room = 1
+        let won_r1 = fight_encounter(22, 10, 2, 15, 30, false)
+        
+        // Room 2: Goblin Outpost - Goblin Captain
+        state.current_room = 2
+        let won_r2 = fight_encounter(36, 12, 4, 30, 50, true)
+        
+        // Room 3: Blacksmith Anvil - Upgrade gear and trade
+        state.current_room = 3
+        let forged_atk = forge_weapon(35, 8)
+        let bought_pot = buy_potion(10)
+        let pot_drink = drink_potion()
+        
+        // Room 4: Sunken Shrine - Divine Restoration & Shield Reinforcement
+        state.current_room = 4
+        let restored_hp = pray_at_shrine()
+        let reinforced_def = reinforce_armor(15, 4)
+        
+        // Room 5: Throne of the Dread Wyrm - Final Boss Encounter
+        state.current_room = 5
+        let won_boss = fight_encounter(65, 20, 6, 100, 150, true)
+        state.boss_defeated = won_boss
+        
+        route {
+            victory: "VICTORY: The Dread Wyrm is defeated! The Crypt of Shadows is cleansed, and your legend shall echo forever!" when state.boss_defeated and state.is_alive,
+            defeat: "GAME OVER: Darkness prevails as the hero perishes in the depths." otherwise
+        }
+    }
+
+    fn main() -> string {
+        run_campaign()
+    }
+}
+
+test "combat damage and critical mechanics" {
+    assert calc_damage(10, 12) == 1
+    assert calc_damage(25, 10) == 15
+    assert calc_crit(15, true) == 30
+    assert calc_crit(15, false) == 15
+    assert xp_required(1) == 50
+    assert xp_required(3) == 150
+}
+
+test "room titles" {
+    assert room_title(1) == "Catacomb Gate"
+    assert room_title(2) == "Goblin Outpost"
+    assert room_title(3) == "Blacksmith Anvil"
+    assert room_title(4) == "Sunken Shrine"
+    assert room_title(5) == "Throne of the Dread Wyrm"
+    assert room_title(99) == "Dark Corridor"
+}
+
+test "potion mechanics and merchant trading" {
+    let r0 = reset_hero()
+    assert get_potions() == 2
+    let bought = buy_potion(10)
+    assert bought
+    assert get_potions() == 3
+    assert get_gold() == 15
+    let cannot_afford = buy_potion(500)
+    assert !cannot_afford
+    assert get_potions() == 3
+}
+
+test "blacksmith upgrades enhance attributes" {
+    let r0 = reset_hero()
+    let init_atk = get_atk()
+    let new_atk = forge_weapon(20, 8)
+    assert new_atk == init_atk + 8
+    assert get_atk() == 28
+    assert get_gold() == 5
+}
+
+test "shrine restores health completely" {
+    let r0 = reset_hero()
+    let full = pray_at_shrine()
+    assert full == get_max_hp()
+    assert get_hp() == get_max_hp()
+}
+
+test "full dungeon crawler adventure campaign" {
+    let result = run_campaign()
+    assert is_hero_alive()
+    assert is_boss_slain()
+    assert get_room() == 5
+    assert get_level() >= 2
+    assert get_score() > 500
+    assert len(result) > 20
+}
