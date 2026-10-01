@@ -100,9 +100,12 @@ The language thesis ships: **the language where agents are safe to deploy.**
 - **Stdlib** (`std/http`, `std/fs`, `std/jsonl`, `std/text`), **RFC process**
   (`docs/rfc/`), **The Nudge Book** + interactive tutorial, **Agent Hub**
 
-## v2.0 — Door 6 + the runtime thesis: *inevitable*
+## v2.0 — Door 6 + the runtime thesis: *inevitable* & *sovereign*
 
 Agent frameworks are libraries; **Nudge is the language + runtime**.
+- **Pure Native Execution Engine (`nudgec run`)** — In-tree Rust AST interpreter and bytecode VM, eliminating mandatory Python runtime dependencies for pure execution, state machines, and agents. See detailed architectural roadmap in [native-runtime-roadmap.md](native-runtime-roadmap.md).
+- **Native Tokio + Reqwest AI Engine** — In-tree async client for LLM providers, JSON schema repair, and deterministic NTF v1 replays with zero pip packages.
+- **Standalone Binary & WASM Compilation** — Single static executable distribution (`./agent`) with sub-millisecond cold start.
 - **Distributed trace store** — traces stream to a local daemon / OTLP
   collector; regression suites run against history
 - **A2A serving** — a compiled Nudge agent is a network-addressable A2A peer
