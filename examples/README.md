@@ -1,7 +1,7 @@
 # Nudge Examples
 
 > [!NOTE]
-> **Testing & Preview Stage / Test Aşaması**: The examples in this directory serve as integration test fixtures, compiler validation suites, and technical previews. They are actively tested across CI matrices and continue to evolve alongside the Nudge language specification.
+> **Testing & Preview Stage / 测试与技术预览阶段**: The examples in this directory serve as integration test fixtures, compiler validation suites, and technical previews. They are actively tested across CI matrices and continue to evolve alongside the Nudge language specification.
 
 
 ## Examples

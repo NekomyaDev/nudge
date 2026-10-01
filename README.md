@@ -63,7 +63,7 @@ The compiler proves the schema matches, infers effects, and computes a static co
 See what you can build with Nudge:
 
 > [!NOTE]
-> **Testing & Preview Stage / Test Aşaması**: Examples in [`examples/`](examples/) serve as compiler integration test fixtures, smoke tests, and technical previews under active development and testing.
+> **Testing & Preview Stage / 测试与技术预览阶段**: Examples in [`examples/`](examples/) serve as compiler integration test fixtures, smoke tests, and technical previews under active development and testing.
 
 | Example | Description | Features |
 |:---|:---|:---|

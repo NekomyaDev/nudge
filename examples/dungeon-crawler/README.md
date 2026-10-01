@@ -1,7 +1,7 @@
 # Dungeon Crawler RPG
 
 > [!NOTE]
-> **Testing & Preview Stage / Test Aşaması**: This example is an experimental test fixture and technical preview evaluating pure Nudge state machines, routing semantics, and headless/graphical runtime interop.
+> **Testing & Preview Stage / 测试与技术预览阶段**: This example is an experimental test fixture and technical preview evaluating pure Nudge state machines, routing semantics, and headless/graphical runtime interop.
 
 A turn-based RPG dungeon crawler adventure developed purely in Nudge. Demonstrates stateful hero progression, turn-based combat with armor mitigation and critical strikes, equipment forging, merchant trading, and shrine restoration — without requiring external API keys.
 
