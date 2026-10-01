@@ -1,0 +1,1431 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Crypt of Shadows — Nudge RPG</title>
+  <style>
+    :root {
+      --bg: #0d0f12;
+      --card-bg: rgba(22, 27, 34, 0.85);
+      --card-border: #30363d;
+      --gold: #f59e0b;
+      --gold-glow: rgba(245, 158, 11, 0.3);
+      --red: #ef4444;
+      --green: #10b981;
+      --blue: #3b82f6;
+      --purple: #8b5cf6;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --font-pixel: 'Courier New', Courier, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      background-image: 
+        radial-gradient(circle at 50% 0%, rgba(59, 130, 246, 0.15) 0%, transparent 60%),
+        radial-gradient(circle at 10% 90%, rgba(239, 68, 68, 0.1) 0%, transparent 50%),
+        linear-gradient(to bottom, #090b0e, #0d0f12 50%, #050608);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 1.5rem 1rem;
+    }
+
+    .container {
+      max-width: 1080px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    /* Header Banner */
+    .header-banner {
+      position: relative;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid var(--card-border);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+      background: #000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-end;
+      min-height: 240px;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    .banner-img {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: center 30%;
+      opacity: 0.55;
+      filter: contrast(1.15) brightness(0.85);
+      z-index: 1;
+      transition: opacity 0.5s ease;
+    }
+
+    .banner-overlay {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(0deg, rgba(13,15,18,0.95) 0%, rgba(13,15,18,0.5) 50%, rgba(13,15,18,0.2) 100%);
+      z-index: 2;
+    }
+
+    .banner-content {
+      position: relative;
+      z-index: 3;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .banner-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid var(--gold);
+      color: var(--gold);
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .game-title {
+      font-size: 2.4rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      text-shadow: 0 4px 15px rgba(0,0,0,0.8), 0 0 30px rgba(245, 158, 11, 0.4);
+      background: linear-gradient(180deg, #fff, #cbd5e1);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .game-subtitle {
+      color: #94a3b8;
+      font-size: 0.95rem;
+      max-width: 600px;
+    }
+
+    /* Map Navigation Bar */
+    .map-tracker {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 1rem 1.25rem;
+      display: flex;
+      justify-content: space-between;
+      position: relative;
+      backdrop-filter: blur(8px);
+    }
+
+    .map-step {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      z-index: 2;
+      flex: 1;
+      text-align: center;
+      cursor: default;
+    }
+
+    .step-circle {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: #161b22;
+      border: 2px solid #30363d;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.1rem;
+      transition: all 0.3s ease;
+    }
+
+    .map-step.active .step-circle {
+      border-color: var(--gold);
+      box-shadow: 0 0 16px var(--gold-glow);
+      background: rgba(245, 158, 11, 0.2);
+      transform: scale(1.15);
+    }
+
+    .map-step.cleared .step-circle {
+      border-color: var(--green);
+      background: rgba(16, 185, 129, 0.2);
+      color: var(--green);
+    }
+
+    .step-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .map-step.active .step-label {
+      color: var(--gold);
+    }
+
+    .map-step.cleared .step-label {
+      color: var(--green);
+    }
+
+    /* Main Grid */
+    .game-grid {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 860px) {
+      .game-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Cards */
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 1.25rem;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    }
+
+    .card-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* Hero Panel */
+    .hero-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .hero-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .hero-avatar {
+      width: 60px;
+      height: 60px;
+      background: linear-gradient(135deg, #1e293b, #0f172a);
+      border: 2px solid var(--gold);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2rem;
+      box-shadow: 0 0 15px rgba(245, 158, 11, 0.2);
+    }
+
+    .hero-name-group {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .hero-name {
+      font-size: 1.2rem;
+      font-weight: 800;
+      color: #fff;
+    }
+
+    .hero-level {
+      font-size: 0.8rem;
+      color: var(--gold);
+      font-weight: 600;
+    }
+
+    /* Health and EXP Bars */
+    .stat-bar-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .bar-info {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+
+    .bar-container {
+      width: 100%;
+      height: 12px;
+      background: #1e293b;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .hp-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #dc2626, #ef4444);
+      border-radius: 6px;
+      transition: width 0.4s ease, background 0.4s ease;
+    }
+
+    .exp-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #4f46e5, #8b5cf6);
+      border-radius: 6px;
+      transition: width 0.4s ease;
+    }
+
+    /* Stats Grid */
+    .stats-matrix {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .stat-badge {
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      padding: 8px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .stat-lbl {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .stat-val {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    /* Inventory Items */
+    .inventory-section {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .inventory-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .inv-item {
+      background: #1e293b;
+      border: 1px solid #3b82f6;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 0.75rem;
+      color: #93c5fd;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* Encounter Stage / Room Arena */
+    .arena-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      position: relative;
+    }
+
+    .encounter-box {
+      background: rgba(15, 23, 42, 0.7);
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 1rem;
+      position: relative;
+      overflow: hidden;
+      min-height: 220px;
+      justify-content: center;
+    }
+
+    .monster-avatar {
+      font-size: 3.5rem;
+      filter: drop-shadow(0 0 15px rgba(239, 68, 68, 0.4));
+      transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    .monster-name {
+      font-size: 1.4rem;
+      font-weight: 800;
+      color: #fff;
+    }
+
+    .monster-stats {
+      display: flex;
+      gap: 1.5rem;
+      font-size: 0.85rem;
+      color: #94a3b8;
+    }
+
+    .monster-hp-bar {
+      width: 70%;
+      max-width: 320px;
+    }
+
+    /* Shake and hit animations */
+    .shake {
+      animation: shakeEffect 0.35s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+    }
+
+    @keyframes shakeEffect {
+      10%, 90% { transform: translate3d(-2px, 0, 0); }
+      20%, 80% { transform: translate3d(4px, 0, 0); }
+      30%, 50%, 70% { transform: translate3d(-6px, 0, 0); }
+      40%, 60% { transform: translate3d(6px, 0, 0); }
+    }
+
+    .floating-text {
+      position: absolute;
+      top: 40%;
+      font-size: 1.5rem;
+      font-weight: 900;
+      pointer-events: none;
+      animation: floatUp 1s ease-out forwards;
+      z-index: 10;
+    }
+
+    @keyframes floatUp {
+      0% { opacity: 1; transform: translateY(0) scale(0.9); }
+      50% { transform: translateY(-30px) scale(1.3); }
+      100% { opacity: 0; transform: translateY(-60px) scale(1); }
+    }
+
+    /* Action Buttons */
+    .actions-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+    }
+
+    .btn {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #fff;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+      user-select: none;
+    }
+
+    .btn:hover:not(:disabled) {
+      background: #334155;
+      border-color: #64748b;
+      transform: translateY(-2px);
+    }
+
+    .btn:active:not(:disabled) {
+      transform: translateY(0);
+    }
+
+    .btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      filter: grayscale(1);
+    }
+
+    .btn-attack {
+      background: linear-gradient(135deg, #b91c1c, #991b1b);
+      border-color: #ef4444;
+      box-shadow: 0 4px 12px rgba(239, 68, 68, 0.25);
+    }
+
+    .btn-attack:hover:not(:disabled) {
+      background: linear-gradient(135deg, #dc2626, #b91c1c);
+      box-shadow: 0 4px 18px rgba(239, 68, 68, 0.4);
+    }
+
+    .btn-heal {
+      background: linear-gradient(135deg, #047857, #065f46);
+      border-color: #10b981;
+    }
+
+    .btn-gold {
+      background: linear-gradient(135deg, #b45309, #92400e);
+      border-color: var(--gold);
+    }
+
+    .btn-shrine {
+      background: linear-gradient(135deg, #1d4ed8, #1e40af);
+      border-color: #3b82f6;
+    }
+
+    .btn-campaign {
+      background: linear-gradient(135deg, #6d28d9, #5b21b6);
+      border-color: #8b5cf6;
+    }
+
+    /* Combat Log */
+    .log-container {
+      background: #090b0e;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      height: 180px;
+      overflow-y: auto;
+      font-family: var(--font-pixel);
+      font-size: 0.8rem;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      box-shadow: inset 0 2px 8px rgba(0,0,0,0.6);
+    }
+
+    .log-line {
+      line-height: 1.4;
+      display: flex;
+      gap: 6px;
+    }
+
+    .log-tag {
+      font-weight: 700;
+    }
+
+    .tag-combat { color: #f87171; }
+    .tag-loot { color: #fbbf24; }
+    .tag-heal { color: #34d399; }
+    .tag-levelup { color: #c084fc; }
+    .tag-shrine { color: #60a5fa; }
+    .tag-victory { color: #facc15; font-weight: 800; }
+    .tag-info { color: #94a3b8; }
+
+    /* Footer */
+    footer {
+      margin-top: 1.5rem;
+      text-align: center;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+    }
+
+    .sound-toggle {
+      background: transparent;
+      border: 1px solid var(--card-border);
+      color: var(--text-muted);
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .sound-toggle:hover {
+      color: #fff;
+      border-color: #64748b;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <!-- Header Banner with Cover Art -->
+    <header class="header-banner">
+      <img src="assets/cover.jpg" alt="The Crypt of Shadows" class="banner-img" id="bannerImg">
+      <div class="banner-overlay"></div>
+      <div class="banner-content">
+        <span class="banner-badge">⚔️ Pure Nudge Engine v1.2</span>
+        <h1 class="game-title">The Crypt of Shadows</h1>
+        <p class="game-subtitle">Saf Nudge dili ile geliştirilmiş sıra tabanlı epik RPG zindan macerası. Odaları keşfet, canavarlarla savaş ve Dread Wyrm ejderhasını alt et!</p>
+      </div>
+    </header>
+
+    <!-- Dungeon Map Progress Bar -->
+    <section class="map-tracker" id="mapTracker">
+      <div class="map-step" id="step-1">
+        <div class="step-circle">🚪</div>
+        <span class="step-label">1. Kapı</span>
+      </div>
+      <div class="map-step" id="step-2">
+        <div class="step-circle">👺</div>
+        <span class="step-label">2. Karakol</span>
+      </div>
+      <div class="map-step" id="step-3">
+        <div class="step-circle">⚒️</div>
+        <span class="step-label">3. Demirci</span>
+      </div>
+      <div class="map-step" id="step-4">
+        <div class="step-circle">⛪</div>
+        <span class="step-label">4. Tapınak</span>
+      </div>
+      <div class="map-step" id="step-5">
+        <div class="step-circle">🐉</div>
+        <span class="step-label">5. Wyrm Tahtı</span>
+      </div>
+    </section>
+
+    <!-- Main Game Grid -->
+    <div class="game-grid">
+      
+      <!-- Hero Character Sheet -->
+      <aside class="card hero-panel">
+        <div class="hero-header">
+          <div class="hero-avatar" id="heroAvatar">🛡️</div>
+          <div class="hero-name-group">
+            <span class="hero-name">Gölge Avcısı</span>
+            <span class="hero-level" id="heroLevelLbl">Seviye 1 Şampiyon</span>
+          </div>
+        </div>
+
+        <!-- Health Bar -->
+        <div class="stat-bar-group">
+          <div class="bar-info">
+            <span style="color: #f87171;">❤️ Can (HP)</span>
+            <span id="hpText">100 / 100</span>
+          </div>
+          <div class="bar-container">
+            <div class="hp-bar-fill" id="hpBar" style="width: 100%;"></div>
+          </div>
+        </div>
+
+        <!-- EXP Bar -->
+        <div class="stat-bar-group">
+          <div class="bar-info">
+            <span style="color: #a78bfa;">⭐ Tecrübe (EXP)</span>
+            <span id="expText">0 / 50</span>
+          </div>
+          <div class="bar-container">
+            <div class="exp-bar-fill" id="expBar" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <!-- Stats Matrix -->
+        <div class="stats-matrix">
+          <div class="stat-badge">
+            <span class="stat-lbl">⚔️ Saldırı (ATK)</span>
+            <span class="stat-val" id="statAtk">20</span>
+          </div>
+          <div class="stat-badge">
+            <span class="stat-lbl">🛡️ Zırh (DEF)</span>
+            <span class="stat-val" id="statDef">8</span>
+          </div>
+          <div class="stat-badge">
+            <span class="stat-lbl">💰 Altın</span>
+            <span class="stat-val" style="color: var(--gold);" id="statGold">25</span>
+          </div>
+          <div class="stat-badge">
+            <span class="stat-lbl">🧪 İksir</span>
+            <span class="stat-val" style="color: var(--green);" id="statPotions">2</span>
+          </div>
+          <div class="stat-badge" style="grid-column: span 2;">
+            <span class="stat-lbl">🏆 Toplam Skor</span>
+            <span class="stat-val" style="color: #60a5fa;" id="statScore">0</span>
+          </div>
+        </div>
+
+        <!-- Inventory List -->
+        <div class="inventory-section">
+          <div class="card-title" style="margin-bottom: 6px;">
+            <span>🎒 Envanter</span>
+            <span id="invCount" style="font-size: 0.75rem; color: var(--text-muted);">2 Eşya</span>
+          </div>
+          <div class="inventory-list" id="inventoryList">
+            <span class="inv-item">🗡️ Iron Sword</span>
+            <span class="inv-item">🧥 Traveler Cloak</span>
+          </div>
+        </div>
+
+      </aside>
+
+      <!-- Combat Arena & Actions -->
+      <main class="card arena-panel">
+        
+        <div class="card-title">
+          <span id="roomTitleLbl">Oda 1: Catacomb Gate</span>
+          <span id="gameStateBadge" style="font-size: 0.75rem; background: #334155; padding: 2px 8px; border-radius: 4px; color: #cbd5e1;">Hazır</span>
+        </div>
+
+        <!-- Visual Encounter Box -->
+        <div class="encounter-box" id="encounterBox">
+          <div class="monster-avatar" id="monsterAvatar">🕷️</div>
+          <div class="monster-name" id="monsterName">Crypt Crawler</div>
+          
+          <div class="stat-bar-group monster-hp-bar" id="monsterBarGroup">
+            <div class="bar-info">
+              <span style="color: #f87171;">Can</span>
+              <span id="monsterHpText">22 / 22</span>
+            </div>
+            <div class="bar-container">
+              <div class="hp-bar-fill" id="monsterHpBar" style="width: 100%;"></div>
+            </div>
+          </div>
+
+          <div class="monster-stats" id="monsterStats">
+            <span>⚔️ Saldırı: <b id="mAtk">10</b></span>
+            <span>🛡️ Savunma: <b id="mDef">2</b></span>
+            <span>💰 Ganimet: <b id="mGold">15 Altın</b></span>
+          </div>
+        </div>
+
+        <!-- Action Control Buttons -->
+        <div class="actions-grid">
+          <button class="btn btn-attack" id="btnAttack" onclick="onAttackClick()">
+            <span>⚔️</span> Saldır (Attack)
+          </button>
+          
+          <button class="btn btn-heal" id="btnDrinkPotion" onclick="onDrinkPotionClick()">
+            <span>🧪</span> İksir İç (+40 HP)
+          </button>
+          
+          <button class="btn btn-gold" id="btnBuyPotion" onclick="onBuyPotionClick()">
+            <span>💰</span> İksir Satın Al (10 G)
+          </button>
+
+          <button class="btn" id="btnForgeWeapon" onclick="onForgeWeaponClick()">
+            <span>⚒️</span> Silah Döv (+8 ATK, 35 G)
+          </button>
+
+          <button class="btn" id="btnReinforceArmor" onclick="onReinforceArmorClick()">
+            <span>🛡️</span> Zırh Güçlendir (+4 DEF, 15 G)
+          </button>
+
+          <button class="btn btn-shrine" id="btnPrayShrine" onclick="onPrayShrineClick()">
+            <span>⛪</span> Tapınakta Dua Et (Full HP)
+          </button>
+
+          <button class="btn" id="btnNextRoom" onclick="onNextRoomClick()" style="border-color: #f59e0b; color: #f59e0b;">
+            <span>⏩</span> Sonraki Odaya İlerle
+          </button>
+
+          <button class="btn btn-campaign" id="btnRunCampaign" onclick="onRunFullCampaignClick()">
+            <span>📜</span> Otomatik Tam Sefer
+          </button>
+
+          <button class="btn" id="btnReset" onclick="onResetClick()">
+            <span>🔄</span> Baştan Başla
+          </button>
+        </div>
+
+        <!-- Combat & Event Log -->
+        <div class="card-title" style="margin-bottom: 4px; margin-top: 6px;">
+          <span>📜 Sefer Günlüğü (Combat Log)</span>
+        </div>
+        <div class="log-container" id="logContainer"></div>
+
+      </main>
+
+    </div>
+
+    <!-- Footer -->
+    <footer>
+      <span>Nudge Compiler v1.2.1 • Pure Nudge State Engine</span>
+      <button class="sound-toggle" onclick="toggleAudio()" id="soundToggleBtn">🔊 Ses: Açık</button>
+    </footer>
+  </div>
+
+  <!-- Nudge Engine & Interactive Game Logic -->
+  <script>
+    // ==========================================
+    // 1. PURE NUDGE RUNTIME IMPLEMENTATION
+    // Exact semantics of nudge_runtime: route() and state proxy
+    // ==========================================
+    const rt = {
+      route: function(...arms) {
+        for (const [label, valFn, condFn] of arms) {
+          if (condFn === null || condFn()) {
+            return typeof valFn === 'function' ? valFn() : valFn;
+          }
+        }
+        return null;
+      }
+    };
+
+    // Nudge Compiled Math and Routing Functions
+    function calc_damage(attacker_atk, defender_def) {
+      return rt.route(
+        ["min_damage", () => 1, () => (attacker_atk <= defender_def)],
+        ["normal_damage", () => (attacker_atk - defender_def), null]
+      );
+    }
+
+    function calc_crit(base_atk, is_crit) {
+      return rt.route(
+        ["critical", () => (base_atk * 2), () => is_crit],
+        ["regular", () => base_atk, null]
+      );
+    }
+
+    function xp_required(level) {
+      return level * 50;
+    }
+
+    function room_title(room_id) {
+      return rt.route(
+        ["r1", () => "Catacomb Gate", () => (room_id === 1)],
+        ["r2", () => "Goblin Outpost", () => (room_id === 2)],
+        ["r3", () => "Blacksmith Anvil", () => (room_id === 3)],
+        ["r4", () => "Sunken Shrine", () => (room_id === 4)],
+        ["r5", () => "Throne of the Dread Wyrm", () => (room_id === 5)],
+        ["default_room", () => "Dark Corridor", null]
+      );
+    }
+
+    // Stateful Nudge Agent: DungeonHero
+    const _state = {
+      hp: 100,
+      max_hp: 100,
+      atk: 20,
+      def_val: 8,
+      potions: 2,
+      gold: 25,
+      exp: 0,
+      level: 1,
+      score: 0,
+      current_room: 1,
+      is_alive: true,
+      boss_defeated: false,
+      inventory: ["Iron Sword", "Traveler Cloak"],
+      log_entries: []
+    };
+
+    function reset_hero() {
+      _state.hp = 100;
+      _state.max_hp = 100;
+      _state.atk = 20;
+      _state.def_val = 8;
+      _state.potions = 2;
+      _state.gold = 25;
+      _state.exp = 0;
+      _state.level = 1;
+      _state.score = 0;
+      _state.current_room = 1;
+      _state.is_alive = true;
+      _state.boss_defeated = false;
+      _state.inventory = ["Iron Sword", "Traveler Cloak"];
+      _state.log_entries = ["A brave hero enters the Crypt of Shadows."];
+      initRoomData(1);
+      return true;
+    }
+
+    function drink_potion() {
+      const can_drink = (_state.potions > 0) && (_state.hp < _state.max_hp);
+      const heal_power = 40;
+      const new_hp_raw = _state.hp + heal_power;
+      const capped_hp = rt.route(
+        ["maxed", () => _state.max_hp, () => (new_hp_raw > _state.max_hp)],
+        ["normal", () => new_hp_raw, null]
+      );
+      _state.hp = rt.route(
+        ["healed", () => capped_hp, () => can_drink],
+        ["untouched", () => _state.hp, null]
+      );
+      _state.potions -= rt.route(
+        ["used", () => 1, () => can_drink],
+        ["keep", () => 0, null]
+      );
+      return { success: can_drink, new_hp: _state.hp };
+    }
+
+    function buy_potion(price = 10) {
+      const can_afford = _state.gold >= price;
+      _state.gold -= rt.route(["paid", () => price, () => can_afford], ["zero", () => 0, null]);
+      _state.potions += rt.route(["added", () => 1, () => can_afford], ["none_added", () => 0, null]);
+      return can_afford;
+    }
+
+    function forge_weapon(cost = 35, atk_gain = 8) {
+      const can_forge = _state.gold >= cost;
+      _state.gold -= rt.route(["spent", () => cost, () => can_forge], ["no_spent", () => 0, null]);
+      _state.atk += rt.route(["buffed", () => atk_gain, () => can_forge], ["no_buff", () => 0, null]);
+      if (can_forge && !_state.inventory.includes("Rune-etched Broadsword")) {
+        _state.inventory.push("Rune-etched Broadsword");
+      }
+      return can_forge;
+    }
+
+    function reinforce_armor(cost = 15, def_gain = 4) {
+      const can_reinforce = _state.gold >= cost;
+      _state.gold -= rt.route(["spent", () => cost, () => can_reinforce], ["no_spent", () => 0, null]);
+      _state.def_val += rt.route(["buffed", () => def_gain, () => can_reinforce], ["no_buff", () => 0, null]);
+      if (can_reinforce && !_state.inventory.includes("Hardened Dwarven Plate")) {
+        _state.inventory.push("Hardened Dwarven Plate");
+      }
+      return can_reinforce;
+    }
+
+    function pray_at_shrine() {
+      _state.hp = _state.max_hp;
+      return _state.hp;
+    }
+
+    // ==========================================
+    // 2. ROOM CONFIGURATIONS & ENCOUNTERS
+    // ==========================================
+    const ROOM_DEFS = {
+      1: {
+        id: 1,
+        title: "Catacomb Gate",
+        avatar: "🕷️",
+        name: "Crypt Crawler",
+        isCombat: true,
+        hp: 22,
+        maxHp: 22,
+        atk: 10,
+        def: 2,
+        gold: 15,
+        xp: 30,
+        lucky: false,
+        desc: "Karanlık mahzen kapısında zehirli bir zindan böceği yaklaşıyor!"
+      },
+      2: {
+        id: 2,
+        title: "Goblin Outpost",
+        avatar: "👺",
+        name: "Goblin Captain",
+        isCombat: true,
+        hp: 36,
+        maxHp: 36,
+        atk: 12,
+        def: 4,
+        gold: 30,
+        xp: 50,
+        lucky: true,
+        desc: "Meşalelerle aydınlatılmış karakolda goblin lideri kılıcını çekiyor!"
+      },
+      3: {
+        id: 3,
+        title: "Blacksmith Anvil",
+        avatar: "⚒️",
+        name: "Cüce Demircisi & Gezgin Tüccar",
+        isCombat: false,
+        hp: 0,
+        maxHp: 0,
+        desc: "Yeraltı demir ocağında çekiç sesleri yankılanıyor. Silahını dövebilir ve iksir alabilirsin."
+      },
+      4: {
+        id: 4,
+        title: "Sunken Shrine",
+        avatar: "⛪",
+        name: "Kutsal Işık Tapınağı",
+        isCombat: false,
+        hp: 0,
+        maxHp: 0,
+        desc: "Mavi kutsal ışık saçan eski bir sunak. Dua ederek tüm yaralarını iyileştirebilirsin."
+      },
+      5: {
+        id: 5,
+        title: "Throne of the Dread Wyrm",
+        avatar: "🐉",
+        name: "Dread Wyrm (Kadim Ejderha)",
+        isCombat: true,
+        hp: 65,
+        maxHp: 65,
+        atk: 20,
+        def: 6,
+        gold: 100,
+        xp: 150,
+        lucky: true,
+        desc: "Altın yığınlarının üstünde kükreyen korkunç Dread Wyrm seni bekliyor!"
+      }
+    };
+
+    let currentEnemy = null;
+    let audioEnabled = true;
+    let audioCtx = null;
+
+    // Web Audio Synthesizer for Retro 8-bit sound effects
+    function getAudioContext() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+      return audioCtx;
+    }
+
+    function playSound(type) {
+      if (!audioEnabled) return;
+      try {
+        const ctx = getAudioContext();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        const now = ctx.currentTime;
+
+        if (type === 'hit') {
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(140, now);
+          osc.frequency.exponentialRampToValueAtTime(40, now + 0.15);
+          gain.gain.setValueAtTime(0.3, now);
+          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+          osc.start(now);
+          osc.stop(now + 0.15);
+        } else if (type === 'crit') {
+          osc.type = 'square';
+          osc.frequency.setValueAtTime(440, now);
+          osc.frequency.setValueAtTime(880, now + 0.08);
+          gain.gain.setValueAtTime(0.4, now);
+          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+          osc.start(now);
+          osc.stop(now + 0.25);
+        } else if (type === 'heal') {
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(320, now);
+          osc.frequency.exponentialRampToValueAtTime(640, now + 0.2);
+          gain.gain.setValueAtTime(0.25, now);
+          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+          osc.start(now);
+          osc.stop(now + 0.2);
+        } else if (type === 'levelup') {
+          [440, 554, 659, 880].forEach((freq, idx) => {
+            const o = ctx.createOscillator();
+            const g = ctx.createGain();
+            o.connect(g);
+            g.connect(ctx.destination);
+            o.type = 'triangle';
+            o.frequency.setValueAtTime(freq, now + idx * 0.08);
+            g.gain.setValueAtTime(0.25, now + idx * 0.08);
+            g.gain.exponentialRampToValueAtTime(0.01, now + idx * 0.08 + 0.2);
+            o.start(now + idx * 0.08);
+            o.stop(now + idx * 0.08 + 0.2);
+          });
+        } else if (type === 'victory') {
+          [523.25, 659.25, 783.99, 1046.50].forEach((freq, idx) => {
+            const o = ctx.createOscillator();
+            const g = ctx.createGain();
+            o.connect(g);
+            g.connect(ctx.destination);
+            o.type = 'sine';
+            o.frequency.setValueAtTime(freq, now + idx * 0.12);
+            g.gain.setValueAtTime(0.3, now + idx * 0.12);
+            g.gain.exponentialRampToValueAtTime(0.01, now + idx * 0.12 + 0.4);
+            o.start(now + idx * 0.12);
+            o.stop(now + idx * 0.12 + 0.4);
+          });
+        } else if (type === 'gameover') {
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(180, now);
+          osc.frequency.exponentialRampToValueAtTime(45, now + 0.5);
+          gain.gain.setValueAtTime(0.4, now);
+          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+          osc.start(now);
+          osc.stop(now + 0.5);
+        }
+      } catch (e) {
+        console.warn("Audio unavailable:", e);
+      }
+    }
+
+    function toggleAudio() {
+      audioEnabled = !audioEnabled;
+      document.getElementById('soundToggleBtn').textContent = audioEnabled ? "🔊 Ses: Açık" : "🔇 Ses: Kapalı";
+    }
+
+    // ==========================================
+    // 3. UI RENDERING & EVENT CONTROLLERS
+    // ==========================================
+    function logMessage(tag, text, tagClass = 'tag-info') {
+      const container = document.getElementById('logContainer');
+      const row = document.createElement('div');
+      row.className = 'log-line';
+      row.innerHTML = `<span class="log-tag ${tagClass}">[${tag}]</span> <span>${text}</span>`;
+      container.appendChild(row);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function spawnFloatingText(text, color = '#ef4444') {
+      const box = document.getElementById('encounterBox');
+      const el = document.createElement('div');
+      el.className = 'floating-text';
+      el.textContent = text;
+      el.style.color = color;
+      box.appendChild(el);
+      setTimeout(() => el.remove(), 1000);
+    }
+
+    function initRoomData(roomId) {
+      _state.current_room = roomId;
+      const def = ROOM_DEFS[roomId];
+      if (def.isCombat) {
+        currentEnemy = {
+          name: def.name,
+          hp: def.hp,
+          maxHp: def.maxHp,
+          atk: def.atk,
+          def: def.def,
+          gold: def.gold,
+          xp: def.xp,
+          lucky: def.lucky,
+          isDefeated: false
+        };
+      } else {
+        currentEnemy = null;
+      }
+      updateUI();
+      logMessage("ODA", `Oda ${roomId}: ${room_title(roomId)} alanına girildi. ${def.desc}`, "tag-info");
+    }
+
+    function updateUI() {
+      // Hero stats
+      document.getElementById('heroLevelLbl').textContent = `Seviye ${_state.level} Şampiyon`;
+      document.getElementById('statAtk').textContent = _state.atk;
+      document.getElementById('statDef').textContent = _state.def_val;
+      document.getElementById('statGold').textContent = _state.gold;
+      document.getElementById('statPotions').textContent = _state.potions;
+      document.getElementById('statScore').textContent = _state.score;
+      
+      // HP Bar
+      const hpPct = Math.max(0, Math.min(100, (_state.hp / _state.max_hp) * 100));
+      document.getElementById('hpText').textContent = `${Math.max(0, _state.hp)} / ${_state.max_hp}`;
+      const hpBar = document.getElementById('hpBar');
+      hpBar.style.width = `${hpPct}%`;
+      if (hpPct < 25) {
+        hpBar.style.background = 'linear-gradient(90deg, #991b1b, #ef4444)';
+      } else if (hpPct < 55) {
+        hpBar.style.background = 'linear-gradient(90deg, #d97706, #f59e0b)';
+      } else {
+        hpBar.style.background = 'linear-gradient(90deg, #059669, #10b981)';
+      }
+
+      // EXP Bar
+      const reqXp = xp_required(_state.level);
+      const expPct = Math.min(100, (_state.exp / reqXp) * 100);
+      document.getElementById('expText').textContent = `${_state.exp} / ${reqXp}`;
+      document.getElementById('expBar').style.width = `${expPct}%`;
+
+      // Inventory
+      const invList = document.getElementById('inventoryList');
+      invList.innerHTML = '';
+      _state.inventory.forEach(item => {
+        const span = document.createElement('span');
+        span.className = 'inv-item';
+        span.textContent = item;
+        invList.appendChild(span);
+      });
+      document.getElementById('invCount').textContent = `${_state.inventory.length} Eşya`;
+
+      // Map steps
+      for (let i = 1; i <= 5; i++) {
+        const stepEl = document.getElementById(`step-${i}`);
+        stepEl.classList.remove('active', 'cleared');
+        if (i === _state.current_room) {
+          stepEl.classList.add('active');
+        } else if (i < _state.current_room) {
+          stepEl.classList.add('cleared');
+        }
+      }
+
+      // Room Title
+      document.getElementById('roomTitleLbl').textContent = `Oda ${_state.current_room}: ${room_title(_state.current_room)}`;
+
+      // Encounter Box
+      const def = ROOM_DEFS[_state.current_room];
+      const monsterAvatar = document.getElementById('monsterAvatar');
+      const monsterName = document.getElementById('monsterName');
+      const monsterBarGroup = document.getElementById('monsterBarGroup');
+      const monsterStats = document.getElementById('monsterStats');
+      const monsterHpBar = document.getElementById('monsterHpBar');
+      const monsterHpText = document.getElementById('monsterHpText');
+      const stateBadge = document.getElementById('gameStateBadge');
+
+      monsterAvatar.textContent = def.avatar;
+      monsterName.textContent = def.name;
+
+      if (def.isCombat && currentEnemy) {
+        monsterBarGroup.style.display = 'flex';
+        monsterStats.style.display = 'flex';
+        const mPct = Math.max(0, (currentEnemy.hp / currentEnemy.maxHp) * 100);
+        monsterHpBar.style.width = `${mPct}%`;
+        monsterHpText.textContent = `${Math.max(0, currentEnemy.hp)} / ${currentEnemy.maxHp}`;
+        document.getElementById('mAtk').textContent = currentEnemy.atk;
+        document.getElementById('mDef').textContent = currentEnemy.def;
+        document.getElementById('mGold').textContent = `${currentEnemy.gold} Altın`;
+
+        if (currentEnemy.isDefeated) {
+          stateBadge.textContent = "Temizlendi";
+          stateBadge.style.background = "#065f46";
+          stateBadge.style.color = "#34d399";
+        } else {
+          stateBadge.textContent = "Savaş Alanı";
+          stateBadge.style.background = "#7f1d1d";
+          stateBadge.style.color = "#f87171";
+        }
+      } else {
+        monsterBarGroup.style.display = 'none';
+        monsterStats.style.display = 'none';
+        stateBadge.textContent = "Güvenli Bölge";
+        stateBadge.style.background = "#1e3a8a";
+        stateBadge.style.color = "#93c5fd";
+      }
+
+      // Buttons State
+      const isDead = !_state.is_alive;
+      const isBossDead = _state.boss_defeated;
+      const canFight = def.isCombat && currentEnemy && !currentEnemy.isDefeated && !isDead;
+      
+      document.getElementById('btnAttack').disabled = !canFight;
+      document.getElementById('btnDrinkPotion').disabled = isDead || _state.potions <= 0 || _state.hp >= _state.max_hp;
+      document.getElementById('btnBuyPotion').disabled = isDead || _state.gold < 10;
+      document.getElementById('btnForgeWeapon').disabled = isDead || _state.gold < 35 || _state.inventory.includes("Rune-etched Broadsword");
+      document.getElementById('btnReinforceArmor').disabled = isDead || _state.gold < 15 || _state.inventory.includes("Hardened Dwarven Plate");
+      document.getElementById('btnPrayShrine').disabled = isDead || _state.current_room !== 4 || _state.hp >= _state.max_hp;
+      
+      const canAdvance = (!def.isCombat || (currentEnemy && currentEnemy.isDefeated)) && _state.current_room < 5 && !isDead;
+      document.getElementById('btnNextRoom').disabled = !canAdvance;
+
+      if (isDead) {
+        stateBadge.textContent = "KAHRAMAN DÜŞTÜ";
+        stateBadge.style.background = "#450a0a";
+        stateBadge.style.color = "#fca5a5";
+        document.getElementById('heroAvatar').textContent = "💀";
+      } else if (isBossDead) {
+        stateBadge.textContent = "ZAFER KAZANILDI";
+        stateBadge.style.background = "#78350f";
+        stateBadge.style.color = "#fde047";
+        document.getElementById('heroAvatar').textContent = "👑";
+      }
+    }
+
+    // ==========================================
+    // 4. ACTION HANDLERS
+    // ==========================================
+    function onAttackClick() {
+      if (!currentEnemy || currentEnemy.isDefeated || !_state.is_alive) return;
+
+      const box = document.getElementById('encounterBox');
+      box.classList.remove('shake');
+      void box.offsetWidth; // trigger reflow
+      box.classList.add('shake');
+
+      // Nudge combat formulas
+      const isLucky = currentEnemy.lucky;
+      const effectiveAtk = calc_crit(_state.atk, isLucky);
+      const heroDmg = calc_damage(effectiveAtk, currentEnemy.def);
+      const enemyDmg = calc_damage(currentEnemy.atk, _state.def_val);
+
+      if (isLucky) {
+        playSound('crit');
+        spawnFloatingText(`💥 KRİTİK VURUŞ! -${heroDmg}`, '#f59e0b');
+        logMessage("KRİTİK", `Kahraman kritik vurdu! Canavar ${heroDmg} hasar aldı!`, "tag-combat");
+      } else {
+        playSound('hit');
+        spawnFloatingText(`-${heroDmg}`, '#ef4444');
+        logMessage("SALDIRI", `Kahraman kılıcını savurdu! ${heroDmg} hasar verdi.`, "tag-combat");
+      }
+
+      currentEnemy.hp -= heroDmg;
+
+      // Enemy counter-attacks if still alive
+      if (currentEnemy.hp > 0) {
+        _state.hp -= enemyDmg;
+        logMessage("KARŞILIK", `${currentEnemy.name} karşı saldırı yaptı! Kahraman ${enemyDmg} hasar aldı.`, "tag-combat");
+        
+        if (_state.hp <= 0) {
+          _state.hp = 0;
+          _state.is_alive = false;
+          playSound('gameover');
+          logMessage("ÖLÜM", "Kahraman karanlık zindanda can verdi! Oyun Bitti.", "tag-combat");
+        }
+      } else {
+        // Monster defeated
+        currentEnemy.hp = 0;
+        currentEnemy.isDefeated = true;
+        _state.gold += currentEnemy.gold;
+        _state.exp += currentEnemy.xp;
+        _state.score += (currentEnemy.gold * 5) + (currentEnemy.xp * 2);
+        playSound('hit');
+        logMessage("GANİMET", `${currentEnemy.name} mağlup edildi! +${currentEnemy.gold} Altın, +${currentEnemy.xp} EXP kazanıldı.`, "tag-loot");
+
+        // Level-up mechanic in Nudge
+        const reqXp = xp_required(_state.level);
+        if (_state.exp >= reqXp) {
+          _state.level += 1;
+          _state.max_hp += 25;
+          _state.atk += 4;
+          _state.hp = _state.max_hp; // level up restores vigor
+          playSound('levelup');
+          spawnFloatingText("⭐ SEVİYE ATLADI!", '#c084fc');
+          logMessage("SEVİYE", `Tebrikler! Seviye ${_state.level} oldun! (+25 Maks HP, +4 ATK)`, "tag-levelup");
+        }
+
+        // Final boss check
+        if (_state.current_room === 5) {
+          _state.boss_defeated = true;
+          playSound('victory');
+          logMessage("ZAFER", "Dread Wyrm yerle bir oldu! Crypt of Shadows temizlendi!", "tag-victory");
+        }
+      }
+
+      updateUI();
+    }
+
+    function onDrinkPotionClick() {
+      const res = drink_potion();
+      if (res.success) {
+        playSound('heal');
+        spawnFloatingText("+40 HP", '#10b981');
+        logMessage("ŞİFA", `İksir içildi. Can: ${_state.hp}/${_state.max_hp} (Kalan İksir: ${_state.potions})`, "tag-heal");
+      }
+      updateUI();
+    }
+
+    function onBuyPotionClick() {
+      if (buy_potion(10)) {
+        playSound('heal');
+        logMessage("TÜCCAR", `10 Altına bir şifa iksiri satın alındı. (Toplam: ${_state.potions})`, "tag-loot");
+      } else {
+        logMessage("TÜCCAR", "İksir için yeterli altınınız yok!", "tag-info");
+      }
+      updateUI();
+    }
+
+    function onForgeWeaponClick() {
+      if (forge_weapon(35, 8)) {
+        playSound('crit');
+        spawnFloatingText("+8 ATK!", '#f59e0b');
+        logMessage("DEMİRCİ", "Rune-etched Broadsword dövüldü! (+8 ATK)", "tag-loot");
+      } else {
+        logMessage("DEMİRCİ", "Silah dövmek için 35 altın gerekli!", "tag-info");
+      }
+      updateUI();
+    }
+
+    function onReinforceArmorClick() {
+      if (reinforce_armor(15, 4)) {
+        playSound('hit');
+        spawnFloatingText("+4 DEF!", '#3b82f6');
+        logMessage("DEMİRCİ", "Hardened Dwarven Plate ile zırh takviye edildi! (+4 DEF)", "tag-loot");
+      } else {
+        logMessage("DEMİRCİ", "Zırh güçlendirmek için 15 altın gerekli!", "tag-info");
+      }
+      updateUI();
+    }
+
+    function onPrayShrineClick() {
+      pray_at_shrine();
+      playSound('victory');
+      spawnFloatingText("KUTSAL ŞİFA! 100% HP", '#60a5fa');
+      logMessage("TAPINAK", "Kutsal Işık Tapınağında dua edildi. Tüm yaralar mucizevi şekilde kapandı!", "tag-shrine");
+      updateUI();
+    }
+
+    function onNextRoomClick() {
+      if (_state.current_room < 5) {
+        initRoomData(_state.current_room + 1);
+      }
+    }
+
+    function onResetClick() {
+      reset_hero();
+      document.getElementById('logContainer').innerHTML = '';
+      logMessage("SİSTEM", "Yeni bir kahraman Crypt of Shadows zindanına adım attı.", "tag-info");
+      updateUI();
+    }
+
+    // Automated Canonical Campaign (exact match to nudge run_campaign())
+    async function onRunFullCampaignClick() {
+      reset_hero();
+      document.getElementById('logContainer').innerHTML = '';
+      logMessage("SEFER", "=== OTOMATİK NUDGE SEFERİ BAŞLATILIYOR ===", "tag-victory");
+
+      // Room 1
+      initRoomData(1);
+      await new Promise(r => setTimeout(r, 600));
+      while(currentEnemy && !currentEnemy.isDefeated && _state.is_alive) {
+        onAttackClick();
+        await new Promise(r => setTimeout(r, 500));
+      }
+
+      // Room 2
+      await new Promise(r => setTimeout(r, 800));
+      initRoomData(2);
+      while(currentEnemy && !currentEnemy.isDefeated && _state.is_alive) {
+        onAttackClick();
+        await new Promise(r => setTimeout(r, 500));
+      }
+
+      // Room 3
+      await new Promise(r => setTimeout(r, 800));
+      initRoomData(3);
+      await new Promise(r => setTimeout(r, 400));
+      onForgeWeaponClick();
+      await new Promise(r => setTimeout(r, 400));
+      onBuyPotionClick();
+      await new Promise(r => setTimeout(r, 400));
+      onDrinkPotionClick();
+
+      // Room 4
+      await new Promise(r => setTimeout(r, 800));
+      initRoomData(4);
+      await new Promise(r => setTimeout(r, 400));
+      onPrayShrineClick();
+      await new Promise(r => setTimeout(r, 400));
+      onReinforceArmorClick();
+
+      // Room 5
+      await new Promise(r => setTimeout(r, 800));
+      initRoomData(5);
+      while(currentEnemy && !currentEnemy.isDefeated && _state.is_alive) {
+        onAttackClick();
+        await new Promise(r => setTimeout(r, 600));
+      }
+
+      logMessage("SEFER", "=== SEFER TAMAMLANDI: ZAFER SENİN! ===", "tag-victory");
+    }
+
+    // Initialize on Load
+    window.addEventListener('DOMContentLoaded', () => {
+      reset_hero();
+      logMessage("BAŞLANGIÇ", "Crypt of Shadows hazır. Saldırmak veya keşfetmek için butonları kullanın.", "tag-info");
+    });
+  </script>
+</body>
+</html>

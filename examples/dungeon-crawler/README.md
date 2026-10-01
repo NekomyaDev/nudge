@@ -35,7 +35,19 @@ Run unit tests:
 nudgec test dungeon-crawler.ndg
 ```
 
-Interactive play mode:
+### Visual Web UI (Graphical Mode)
+Play directly with full graphics, health bars, inventory slots, 8-bit sound effects, and animations:
+```sh
+# Open in your default browser:
+xdg-open index.html
+
+# Or serve locally:
+python3 -m http.server 8080
+# then visit http://localhost:8080/index.html
+```
+
+### Interactive CLI Mode
 ```sh
 python3 play.py
 ```
+
