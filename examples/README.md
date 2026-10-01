@@ -1,6 +1,8 @@
 # Nudge Examples
 
-Real-world examples built with Nudge. Each example demonstrates different features and use cases.
+> [!NOTE]
+> **Testing & Preview Stage / Test Aşaması**: The examples in this directory serve as integration test fixtures, compiler validation suites, and technical previews. They are actively tested across CI matrices and continue to evolve alongside the Nudge language specification.
+
 
 ## Examples
 
