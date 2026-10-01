@@ -34,3 +34,8 @@ Run unit tests:
 ```sh
 nudgec test dungeon-crawler.ndg
 ```
+
+Interactive play mode:
+```sh
+python3 play.py
+```

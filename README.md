@@ -69,6 +69,9 @@ See what you can build with Nudge:
 | [Research Agent](examples/research-agent/) | Multi-source research | Confidence scores, Par map |
 | [Data Analyzer](examples/data-analyzer/) | Data pattern recognition | Insights, Recommendations |
 | [Translator](examples/translator/) | Multi-language translation | Quality scoring, Parallel |
+| [Classifier](examples/classifier/) | Support ticket triage & model routing | Route model choice, Batch |
+| [RAG Agent](examples/rag-agent/) | Grounded retrieval with citations | MCP tool retrieval, Grounded answers |
+| [Dungeon Crawler](examples/dungeon-crawler/) | Turn-based RPG dungeon crawler | Pure Nudge, Stateful Hero, Combat |
 
 ```sh
 # Try any example
