@@ -628,3 +628,31 @@ one batched call against a JEV-family decision model (Laya / Jev share the
 [decision.md](decision.md): question kinds, answer record shapes, checker
 rules (E0806/E0807, W0005), adapter validation, deadline semantics and the
 `policy-sweep` loop. Trace records (`decision.call`) and replay follow §6.
+
+## 12. Computer Use (v1.5)
+
+The machine is an effect: `computer.observe(app, ...)` returns a typed
+`Observation` (accessibility tree as text + elements + optional
+screenshot), and `computer.click / type / key / scroll / set_value / drag`
+return `ActionResult`. The methods live on the reserved contextual
+receiver `computer` (binding it is E0103); every call carries the
+**Computer** effect (inferred, verified like LLM/Tool/IO/Decision —
+E0301/E0302) and is E0804-forbidden inside `for_all` properties.
+
+Division of labor: the language owns control (scoping, deadlines, kill
+switch, one NTF record per step — `computer.observe` / `computer.act`),
+the model owns perception (the program hands `obs.tree` / `obs.screenshot`
+to `llm"""` or `decide{}` and acts on the typed answer). Element indices
+are the addressing currency; `{x, y}` raster targets exist but the
+language never converts coordinate frames.
+
+Options (all methods): `allow: [App, ...]` (W0006 warns on unscoped
+calls; the runtime refuses other apps with `ComputerDenied`), `deadline:
+ms` (soft → `deadline_missed`; `NUDGE_COMPUTER_STRICT=1` raises
+`ComputerTimeout`), `screenshot: bool` (observe). Replay never re-fires
+actions; `NUDGE_COMPUTER_DRIFT=1` re-observes live and attaches the
+`Drift` evidence record — the model, not the language, interprets it.
+Providers resolve via `NUDGE_COMPUTER_SERVERS` +
+`NUDGE_COMPUTER_PROVIDER`; the default fake provider is a deterministic
+in-memory desktop (`NUDGE_COMPUTER_SCENARIO` drives scene changes). Full
+contract, wire format, and tests: [computer-use.md](computer-use.md).

@@ -25,7 +25,7 @@ for LLM calls (prompts, schemas, token counts, USD).
 |:---|:---|:---|
 | `v` | number | Record schema version. Must be `1` — validators raise **E0601** on any other value |
 | `seq` | number | 1-based, gapless record counter across the trace |
-| `kind` | string | One of `llm.call`, `tool.call`, `fn.return`, `decision.call` |
+| `kind` | string | One of `llm.call`, `tool.call`, `fn.return`, `decision.call`, `computer.observe`, `computer.act` |
 
 ## Record kinds
 
@@ -77,6 +77,38 @@ gates latency growth and decision failures.
 |:---|:---|:---|
 | `fn` | string | Function name |
 | `output` | string \| object | Returned value |
+
+### `computer.observe` — one accessibility observation (v1.5, docs/computer-use.md)
+
+| Field | Type | Meaning |
+|:---|:---|:---|
+| `app` | string | App observed (as named by the program) |
+| `state_id` | string | Provider's observation id (e.g. `s-1`; monotonic per bridge) |
+| `element_count` | number | Number of elements in the observed tree |
+| `outcome` | string | `"ok"` or an error tag (`denied`, `deadline_missed`, `unreachable`) |
+| `latency_ms` | number | Measured wall time of the observation |
+
+Additive: `title` (window title), `tree` (rendered accessibility tree — the
+text a model would read), `screenshot_hash` (sha256 of the screenshot when
+`include_screenshot` was set), `drift` (`{changed, screenshot_changed,
+added, removed, summary}` — populated in drift-check replay mode when the
+live observation differs from the recorded one), `deadline_ms`, `branch`.
+
+### `computer.act` — one executed (or dry-run) computer action
+
+| Field | Type | Meaning |
+|:---|:---|:---|
+| `action` | string | `click`, `type`, `key`, `scroll`, `set_value`, `drag` |
+| `app` | string | App the action targeted |
+| `target` | number \| object | Element index, or `{"x": ..., "y": ...}` raster pixels |
+| `outcome` | string | `"ok"` or an error tag |
+| `latency_ms` | number | Measured wall time |
+
+Additive: `ok` (boolean success), `error` (message when not ok), `value`
+(text payload for `type`/`set_value`), `dry_run: true` (replay mode — the
+action was NOT re-executed), `deadline_ms`, `branch`. Replay never
+re-fires actions: `dry_run: true` is how an auditor tells a replayed run
+from a live one.
 
 ## Additive fields (already shipping in v1, all optional)
 
