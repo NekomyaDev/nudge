@@ -1304,6 +1304,7 @@ function computerReplayRecords(kind) {
   return kind === "computer.observe" ? _computerReplay.obs : _computerReplay.acts;
 }
 let _lastObservedApp = "";
+let _lastObservedStateId = "";
 
 function computerProvider() {
   if (process.env.NUDGE_PROVIDER === "fake") return "fake";
@@ -1361,6 +1362,10 @@ function normalizeObservation(app, raw) {
     focused: Boolean(el.focused),
     enabled: el.enabled !== false,
     actions: (el.actions || []).map(String),
+    // diagnostic geometry (zcode rule): bounds describe where the
+    // element sits — they are NEVER a click-coordinate source
+    bounds: Array.isArray(el.bounds) && el.bounds.length === 4
+      ? el.bounds.map(Number) : [],
   }));
   const shot = raw.screenshot || {};
   const screenshot = typeof shot === "string" && shot.startsWith("data:") ? shot
@@ -1383,11 +1388,16 @@ function normalizeResult(raw) {
   if (!raw || typeof raw !== "object") {
     throw new Error("computer provider returned a non-object result");
   }
+  const dispatch = String(raw.dispatch || "sent");
   return {
     ok: Boolean(raw.ok),
     outcome: String(raw.outcome || (raw.ok ? "ok" : "error")),
     latency_ms: Number(raw.latency_ms || 0),
     error: String(raw.error || ""),
+    // dispatch receipt: True only when the bridge KNOWS the input was
+    // dispatched; a "not_sent" action may be retried, anything else must
+    // be re-observed instead
+    action_sent: dispatch !== "not_sent",
   };
 }
 
@@ -1481,6 +1491,7 @@ function computerLiveCall(payload, app, includeScreenshot) {
 export function computerObserve(app, options = {}) {
   const started = Date.now();
   _lastObservedApp = String(app);
+  _lastObservedStateId = "";
   const allow = options.allow || null;
   const includeScreenshot = Boolean(options.screenshot);
   const replaying = Boolean(process.env.NUDGE_REPLAY);
@@ -1520,6 +1531,7 @@ export function computerObserve(app, options = {}) {
   }
   if (recorded) {
     // plain replay: the recorded observation IS the observation
+    _lastObservedStateId = String(recorded.state_id || "");
     return normalizeObservation(app, recorded);
   }
   if (process.env.NUDGE_COMPUTER_KILL === "1") {
@@ -1532,6 +1544,7 @@ export function computerObserve(app, options = {}) {
     { op: "observe", app: String(app), include_screenshot: includeScreenshot },
     app, includeScreenshot);
   const obs = normalizeObservation(app, msg.observation);
+  _lastObservedStateId = obs.state_id;
   const latency = Date.now() - started;
   const outcome = computerCheckDeadline(latency, options.deadline);
   {
@@ -1539,6 +1552,7 @@ export function computerObserve(app, options = {}) {
       kind: "computer.observe", app: String(app), state_id: obs.state_id,
       element_count: obs.elements.length, outcome, latency_ms: latency,
       provider: computerProvider(), elements: obs.elements,
+      snapshot_mode: "full", // delta observations are a future extension
     };
     if (obs.title) record.title = obs.title;
     if (obs.tree) record.tree = obs.tree;
@@ -1587,7 +1601,8 @@ function computerAct(action, payload, options = {}) {
   if (!computerAllowOk(options.allow || null, app)) {
     throw new ComputerDenied(`app '${app}' is outside the allow scope ${JSON.stringify(options.allow || [])}`);
   }
-  const msg = computerLiveCall({ op: action, app, ...payload }, app, false);
+  const msg = computerLiveCall(
+    { op: action, app, ...payload, state_id: _lastObservedStateId }, app, false);
   const result = normalizeResult(msg.result);
   result.latency_ms = Date.now() - started;
   const outcome = computerCheckDeadline(result.latency_ms, options.deadline);
@@ -1599,6 +1614,7 @@ function computerAct(action, payload, options = {}) {
     const record = {
       kind: "computer.act", action, app, target: payload.target || null,
       outcome, latency_ms: result.latency_ms, ok: result.ok,
+      action_sent: result.action_sent,
       provider: computerProvider(),
     };
     if (result.error) record.error = result.error;
@@ -1638,6 +1654,21 @@ export function computerScroll(target, direction, pages = 1, options = {}) {
 export function computerSetValue(index, value, options = {}) {
   return computerAct("set_value",
     { target: computerTarget(index), value: String(value) }, options);
+}
+
+export function computerPerform(index, action, options = {}) {
+  // invoke an element's OWN advertised action (zcode perform_action
+  // parity) — the element's `.actions` list is the only legal source
+  return computerAct("perform",
+    { target: computerTarget(index), action: String(action) }, options);
+}
+
+export function computerPaste(text, format = null, options = {}) {
+  // paste via the system clipboard — the bridge borrows the user's
+  // clipboard, writes the text, pastes, and restores
+  const payload = { target: { index: -1 }, text: String(text) };
+  if (format) payload.format = String(format);
+  return computerAct("paste", payload, options);
 }
 
 export function computerDrag(fromTarget, toTarget, options = {}) {

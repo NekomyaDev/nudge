@@ -23,7 +23,7 @@ pub fn hint(code: &str) -> Option<&'static str> {
         "E0804" => "properties must be pure: no llm/tool/decide/computer calls inside `for_all` — decide on recorded traces or fake providers instead",
         "E0806" => "a decide question references an unknown or mistyped option — option labels must match the `choose [...]` list exactly",
         "E0807" => "too many options — choice questions take 1–255 options (20+ degrades family accuracy, W0005), rubrics take 2–10 levels",
-        "E0901" => "a computer call references an unknown method or option — known options: allow, deadline, screenshot (docs/computer-use.md)",
+        "E0901" => "a computer call references an unknown method or option — known methods: observe/click/type/key/scroll/set_value/drag/perform/paste; options: allow, deadline, screenshot",
         "E0902" => "a computer call gets the wrong number of arguments — observe takes the app name; each action takes its target/payload (docs/computer-use.md)",
         _ => return None,
     })

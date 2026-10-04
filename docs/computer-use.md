@@ -65,6 +65,8 @@ fn fix_note(app: string, target_index: int) -> bool uses Computer, Decision {
 | `computer.scroll(target, direction, pages?, ...)` | target, `"up"/"down"/...` | `ActionResult` |
 | `computer.set_value(index, value, ...)` | element index + text | `ActionResult` |
 | `computer.drag(from, to, ...)` | two targets | `ActionResult` |
+| `computer.perform(index, action, ...)` | element index + one of the element's OWN advertised `.actions` | `ActionResult` |
+| `computer.paste(text, format?, ...)` | text (`"text"/"md"/"html"`) — the bridge borrows the user's clipboard and restores it | `ActionResult` |
 
 ### Options (every method, frozen v1)
 
@@ -87,7 +89,8 @@ Observation  = { app: string, state_id: string, title: string,
 Element      = { index: int, role: string, title: string, value: string,
                  pressable: bool, editable: bool, focused: bool,
                  enabled: bool, actions: [string] }
-ActionResult = { ok: bool, outcome: string, latency_ms: int, error: string }
+ActionResult = { ok: bool, outcome: string, latency_ms: int, error: string,
+                 action_sent: bool }
 Drift        = { changed: bool, screenshot_changed: bool, added, removed,
                  summary: string }
 ```
@@ -116,13 +119,37 @@ NUDGE_COMPUTER_PROVIDER=remote nudgec build agent.ndg && python3 out/agent.py
 
 Wire contract (both transports, one round trip per call):
 
-- request: `{"id": n, "op": "observe"|"click"|"type"|"key"|"scroll"|"set_value"|"drag", "app": "...", ...params}`
+- request: `{"id": n, "op": "observe"|"click"|"type"|"key"|"scroll"|"set_value"|"drag"|"perform"|"paste"|"abort", "app": "...", ...params}`
   — observe takes `include_screenshot: bool`; acts take `target`
   (`{"index": i}` or `{"x": x, "y": y}`) plus their payload (`text`, `key`,
-  `direction`, `pages`, `value`, `to`).
+  `direction`, `pages`, `value`, `to`, `action`) and the `state_id` of the
+  observation they were decided on. `abort` (no other fields) releases any
+  held mouse button — the runtime sends it at process exit and when the
+  kill switch fires, because an interrupted drag must never stay pressed.
 - response: `{"id": n, "ok": true, "observation": {...}}` /
   `{"id": n, "ok": true, "result": {...}}`, or
-  `{"id": n, "ok": false, "error": "..."}`.
+  `{"id": n, "ok": false, "error": "..."}`. Action results carry a
+  **dispatch receipt**: `dispatch: "sent"` (the bridge KNOWS the input was
+  dispatched), `"not_sent"` (certain nothing was dispatched), or
+  `"unknown"` — surfaced in the language as `result.action_sent`. A
+  non-idempotent action may only be retried when `action_sent` is false;
+  otherwise the safe move is re-observe and re-decide.
+
+Hardening invariants every bridge MUST enforce (fail closed):
+
+- **Controller lease** — one live controller per backend. The reference
+  bridge holds a lockfile lease (`CU_BRIDGE_LOCK`); calls from a second
+  controller get `controller_busy` (abort is always allowed).
+- **Stale-element refusal** — an action whose `target.index` was not in the
+  element table of the `state_id` it references is refused with
+  `stale_state` (and `dispatch: "not_sent"`). Elements move; blind clicks
+  are errors, not gambles.
+- **perform_action parity** — `perform` is only legal for actions the
+  element itself advertises in `.actions`; anything else is
+  `not_actionable`.
+- Element observations may carry `bounds: [x, y, w, h]` — diagnostic
+  geometry only, never a click-coordinate source (the provider owns the
+  frame authority).
 
 Adapter validation is strict (the decision-adapter rules apply): unknown
 operations, missing fields, non-finite numbers and unnormalized trees are

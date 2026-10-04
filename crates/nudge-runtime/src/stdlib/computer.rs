@@ -18,7 +18,7 @@ use std::io::{BufRead, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
 
-const METHODS: [&str; 7] = [
+const METHODS: [&str; 9] = [
     "computer.observe",
     "computer.click",
     "computer.type",
@@ -26,6 +26,8 @@ const METHODS: [&str; 7] = [
     "computer.scroll",
     "computer.set_value",
     "computer.drag",
+    "computer.perform",
+    "computer.paste",
 ];
 
 pub fn register() -> HashMap<String, Value> {
@@ -203,6 +205,16 @@ fn build_request(op: &str, app: &str, args: &[Value]) -> Result<String, String> 
             "\"app\":{},\"target\":{target},\"value\":{}",
             json_str(app),
             json_str(&args.get(2).map(value_to_text).unwrap_or_default())
+        ),
+        "perform" => format!(
+            "\"app\":{},\"target\":{target},\"action\":{}",
+            json_str(app),
+            json_str(&args.get(2).map(value_to_text).unwrap_or_default())
+        ),
+        "paste" => format!(
+            "\"app\":{},\"target\":{{\"index\":-1}},\"text\":{}",
+            json_str(app),
+            json_str(&args.get(1).map(value_to_text).unwrap_or_default())
         ),
         _ => return Err(format!("computer op '{op}' is not wired in the VM")),
     };

@@ -379,7 +379,7 @@ test("route: picks arm and attaches route label to trace record", () => {
 
 // ── computer use (v1.5) ───────────────────────────────────────────────
 
-import { computerObserve, computerClick, computerType, computerSetValue, ComputerDenied } from "./nudge_runtime.ts";
+import { computerObserve, computerClick, computerType, computerSetValue, computerPerform, computerPaste, ComputerDenied } from "./nudge_runtime.ts";
 
 function withEnv(env, fn) {
   const prev = {};
@@ -463,5 +463,23 @@ test("computer: drift mode re-observes live and reports the mechanical diff", ()
     const recs = fs.readFileSync("/tmp/nudge-cu-drift.jsonl", "utf8").trim().split("\n").map(JSON.parse);
     assert.equal(recs[0].replay_check, true);
     assert.equal(recs[1].dry_run, true);
+  });
+});
+
+test("computer: perform + paste with dispatch receipts and bounds", () => {
+  withEnv({ NUDGE_TRACE: "/tmp/nudge-cu-h.jsonl" }, () => {
+    fs.writeFileSync("/tmp/nudge-cu-h.jsonl", "");
+    const obs = computerObserve("FakeApp", { allow: ["FakeApp"] });
+    assert.ok(obs.elements.every((el) => Array.isArray(el.bounds)));
+    const p = computerPerform(1, "press", { allow: ["FakeApp"] });
+    assert.equal(p.ok, true);
+    assert.equal(p.action_sent, true); // bridge knows the input was dispatched
+    const w = computerPaste("hello", null, { allow: ["FakeApp"] });
+    assert.equal(w.ok, true);
+    const recs = fs.readFileSync("/tmp/nudge-cu-h.jsonl", "utf8").trim().split("\n").map(JSON.parse);
+    assert.equal(recs[0].snapshot_mode, "full");
+    assert.equal(recs[1].action, "perform");
+    assert.equal(recs[2].action, "paste");
+    assert.equal(recs[1].action_sent, true);
   });
 });

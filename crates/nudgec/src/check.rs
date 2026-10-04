@@ -247,12 +247,19 @@ fn builtin_record_ty(name: &str) -> Option<Ty> {
             ("focused", Ty::Bool),
             ("enabled", Ty::Bool),
             ("actions", Ty::List(Box::new(Ty::Str))),
+            // diagnostic geometry (zcode rule): describes where the element
+            // sits — never a click-coordinate source; Unknown because the
+            // provider shape ([x, y, w, h]) is advisory
+            ("bounds", Ty::Unknown),
         ]),
         "ActionResult" => r(vec![
             ("ok", Ty::Bool),
             ("outcome", Ty::Str),
             ("latency_ms", Ty::Int),
             ("error", Ty::Str),
+            // dispatch receipt: False only when the bridge KNOWS the input
+            // was NOT dispatched — the only safe-to-retry case
+            ("action_sent", Ty::Bool),
         ]),
         "Drift" => r(vec![
             ("changed", Ty::Bool),
@@ -1381,10 +1388,11 @@ fn check_expr(
                     }
                     builtin_record_ty("Observation").unwrap()
                 }
-                "click" | "drag" | "set_value" | "type" | "key" | "scroll" => {
+                "click" | "drag" | "set_value" | "type" | "key" | "scroll" | "perform"
+                | "paste" => {
                     let min_args = match method.as_str() {
-                        "click" | "type" | "key" => 1,
-                        "set_value" | "drag" => 2,
+                        "click" | "type" | "key" | "paste" => 1,
+                        "set_value" | "drag" | "perform" => 2,
                         _ => 2, // scroll(target, direction[, pages])
                     };
                     if args.len() < min_args {
@@ -1406,7 +1414,7 @@ fn check_expr(
                         span: None,
                         code: "E0901",
                         msg: format!(
-                            "unknown computer method '{other}' (known: observe, click, type, key, scroll, set_value, drag)"
+                            "unknown computer method '{other}' (known: observe, click, type, key, scroll, set_value, drag, perform, paste)"
                         ),
                     });
                     Ty::Unknown
@@ -1973,6 +1981,28 @@ fn run(app: string) -> bool uses Computer {
     assert o.elements.len() >= 0 } }"#,
         );
         assert!(errs.iter().any(|e| e.code == "E0804"), "{errs:?}");
+    }
+
+    #[test]
+    fn computer_perform_and_paste_check_clean() {
+        let src = r#"
+fn run(app: string) -> bool uses Computer {
+    let obs = computer.observe(app, allow = [app])
+    let p = computer.perform(2, "AXPress", allow = [app])
+    let w = computer.paste("hello", allow = [app])
+    obs.elements.len() >= 0 and p.action_sent and w.ok
+}"#;
+        assert_eq!(check_src(src), vec![], "{errs:?}", errs = check_src(src));
+    }
+
+    #[test]
+    fn computer_dispatch_receipt_is_typed() {
+        // action_sent is a bool — comparing it to an int must be E0201
+        let errs = check_src(
+            "fn f() -> bool uses Computer { let r = computer.click(1)
+    r.action_sent == 3 }",
+        );
+        assert!(errs.iter().any(|e| e.code == "E0201"), "{errs:?}");
     }
 
     #[test]

@@ -74,6 +74,7 @@ prefix instead of raising ``ReplayMismatch``).
 
 from __future__ import annotations
 
+import atexit
 import base64
 import functools
 import json
@@ -3039,8 +3040,10 @@ _COMPUTER_SESSIONS = {}  # command string → {"proc", "rid"}
 _COMPUTER_REPLAY_STATE = {"path": None, "obs": None, "acts": None, "obs_idx": 0, "act_idx": 0}
 _COMPUTER_REPLAY_LOCK = threading.Lock()
 _FAKE_DESKTOP = {"scene": 0}
-# the app of the latest observation — actions act on what you saw
-_LAST_OBSERVED_APP = {"app": ""}
+# the app + state_id of the latest observation — actions act on what you
+# saw, and carry the state_id so the bridge can validate staleness
+# fail-closed (docs/computer-use.md §3)
+_LAST_OBSERVED_APP = {"app": "", "state_id": ""}
 
 
 def _computer_provider():
@@ -3121,6 +3124,8 @@ def _normalize_observation(app, raw):
     for el in raw_elements:
         if not isinstance(el, dict) or "index" not in el:
             raise RuntimeError("computer provider element has no `index`")
+        raw_bounds = el.get("bounds")
+        bounds = [float(b) for b in raw_bounds] if isinstance(raw_bounds, (list, tuple)) and len(raw_bounds) == 4 else []
         elements.append({
             "index": int(el["index"]),
             "role": str(el.get("role", "element")),
@@ -3131,6 +3136,9 @@ def _normalize_observation(app, raw):
             "focused": bool(el.get("focused", False)),
             "enabled": bool(el.get("enabled", True)),
             "actions": [str(a) for a in (el.get("actions") or [])],
+            # diagnostic geometry (zcode rule): bounds describe where the
+            # element sits — they are NEVER a click-coordinate source
+            "bounds": bounds,
         })
     shot = raw.get("screenshot") or {}
     screenshot = ""
@@ -3157,11 +3165,16 @@ def _normalize_observation(app, raw):
 def _normalize_result(raw):
     if not isinstance(raw, dict):
         raise RuntimeError("computer provider returned a non-object result")
+    dispatch = str(raw.get("dispatch", "sent"))
     return {
         "ok": bool(raw.get("ok", False)),
         "outcome": str(raw.get("outcome", "ok" if raw.get("ok") else "error")),
         "latency_ms": int(raw.get("latency_ms", 0)),
         "error": str(raw.get("error", "")),
+        # dispatch receipt (docs/computer-use.md §3): True only when the
+        # bridge KNOWS the input was dispatched; a "not_sent" action may be
+        # retried, a "sent"/"unknown" one must be re-observed instead
+        "action_sent": dispatch != "not_sent",
     }
 
 
@@ -3342,6 +3355,23 @@ def _computer_replay_records(kind):
     return _COMPUTER_REPLAY_STATE[kind]
 
 
+def _computer_abort():
+    """Best-effort abort: release any held mouse button on the bridge
+    (an interrupted drag must never stay pressed). Never raises."""
+    try:
+        if _COMPUTER_SESSIONS and list(_COMPUTER_SESSIONS.values()):
+            for sess in list(_COMPUTER_SESSIONS.values()):
+                proc = sess.get("proc")
+                if proc is not None and proc.poll() is None:
+                    proc.stdin.write(json.dumps({"id": 0, "op": "abort"}) + "\n")
+                    proc.stdin.flush()
+    except Exception:
+        pass
+
+
+atexit.register(_computer_abort)
+
+
 def _replay_observations():
     return _computer_replay_records("obs")
 
@@ -3394,6 +3424,7 @@ def computer_observe(app, allow=None, deadline=None, screenshot=False):
     dry-run — the model interprets the drift, not the language)."""
     started = time.monotonic()
     _LAST_OBSERVED_APP["app"] = str(app)
+    _LAST_OBSERVED_APP["state_id"] = ""
     mode = _replay_mode()
     provider = _computer_provider()
     include_screenshot = bool(screenshot)
@@ -3445,6 +3476,7 @@ def computer_observe(app, allow=None, deadline=None, screenshot=False):
         # plain replay: the recorded observation IS the observation
         # (elements + tree land in the record; the screenshot data URL
         # does not — only its hash, keeping traces human-sized)
+        _LAST_OBSERVED_APP["state_id"] = str(recorded.get("state_id", ""))
         return _attr(_normalize_observation(app, recorded))
 
     # live path
@@ -3458,6 +3490,7 @@ def computer_observe(app, allow=None, deadline=None, screenshot=False):
          "include_screenshot": include_screenshot},
         app, include_screenshot)
     obs = _normalize_observation(app, msg["observation"])
+    _LAST_OBSERVED_APP["state_id"] = obs["state_id"]
     latency_ms = int((time.monotonic() - started) * 1000)
     outcome = _computer_check_deadline(latency_ms, deadline)
     # one NTF record per step, always (llm/tool convention: traces default
@@ -3471,6 +3504,9 @@ def computer_observe(app, allow=None, deadline=None, screenshot=False):
         # additive + replay-critical: the element table lets replay and
         # the drift diff rebuild the full Observation (not just tree text)
         "elements": obs["elements"],
+        # additive: delta observations are a future extension — today the
+        # bridge always serves the full tree
+        "snapshot_mode": "full",
     }
     if obs["title"]:
         record["title"] = obs["title"]
@@ -3524,6 +3560,7 @@ def _computer_act(action, app, payload, allow=None, deadline=None):
         return _attr(result)
 
     if os.environ.get("NUDGE_COMPUTER_KILL") == "1":
+        _computer_abort()
         raise ComputerDenied("NUDGE_COMPUTER_KILL=1 refuses all computer work")
     if not app:
         raise RuntimeError(
@@ -3532,6 +3569,7 @@ def _computer_act(action, app, payload, allow=None, deadline=None):
     if not _computer_allow_ok(allow, app):
         raise ComputerDenied(
             f"app '{app}' is outside the allow scope {list(allow or [])}")
+    payload = dict(payload, state_id=_LAST_OBSERVED_APP.get("state_id", ""))
     msg = _computer_live_call({"op": action, "app": str(app), **payload},
                               app, False)
     result = _normalize_result(msg["result"])
@@ -3544,6 +3582,7 @@ def _computer_act(action, app, payload, allow=None, deadline=None):
         "kind": "computer.act", "action": action, "app": str(app),
         "target": payload.get("target"), "outcome": outcome,
         "latency_ms": result["latency_ms"], "ok": result["ok"],
+        "action_sent": result["action_sent"],
         "provider": provider,
     }
     if result["error"]:
@@ -3590,6 +3629,25 @@ def computer_set_value(index, value, allow=None, deadline=None):
     return _computer_act("set_value", _last_app(),
                          {"target": _computer_target(index), "value": str(value)},
                          allow, deadline)
+
+
+def computer_perform(index, action, allow=None, deadline=None):
+    """Invoke an element's OWN advertised action (zcode perform_action
+    parity): `computer.perform(2, "AXPress")` — the element's
+    `.actions` list is the only legal source of action names."""
+    return _computer_act("perform", _last_app(),
+                         {"target": _computer_target(index), "action": str(action)},
+                         allow, deadline)
+
+
+def computer_paste(text, format=None, allow=None, deadline=None):
+    """Paste via the system clipboard — the bridge borrows the user's
+    clipboard, writes `text` (format "text"/"md"/"html"), pastes, and
+    restores. Preferred over computer.type for settable fields."""
+    payload = {"target": {"index": -1}, "text": str(text)}
+    if format:
+        payload["format"] = str(format)
+    return _computer_act("paste", _last_app(), payload, allow, deadline)
 
 
 def computer_drag(from_target, to_target, allow=None, deadline=None):

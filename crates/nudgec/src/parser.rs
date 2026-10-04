@@ -1108,6 +1108,8 @@ pub const COMPUTER_METHODS: &[&str] = &[
     "scroll",
     "set_value",
     "drag",
+    "perform",
+    "paste",
 ];
 
 /// Span covering two sibling expressions (composite node spans derive

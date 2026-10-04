@@ -89,10 +89,14 @@ gates latency growth and decision failures.
 | `latency_ms` | number | Measured wall time of the observation |
 
 Additive: `title` (window title), `tree` (rendered accessibility tree — the
-text a model would read), `screenshot_hash` (sha256 of the screenshot when
-`include_screenshot` was set), `drift` (`{changed, screenshot_changed,
-added, removed, summary}` — populated in drift-check replay mode when the
-live observation differs from the recorded one), `deadline_ms`, `branch`.
+text a model would read), `elements` (the full element table — lets replay
+and the drift diff rebuild the Observation), `snapshot_mode` (`"full"`
+today; delta observations are a future extension), `screenshot_hash`
+(sha256 of the screenshot when `include_screenshot` was set), `drift`
+(`{changed, screenshot_changed, added, removed, summary}` — populated in
+drift-check replay mode when the live observation differs from the
+recorded one), `deadline_ms`, `branch`, `replay_check: true` (drift-check
+mode: this observation was re-taken live).
 
 ### `computer.act` — one executed (or dry-run) computer action
 
@@ -104,11 +108,13 @@ live observation differs from the recorded one), `deadline_ms`, `branch`.
 | `outcome` | string | `"ok"` or an error tag |
 | `latency_ms` | number | Measured wall time |
 
-Additive: `ok` (boolean success), `error` (message when not ok), `value`
-(text payload for `type`/`set_value`), `dry_run: true` (replay mode — the
-action was NOT re-executed), `deadline_ms`, `branch`. Replay never
-re-fires actions: `dry_run: true` is how an auditor tells a replayed run
-from a live one.
+Additive: `ok` (boolean success), `action_sent` (dispatch receipt — False
+only when the bridge knows the input was NOT dispatched; that is the only
+safe-to-retry case), `error` (message when not ok), `value` (text payload
+for `type`/`set_value`/`paste`), `dry_run: true` (replay mode — the action
+was NOT re-executed), `deadline_ms`, `branch`. Replay never re-fires
+actions: `dry_run: true` is how an auditor tells a replayed run from a
+live one.
 
 ## Additive fields (already shipping in v1, all optional)
 
