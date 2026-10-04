@@ -1,0 +1,13 @@
+{
+  "scenes": [
+    {"title": "OtherApp", "elements": [
+      {"index": 0, "role": "window", "title": "OtherApp"},
+      {"index": 1, "role": "button", "title": "Not the same", "pressable": true}
+    ]},
+    {"title": "OtherApp", "elements": [
+      {"index": 0, "role": "window", "title": "OtherApp"},
+      {"index": 1, "role": "button", "title": "Not the same", "pressable": true}
+    ]}
+  ],
+  "advance_on": "click:never"
+}

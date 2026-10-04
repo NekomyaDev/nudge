@@ -1534,7 +1534,7 @@ export function computerObserve(app, options = {}) {
   const obs = normalizeObservation(app, msg.observation);
   const latency = Date.now() - started;
   const outcome = computerCheckDeadline(latency, options.deadline);
-  if (process.env.NUDGE_TRACE) {
+  {
     const record = {
       kind: "computer.observe", app: String(app), state_id: obs.state_id,
       element_count: obs.elements.length, outcome, latency_ms: latency,
@@ -1567,7 +1567,7 @@ function computerAct(action, payload, options = {}) {
   if (recorded) {
     if (!app) app = String(recorded.app || "");
     const result = normalizeResult(recorded);
-    if (driftMode && process.env.NUDGE_TRACE) {
+    if (driftMode) {
       // drift-check audit: the action was NOT re-executed
       computerRecord({
         kind: "computer.act", action, app,
@@ -1595,7 +1595,7 @@ function computerAct(action, payload, options = {}) {
     result.outcome = outcome;
     result.deadline_missed = true;
   }
-  if (process.env.NUDGE_TRACE) {
+  {
     const record = {
       kind: "computer.act", action, app, target: payload.target || null,
       outcome, latency_ms: result.latency_ms, ok: result.ok,

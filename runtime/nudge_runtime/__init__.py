@@ -3460,26 +3460,27 @@ def computer_observe(app, allow=None, deadline=None, screenshot=False):
     obs = _normalize_observation(app, msg["observation"])
     latency_ms = int((time.monotonic() - started) * 1000)
     outcome = _computer_check_deadline(latency_ms, deadline)
-    if os.environ.get("NUDGE_TRACE"):
-        record = {
-            "kind": "computer.observe", "app": str(app),
-            "state_id": obs["state_id"],
-            "element_count": len(obs["elements"]),
-            "outcome": outcome, "latency_ms": latency_ms,
-            "provider": provider,
-            # additive + replay-critical: the element table lets replay and
-            # the drift diff rebuild the full Observation (not just tree text)
-            "elements": obs["elements"],
-        }
-        if obs["title"]:
-            record["title"] = obs["title"]
-        if obs["tree"]:
-            record["tree"] = obs["tree"]
-        if obs["screenshot_hash"]:
-            record["screenshot_hash"] = obs["screenshot_hash"]
-        if deadline is not None:
-            record["deadline_ms"] = int(deadline)
-        _write_computer_record(record)
+    # one NTF record per step, always (llm/tool convention: traces default
+    # to ./trace.jsonl when NUDGE_TRACE is unset)
+    record = {
+        "kind": "computer.observe", "app": str(app),
+        "state_id": obs["state_id"],
+        "element_count": len(obs["elements"]),
+        "outcome": outcome, "latency_ms": latency_ms,
+        "provider": provider,
+        # additive + replay-critical: the element table lets replay and
+        # the drift diff rebuild the full Observation (not just tree text)
+        "elements": obs["elements"],
+    }
+    if obs["title"]:
+        record["title"] = obs["title"]
+    if obs["tree"]:
+        record["tree"] = obs["tree"]
+    if obs["screenshot_hash"]:
+        record["screenshot_hash"] = obs["screenshot_hash"]
+    if deadline is not None:
+        record["deadline_ms"] = int(deadline)
+    _write_computer_record(record)
     return _attr(obs)
 
 
@@ -3511,7 +3512,7 @@ def _computer_act(action, app, payload, allow=None, deadline=None):
         if not app:
             app = str(recorded.get("app", ""))
         result = _normalize_result(recorded)
-        if drift_mode and os.environ.get("NUDGE_TRACE"):
+        if drift_mode:
             # drift-check audit: the action was NOT re-executed
             record = {
                 "kind": "computer.act", "action": action, "app": str(app),
@@ -3539,22 +3540,21 @@ def _computer_act(action, app, payload, allow=None, deadline=None):
     if outcome == "deadline_missed":
         result["outcome"] = outcome
         result["deadline_missed"] = True
-    if os.environ.get("NUDGE_TRACE"):
-        record = {
-            "kind": "computer.act", "action": action, "app": str(app),
-            "target": payload.get("target"), "outcome": outcome,
-            "latency_ms": result["latency_ms"], "ok": result["ok"],
-            "provider": provider,
-        }
-        if result["error"]:
-            record["error"] = result["error"]
-        if payload.get("text"):
-            record["value"] = payload["text"]
-        if payload.get("value"):
-            record["value"] = payload["value"]
-        if deadline is not None:
-            record["deadline_ms"] = int(deadline)
-        _write_computer_record(record)
+    record = {
+        "kind": "computer.act", "action": action, "app": str(app),
+        "target": payload.get("target"), "outcome": outcome,
+        "latency_ms": result["latency_ms"], "ok": result["ok"],
+        "provider": provider,
+    }
+    if result["error"]:
+        record["error"] = result["error"]
+    if payload.get("text"):
+        record["value"] = payload["text"]
+    if payload.get("value"):
+        record["value"] = payload["value"]
+    if deadline is not None:
+        record["deadline_ms"] = int(deadline)
+    _write_computer_record(record)
     return _attr(result)
 
 

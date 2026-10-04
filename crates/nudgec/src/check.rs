@@ -1912,7 +1912,7 @@ fn triage(t: string) -> string uses Decision {
 fn run(app: string) -> bool uses Computer {
     let obs = computer.observe(app, allow = ["Notes"], screenshot = true)
     let r = computer.click(3, allow = ["Notes"])
-    obs.elements.len() >= 0 and r.ok
+    len(obs.elements) >= 0 and r.ok
 }"#;
         assert_eq!(check_src(src), vec![], "{errs:?}", errs = check_src(src));
     }
@@ -1949,7 +1949,7 @@ fn run(app: string) -> bool uses Computer {
         );
         // arity
         let errs = check_src(
-            "fn f() -> bool uses Computer { let o = computer.observe()\n    o.changed.len() >= 0 }",
+            "fn f() -> bool uses Computer { let o = computer.observe()\n    len(o.drift.added) >= 0 }",
         );
         assert!(errs.iter().any(|e| e.code == "E0902"), "{errs:?}");
     }

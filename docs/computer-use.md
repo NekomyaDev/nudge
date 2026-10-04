@@ -107,11 +107,11 @@ selected by `NUDGE_COMPUTER_PROVIDER` (default `fake`).
 ```sh
 # subprocess JSONL bridge (long-lived; one request per line on stdin)
 NUDGE_COMPUTER_SERVERS='{"cu": {"command": "python3 tools/cu_bridge.py"}}' \
-NUDGE_COMPUTER_PROVIDER=cu nudgec run agent.ndg
+NUDGE_COMPUTER_PROVIDER=cu nudgec build agent.ndg && python3 out/agent.py
 
 # HTTP transport
 NUDGE_COMPUTER_SERVERS='{"remote": {"base_url": "http://localhost:9333"}}' \
-NUDGE_COMPUTER_PROVIDER=remote nudgec run agent.ndg
+NUDGE_COMPUTER_PROVIDER=remote nudgec build agent.ndg && python3 out/agent.py
 ```
 
 Wire contract (both transports, one round trip per call):

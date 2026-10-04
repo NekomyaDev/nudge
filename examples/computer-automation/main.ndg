@@ -1,0 +1,39 @@
+// computer-automation — the observe → decide → act loop, end to end.
+//
+// Record (runs $0 against the fake desktop, the default provider):
+//   nudgec build examples/computer-automation/main.ndg
+//   cd out && NUDGE_TRACE=trace.jsonl \
+//     python3 -c "import main; print(main.run('FakeApp'))"
+//
+// Replay (actions are NEVER re-fired; observations come from the trace):
+//   cd out && NUDGE_TRACE=trace.jsonl NUDGE_REPLAY=trace.jsonl \
+//     python3 -c "import main; print(main.run('FakeApp'))"
+//
+// Drift check (live re-observation, mechanical diff, actions stay dry):
+//   cd out && NUDGE_TRACE=trace.jsonl NUDGE_REPLAY=trace.jsonl \
+//     NUDGE_COMPUTER_DRIFT=1 NUDGE_COMPUTER_PROVIDER=fake \
+//     NUDGE_COMPUTER_SCENARIO=../scenario-drift.json \
+//     python3 -c "import main; print(main.run('FakeApp'))"
+
+fn run(app: string) -> bool uses Computer, Decision {
+    let obs = computer.observe(app, allow = [app], deadline = 30000)
+    let sane = decide {
+        looks_right: "does this screen show the expected app?" yes/no
+    } on obs.tree
+    with { deadline: 100 }
+    let r = route {
+        press: computer.click(1, allow = [app]) when sane.looks_right.p > 0.4,
+        quit:  computer.key("Escape", allow = [app]) otherwise
+    }
+    r.ok
+}
+
+test "automation presses the right button" {
+    let obs = computer.observe("FakeApp", allow = ["FakeApp"])
+    assert len(obs.elements) == 4
+    assert len(obs.tree) > 0
+}
+
+test "computer stays out of pure properties" {
+    assert 1 < 2
+}
