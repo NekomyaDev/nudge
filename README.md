@@ -104,6 +104,7 @@ python3 out/chatbot.py
 | **NTF** | Open trace format (frozen v1) + conformance suite — logs you can replay |
 | **Property Tests** | `for_all x in gen { … }`: fuzz your agent logic (incl. an injection corpus), shrink failures |
 | **Typed Decisions** | `decide { … choose / yes/no / score }`: batched JEV-family decisions with distributions, confidence, deadlines |
+| **Computer Use** | `computer.observe` + typed actions: the machine as a replayable effect — the language owns control, the model owns perception |
 | **A2A & LSP & OTel** | Built in, not bolted on |
 
 </div>
@@ -415,6 +416,11 @@ Install the [Nudge Language](https://marketplace.visualstudio.com/items?itemName
 - Real-time diagnostics via `nudgec lsp`
 - Hover information
 - Go to definition
+
+> **Note:** the extension may lag behind the latest language features — new
+> grammar (like the v1.5 `computer.*` surface) can ship in the compiler before
+> the extension's highlighting, snippets, and grammar catch up. The compiler
+> and `nudgec lsp` are always the source of truth.
 
 ## Privacy Note
 
