@@ -3036,7 +3036,7 @@ _COMPUTER_ACTIONS = ("click", "type", "key", "scroll", "set_value", "drag")
 
 _COMPUTER_BRIDGE_LOCK = threading.Lock()
 _COMPUTER_SESSIONS = {}  # command string → {"proc", "rid"}
-_COMPUTER_REPLAY_STATE = {"obs": None, "acts": None, "obs_idx": 0, "act_idx": 0}
+_COMPUTER_REPLAY_STATE = {"path": None, "obs": None, "acts": None, "obs_idx": 0, "act_idx": 0}
 _COMPUTER_REPLAY_LOCK = threading.Lock()
 _FAKE_DESKTOP = {"scene": 0}
 # the app of the latest observation — actions act on what you saw
@@ -3325,20 +3325,29 @@ def _computer_live_call(payload, app, include_screenshot):
     )
 
 
-def _replay_observations():
-    if _COMPUTER_REPLAY_STATE["obs"] is None:
-        trace = Trace(os.environ["NUDGE_REPLAY"])
+def _computer_replay_records(kind):
+    """Recorded computer records for the current NUDGE_REPLAY trace. A new
+    trace path resets the consumption cursors (replay loops, tests)."""
+    path = os.environ.get("NUDGE_REPLAY")
+    if _COMPUTER_REPLAY_STATE["path"] != path:
+        trace = Trace(path)
+        records = trace.records
+        _COMPUTER_REPLAY_STATE["path"] = path
         _COMPUTER_REPLAY_STATE["obs"] = [
-            r for r in trace.records if r.get("kind") == "computer.observe"]
-    return _COMPUTER_REPLAY_STATE["obs"]
+            r for r in records if r.get("kind") == "computer.observe"]
+        _COMPUTER_REPLAY_STATE["acts"] = [
+            r for r in records if r.get("kind") == "computer.act"]
+        _COMPUTER_REPLAY_STATE["obs_idx"] = 0
+        _COMPUTER_REPLAY_STATE["act_idx"] = 0
+    return _COMPUTER_REPLAY_STATE[kind]
+
+
+def _replay_observations():
+    return _computer_replay_records("obs")
 
 
 def _replay_actions():
-    if _COMPUTER_REPLAY_STATE["acts"] is None:
-        trace = Trace(os.environ["NUDGE_REPLAY"])
-        _COMPUTER_REPLAY_STATE["acts"] = [
-            r for r in trace.records if r.get("kind") == "computer.act"]
-    return _COMPUTER_REPLAY_STATE["acts"]
+    return _computer_replay_records("acts")
 
 
 def _computer_diff_drift(live, recorded):

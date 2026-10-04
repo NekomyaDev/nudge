@@ -1266,3 +1266,381 @@ async function httpDecide(base_url, state, questions, options, started, ctx = nu
   }
   return finished;
 }
+
+// ── computer use (v1.5, docs/computer-use.md) ────────────────────────
+// Parity with the Python runtime: the fake desktop, allow-scope + kill
+// switch, one NTF record per step, replay that never re-fires actions and
+// the drift-check evidence record. Bridge/HTTP transports run on the
+// Python runtime at v1.5 (the TS adapter lands with async codegen, like
+// the other real providers).
+
+export class ComputerDenied extends Error {
+  constructor(msg) {
+    super(msg);
+    this.name = "ComputerDenied";
+  }
+}
+
+export class ComputerTimeout extends Error {
+  constructor(msg) {
+    super(msg);
+    this.name = "ComputerTimeout";
+  }
+}
+
+const _computerReplay = { path: null, obs: null, acts: null, obsIdx: 0, actIdx: 0 };
+
+function computerReplayRecords(kind) {
+  const p = process.env.NUDGE_REPLAY;
+  if (_computerReplay.path !== p) {
+    // a new trace path resets the consumption cursors (test/replay loops)
+    const records = p ? fs.readFileSync(p, "utf8").split("\n").filter(Boolean).map(JSON.parse) : [];
+    _computerReplay.path = p;
+    _computerReplay.obs = records.filter((r) => r.kind === "computer.observe");
+    _computerReplay.acts = records.filter((r) => r.kind === "computer.act");
+    _computerReplay.obsIdx = 0;
+    _computerReplay.actIdx = 0;
+  }
+  return kind === "computer.observe" ? _computerReplay.obs : _computerReplay.acts;
+}
+let _lastObservedApp = "";
+
+function computerProvider() {
+  if (process.env.NUDGE_PROVIDER === "fake") return "fake";
+  return process.env.NUDGE_COMPUTER_PROVIDER || "fake";
+}
+
+function computerAllowOk(allow, app) {
+  if (!allow || !allow.length) return true;
+  return allow.map(String).includes(String(app));
+}
+
+function computerCheckDeadline(latencyMs, deadline) {
+  if (deadline != null && latencyMs > Number(deadline)) {
+    if (process.env.NUDGE_COMPUTER_STRICT === "1") {
+      throw new ComputerTimeout(
+        `computer call took ${latencyMs} ms over the ${Number(deadline)} ms deadline`);
+    }
+    return "deadline_missed";
+  }
+  return "ok";
+}
+
+function renderTree(elements) {
+  return elements.map((el) => {
+    const flags = [];
+    if (el.focused) flags.push("focused");
+    if (el.selected) flags.push("selected");
+    if (el.editable) flags.push("editable");
+    if (el.pressable) flags.push("pressable");
+    if (el.enabled === false) flags.push("disabled");
+    let head = `[${el.index ?? 0}] ${el.role || "element"}` +
+      (el.title ? ` "${el.title}"` : "");
+    if (el.value) head += ` = ${el.value}`;
+    if (el.actions && el.actions.length) head += ` actions=${JSON.stringify(el.actions)}`;
+    if (flags.length) head += ` (${flags.join(",")})`;
+    return head;
+  }).join("\n");
+}
+
+function normalizeObservation(app, raw) {
+  if (!raw || typeof raw !== "object") {
+    throw new Error("computer provider returned a non-object observation");
+  }
+  if (!raw.state_id) throw new Error("computer provider observation has no `state_id`");
+  if (!Array.isArray(raw.elements)) {
+    throw new Error("computer provider observation has no `elements` list");
+  }
+  const elements = raw.elements.map((el) => ({
+    index: Number(el.index),
+    role: String(el.role || "element"),
+    title: String(el.title || ""),
+    value: String(el.value || ""),
+    pressable: Boolean(el.pressable),
+    editable: Boolean(el.editable),
+    focused: Boolean(el.focused),
+    enabled: el.enabled !== false,
+    actions: (el.actions || []).map(String),
+  }));
+  const shot = raw.screenshot || {};
+  const screenshot = typeof shot === "string" && shot.startsWith("data:") ? shot
+    : (shot && typeof shot === "object" && shot.data_url) ? String(shot.data_url) : "";
+  const screenshotHash = (shot && typeof shot === "object" && shot.sha256)
+    ? String(shot.sha256) : String(raw.screenshot_hash || "");
+  return {
+    app: String(app),
+    state_id: String(raw.state_id),
+    title: String(raw.title || ""),
+    elements,
+    tree: String(raw.tree || renderTree(elements)),
+    screenshot_hash: screenshotHash,
+    screenshot,
+    drift: { changed: false, screenshot_changed: false, added: [], removed: [], summary: "" },
+  };
+}
+
+function normalizeResult(raw) {
+  if (!raw || typeof raw !== "object") {
+    throw new Error("computer provider returned a non-object result");
+  }
+  return {
+    ok: Boolean(raw.ok),
+    outcome: String(raw.outcome || (raw.ok ? "ok" : "error")),
+    latency_ms: Number(raw.latency_ms || 0),
+    error: String(raw.error || ""),
+  };
+}
+
+function fakeScenes() {
+  const path = process.env.NUDGE_COMPUTER_SCENARIO;
+  if (path) {
+    const data = JSON.parse(fs.readFileSync(path, "utf8"));
+    if (!data.scenes || !data.scenes.length) {
+      throw new Error("NUDGE_COMPUTER_SCENARIO has no `scenes` list");
+    }
+    return [data.scenes, data.advance_on];
+  }
+  const elements = [
+    { index: 0, role: "window", title: "FakeApp" },
+    { index: 1, role: "button", title: "OK", pressable: true, actions: ["press"] },
+    { index: 2, role: "button", title: "Cancel", pressable: true, actions: ["press"] },
+    { index: 3, role: "textfield", title: "Search", value: "", editable: true, focused: true },
+  ];
+  return [[{ title: "FakeApp", elements }], null];
+}
+
+let _fakeScene = 0;
+
+function fakeObserve(app, includeScreenshot) {
+  const [scenes] = fakeScenes();
+  const sceneIdx = _fakeScene % scenes.length;
+  const scene = { ...scenes[sceneIdx], state_id: `s-${sceneIdx + 1}` };
+  const obs = normalizeObservation(app, scene);
+  if (includeScreenshot) {
+    // deterministic 1x1 PNG; the hash covers the shot + the tree so a scene
+    // change flips it exactly like the Python fake provider's tinted PNG
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGP4DwABBQECz6AuzQAAAABJRU5ErkJggg==",
+      "base64");
+    const shot = `data:image/png;base64,${png.toString("base64")}`;
+    obs.screenshot = shot;
+    obs.screenshot_hash = "sha256:" +
+      crypto.createHash("sha256").update(shot + "\u0000" + obs.tree).digest("hex");
+  }
+  return obs;
+}
+
+function fakeAct(action, params) {
+  const [, advanceOn] = fakeScenes();
+  if (advanceOn && advanceOn.includes(":")) {
+    const [wantAction, wantLabel] = advanceOn.split(":", 2);
+    const [scenes] = fakeScenes();
+    const scene = scenes[_fakeScene % scenes.length];
+    const hit = (scene.elements || []).find((el) => el.index === (params.target || {}).index);
+    if (action === wantAction && hit && hit.title === wantLabel) _fakeScene += 1;
+  }
+  return { ok: true, outcome: "ok", latency_ms: 1, error: "" };
+}
+
+function computerDiffDrift(live, recorded) {
+  const key = (el) => `${el.index}:${el.role}:${el.title}`;
+  const recKeys = new Set(((recorded || {}).elements || []).map(key));
+  const liveKeys = new Set((live.elements || []).map(key));
+  const added = [...liveKeys].filter((k) => !recKeys.has(k)).sort();
+  const removed = [...recKeys].filter((k) => !liveKeys.has(k)).sort();
+  const recordedHash = (recorded || {}).screenshot_hash || "";
+  const shotChanged = Boolean(live.screenshot_hash) && Boolean(recordedHash) &&
+    live.screenshot_hash !== recordedHash;
+  const changed = added.length > 0 || removed.length > 0 || shotChanged ||
+    ((recorded || {}).tree ?? live.tree) !== live.tree;
+  const parts = [];
+  if (removed.length) parts.push(`${removed.length} element(s) gone`);
+  if (added.length) parts.push(`${added.length} new element(s)`);
+  if (shotChanged) parts.push("screenshot changed");
+  return { changed, screenshot_changed: shotChanged, added, removed, summary: parts.join("; ") };
+}
+
+function computerRecord(record) {
+  if (_branchId !== null) record.branch = _branchId;
+  _emitTrace(record);
+}
+
+function computerLiveCall(payload, app, includeScreenshot) {
+  const provider = computerProvider();
+  if (provider !== "fake") {
+    throw new Error(
+      `computer provider '${provider}' transports (bridge/HTTP) run on the Python runtime at v1.5 — use the fake provider or compile with nudgec build`);
+  }
+  void app;
+  if (payload.op === "observe") {
+    return { ok: true, observation: fakeObserve(app, includeScreenshot) };
+  }
+  return { ok: true, result: fakeAct(payload.op, payload) };
+}
+
+export function computerObserve(app, options = {}) {
+  const started = Date.now();
+  _lastObservedApp = String(app);
+  const allow = options.allow || null;
+  const includeScreenshot = Boolean(options.screenshot);
+  const replaying = Boolean(process.env.NUDGE_REPLAY);
+  const driftMode = replaying && process.env.NUDGE_COMPUTER_DRIFT === "1";
+  let recorded = null;
+  if (replaying) {
+    const recs = computerReplayRecords("computer.observe");
+    if (_computerReplay.obsIdx < recs.length) {
+      recorded = recs[_computerReplay.obsIdx++];
+    } else {
+      throw new Error(
+        "ReplayMismatch: program made more computer.observe calls than the trace holds");
+    }
+  }
+  if (driftMode && recorded) {
+    if (process.env.NUDGE_COMPUTER_KILL === "1") {
+      throw new ComputerDenied("NUDGE_COMPUTER_KILL=1 refuses all computer work");
+    }
+    if (!computerAllowOk(allow, app)) {
+      throw new ComputerDenied(`app '${app}' is outside the allow scope ${JSON.stringify(allow || [])}`);
+    }
+    const msg = computerLiveCall(
+      { op: "observe", app: String(app), include_screenshot: includeScreenshot },
+      app, includeScreenshot);
+    const live = normalizeObservation(app, msg.observation);
+    const latency = Date.now() - started;
+    const outcome = computerCheckDeadline(latency, options.deadline);
+    live.drift = computerDiffDrift(live, recorded);
+    const record = {
+      kind: "computer.observe", app: String(app), state_id: live.state_id,
+      element_count: live.elements.length, outcome, latency_ms: latency,
+      replay_check: true, drift: live.drift,
+    };
+    if (options.deadline != null) record.deadline_ms = Number(options.deadline);
+    computerRecord(record);
+    return live;
+  }
+  if (recorded) {
+    // plain replay: the recorded observation IS the observation
+    return normalizeObservation(app, recorded);
+  }
+  if (process.env.NUDGE_COMPUTER_KILL === "1") {
+    throw new ComputerDenied("NUDGE_COMPUTER_KILL=1 refuses all computer work");
+  }
+  if (!computerAllowOk(allow, app)) {
+    throw new ComputerDenied(`app '${app}' is outside the allow scope ${JSON.stringify(allow || [])}`);
+  }
+  const msg = computerLiveCall(
+    { op: "observe", app: String(app), include_screenshot: includeScreenshot },
+    app, includeScreenshot);
+  const obs = normalizeObservation(app, msg.observation);
+  const latency = Date.now() - started;
+  const outcome = computerCheckDeadline(latency, options.deadline);
+  if (process.env.NUDGE_TRACE) {
+    const record = {
+      kind: "computer.observe", app: String(app), state_id: obs.state_id,
+      element_count: obs.elements.length, outcome, latency_ms: latency,
+      provider: computerProvider(), elements: obs.elements,
+    };
+    if (obs.title) record.title = obs.title;
+    if (obs.tree) record.tree = obs.tree;
+    if (obs.screenshot_hash) record.screenshot_hash = obs.screenshot_hash;
+    if (options.deadline != null) record.deadline_ms = Number(options.deadline);
+    computerRecord(record);
+  }
+  return obs;
+}
+
+function computerAct(action, payload, options = {}) {
+  const started = Date.now();
+  const replaying = Boolean(process.env.NUDGE_REPLAY);
+  const driftMode = replaying && process.env.NUDGE_COMPUTER_DRIFT === "1";
+  let recorded = null;
+  if (replaying) {
+    const recs = computerReplayRecords("computer.act");
+    if (_computerReplay.actIdx < recs.length) {
+      recorded = recs[_computerReplay.actIdx++];
+    } else {
+      throw new Error(
+        "ReplayMismatch: program made more computer actions than the trace holds");
+    }
+  }
+  let app = _lastObservedApp;
+  if (recorded) {
+    if (!app) app = String(recorded.app || "");
+    const result = normalizeResult(recorded);
+    if (driftMode && process.env.NUDGE_TRACE) {
+      // drift-check audit: the action was NOT re-executed
+      computerRecord({
+        kind: "computer.act", action, app,
+        target: (payload.target || null), outcome: "dry_run",
+        latency_ms: Date.now() - started, ok: result.ok, dry_run: true,
+      });
+    }
+    return result;
+  }
+  if (process.env.NUDGE_COMPUTER_KILL === "1") {
+    throw new ComputerDenied("NUDGE_COMPUTER_KILL=1 refuses all computer work");
+  }
+  if (!app) {
+    throw new Error(
+      "computer action without a prior computer.observe — observe the app you intend to act on");
+  }
+  if (!computerAllowOk(options.allow || null, app)) {
+    throw new ComputerDenied(`app '${app}' is outside the allow scope ${JSON.stringify(options.allow || [])}`);
+  }
+  const msg = computerLiveCall({ op: action, app, ...payload }, app, false);
+  const result = normalizeResult(msg.result);
+  result.latency_ms = Date.now() - started;
+  const outcome = computerCheckDeadline(result.latency_ms, options.deadline);
+  if (outcome === "deadline_missed") {
+    result.outcome = outcome;
+    result.deadline_missed = true;
+  }
+  if (process.env.NUDGE_TRACE) {
+    const record = {
+      kind: "computer.act", action, app, target: payload.target || null,
+      outcome, latency_ms: result.latency_ms, ok: result.ok,
+      provider: computerProvider(),
+    };
+    if (result.error) record.error = result.error;
+    if (payload.text) record.value = payload.text;
+    if (payload.value) record.value = payload.value;
+    if (options.deadline != null) record.deadline_ms = Number(options.deadline);
+    computerRecord(record);
+  }
+  return result;
+}
+
+function computerTarget(target) {
+  if (target && typeof target === "object" && "x" in target && "y" in target) {
+    return { x: Number(target.x), y: Number(target.y) };
+  }
+  return { index: Number(target) };
+}
+
+export function computerClick(target, options = {}) {
+  return computerAct("click", { target: computerTarget(target) }, options);
+}
+
+export function computerType(text, options = {}) {
+  return computerAct("type", { target: { index: -1 }, text: String(text) }, options);
+}
+
+export function computerKey(key, options = {}) {
+  return computerAct("key", { target: { index: -1 }, key: String(key) }, options);
+}
+
+export function computerScroll(target, direction, pages = 1, options = {}) {
+  return computerAct("scroll",
+    { target: computerTarget(target), direction: String(direction), pages: Number(pages) },
+    options);
+}
+
+export function computerSetValue(index, value, options = {}) {
+  return computerAct("set_value",
+    { target: computerTarget(index), value: String(value) }, options);
+}
+
+export function computerDrag(fromTarget, toTarget, options = {}) {
+  return computerAct("drag",
+    { target: computerTarget(fromTarget), to: computerTarget(toTarget) }, options);
+}
