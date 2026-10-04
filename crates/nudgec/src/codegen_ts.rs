@@ -691,6 +691,7 @@ fn llm_ts(
                 _ => format!("cache: {}", ts(v, aliases, sigs)),
             }),
             "tags" => parts.push(format!("tags: {}", ts(v, aliases, sigs))),
+            "images" => parts.push(format!("images: {}", ts(v, aliases, sigs))),
             other => parts.push(format!(
                 "/* warning: unsupported option {other} (ignored) */"
             )),

@@ -879,6 +879,7 @@ fn llm_py(
                 _ => format!("cache={}", py(v, aliases)),
             }),
             "tags" => parts.push(format!("tags={}", py(v, aliases))),
+            "images" => parts.push(format!("images={}", py(v, aliases))),
             other => parts.push(format!(
                 "# warning: unsupported option {other}={} (ignored)",
                 py(v, aliases)
