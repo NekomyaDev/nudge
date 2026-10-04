@@ -31,6 +31,10 @@ fn required(kind: &str) -> Option<&'static [&'static str]> {
             "latency_ms",
             "outcome",
         ]),
+        // v1.5 computer-use: one observation / one action per record
+        // (docs/computer-use.md, docs/ntf-spec.md)
+        "computer.observe" => Some(&["app", "state_id", "element_count", "outcome", "latency_ms"]),
+        "computer.act" => Some(&["action", "app", "target", "outcome", "latency_ms"]),
         _ => None,
     }
 }
@@ -60,6 +64,14 @@ fn field_type(kind: &str, field: &str) -> Option<Ty> {
         | ("decision.call", "outcome") => Some(Ty::Str),
         ("decision.call", "latency_ms") => Some(Ty::Num),
         ("decision.call", "questions") | ("decision.call", "answers") => Some(Ty::Obj),
+        ("computer.observe", "app")
+        | ("computer.observe", "state_id")
+        | ("computer.observe", "outcome") => Some(Ty::Str),
+        ("computer.observe", "element_count") | ("computer.observe", "latency_ms") => Some(Ty::Num),
+        ("computer.act", "action") | ("computer.act", "app") | ("computer.act", "outcome") => {
+            Some(Ty::Str)
+        }
+        ("computer.act", "latency_ms") => Some(Ty::Num),
         // dotted paths check nested fields — tokens.in must be a NUMBER,
         // so a hostile `<img onerror=...>` string is rejected at check time
         ("llm.call", "tokens.in") | ("llm.call", "tokens.out") => Some(Ty::Num),

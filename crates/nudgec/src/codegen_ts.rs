@@ -626,6 +626,35 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
                 opts
             )
         }
+        // v1.5 computer-use surface: camelCase rt.* counterparts
+        ExprKind::ComputerCall {
+            method,
+            args,
+            kwargs,
+        } => {
+            let camel = |m: &str| -> String {
+                let mut out = String::with_capacity(m.len());
+                let mut up = false;
+                for c in m.chars() {
+                    if c == '_' {
+                        up = true;
+                    } else if up {
+                        out.extend(c.to_uppercase());
+                        up = false;
+                    } else {
+                        out.push(c);
+                    }
+                }
+                out
+            };
+            let mut parts: Vec<String> = args.iter().map(|a| ts(a, aliases, sigs)).collect();
+            parts.extend(
+                kwargs
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", js_key(k), ts(v, aliases, sigs))),
+            );
+            format!("rt.computer{}({})", camel(method), parts.join(", "))
+        }
     }
 }
 

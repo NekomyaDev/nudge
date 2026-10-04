@@ -930,6 +930,36 @@ impl Parser {
                     },
                 ))
             }
+            // `computer.observe(app)` / `computer.click(target)` (v1.5) —
+            // contextual: only special as `computer . <method> (`; anything
+            // else keeps `computer` an ordinary identifier
+            Tok::Ident(s) if s == "computer" && self.peek2() == &Tok::Dot => {
+                let method = matches!(self.t.get(self.i + 2).map(|t| &t.tok), Some(Tok::Ident(m)) if COMPUTER_METHODS.contains(&m.as_str()));
+                let called = matches!(self.t.get(self.i + 3).map(|t| &t.tok), Some(Tok::LParen));
+                if method && called {
+                    let start = self.pos();
+                    self.bump(); // computer
+                    self.bump(); // .
+                    let method = self.ident()?;
+                    let (args, kwargs) = self.parse_call_args()?;
+                    let span = Span {
+                        start,
+                        end: self.t[self.i - 1].end,
+                    };
+                    Ok(self.ex(
+                        span,
+                        ExprKind::ComputerCall {
+                            method,
+                            args,
+                            kwargs,
+                        },
+                    ))
+                } else {
+                    let start = self.pos();
+                    self.bump();
+                    Ok(self.ex_from(start, ExprKind::Ident("computer".into())))
+                }
+            }
             // `state` reads (`state.round`) inside agent fns (design §7);
             // codegen binds it to the agent's checkpointed state object
             Tok::State => {
@@ -1065,6 +1095,20 @@ impl Parser {
         }
     }
 }
+
+/// The native computer-use methods (v1.5): `computer.<name>(...)` parses as
+/// a [`ExprKind::ComputerCall`] when `computer` is directly followed by
+/// `.`, one of these names, and `(` — otherwise `computer` stays a plain
+/// identifier (design §12 contextual keyword policy).
+pub const COMPUTER_METHODS: &[&str] = &[
+    "observe",
+    "click",
+    "type",
+    "key",
+    "scroll",
+    "set_value",
+    "drag",
+];
 
 /// Span covering two sibling expressions (composite node spans derive
 /// from their children — spanned AST, stage 2).
@@ -1332,6 +1376,62 @@ fn f() -> string uses Decision {
     d.x.winner
 }"#;
         assert!(parse(lex(src).unwrap()).is_err());
+    }
+
+    #[test]
+    fn computer_calls_parse_with_args_and_kwargs() {
+        let src = r#"
+fn run(app: string) -> int uses Computer {
+    let obs = computer.observe(app, allow = ["Notes", "Finder"], screenshot = true, deadline = 5000)
+    let r = computer.click(3, allow = ["Notes"])
+    computer.set_value(7, "hello", allow = ["Notes"])
+    obs.elements.len() + r.ok.len()
+}"#;
+        let items = parse_str(src);
+        let Some(Item::Fn { body, .. }) = items.first() else {
+            panic!("expected fn");
+        };
+        let StmtKind::Let { value, .. } = &body[0].kind else {
+            panic!("expected let");
+        };
+        let ExprKind::ComputerCall {
+            method,
+            args,
+            kwargs,
+        } = &value.kind
+        else {
+            panic!("expected computer call, got {:?}", value.kind);
+        };
+        assert_eq!(method, "observe");
+        assert_eq!(args.len(), 1);
+        assert_eq!(kwargs.len(), 3);
+        // a plain `computer` identifier stays an identifier (contextual)
+        let items = parse_str("fn f() -> int { let computer = 3\n    computer }");
+        match &items[0] {
+            Item::Fn { body, .. } => {
+                assert!(matches!(&body[0].kind, StmtKind::Let { name, .. } if name == "computer"))
+            }
+            _ => panic!("expected fn"),
+        }
+    }
+
+    #[test]
+    fn computer_without_known_method_stays_an_identifier() {
+        // `computer.resize(...)` is NOT a computer call — the checker will
+        // diagnose the unknown identifier, not the parser
+        let items = parse_str("fn f() -> int { computer.resize(1) }");
+        let Some(Item::Fn { body, .. }) = items.first() else {
+            panic!("expected fn");
+        };
+        let StmtKind::ExprStmt(e) = &body[0].kind else {
+            panic!("expected expr stmt");
+        };
+        assert!(matches!(
+            &e.kind,
+            ExprKind::Call { func, .. }
+                if matches!(&func.kind, ExprKind::Field { obj, name }
+                    if matches!(&obj.kind, ExprKind::Ident(n) if n == "computer") && name == "resize")
+        ));
     }
     #[test]
     fn test_block_with_asserts() {

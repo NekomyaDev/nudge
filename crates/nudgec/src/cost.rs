@@ -233,6 +233,16 @@ fn collect_calls(e: &Expr, in_par: bool, out: &mut Vec<(String, bool)>) {
                 collect_calls(v, in_par, out);
             }
         }
+        // computer calls carry no LLM cost; their argument expressions still
+        // contribute call-graph edges
+        ExprKind::ComputerCall { args, kwargs, .. } => {
+            for a in args {
+                collect_calls(a, in_par, out);
+            }
+            for (_, v) in kwargs {
+                collect_calls(v, in_par, out);
+            }
+        }
     }
 }
 
@@ -275,6 +285,15 @@ fn count_expr(e: &Expr, in_par: bool, c: &mut Count) {
             c.decisions += 1;
             count_expr(state, in_par, c);
             for (_, v) in options {
+                count_expr(v, in_par, c);
+            }
+        }
+        // a computer call is $0 by itself (no tokens); arguments still count
+        ExprKind::ComputerCall { args, kwargs, .. } => {
+            for a in args {
+                count_expr(a, in_par, c);
+            }
+            for (_, v) in kwargs {
                 count_expr(v, in_par, c);
             }
         }

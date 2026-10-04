@@ -1386,3 +1386,21 @@ test "props" {
     );
     assert!(py.contains("def _prop_0(n):"), "{py}");
 }
+
+#[test]
+fn computer_calls_lower_to_rt_helpers() {
+    let src = "fn f(app: string) -> bool uses Computer {\n    let o = computer.observe(app, allow = [\"Notes\"], screenshot = true)\n    let r = computer.click(3, allow = [\"Notes\"])\n    o.drift.changed or r.ok\n}";
+    let out = gen(src);
+    assert!(
+        out.contains("rt.computer_observe(app, allow=[\"Notes\"], screenshot=True)"),
+        "got:\n{out}"
+    );
+    assert!(
+        out.contains("rt.computer_click(3, allow=[\"Notes\"])"),
+        "got:\n{out}"
+    );
+    assert!(
+        out.contains("@rt.effectful(effects={\"Computer\"})"),
+        "got:\n{out}"
+    );
+}

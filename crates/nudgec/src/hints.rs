@@ -12,17 +12,19 @@ pub fn hint(code: &str) -> Option<&'static str> {
         "E0103" => "duplicate declaration — every fn/tool/effect name must be unique",
         "E0201" => "two types don't fit together — trace the expression back to its source; record fields are read with dot syntax and each has exactly one type",
         "E0202" => "a constraint or schema is malformed — check @range bounds order (lo, hi) and that a `schema:` value is a record type",
-        "E0301" => "this call has an effect the function doesn't declare — add the effect (LLM, Tool, IO or Decision) to the `uses` clause",
-        "E0302" => "unknown effect in `uses` — valid effects are LLM, Tool, IO and Decision",
+        "E0301" => "this call has an effect the function doesn't declare — add the effect (LLM, Tool, IO, Decision or Computer) to the `uses` clause",
+        "E0302" => "unknown effect in `uses` — valid effects are LLM, Tool, IO, Decision and Computer",
         "E0501" => "money literals keep their unit (100 USD + 100 EUR won't add) — convert explicitly before comparing or combining",
         "E0601" => "trace records must be JSONL objects with `v` (1), `seq` and a known `kind` — run `nudgec trace-check` to see the first bad record",
         "E0701" => "`state.x` writes are only valid inside an `agent` block, and only for fields declared in its `state` section",
         "E0702" => "a route block needs an `otherwise` arm so the program has a value on every path",
         "E0801" => "`for_all` properties only live inside `test` blocks — wrap it in `test \"...\" { ... }`",
         "E0802" => "unknown generator or wrong arity — valid: gen.int(lo, hi), gen.str(max), gen.injection(), gen.bool()",
-        "E0804" => "properties must be pure: no llm/tool/decide calls inside `for_all` — decide on recorded traces or fake providers instead",
+        "E0804" => "properties must be pure: no llm/tool/decide/computer calls inside `for_all` — decide on recorded traces or fake providers instead",
         "E0806" => "a decide question references an unknown or mistyped option — option labels must match the `choose [...]` list exactly",
         "E0807" => "too many options — choice questions take 1–255 options (20+ degrades family accuracy, W0005), rubrics take 2–10 levels",
+        "E0901" => "a computer call references an unknown method or option — known options: allow, deadline, screenshot (docs/computer-use.md)",
+        "E0902" => "a computer call gets the wrong number of arguments — observe takes the app name; each action takes its target/payload (docs/computer-use.md)",
         _ => return None,
     })
 }
@@ -83,6 +85,7 @@ mod tests {
         for code in [
             "E0001", "E0002", "E0101", "E0102", "E0103", "E0201", "E0202", "E0301", "E0302",
             "E0501", "E0601", "E0701", "E0702", "E0801", "E0802", "E0804", "E0806", "E0807",
+            "E0901", "E0902",
         ] {
             assert!(hint(code).is_some(), "{code} has no hint");
             assert!(

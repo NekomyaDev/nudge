@@ -133,6 +133,17 @@ pub enum ExprKind {
         state: Box<Expr>,
         options: Vec<(String, Expr)>,
     },
+
+    /// `computer.observe(app, ...)` / `computer.click(target, ...)` (v1.5):
+    /// the native computer-use surface. The parser only produces this when
+    /// `computer` is directly followed by `.` + a known method + `(` — a
+    /// bare `computer` stays an ordinary identifier (design §12 keyword
+    /// policy). Every call carries the `Computer` effect.
+    ComputerCall {
+        method: String,
+        args: Vec<Expr>,
+        kwargs: Vec<(String, Expr)>,
+    },
 }
 
 /// An expression with its source span attached (spanned AST, stage 2).

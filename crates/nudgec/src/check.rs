@@ -84,6 +84,9 @@ fn resolve(
             "none" | "()" => Ty::None_,
             "bytes" | "timestamp" => Ty::Unknown, // post-MVP core types
             _ => {
+                if let Some(builtin) = builtin_record_ty(name) {
+                    return builtin;
+                }
                 if visiting.iter().any(|v| v == name) {
                     errs.push(CheckError {
                         span: None,
@@ -208,7 +211,59 @@ fn elem_of(t: &Ty) -> Ty {
 
 // ── effect inference (design §3.2, v1.4) ──────────────────────────
 
-const KNOWN_EFFECTS: [&str; 4] = ["LLM", "Tool", "IO", "Decision"];
+const KNOWN_EFFECTS: [&str; 5] = ["LLM", "Tool", "IO", "Decision", "Computer"];
+
+/// Builtin record types of the computer-use surface (v1.5): these names
+/// resolve like user type aliases but need no declaration. Additive
+/// runtime fields are typed as Unknown so consumers can read them without
+/// false alarms.
+fn builtin_record_ty(name: &str) -> Option<Ty> {
+    let r = |fs: Vec<(&str, Ty)>| {
+        Some(Ty::Record(
+            fs.into_iter().map(|(k, t)| (k.to_string(), t)).collect(),
+        ))
+    };
+    match name {
+        "Observation" => r(vec![
+            ("app", Ty::Str),
+            ("state_id", Ty::Str),
+            ("title", Ty::Str),
+            (
+                "elements",
+                Ty::List(Box::new(builtin_record_ty("Element")?)),
+            ),
+            ("tree", Ty::Str),
+            ("screenshot_hash", Ty::Str),
+            ("screenshot", Ty::Str),
+            ("drift", builtin_record_ty("Drift")?),
+        ]),
+        "Element" => r(vec![
+            ("index", Ty::Int),
+            ("role", Ty::Str),
+            ("title", Ty::Str),
+            ("value", Ty::Str),
+            ("pressable", Ty::Bool),
+            ("editable", Ty::Bool),
+            ("focused", Ty::Bool),
+            ("enabled", Ty::Bool),
+            ("actions", Ty::List(Box::new(Ty::Str))),
+        ]),
+        "ActionResult" => r(vec![
+            ("ok", Ty::Bool),
+            ("outcome", Ty::Str),
+            ("latency_ms", Ty::Int),
+            ("error", Ty::Str),
+        ]),
+        "Drift" => r(vec![
+            ("changed", Ty::Bool),
+            ("screenshot_changed", Ty::Bool),
+            ("added", Ty::Unknown),
+            ("removed", Ty::Unknown),
+            ("summary", Ty::Str),
+        ]),
+        _ => None,
+    }
+}
 
 /// Collect the direct (non-transitive) effects of an expression, plus the
 /// names of user fns it calls (call-graph edges for the fixpoint).
@@ -229,6 +284,15 @@ fn direct_effects(
             effects.insert("Decision".into());
             direct_effects(state, g, effects, calls);
             for (_, v) in options {
+                direct_effects(v, g, effects, calls);
+            }
+        }
+        ExprKind::ComputerCall { args, kwargs, .. } => {
+            effects.insert("Computer".into());
+            for a in args {
+                direct_effects(a, g, effects, calls);
+            }
+            for (_, v) in kwargs {
                 direct_effects(v, g, effects, calls);
             }
         }
@@ -352,7 +416,9 @@ fn expr_has_effect_call(
     inferred: &HashMap<String, BTreeSet<String>>,
 ) -> bool {
     match &e.kind {
-        ExprKind::LlmCall { .. } | ExprKind::DecideCall { .. } => true,
+        ExprKind::LlmCall { .. } | ExprKind::DecideCall { .. } | ExprKind::ComputerCall { .. } => {
+            true
+        }
         ExprKind::Call { func, args, kwargs } => {
             let callee = match &func.kind {
                 ExprKind::Ident(n) => Some(n.clone()),
@@ -493,6 +559,7 @@ fn check_test_body(
                 name, ty, value, ..
             } => {
                 let vt = check_expr(value, &locals, g, errs);
+                check_reserved_binding(name, errs);
                 if let Some(ann) = ty {
                     let at = resolve(ann, g, &mut Vec::new(), errs);
                     if !assignable(&vt, &at) {
@@ -572,6 +639,7 @@ fn check_fn_body(
                 name: n, ty, value, ..
             } => {
                 let vt = check_expr(value, &locals, g, errs);
+                check_reserved_binding(n, errs);
                 let bound = match ty {
                     Some(ann) => {
                         let at = resolve(ann, g, &mut Vec::new(), errs);
@@ -669,6 +737,21 @@ fn check_fn_body(
 }
 
 // ── expression checking + inference ─────────────────────────────────
+
+/// Bindings users must never take: `rt`/`nudge_runtime` collide with the
+/// generated Python/TS, `state` is the agent-state receiver, `computer`
+/// would hijack the native computer-use surface (`computer.observe(...)`).
+const RESERVED_BINDINGS: [&str; 4] = ["rt", "nudge_runtime", "state", "computer"];
+
+fn check_reserved_binding(name: &str, errs: &mut Vec<CheckError>) {
+    if RESERVED_BINDINGS.contains(&name) {
+        errs.push(CheckError {
+            span: None,
+            code: "E0103",
+            msg: format!("'{name}' collides with a generated/runtime identifier — rename it"),
+        });
+    }
+}
 
 fn schema_expr_ty(e: &Expr, g: &Globals, errs: &mut Vec<CheckError>) -> Ty {
     let as_type = match &e.kind {
@@ -1278,6 +1361,113 @@ fn check_expr(
             }
             Ty::Record(fields)
         }
+        ExprKind::ComputerCall {
+            method,
+            args,
+            kwargs,
+        } => {
+            let known_options = ["allow", "deadline", "screenshot"];
+            let result_ty = match method.as_str() {
+                "observe" => {
+                    if args.len() != 1 {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0902",
+                            msg: format!(
+                                "computer.observe takes 1 argument (the app name), got {}",
+                                args.len()
+                            ),
+                        });
+                    }
+                    builtin_record_ty("Observation").unwrap()
+                }
+                "click" | "drag" | "set_value" | "type" | "key" | "scroll" => {
+                    let min_args = match method.as_str() {
+                        "click" | "type" | "key" => 1,
+                        "set_value" | "drag" => 2,
+                        _ => 2, // scroll(target, direction[, pages])
+                    };
+                    if args.len() < min_args {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0902",
+                            msg: format!(
+                                "computer.{method} takes at least {min_args} argument(s), got {}",
+                                args.len()
+                            ),
+                        });
+                    }
+                    builtin_record_ty("ActionResult").unwrap()
+                }
+                other => {
+                    // unreachable via the parser (COMPUTER_METHODS gates it);
+                    // kept for ASTs built by other tools
+                    errs.push(CheckError {
+                        span: None,
+                        code: "E0901",
+                        msg: format!(
+                            "unknown computer method '{other}' (known: observe, click, type, key, scroll, set_value, drag)"
+                        ),
+                    });
+                    Ty::Unknown
+                }
+            };
+            // targets are int element indices or {x, y} records, and text
+            // payloads are strings — typed loosely (Unknown) so provider-side
+            // shapes keep flowing through
+            for a in args {
+                check_expr(a, locals, g, errs);
+            }
+            for (k, v) in kwargs {
+                if !known_options.contains(&k.as_str()) {
+                    errs.push(CheckError {
+                        span: None,
+                        code: "E0901",
+                        msg: format!(
+                            "unknown computer option '{k}' (known: allow, deadline, screenshot)"
+                        ),
+                    });
+                    check_expr(v, locals, g, errs);
+                    continue;
+                }
+                let t = check_expr(v, locals, g, errs);
+                match k.as_str() {
+                    "allow" => {
+                        if !matches!(t, Ty::List(_) | Ty::Unknown) {
+                            errs.push(CheckError {
+                                span: None,
+                                code: "E0901",
+                                msg: format!(
+                                    "computer option 'allow' must be a list of app names, got {t}"
+                                ),
+                            });
+                        }
+                    }
+                    "deadline" => {
+                        if !matches!(t, Ty::Int | Ty::Float | Ty::Unknown) {
+                            errs.push(CheckError {
+                                span: None,
+                                code: "E0901",
+                                msg: "computer option 'deadline' must be milliseconds (int), e.g. deadline: 30000".into(),
+                            });
+                        }
+                    }
+                    "screenshot" => {
+                        if !matches!(t, Ty::Bool | Ty::Unknown) {
+                            errs.push(CheckError {
+                                span: None,
+                                code: "E0901",
+                                msg: format!(
+                                    "computer option 'screenshot' must be a bool, got {t}"
+                                ),
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            result_ty
+        }
     }
 }
 
@@ -1290,8 +1480,10 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
 
     // generated identifiers must stay owner-only: user code binding these
     // names silently breaks the emitted Python/TS (`rt.llm_call` resolving
-    // to a user fn, `_state_A` shadowing a checkpoint object)
-    const RESERVED: [&str; 3] = ["rt", "nudge_runtime", "state"];
+    // to a user fn, `_state_A` shadowing a checkpoint object). `computer`
+    // is reserved the same way — `computer.observe(...)` is the native
+    // computer-use surface (v1.5), and a user binding would hijack it.
+    const RESERVED: [&str; 4] = ["rt", "nudge_runtime", "state", "computer"];
     for item in items {
         let fn_name = match item {
             Item::Fn { name, .. } => Some(name),
@@ -1530,7 +1722,7 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                     errs.push(CheckError {
                         span: None,
                         code: "E0101",
-                        msg: format!("unknown effect '{d}' in fn '{name}' (known: LLM, Tool, IO)"),
+                        msg: format!("unknown effect '{d}' in fn '{name}' (known: LLM, Tool, IO, Decision, Computer)"),
                     });
                 }
             }
@@ -1710,6 +1902,83 @@ fn triage(t: string) -> string uses Decision {
                 .any(|e| e.code == "E0301" && e.msg.contains("Decision")),
             "{errs:?}"
         );
+    }
+
+    // ── v1.5 computer-use ──────────────────────────────────────────
+
+    #[test]
+    fn computer_calls_check_clean_and_are_typed() {
+        let src = r#"
+fn run(app: string) -> bool uses Computer {
+    let obs = computer.observe(app, allow = ["Notes"], screenshot = true)
+    let r = computer.click(3, allow = ["Notes"])
+    obs.elements.len() >= 0 and r.ok
+}"#;
+        assert_eq!(check_src(src), vec![], "{errs:?}", errs = check_src(src));
+    }
+
+    #[test]
+    fn computer_infers_the_computer_effect() {
+        let errs = check_src("fn f() -> bool { let r = computer.click(1)\n    r.ok }");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0301" && e.msg.contains("Computer")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn computer_option_and_arity_errors() {
+        // unknown option
+        let errs = check_src(
+            "fn f() -> bool uses Computer { let r = computer.click(1, volume = 3)\n    r.ok }",
+        );
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0901" && e.msg.contains("volume")),
+            "{errs:?}"
+        );
+        // mistyped option
+        let errs = check_src(
+            "fn f() -> bool uses Computer { let r = computer.click(1, allow = 3)\n    r.ok }",
+        );
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0901" && e.msg.contains("'allow' must be")),
+            "{errs:?}"
+        );
+        // arity
+        let errs = check_src(
+            "fn f() -> bool uses Computer { let o = computer.observe()\n    o.changed.len() >= 0 }",
+        );
+        assert!(errs.iter().any(|e| e.code == "E0902"), "{errs:?}");
+    }
+
+    #[test]
+    fn computer_observation_fields_are_typed() {
+        // `.changed` is bool on the Observation's drift record — using it in
+        // arithmetic must be E0201, proving Observation resolves as a record
+        let errs = check_src("fn f() -> int uses Computer { let o = computer.observe(\"Notes\")\n    o.drift.changed + 1 }");
+        assert!(errs.iter().any(|e| e.code == "E0201"), "{errs:?}");
+        // valid field reads stay clean
+        let ok = check_src("fn f() -> bool uses Computer { let o = computer.observe(\"Notes\")\n    o.drift.changed or o.title == \"\" }");
+        assert_eq!(ok, vec![]);
+    }
+
+    #[test]
+    fn computer_in_properties_is_e0804() {
+        let errs = check_src(
+            r#"test "x" { for_all p in gen.injection() {
+    let o = computer.observe("Notes")
+    assert o.elements.len() >= 0 } }"#,
+        );
+        assert!(errs.iter().any(|e| e.code == "E0804"), "{errs:?}");
+    }
+
+    #[test]
+    fn computer_is_a_reserved_name() {
+        let errs = check_src("fn f() -> int { let computer = 3\n    computer }");
+        assert!(errs.iter().any(|e| e.code == "E0103"), "{errs:?}");
     }
 
     #[test]
