@@ -53,4 +53,3 @@ python3 -m http.server 8080
 ```sh
 python3 play.py
 ```
-

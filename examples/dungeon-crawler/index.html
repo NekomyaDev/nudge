@@ -28,7 +28,7 @@
 
     body {
       background-color: var(--bg);
-      background-image: 
+      background-image:
         radial-gradient(circle at 50% 0%, rgba(59, 130, 246, 0.15) 0%, transparent 60%),
         radial-gradient(circle at 10% 90%, rgba(239, 68, 68, 0.1) 0%, transparent 50%),
         linear-gradient(to bottom, #090b0e, #0d0f12 50%, #050608);
@@ -613,7 +613,7 @@
 
     <!-- Main Game Grid -->
     <div class="game-grid">
-      
+
       <!-- Hero Character Sheet -->
       <aside class="card hero-panel">
         <div class="hero-header">
@@ -686,7 +686,7 @@
 
       <!-- Combat Arena & Actions -->
       <main class="card arena-panel">
-        
+
         <div class="card-title">
           <span id="roomTitleLbl">第 1 间: Catacomb Gate</span>
           <span id="gameStateBadge" style="font-size: 0.75rem; background: #334155; padding: 2px 8px; border-radius: 4px; color: #cbd5e1;">准备就绪</span>
@@ -696,7 +696,7 @@
         <div class="encounter-box" id="encounterBox">
           <div class="monster-avatar" id="monsterAvatar">🕷️</div>
           <div class="monster-name" id="monsterName">Crypt Crawler (剧毒爬虫)</div>
-          
+
           <div class="stat-bar-group monster-hp-bar" id="monsterBarGroup">
             <div class="bar-info">
               <span style="color: #f87171;">生命值 (HP)</span>
@@ -719,11 +719,11 @@
           <button class="btn btn-attack" id="btnAttack" onclick="onAttackClick()">
             <span>⚔️</span> 发起攻击 (Attack)
           </button>
-          
+
           <button class="btn btn-heal" id="btnDrinkPotion" onclick="onDrinkPotionClick()">
             <span>🧪</span> 饮用药水 (+40 HP)
           </button>
-          
+
           <button class="btn btn-gold" id="btnBuyPotion" onclick="onBuyPotionClick()">
             <span>💰</span> 购买药水 (10 金币)
           </button>
@@ -1122,7 +1122,7 @@
       document.getElementById('statGold').textContent = _state.gold;
       document.getElementById('statPotions').textContent = _state.potions;
       document.getElementById('statScore').textContent = _state.score;
-      
+
       // HP Bar
       const hpPct = Math.max(0, Math.min(100, (_state.hp / _state.max_hp) * 100));
       document.getElementById('hpText').textContent = `${Math.max(0, _state.hp)} / ${_state.max_hp}`;
@@ -1211,14 +1211,14 @@
       const isDead = !_state.is_alive;
       const isBossDead = _state.boss_defeated;
       const canFight = def.isCombat && currentEnemy && !currentEnemy.isDefeated && !isDead;
-      
+
       document.getElementById('btnAttack').disabled = !canFight;
       document.getElementById('btnDrinkPotion').disabled = isDead || _state.potions <= 0 || _state.hp >= _state.max_hp;
       document.getElementById('btnBuyPotion').disabled = isDead || _state.gold < 10;
       document.getElementById('btnForgeWeapon').disabled = isDead || _state.gold < 35 || _state.inventory.includes("Rune-etched Broadsword");
       document.getElementById('btnReinforceArmor').disabled = isDead || _state.gold < 15 || _state.inventory.includes("Hardened Dwarven Plate");
       document.getElementById('btnPrayShrine').disabled = isDead || _state.current_room !== 4 || _state.hp >= _state.max_hp;
-      
+
       const canAdvance = (!def.isCombat || (currentEnemy && currentEnemy.isDefeated)) && _state.current_room < 5 && !isDead;
       document.getElementById('btnNextRoom').disabled = !canAdvance;
 
@@ -1268,7 +1268,7 @@
       if (currentEnemy.hp > 0) {
         _state.hp -= enemyDmg;
         logMessage("反击", `${currentEnemy.name} 咆哮反扑！英雄受到 ${enemyDmg} 点伤害。`, "tag-combat");
-        
+
         if (_state.hp <= 0) {
           _state.hp = 0;
           _state.is_alive = false;

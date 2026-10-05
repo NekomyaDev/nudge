@@ -1,10 +1,10 @@
 # RFC & Architectural Roadmap: Pure Nudge Native Execution Engine
 # 原生独立执行引擎与去 Python 依赖路线图
 
-> **Status:** Draft / Active Planning  
-> **Authors:** Nudge Core Architecture Team  
-> **Language Support:** English & Chinese (zh-CN)  
-> **Target Version:** v1.3 – v2.0  
+> **Status:** Draft / Active Planning
+> **Authors:** Nudge Core Architecture Team
+> **Language Support:** English & Chinese (zh-CN)
+> **Target Version:** v1.3 – v2.0
 
 ---
 

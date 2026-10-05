@@ -5,9 +5,9 @@ repos:
     rev: v5.0.0
     hooks:
       - id: trailing-whitespace
-        exclude: ^assets/
+        exclude: ^(assets/|conformance/)
       - id: end-of-file-fixer
-        exclude: ^assets/
+        exclude: ^(assets/|conformance/)
       - id: check-yaml
       - id: check-json
       - id: check-merge-conflict
@@ -22,7 +22,8 @@ repos:
     hooks:
       - id: cargo-fmt
         name: cargo fmt (compiler crates)
-        entry: bash -c 'cd crates && cargo fmt --all -- --check'
+        # pre-commit.ci runners have no Rust toolchain — skip there
+        entry: bash -c 'command -v cargo >/dev/null || exit 0; cd crates && cargo fmt --all -- --check'
         language: system
         pass_filenames: false
         files: ^crates/.*\.rs$

@@ -4,13 +4,13 @@ title: Nudge - Programming Language for LLM Agents
 summary: Typed, replayable, budget-aware programming language for LLM agents
 description: |
   Nudge is a programming language designed for LLM agents. It features:
-  
+
   • Typed LLM calls with schema validation
   • Deterministic replay and trace-based testing
   • Budget contracts for cost control
   • Native parallelism with par map/race/all
   • MCP and Python interop
-  
+
   Quick start:
     nudgec check hello.ndg    # Type check
     nudgec build hello.ndg    # Compile to Python

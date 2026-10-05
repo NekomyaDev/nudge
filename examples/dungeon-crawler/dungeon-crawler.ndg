@@ -204,19 +204,19 @@ agent DungeonHero {
         let effective_hero_atk = calc_crit(state.atk, is_lucky)
         let hero_dmg_round = calc_damage(effective_hero_atk, m_def)
         let monster_dmg_round = calc_damage(m_atk, state.def_val)
-        
+
         let rounds_to_defeat = route {
             instant: 1 when hero_dmg_round >= m_hp,
             two_hits: 2 when hero_dmg_round * 2 >= m_hp,
             three_hits: 3 otherwise
         }
-        
+
         let total_dmg_suffered = monster_dmg_round * rounds_to_defeat
         state.hp -= total_dmg_suffered
         state.is_alive = state.hp > 0
-        
+
         let hero_won = (hero_dmg_round * 3 >= m_hp) and state.is_alive
-        
+
         state.gold += route {
             reward_gold: gold_drop when hero_won,
             no_gold: 0 otherwise
@@ -229,7 +229,7 @@ agent DungeonHero {
             score_gain: (gold_drop * 5) + (xp_drop * 2) when hero_won,
             no_score: 0 otherwise
         }
-        
+
         // Level-up mechanic
         let required_xp = xp_required(state.level)
         let can_level_up = state.exp >= required_xp
@@ -245,7 +245,7 @@ agent DungeonHero {
             strength_up: 4 when can_level_up,
             same_atk: 0 otherwise
         }
-        
+
         state.log_entries += route {
             victory_log: ["Monster defeated! Spoils and experience collected."] when hero_won,
             defeat_log: ["The hero took a mortal blow in the dark depths."] otherwise
@@ -255,31 +255,31 @@ agent DungeonHero {
 
     fn run_campaign() -> string {
         let r0 = reset_hero()
-        
+
         // Room 1: Catacomb Gate - Crypt Crawler
         state.current_room = 1
         let won_r1 = fight_encounter(22, 10, 2, 15, 30, false)
-        
+
         // Room 2: Goblin Outpost - Goblin Captain
         state.current_room = 2
         let won_r2 = fight_encounter(36, 12, 4, 30, 50, true)
-        
+
         // Room 3: Blacksmith Anvil - Upgrade gear and trade
         state.current_room = 3
         let forged_atk = forge_weapon(35, 8)
         let bought_pot = buy_potion(10)
         let pot_drink = drink_potion()
-        
+
         // Room 4: Sunken Shrine - Divine Restoration & Shield Reinforcement
         state.current_room = 4
         let restored_hp = pray_at_shrine()
         let reinforced_def = reinforce_armor(15, 4)
-        
+
         // Room 5: Throne of the Dread Wyrm - Final Boss Encounter
         state.current_room = 5
         let won_boss = fight_encounter(65, 20, 6, 100, 150, true)
         state.boss_defeated = won_boss
-        
+
         route {
             victory: "============================================================\n              THE CRYPT OF SHADOWS (Nudge RPG)\n============================================================\n[Room 1: Catacomb Gate]\n  - Encountered Crypt Crawler (HP: 22, ATK: 10)\n  - Hero strikes true! Crawler defeated in 2 rounds.\n  - Spoils: +15 Gold, +30 EXP.\n\n[Room 2: Goblin Outpost]\n  - Encountered Goblin Captain (HP: 36, ATK: 12)\n  - Critical strike landed! Goblin Captain slain.\n  - Spoils: +30 Gold, +50 EXP.\n  - Level Up! Level 2 reached (+25 Max HP, +4 ATK).\n\n[Room 3: Blacksmith Anvil & Wandering Merchant]\n  - Blacksmith reforged weapon: Rune-etched Broadsword (+8 ATK)\n  - Purchased health potion from hooded merchant (-10 Gold)\n  - Quaffed glowing potion (+40 HP restored)\n\n[Room 4: Sunken Shrine of Light]\n  - Prayed at the holy shrine: Wounds miraculously healed (100% HP)\n  - Reinforced armor with Hardened Dwarven Plate (+4 DEF)\n\n[Room 5: Throne of the Dread Wyrm]\n  - Final Boss Encounter: Dread Wyrm (HP: 65, ATK: 20, DEF: 6)\n  - Fierce battle ensues! Hero unleashes lethal critical strike!\n  - The Dread Wyrm collapses into ash!\n  - Spoils: +100 Gold, +150 EXP, +950 Score.\n\n------------------------------------------------------------\nHERO FINAL STATUS:\n  Level: 2 | HP: 125/125 | ATK: 32 | DEF: 12\n  Gold: 110 coins | Potions: 2 | Score: 950 points\n  Inventory: [Iron Sword, Traveler Cloak, Rune-etched Broadsword, Hardened Dwarven Plate]\n------------------------------------------------------------\n>>> VICTORY: The Crypt of Shadows is cleansed, and your legend shall echo forever! <<<" when state.boss_defeated and state.is_alive,
             defeat: "GAME OVER: Darkness prevails as the hero perishes in the depths." otherwise
