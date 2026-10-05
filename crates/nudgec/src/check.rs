@@ -1440,36 +1440,28 @@ fn check_expr(
                 }
                 let t = check_expr(v, locals, g, errs);
                 match k.as_str() {
-                    "allow" => {
-                        if !matches!(t, Ty::List(_) | Ty::Unknown) {
-                            errs.push(CheckError {
-                                span: None,
-                                code: "E0901",
-                                msg: format!(
-                                    "computer option 'allow' must be a list of app names, got {t}"
-                                ),
-                            });
-                        }
+                    "allow" if !matches!(t, Ty::List(_) | Ty::Unknown) => {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0901",
+                            msg: format!(
+                                "computer option 'allow' must be a list of app names, got {t}"
+                            ),
+                        });
                     }
-                    "deadline" => {
-                        if !matches!(t, Ty::Int | Ty::Float | Ty::Unknown) {
-                            errs.push(CheckError {
-                                span: None,
-                                code: "E0901",
-                                msg: "computer option 'deadline' must be milliseconds (int), e.g. deadline: 30000".into(),
-                            });
-                        }
+                    "deadline" if !matches!(t, Ty::Int | Ty::Float | Ty::Unknown) => {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0901",
+                            msg: "computer option 'deadline' must be milliseconds (int), e.g. deadline: 30000".into(),
+                        });
                     }
-                    "screenshot" => {
-                        if !matches!(t, Ty::Bool | Ty::Unknown) {
-                            errs.push(CheckError {
-                                span: None,
-                                code: "E0901",
-                                msg: format!(
-                                    "computer option 'screenshot' must be a bool, got {t}"
-                                ),
-                            });
-                        }
+                    "screenshot" if !matches!(t, Ty::Bool | Ty::Unknown) => {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0901",
+                            msg: format!("computer option 'screenshot' must be a bool, got {t}"),
+                        });
                     }
                     _ => {}
                 }
