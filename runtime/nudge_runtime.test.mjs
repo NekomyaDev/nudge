@@ -376,3 +376,110 @@ test("route: picks arm and attaches route label to trace record", () => {
     else process.env.NUDGE_TRACE = prevTrace;
   }
 });
+
+// ── computer use (v1.5) ───────────────────────────────────────────────
+
+import { computerObserve, computerClick, computerType, computerSetValue, computerPerform, computerPaste, ComputerDenied } from "./nudge_runtime.ts";
+
+function withEnv(env, fn) {
+  const prev = {};
+  for (const k of Object.keys(env)) { prev[k] = process.env[k]; process.env[k] = env[k]; }
+  try { fn(); } finally {
+    for (const k of Object.keys(env)) {
+      if (prev[k] === undefined) delete process.env[k];
+      else process.env[k] = prev[k];
+    }
+  }
+}
+
+test("computer: fake desktop observe/click/type/set_value with a trace", () => {
+  withEnv({ NUDGE_TRACE: "/tmp/nudge-cu-test.jsonl" }, () => {
+    fs.writeFileSync("/tmp/nudge-cu-test.jsonl", "");
+    const obs = computerObserve("FakeApp", { allow: ["FakeApp"], screenshot: true });
+    assert.equal(obs.state_id, "s-1");
+    assert.equal(obs.elements.length, 4);
+    assert.ok(obs.tree.includes("[1] button \"OK\""));
+    assert.ok(obs.screenshot.startsWith("data:image/png;base64,"));
+    assert.ok(obs.screenshot_hash.startsWith("sha256:"));
+    const r = computerClick(1, { allow: ["FakeApp"] });
+    assert.equal(r.ok, true);
+    const r2 = computerType("hello", { allow: ["FakeApp"] });
+    assert.equal(r2.ok, true);
+    const r3 = computerSetValue(3, "x", { allow: ["FakeApp"] });
+    assert.equal(r3.ok, true);
+    const recs = fs.readFileSync("/tmp/nudge-cu-test.jsonl", "utf8").trim().split("\n").map(JSON.parse);
+    assert.deepEqual(recs.map((r) => r.kind), ["computer.observe", "computer.act", "computer.act", "computer.act"]);
+    assert.equal(recs[0].elements.length, 4); // elements land in the record for replay
+  });
+});
+
+test("computer: allow scope refuses other apps (ComputerDenied)", () => {
+  assert.throws(() => computerObserve("Terminal", { allow: ["FakeApp"] }), ComputerDenied);
+});
+
+test("computer: kill switch refuses everything", () => {
+  withEnv({ NUDGE_COMPUTER_KILL: "1" }, () => {
+    assert.throws(() => computerObserve("FakeApp", { allow: ["FakeApp"] }), ComputerDenied);
+  });
+});
+
+test("computer: replay consumes recorded observations and never re-fires actions", () => {
+  const obsRec = { v: 1, seq: 1, kind: "computer.observe", app: "Notes", state_id: "s-1",
+    title: "Notes", element_count: 2, outcome: "ok", latency_ms: 4,
+    elements: [{ index: 0, role: "window", title: "Notes" }, { index: 1, role: "button", title: "OK", pressable: true }] };
+  const actRec = { v: 1, seq: 2, kind: "computer.act", action: "click", app: "Notes",
+    target: { index: 1 }, outcome: "ok", latency_ms: 9, ok: true };
+  const p = tracePath([obsRec, actRec]);
+  withEnv({ NUDGE_REPLAY: p }, () => {
+    const obs = computerObserve("Notes", { allow: ["Notes"] });
+    assert.equal(obs.title, "Notes");
+    assert.equal(obs.elements.length, 2);
+    assert.ok(obs.tree.includes("OK")); // tree re-rendered from recorded elements
+    const r = computerClick(1, { allow: ["Notes"] });
+    assert.equal(r.ok, true); // the recorded result — nothing executed
+  });
+});
+
+test("computer: drift mode re-observes live and reports the mechanical diff", () => {
+  const recElements = [
+    { index: 0, role: "window", title: "Notes" },
+    { index: 1, role: "button", title: "OK", pressable: true },
+    { index: 2, role: "textfield", title: "Body", editable: true },
+  ];
+  const obsRec = { v: 1, seq: 1, kind: "computer.observe", app: "Notes", state_id: "s-1",
+    title: "Notes", element_count: 3, outcome: "ok", latency_ms: 4, elements: recElements,
+    tree: recElements.map((e) => `[${e.index}] ${e.role} "${e.title}"`).join("\n"),
+    screenshot_hash: "sha256:aaa" };
+  const actRec = { v: 1, seq: 2, kind: "computer.act", action: "click", app: "Notes",
+    target: { index: 1 }, outcome: "ok", latency_ms: 9, ok: true };
+  const p = tracePath([obsRec, actRec]);
+  withEnv({ NUDGE_REPLAY: p, NUDGE_COMPUTER_DRIFT: "1", NUDGE_TRACE: "/tmp/nudge-cu-drift.jsonl" }, () => {
+    fs.writeFileSync("/tmp/nudge-cu-drift.jsonl", "");
+    const live = computerObserve("Notes", { allow: ["Notes"] }); // live fake desktop ≠ recorded tree
+    assert.equal(live.drift.changed, true);
+    assert.ok(live.drift.summary.length > 0);
+    const r = computerClick(1, { allow: ["Notes"] }); // dry-run
+    assert.equal(r.ok, true);
+    const recs = fs.readFileSync("/tmp/nudge-cu-drift.jsonl", "utf8").trim().split("\n").map(JSON.parse);
+    assert.equal(recs[0].replay_check, true);
+    assert.equal(recs[1].dry_run, true);
+  });
+});
+
+test("computer: perform + paste with dispatch receipts and bounds", () => {
+  withEnv({ NUDGE_TRACE: "/tmp/nudge-cu-h.jsonl" }, () => {
+    fs.writeFileSync("/tmp/nudge-cu-h.jsonl", "");
+    const obs = computerObserve("FakeApp", { allow: ["FakeApp"] });
+    assert.ok(obs.elements.every((el) => Array.isArray(el.bounds)));
+    const p = computerPerform(1, "press", { allow: ["FakeApp"] });
+    assert.equal(p.ok, true);
+    assert.equal(p.action_sent, true); // bridge knows the input was dispatched
+    const w = computerPaste("hello", null, { allow: ["FakeApp"] });
+    assert.equal(w.ok, true);
+    const recs = fs.readFileSync("/tmp/nudge-cu-h.jsonl", "utf8").trim().split("\n").map(JSON.parse);
+    assert.equal(recs[0].snapshot_mode, "full");
+    assert.equal(recs[1].action, "perform");
+    assert.equal(recs[2].action, "paste");
+    assert.equal(recs[1].action_sent, true);
+  });
+});

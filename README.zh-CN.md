@@ -75,6 +75,7 @@ test "stays within budget on recorded trace" {
 | **真实提供商** | OpenAI / Gemini / Groq / MiMo / Mistral / Anthropic / Ollama |
 | **跟踪查看器** | 本地 Web UI：时间线、token、成本、修复高亮 |
 | **跟踪差异** | 比较两个跟踪："编辑提示后什么改变了？" |
+| **计算机操作（Computer Use）** | `computer.observe` + 类型化动作：把机器变成可重放的效果 —— 语言掌控控制权，模型掌控感知 |
 | **A2A 和 LSP 和 OTel** | 内置，非外挂 |
 
 </div>

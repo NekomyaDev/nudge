@@ -1,0 +1,2 @@
+{"v": 1, "seq": 1, "kind": "computer.observe", "app": "Notes", "state_id": "s-1", "element_count": 12, "outcome": "ok", "latency_ms": 34, "tree": "[0] window \"Notes\"", "screenshot_hash": "sha256:abc", "title": "Notes"}
+{"v": 1, "seq": 2, "kind": "computer.act", "action": "click", "app": "Notes", "target": 3, "outcome": "ok", "latency_ms": 51, "dry_run": true}

@@ -98,6 +98,7 @@ impl VM {
         let mut io_module: HashMap<String, Value> = HashMap::new();
         let mut math_module: HashMap<String, Value> = HashMap::new();
         let mut str_module: HashMap<String, Value> = HashMap::new();
+        let mut computer_module: HashMap<String, Value> = HashMap::new();
 
         for (name, func) in stdlib_functions {
             // Register as global (e.g., "io.read")
@@ -113,6 +114,9 @@ impl VM {
             } else if name.starts_with("str.") {
                 let short = name.strip_prefix("str.").unwrap().to_string();
                 str_module.insert(short, func);
+            } else if name.starts_with("computer.") {
+                let short = name.strip_prefix("computer.").unwrap().to_string();
+                computer_module.insert(short, func);
             }
         }
 
@@ -120,6 +124,8 @@ impl VM {
         vm.globals
             .insert("math".to_string(), Value::Map(math_module));
         vm.globals.insert("str".to_string(), Value::Map(str_module));
+        vm.globals
+            .insert("computer".to_string(), Value::Map(computer_module));
 
         // Register program functions as globals
         for (i, func) in vm.program.functions.iter().enumerate() {

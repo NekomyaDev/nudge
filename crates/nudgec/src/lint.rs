@@ -13,6 +13,9 @@
 //!   — narrow the candidate set first
 //!   W0004 schema-without-repair — a `schema` with no `retry: N with repair`:
 //!                           a violation raises at runtime instead of repairing
+//!   W0006 computer-unscoped — a `computer.*` call with no `allow` option:
+//!                           the automation may touch ANY app on the machine;
+//!                           scope it to the apps the task actually needs
 
 use crate::ast::{Expr, ExprKind, Item, Stmt, StmtKind, TypeExpr};
 
@@ -216,6 +219,21 @@ fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut V
             }
             walk_expr(ctx, state, records, out);
             for (_, v) in options {
+                walk_expr(ctx, v, records, out);
+            }
+        }
+        ExprKind::ComputerCall { method, kwargs, .. } => {
+            // W0006: unscoped automation — without `allow`, the runtime may
+            // bind and act on ANY app on the machine
+            if !kwargs.iter().any(|(k, _)| k == "allow") {
+                out.push(lint(
+                    "W0006",
+                    format!(
+                        "in {ctx}: computer.{method} has no `allow` option — the automation may touch any app on the machine; scope it, e.g. computer.{method}(target, allow: [\"Notes\"])"
+                    ),
+                ));
+            }
+            for (_, v) in kwargs {
                 walk_expr(ctx, v, records, out);
             }
         }
@@ -504,5 +522,13 @@ mod tests {
 }"#;
         let ls = lints(src);
         assert!(ls.iter().any(|l| l.code == "W0001"), "{ls:?}");
+    }
+
+    #[test]
+    fn unscoped_computer_calls_warn_w0006_and_allow_clears_it() {
+        let bare = lints("fn f() -> bool uses Computer { let o = computer.observe(\"Notes\")\n    o.drift.changed }");
+        assert!(bare.iter().any(|l| l.code == "W0006"), "{bare:?}");
+        let scoped = lints("fn f() -> bool uses Computer { let o = computer.observe(\"Notes\", allow = [\"Notes\"])\n    o.drift.changed }");
+        assert!(scoped.is_empty(), "{scoped:?}");
     }
 }

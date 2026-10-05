@@ -74,6 +74,8 @@ prefix instead of raising ``ReplayMismatch``).
 
 from __future__ import annotations
 
+import atexit
+import base64
 import functools
 import json
 import os
@@ -976,7 +978,26 @@ def _urlopen_retry(req, provider, timeout=120):
     raise last_err  # pragma: no cover — loop always returns or raises
 
 
-def _openai_chat(provider, model, prompt):
+def _image_content(image, fmt):
+    """One user-content image block for the provider wire (`fmt` is
+    "openai" or "anthropic"). Accepts data URLs (`data:image/png;base64,…`)
+    or bare base64 payloads (PNG assumed). Text-only providers should not
+    receive images — that is a program bug, so it raises."""
+    text = str(image)
+    if text.startswith("data:"):
+        header, b64 = text.split(",", 1) if "," in text else (text, "")
+        mime = header[5:].split(";")[0] or "image/png"
+    else:
+        b64, mime = text, "image/png"
+    b64 = "".join(b64.split())
+    if not b64:
+        raise ValueError("empty image payload passed to an llm call")
+    if fmt == "anthropic":
+        return {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}}
+    return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
+
+
+def _openai_chat(provider, model, prompt, images=None):
     """One non-streaming chat completion against an OpenAI-compatible API.
     Returns (text, prompt_tokens, completion_tokens)."""
     import urllib.error
@@ -984,9 +1005,14 @@ def _openai_chat(provider, model, prompt):
     base = os.environ.get("NUDGE_BASE_URL", _PROVIDER_BASE_URLS[provider])
     key_env = _PROVIDER_KEY_ENVS.get(provider)
     key = os.environ.get("NUDGE_API_KEY") or (os.environ.get(key_env, "") if key_env else "")
+    if images:
+        content = [{"type": "text", "text": str(prompt)}]
+        content.extend(_image_content(i, "openai") for i in images)
+    else:
+        content = str(prompt)
     body = json.dumps({
         "model": model,
-        "messages": [{"role": "user", "content": str(prompt)}],
+        "messages": [{"role": "user", "content": content}],
     }).encode()
     req = urllib.request.Request(
         base.rstrip("/") + "/chat/completions", data=body,
@@ -1010,7 +1036,7 @@ def _openai_chat(provider, model, prompt):
     return text, int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
 
 
-def _anthropic_chat(provider, model, prompt):
+def _anthropic_chat(provider, model, prompt, images=None):
     """One non-streaming call against Anthropic's Messages API (not the
     OpenAI shape). Returns (text, input_tokens, output_tokens)."""
     import urllib.error
@@ -1018,10 +1044,15 @@ def _anthropic_chat(provider, model, prompt):
     base = os.environ.get("NUDGE_BASE_URL", _PROVIDER_BASE_URLS[provider])
     key = os.environ.get("NUDGE_API_KEY") or os.environ.get(
         _PROVIDER_KEY_ENVS[provider], "")
+    if images:
+        content = [{"type": "text", "text": str(prompt)}]
+        content.extend(_image_content(i, "anthropic") for i in images)
+    else:
+        content = str(prompt)
     body = json.dumps({
         "model": model,
         "max_tokens": 4096,
-        "messages": [{"role": "user", "content": str(prompt)}],
+        "messages": [{"role": "user", "content": content}],
     }).encode()
     req = urllib.request.Request(
         base.rstrip("/") + "/v1/messages", data=body,
@@ -1163,7 +1194,7 @@ def _extract_json(text):
     return text
 
 
-def _complete(provider, model, prompt, schema):
+def _complete(provider, model, prompt, schema, images=None):
     """(output, in_tokens, out_tokens) — one completion on the given
     provider. Real-provider answers are JSON-extracted when a schema is
     set; the fake provider synthesizes as before."""
@@ -1171,9 +1202,9 @@ def _complete(provider, model, prompt, schema):
         return _fake_answer(prompt, model, schema), 0, 0
     bare = _split_model(model)[1]
     if provider == "anthropic":
-        text, in_t, out_t = _anthropic_chat(provider, bare, prompt)
+        text, in_t, out_t = _anthropic_chat(provider, bare, prompt, images)
     else:
-        text, in_t, out_t = _openai_chat(provider, bare, prompt)
+        text, in_t, out_t = _openai_chat(provider, bare, prompt, images)
     if schema is not None:
         return _extract_json(text), in_t, out_t
     return text, in_t, out_t
@@ -2002,12 +2033,15 @@ def _apply_output_guards(value):
 
 
 def llm_call(prompt, model=None, schema=None, retry=0, repair=False,
-             budget=None, cache=None, tags=None):
+             budget=None, cache=None, tags=None, images=None):
     """One typed LLM call (design §4).
 
     MVP: fake provider only. With ``schema`` set, output is validated; a
     violation triggers the §4.2 repair loop for up to ``retry`` rounds when
     ``repair`` is set, then raises :class:`SchemaFailure`.
+    ``images`` (v1.5, additive): list of data URLs / base64 PNG payloads
+    sent alongside the prompt as image content blocks (computer-use
+    screenshots); the fake provider ignores them.
     """
     replaying = os.environ.get("NUDGE_REPLAY")
     real = _real_provider_for(model)
@@ -2050,7 +2084,7 @@ def llm_call(prompt, model=None, schema=None, retry=0, repair=False,
         if provider not in ("fake", "replay") and budget is not None:
             reservation = _budget_reserve(max(0.0, float(budget) - site_spent[0]))
         try:
-            return _complete(provider, model, prompt, schema)
+            return _complete(provider, model, prompt, schema, images)
         finally:
             _budget_release(reservation)
 
@@ -2978,3 +3012,661 @@ def _http_decide(base_url, state, questions, opts):
         for a in out.values():
             a["level"] = level
     return out
+
+
+# ── computer use (v1.5, docs/computer-use.md) ────────────────────────
+# The machine as a typed effect. The language owns control (scoping,
+# deadlines, kill switch, one NTF record per step, replay that never
+# re-fires actions); the model owns perception (the program hands the
+# observation to llm"""/decide and acts on the typed answer).
+
+
+class ComputerDenied(PermissionError):
+    """A computer call was refused: the app is outside the `allow` scope
+    or the NUDGE_COMPUTER_KILL=1 kill switch is set. Refusals trace with
+    outcome "denied" — like ToolDenied for tools."""
+
+
+class ComputerTimeout(RuntimeError):
+    """A computer call exceeded its declared deadline. Soft by default
+    (the record annotates deadline_missed); NUDGE_COMPUTER_STRICT=1 makes
+    it raise."""
+
+
+_COMPUTER_ACTIONS = ("click", "type", "key", "scroll", "set_value", "drag")
+
+_COMPUTER_BRIDGE_LOCK = threading.Lock()
+_COMPUTER_SESSIONS = {}  # command string → {"proc", "rid"}
+_COMPUTER_REPLAY_STATE = {"path": None, "obs": None, "acts": None, "obs_idx": 0, "act_idx": 0}
+_COMPUTER_REPLAY_LOCK = threading.Lock()
+_FAKE_DESKTOP = {"scene": 0}
+# the app + state_id of the latest observation — actions act on what you
+# saw, and carry the state_id so the bridge can validate staleness
+# fail-closed (docs/computer-use.md §3)
+_LAST_OBSERVED_APP = {"app": "", "state_id": ""}
+
+
+def _computer_provider():
+    """Provider selection: NUDGE_COMPUTER_PROVIDER (default `fake`), a key
+    into NUDGE_COMPUTER_SERVERS. NUDGE_PROVIDER=fake forces the fake
+    desktop exactly like the llm/decide paths."""
+    if os.environ.get("NUDGE_PROVIDER") == "fake":
+        return "fake"
+    return os.environ.get("NUDGE_COMPUTER_PROVIDER", "fake")
+
+
+def _computer_registry():
+    raw = os.environ.get("NUDGE_COMPUTER_SERVERS")
+    if not raw:
+        return {}
+    data = json.loads(raw)
+    return data if isinstance(data, dict) else {}
+
+
+def _computer_allow_ok(allow, app):
+    if not allow:
+        return True
+    return str(app) in [str(a) for a in allow]
+
+
+def _computer_check_deadline(latency_ms, deadline):
+    if deadline is not None and latency_ms > int(deadline):
+        if os.environ.get("NUDGE_COMPUTER_STRICT") == "1":
+            raise ComputerTimeout(
+                f"computer call took {latency_ms} ms over the {int(deadline)} ms deadline"
+            )
+        return "deadline_missed"
+    return "ok"
+
+
+def _render_tree(elements):
+    """Rendered AX-style tree (zcode shape): `[N] role "title" = value
+    (flags)` — the text a model reads. Providers MAY send their own `tree`;
+    this renders it from elements when they don't."""
+    lines = []
+    for el in elements:
+        flags = []
+        if el.get("focused"):
+            flags.append("focused")
+        if el.get("selected"):
+            flags.append("selected")
+        if el.get("editable"):
+            flags.append("editable")
+        if el.get("pressable"):
+            flags.append("pressable")
+        if not el.get("enabled", True):
+            flags.append("disabled")
+        head = f'[{el.get("index", 0)}] {el.get("role", "element")}' + \
+            (f' "{el["title"]}"' if el.get("title") else "")
+        if el.get("value"):
+            head += f' = {el["value"]}'
+        if el.get("actions"):
+            head += f' actions={el["actions"]}'
+        if flags:
+            head += f' ({",".join(flags)})'
+        lines.append(head)
+    return "\n".join(lines)
+
+
+def _normalize_observation(app, raw):
+    """Validate a provider observation (strict adapter rules: missing
+    state_id/elements, bad element shapes and unsorted indices are
+    rejected) and fill the Observation record the language sees."""
+    if not isinstance(raw, dict):
+        raise RuntimeError("computer provider returned a non-object observation")
+    state_id = raw.get("state_id")
+    if not state_id:
+        raise RuntimeError("computer provider observation has no `state_id`")
+    raw_elements = raw.get("elements")
+    if not isinstance(raw_elements, list):
+        raise RuntimeError("computer provider observation has no `elements` list")
+    elements = []
+    for el in raw_elements:
+        if not isinstance(el, dict) or "index" not in el:
+            raise RuntimeError("computer provider element has no `index`")
+        raw_bounds = el.get("bounds")
+        bounds = [float(b) for b in raw_bounds] if isinstance(raw_bounds, (list, tuple)) and len(raw_bounds) == 4 else []
+        elements.append({
+            "index": int(el["index"]),
+            "role": str(el.get("role", "element")),
+            "title": str(el.get("title", "")),
+            "value": str(el.get("value", "")),
+            "pressable": bool(el.get("pressable", False)),
+            "editable": bool(el.get("editable", False)),
+            "focused": bool(el.get("focused", False)),
+            "enabled": bool(el.get("enabled", True)),
+            "actions": [str(a) for a in (el.get("actions") or [])],
+            # diagnostic geometry (zcode rule): bounds describe where the
+            # element sits — they are NEVER a click-coordinate source
+            "bounds": bounds,
+        })
+    shot = raw.get("screenshot") or {}
+    screenshot = ""
+    screenshot_hash = raw.get("screenshot_hash", "")
+    if isinstance(shot, dict) and shot.get("data_url"):
+        screenshot = str(shot["data_url"])
+        screenshot_hash = str(shot.get("sha256", screenshot_hash))
+    elif isinstance(shot, str) and shot.startswith("data:"):
+        # providers may inline the data URL directly (the fake desktop does)
+        screenshot = shot
+    return {
+        "app": str(app),
+        "state_id": str(state_id),
+        "title": str(raw.get("title", "")),
+        "elements": elements,
+        "tree": str(raw.get("tree") or _render_tree(elements)),
+        "screenshot_hash": screenshot_hash,
+        "screenshot": screenshot,
+        "drift": {"changed": False, "screenshot_changed": False,
+                  "added": [], "removed": [], "summary": ""},
+    }
+
+
+def _normalize_result(raw):
+    if not isinstance(raw, dict):
+        raise RuntimeError("computer provider returned a non-object result")
+    dispatch = str(raw.get("dispatch", "sent"))
+    return {
+        "ok": bool(raw.get("ok", False)),
+        "outcome": str(raw.get("outcome", "ok" if raw.get("ok") else "error")),
+        "latency_ms": int(raw.get("latency_ms", 0)),
+        "error": str(raw.get("error", "")),
+        # dispatch receipt (docs/computer-use.md §3): True only when the
+        # bridge KNOWS the input was dispatched; a "not_sent" action may be
+        # retried, a "sent"/"unknown" one must be re-observed instead
+        "action_sent": dispatch != "not_sent",
+    }
+
+
+def _fake_scenes():
+    """Fake desktop scenes: NUDGE_COMPUTER_SCENARIO (JSON) or the built-in
+    single scene. Deterministic — same scenario, same tree, same hashes."""
+    path = os.environ.get("NUDGE_COMPUTER_SCENARIO")
+    if path:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.loads(f.read())
+        scenes = data.get("scenes") if isinstance(data, dict) else None
+        if not scenes:
+            raise RuntimeError("NUDGE_COMPUTER_SCENARIO has no `scenes` list")
+        return scenes, data.get("advance_on")
+    elements = [
+        {"index": 0, "role": "window", "title": "FakeApp"},
+        {"index": 1, "role": "button", "title": "OK", "pressable": True,
+         "actions": ["press"]},
+        {"index": 2, "role": "button", "title": "Cancel", "pressable": True,
+         "actions": ["press"]},
+        {"index": 3, "role": "textfield", "title": "Search", "value": "",
+         "editable": True, "focused": True},
+    ]
+    return [{"title": "FakeApp", "elements": elements}], None
+
+
+def _fake_screenshot(scene_idx, tree):
+    """Deterministic 1x1 PNG tinted by the scene hash — same scene, same
+    sha256; a scene change flips the hash (drift detection)."""
+    import hashlib
+    import struct
+    import zlib as _zlib
+    tint = int(hashlib.sha256(tree.encode("utf-8")).hexdigest()[:8], 16) & 0xFFFFFF
+    r, g, b = (tint >> 16) & 0xFF, (tint >> 8) & 0xFF, tint & 0xFF
+    raw = b"\x00" + bytes((r, g, b))
+    chunk = lambda tag, data: struct.pack(">I", len(data)) + tag + data + \
+        struct.pack(">I", _zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+    def _tag(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(
+            ">I", _zlib.crc32(t + d) & 0xFFFFFFFF)
+
+    png = (b"\x89PNG\r\n\x1a\n"
+           + _tag(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+           + _tag(b"IDAT", _zlib.compress(raw, 9))
+           + _tag(b"IEND", b""))
+    return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+
+
+def _fake_observe(app, include_screenshot):
+    with _FAKE_DESKTOP_LOCK:
+        scenes, _adv = _fake_scenes()
+        scene_idx = _FAKE_DESKTOP["scene"] % len(scenes)
+        scene = scenes[scene_idx]
+        scene = dict(scene, state_id=f"s-{scene_idx + 1}")
+        obs = _normalize_observation(app, scene)
+        if include_screenshot:
+            shot = _fake_screenshot(scene_idx, obs["tree"])
+            obs["screenshot"] = shot
+            import hashlib
+            obs["screenshot_hash"] = "sha256:" + hashlib.sha256(
+                shot.encode("ascii")).hexdigest()
+        return obs
+
+
+def _fake_act(action, app, params):
+    with _FAKE_DESKTOP_LOCK:
+        scenes, advance_on = _fake_scenes()
+        if advance_on and ":" in advance_on:
+            want_action, want_label = advance_on.split(":", 1)
+            target = params.get("target") or {}
+            scene = scenes[_FAKE_DESKTOP["scene"] % len(scenes)]
+            hit = next((el for el in scene.get("elements", [])
+                        if el.get("index") == target.get("index")), {})
+            acted_title = hit.get("title", "")
+            if action == want_action and acted_title == want_label:
+                _FAKE_DESKTOP["scene"] += 1
+    return {"ok": True, "outcome": "ok", "latency_ms": 1, "error": ""}
+
+
+_FAKE_DESKTOP_LOCK = threading.Lock()
+
+
+def _computer_bridge_call(command, payload):
+    """Subprocess JSONL bridge (long-lived, like an MCP stdio session):
+    one request object per line on stdin, one response per line on stdout,
+    matched by id. A dead bridge raises — never a silent fake result."""
+    import shlex
+    import subprocess
+
+    with _COMPUTER_BRIDGE_LOCK:
+        sess = _COMPUTER_SESSIONS.get(command)
+        if sess is None or sess["proc"].poll() is not None:
+            argv = shlex.split(command) if isinstance(command, str) else list(command)
+            try:
+                proc = subprocess.Popen(
+                    argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                    text=True, bufsize=1,
+                )
+            except OSError as e:
+                raise RuntimeError(f"computer bridge failed to start ({argv[0]}): {e}")
+            sess = {"proc": proc, "rid": 0}
+            _COMPUTER_SESSIONS[command] = sess
+        sess["rid"] += 1
+        my_id = sess["rid"]
+        sess["proc"].stdin.write(json.dumps({"id": my_id, **payload}) + "\n")
+        sess["proc"].stdin.flush()
+        while True:
+            line = sess["proc"].stdout.readline()
+            if not line:
+                raise RuntimeError("computer bridge closed the pipe mid-call")
+            msg = json.loads(line)
+            if msg.get("id") != my_id:
+                continue
+            break
+    if not msg.get("ok"):
+        raise RuntimeError(f"computer bridge error: {msg.get('error')}")
+    return msg
+
+
+def _computer_http_call(base_url, payload):
+    import urllib.request
+    req = urllib.request.Request(
+        base_url.rstrip("/") + "/v1/computer",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        msg = json.loads(resp.read().decode())
+    if not msg.get("ok"):
+        raise RuntimeError(f"computer server error: {msg.get('error')}")
+    return msg
+
+
+def _computer_live_call(payload, app, include_screenshot):
+    """Route one live call to the configured provider (fake, HTTP or
+    subprocess bridge)."""
+    provider = _computer_provider()
+    if provider == "fake":
+        if payload["op"] == "observe":
+            return {"ok": True,
+                    "observation": _fake_observe(app, include_screenshot)}
+        return {"ok": True, "result": _fake_act(
+            payload["op"], app, payload)}
+    registry = _computer_registry()
+    entry = registry.get(provider)
+    if not entry:
+        raise RuntimeError(
+            f"computer provider '{provider}' is not configured — set "
+            "NUDGE_COMPUTER_SERVERS (JSON with command or base_url) or use "
+            "the fake provider"
+        )
+    if entry.get("command"):
+        return _computer_bridge_call(entry["command"], payload)
+    if entry.get("base_url"):
+        return _computer_http_call(entry["base_url"], payload)
+    raise RuntimeError(
+        f"computer provider '{provider}' needs a base_url or command in "
+        "NUDGE_COMPUTER_SERVERS"
+    )
+
+
+def _computer_replay_records(kind):
+    """Recorded computer records for the current NUDGE_REPLAY trace. A new
+    trace path resets the consumption cursors (replay loops, tests)."""
+    path = os.environ.get("NUDGE_REPLAY")
+    if _COMPUTER_REPLAY_STATE["path"] != path:
+        trace = Trace(path)
+        records = trace.records
+        _COMPUTER_REPLAY_STATE["path"] = path
+        _COMPUTER_REPLAY_STATE["obs"] = [
+            r for r in records if r.get("kind") == "computer.observe"]
+        _COMPUTER_REPLAY_STATE["acts"] = [
+            r for r in records if r.get("kind") == "computer.act"]
+        _COMPUTER_REPLAY_STATE["obs_idx"] = 0
+        _COMPUTER_REPLAY_STATE["act_idx"] = 0
+    return _COMPUTER_REPLAY_STATE[kind]
+
+
+def _computer_abort():
+    """Best-effort abort: release any held mouse button on the bridge
+    (an interrupted drag must never stay pressed). Never raises."""
+    try:
+        if _COMPUTER_SESSIONS and list(_COMPUTER_SESSIONS.values()):
+            for sess in list(_COMPUTER_SESSIONS.values()):
+                proc = sess.get("proc")
+                if proc is not None and proc.poll() is None:
+                    proc.stdin.write(json.dumps({"id": 0, "op": "abort"}) + "\n")
+                    proc.stdin.flush()
+    except Exception:
+        pass
+
+
+atexit.register(_computer_abort)
+
+
+def _replay_observations():
+    return _computer_replay_records("obs")
+
+
+def _replay_actions():
+    return _computer_replay_records("acts")
+
+
+def _computer_diff_drift(live, recorded):
+    """Mechanical observation diff: removed/added tree rows (by element
+    index + role + title) and the screenshot hash. Evidence, not judgment
+    — interpreting the summary is the model's job."""
+    def key(el):
+        return f'{el["index"]}:{el["role"]}:{el["title"]}'
+
+    recorded_elements = (recorded or {}).get("elements") or []
+    live_elements = live.get("elements") or []
+    recorded_keys = {key(el) for el in recorded_elements}
+    live_keys = {key(el) for el in live_elements}
+    added = sorted(live_keys - recorded_keys)
+    removed = sorted(recorded_keys - live_keys)
+    recorded_hash = (recorded or {}).get("screenshot_hash") or ""
+    shot_changed = bool(live.get("screenshot_hash")) and bool(recorded_hash) \
+        and live["screenshot_hash"] != recorded_hash
+    changed = bool(added or removed or shot_changed
+                   or (recorded or {}).get("tree", live.get("tree")) != live.get("tree"))
+    parts = []
+    if removed:
+        parts.append(f"{len(removed)} element(s) gone")
+    if added:
+        parts.append(f"{len(added)} new element(s)")
+    if shot_changed:
+        parts.append("screenshot changed")
+    return {"changed": changed, "screenshot_changed": shot_changed,
+            "added": added, "removed": removed, "summary": "; ".join(parts)}
+
+
+def _write_computer_record(record):
+    branch = _current_branch()
+    if branch:
+        record["branch"] = branch
+    _emit_trace(record)
+
+
+def computer_observe(app, allow=None, deadline=None, screenshot=False):
+    """Observe an app's accessibility tree — read-only, always safe to
+    repeat. Replay (`NUDGE_REPLAY=all`) consumes the recorded observation;
+    `NUDGE_COMPUTER_DRIFT=1` instead re-observes LIVE and attaches the
+    mechanical `drift` diff against the recorded observation (actions stay
+    dry-run — the model interprets the drift, not the language)."""
+    started = time.monotonic()
+    _LAST_OBSERVED_APP["app"] = str(app)
+    _LAST_OBSERVED_APP["state_id"] = ""
+    mode = _replay_mode()
+    provider = _computer_provider()
+    include_screenshot = bool(screenshot)
+    replaying = mode == "all" and bool(os.environ.get("NUDGE_REPLAY"))
+    drift_mode = replaying and os.environ.get("NUDGE_COMPUTER_DRIFT") == "1"
+
+    recorded = None
+    if replaying:
+        with _COMPUTER_REPLAY_LOCK:
+            recs = _replay_observations()
+            idx = _COMPUTER_REPLAY_STATE["obs_idx"]
+            if idx < len(recs):
+                recorded = recs[idx]
+                _COMPUTER_REPLAY_STATE["obs_idx"] += 1
+            elif not os.environ.get("NUDGE_RESUME"):
+                raise ReplayMismatch(
+                    "program made more computer.observe calls than the trace holds "
+                    "(replay exhaustion raises like llm replay)"
+                )
+
+    if drift_mode and recorded is not None:
+        # live re-observation (read-only, safe) compared to the recording
+        if os.environ.get("NUDGE_COMPUTER_KILL") == "1":
+            raise ComputerDenied("NUDGE_COMPUTER_KILL=1 refuses all computer work")
+        if not _computer_allow_ok(allow, app):
+            raise ComputerDenied(
+                f"app '{app}' is outside the allow scope {list(allow or [])}")
+        msg = _computer_live_call(
+            {"op": "observe", "app": str(app),
+             "include_screenshot": include_screenshot},
+            app, include_screenshot)
+        live = _normalize_observation(app, msg["observation"])
+        latency_ms = int((time.monotonic() - started) * 1000)
+        outcome = _computer_check_deadline(latency_ms, deadline)
+        live["drift"] = _computer_diff_drift(live, recorded)
+        record = {
+            "kind": "computer.observe", "app": str(app),
+            "state_id": live["state_id"],
+            "element_count": len(live["elements"]),
+            "outcome": outcome, "latency_ms": latency_ms,
+            "replay_check": True, "drift": live["drift"],
+        }
+        if deadline is not None:
+            record["deadline_ms"] = int(deadline)
+        _write_computer_record(record)
+        return _attr(live)
+
+    if recorded is not None:
+        # plain replay: the recorded observation IS the observation
+        # (elements + tree land in the record; the screenshot data URL
+        # does not — only its hash, keeping traces human-sized)
+        _LAST_OBSERVED_APP["state_id"] = str(recorded.get("state_id", ""))
+        return _attr(_normalize_observation(app, recorded))
+
+    # live path
+    if os.environ.get("NUDGE_COMPUTER_KILL") == "1":
+        raise ComputerDenied("NUDGE_COMPUTER_KILL=1 refuses all computer work")
+    if not _computer_allow_ok(allow, app):
+        raise ComputerDenied(
+            f"app '{app}' is outside the allow scope {list(allow or [])}")
+    msg = _computer_live_call(
+        {"op": "observe", "app": str(app),
+         "include_screenshot": include_screenshot},
+        app, include_screenshot)
+    obs = _normalize_observation(app, msg["observation"])
+    _LAST_OBSERVED_APP["state_id"] = obs["state_id"]
+    latency_ms = int((time.monotonic() - started) * 1000)
+    outcome = _computer_check_deadline(latency_ms, deadline)
+    # one NTF record per step, always (llm/tool convention: traces default
+    # to ./trace.jsonl when NUDGE_TRACE is unset)
+    record = {
+        "kind": "computer.observe", "app": str(app),
+        "state_id": obs["state_id"],
+        "element_count": len(obs["elements"]),
+        "outcome": outcome, "latency_ms": latency_ms,
+        "provider": provider,
+        # additive + replay-critical: the element table lets replay and
+        # the drift diff rebuild the full Observation (not just tree text)
+        "elements": obs["elements"],
+        # additive: delta observations are a future extension — today the
+        # bridge always serves the full tree
+        "snapshot_mode": "full",
+    }
+    if obs["title"]:
+        record["title"] = obs["title"]
+    if obs["tree"]:
+        record["tree"] = obs["tree"]
+    if obs["screenshot_hash"]:
+        record["screenshot_hash"] = obs["screenshot_hash"]
+    if deadline is not None:
+        record["deadline_ms"] = int(deadline)
+    _write_computer_record(record)
+    return _attr(obs)
+
+
+def _computer_act(action, app, payload, allow=None, deadline=None):
+    """Shared action path: kill switch → allow scope → provider (live) or
+    dry-run (replay: the recorded ActionResult is returned, nothing
+    executes) — plus the `computer.act` NTF record."""
+    started = time.monotonic()
+    mode = _replay_mode()
+    replaying = mode == "all" and bool(os.environ.get("NUDGE_REPLAY"))
+    drift_mode = replaying and os.environ.get("NUDGE_COMPUTER_DRIFT") == "1"
+    provider = _computer_provider()
+
+    recorded = None
+    if replaying:
+        with _COMPUTER_REPLAY_LOCK:
+            recs = _replay_actions()
+            idx = _COMPUTER_REPLAY_STATE["act_idx"]
+            if idx < len(recs):
+                recorded = recs[idx]
+                _COMPUTER_REPLAY_STATE["act_idx"] += 1
+            elif not os.environ.get("NUDGE_RESUME"):
+                raise ReplayMismatch(
+                    "program made more computer actions than the trace holds "
+                    "(replay exhaustion raises like llm replay)"
+                )
+
+    if recorded is not None:
+        if not app:
+            app = str(recorded.get("app", ""))
+        result = _normalize_result(recorded)
+        if drift_mode:
+            # drift-check audit: the action was NOT re-executed
+            record = {
+                "kind": "computer.act", "action": action, "app": str(app),
+                "target": payload.get("target"), "outcome": "dry_run",
+                "latency_ms": int((time.monotonic() - started) * 1000),
+                "ok": result["ok"], "dry_run": True,
+            }
+            _write_computer_record(record)
+        return _attr(result)
+
+    if os.environ.get("NUDGE_COMPUTER_KILL") == "1":
+        _computer_abort()
+        raise ComputerDenied("NUDGE_COMPUTER_KILL=1 refuses all computer work")
+    if not app:
+        raise RuntimeError(
+            "computer action without a prior computer.observe — observe the "
+            "app you intend to act on")
+    if not _computer_allow_ok(allow, app):
+        raise ComputerDenied(
+            f"app '{app}' is outside the allow scope {list(allow or [])}")
+    payload = dict(payload, state_id=_LAST_OBSERVED_APP.get("state_id", ""))
+    msg = _computer_live_call({"op": action, "app": str(app), **payload},
+                              app, False)
+    result = _normalize_result(msg["result"])
+    result["latency_ms"] = int((time.monotonic() - started) * 1000)
+    outcome = _computer_check_deadline(result["latency_ms"], deadline)
+    if outcome == "deadline_missed":
+        result["outcome"] = outcome
+        result["deadline_missed"] = True
+    record = {
+        "kind": "computer.act", "action": action, "app": str(app),
+        "target": payload.get("target"), "outcome": outcome,
+        "latency_ms": result["latency_ms"], "ok": result["ok"],
+        "action_sent": result["action_sent"],
+        "provider": provider,
+    }
+    if result["error"]:
+        record["error"] = result["error"]
+    if payload.get("text"):
+        record["value"] = payload["text"]
+    if payload.get("value"):
+        record["value"] = payload["value"]
+    if deadline is not None:
+        record["deadline_ms"] = int(deadline)
+    _write_computer_record(record)
+    return _attr(result)
+
+
+def computer_click(target, allow=None, deadline=None):
+    """Click an element by index (preferred) or `{x, y}` raster pixels of
+    the latest screenshot. The action applies to the last observed app."""
+    return _computer_act("click", _last_app(),
+                         {"target": _computer_target(target)}, allow, deadline)
+
+
+def computer_type(text, allow=None, deadline=None):
+    """Type text into the focused element of the last observed app."""
+    return _computer_act("type", _last_app(),
+                         {"target": {"index": -1}, "text": str(text)}, allow, deadline)
+
+
+def computer_key(key, allow=None, deadline=None):
+    """Press a key (e.g. "Return", "Control_L+a") on the last observed app."""
+    return _computer_act("key", _last_app(),
+                         {"target": {"index": -1}, "key": str(key)}, allow, deadline)
+
+
+def computer_scroll(target, direction, pages=1, allow=None, deadline=None):
+    """Scroll the element `pages` pages in `direction` ("up"/"down"/...)."""
+    return _computer_act("scroll", _last_app(),
+                         {"target": _computer_target(target),
+                          "direction": str(direction), "pages": int(pages)},
+                         allow, deadline)
+
+
+def computer_set_value(index, value, allow=None, deadline=None):
+    """Set an element's value directly (AX set — background-safe)."""
+    return _computer_act("set_value", _last_app(),
+                         {"target": _computer_target(index), "value": str(value)},
+                         allow, deadline)
+
+
+def computer_perform(index, action, allow=None, deadline=None):
+    """Invoke an element's OWN advertised action (zcode perform_action
+    parity): `computer.perform(2, "AXPress")` — the element's
+    `.actions` list is the only legal source of action names."""
+    return _computer_act("perform", _last_app(),
+                         {"target": _computer_target(index), "action": str(action)},
+                         allow, deadline)
+
+
+def computer_paste(text, format=None, allow=None, deadline=None):
+    """Paste via the system clipboard — the bridge borrows the user's
+    clipboard, writes `text` (format "text"/"md"/"html"), pastes, and
+    restores. Preferred over computer.type for settable fields."""
+    payload = {"target": {"index": -1}, "text": str(text)}
+    if format:
+        payload["format"] = str(format)
+    return _computer_act("paste", _last_app(), payload, allow, deadline)
+
+
+def computer_drag(from_target, to_target, allow=None, deadline=None):
+    """Drag from one target (index or {x, y}) to another."""
+    return _computer_act("drag", _last_app(),
+                         {"target": _computer_target(from_target),
+                          "to": _computer_target(to_target)},
+                         allow, deadline)
+
+
+def _computer_target(target):
+    """Normalize a target: int → element index; {x, y} record → raster
+    pixel coordinates (the frame authority lives in the provider)."""
+    if isinstance(target, dict) and "x" in target and "y" in target:
+        return {"x": int(target["x"]), "y": int(target["y"])}
+    return {"index": int(target)}
+
+
+def _last_app():
+    """The app of the latest observation — actions act on what you saw.
+    In replay the recorded act record carries its own app."""
+    return _LAST_OBSERVED_APP.get("app", "")

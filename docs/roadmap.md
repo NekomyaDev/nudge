@@ -69,6 +69,11 @@ Finish the "why did my agent do that?" answer beyond doubt.
 ## v1.5 — Door 3: *safe* (the moat — flagship engineering) 🛡️
 
 The language thesis ships: **the language where agents are safe to deploy.**
+- ✅ **Computer use** — the machine as a typed effect: `computer.observe(app)` +
+  `computer.click/type/key/scroll/set_value/drag` with the `Computer` effect,
+  `allow` app scoping (W0006), deadlines + kill switch, NTF records per step,
+  replay that never re-fires actions, and drift-check evidence for the model
+  to interpret ([docs/computer-use.md](computer-use.md))
 - **Capability-based tool security** — tools as capabilities; per-agent grants
   with attenuation (`fs.read` yes, `fs.write` no); the compiler proves the
   reachable-tool graph, so injected instructions cannot invoke ungranted calls.

@@ -2,6 +2,7 @@
 //!
 //! Provides built-in functions for I/O, math, string operations, and more.
 
+pub mod computer;
 pub mod io;
 pub mod math;
 pub mod string;
@@ -25,6 +26,9 @@ pub fn register_all() -> HashMap<String, Value> {
     // Register string functions
     functions.extend(string::register());
 
+    // Register computer-use functions (v1.5, docs/computer-use.md)
+    functions.extend(computer::register());
+
     functions
 }
 
@@ -36,6 +40,8 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
         math::execute(name, args)
     } else if name.starts_with("str.") {
         string::execute(name, args)
+    } else if name.starts_with("computer.") {
+        computer::execute(name, args)
     } else {
         Err(format!("Unknown standard library function: {}", name))
     }

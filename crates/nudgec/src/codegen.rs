@@ -822,6 +822,21 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
                 .join(", ");
             format!("rt.decide([{qs}], {}, {{{opts}}})", py(state, aliases))
         }
+        // v1.5 computer-use surface: every method lowers to its rt.*
+        // counterpart with kwargs passed through (allow/deadline/screenshot)
+        ExprKind::ComputerCall {
+            method,
+            args,
+            kwargs,
+        } => {
+            let mut parts: Vec<String> = args.iter().map(|a| py(a, aliases)).collect();
+            parts.extend(
+                kwargs
+                    .iter()
+                    .map(|(k, v)| format!("{k}={}", py(v, aliases))),
+            );
+            format!("rt.computer_{}({})", method, parts.join(", "))
+        }
     }
 }
 
@@ -864,6 +879,7 @@ fn llm_py(
                 _ => format!("cache={}", py(v, aliases)),
             }),
             "tags" => parts.push(format!("tags={}", py(v, aliases))),
+            "images" => parts.push(format!("images={}", py(v, aliases))),
             other => parts.push(format!(
                 "# warning: unsupported option {other}={} (ignored)",
                 py(v, aliases)

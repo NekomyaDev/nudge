@@ -10,6 +10,8 @@
 
 mod bytecode;
 mod codegen;
+#[allow(dead_code)]
+mod json;
 mod parser;
 mod stdlib;
 mod vm;

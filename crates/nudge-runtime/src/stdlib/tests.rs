@@ -334,3 +334,69 @@ mod tests {
         assert_eq!(result_neg.unwrap(), Value::Float(0.0));
     }
 }
+
+#[cfg(test)]
+mod computer_tests {
+    use crate::stdlib::computer;
+    use crate::vm::Value;
+
+    #[test]
+    fn test_computer_fake_observe_and_act() {
+        let obs = computer::execute(
+            "computer.observe",
+            vec![Value::String("FakeApp".to_string())],
+        )
+        .expect("fake observe works");
+        match &obs {
+            Value::Map(m) => {
+                let ok = m.get("ok").cloned().unwrap_or(Value::None);
+                assert_eq!(ok, Value::Bool(true));
+                assert!(m.contains_key("observation"));
+            }
+            other => panic!("expected a map, got {other:?}"),
+        }
+        let r = computer::execute(
+            "computer.click",
+            vec![Value::String("FakeApp".to_string()), Value::Int(1)],
+        )
+        .expect("fake act works");
+        match &r {
+            Value::Map(m) => assert!(m.contains_key("result")),
+            other => panic!("expected a map, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_computer_kill_switch_denies() {
+        std::env::set_var("NUDGE_COMPUTER_KILL", "1");
+        let err = computer::execute(
+            "computer.observe",
+            vec![Value::String("FakeApp".to_string())],
+        )
+        .expect_err("kill switch must deny");
+        std::env::remove_var("NUDGE_COMPUTER_KILL");
+        assert!(err.contains("ComputerDenied"), "{err}");
+    }
+
+    #[test]
+    fn test_computer_bridge_transport() {
+        // real subprocess JSONL round trip through the reference bridge
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        let bridge = format!("{manifest}/../../tools/cu_bridge.py");
+        std::env::set_var(
+            "NUDGE_COMPUTER_SERVERS",
+            format!(r#"{{"cu": {{"command": "python3 {bridge}"}}}}"#),
+        );
+        std::env::set_var("NUDGE_COMPUTER_PROVIDER", "cu");
+        let obs = computer::execute("computer.observe", vec![Value::String("Notes".to_string())])
+            .expect("bridge observe works");
+        match &obs {
+            Value::Map(m) => {
+                assert!(m.contains_key("observation"), "{m:?}");
+            }
+            other => panic!("expected a map, got {other:?}"),
+        }
+        std::env::remove_var("NUDGE_COMPUTER_PROVIDER");
+        std::env::remove_var("NUDGE_COMPUTER_SERVERS");
+    }
+}
