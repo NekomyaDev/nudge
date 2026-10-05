@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.2.1-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.5-blue">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-green">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-green">
   <img alt="Target" src="https://img.shields.io/badge/target-Python%20%7C%20TypeScript-yellow">
@@ -75,6 +75,7 @@ See what you can build with Nudge:
 | [Classifier](examples/classifier/) | Support ticket triage & model routing | Route model choice, Batch |
 | [RAG Agent](examples/rag-agent/) | Grounded retrieval with citations | MCP tool retrieval, Grounded answers |
 | [Dungeon Crawler](examples/dungeon-crawler/) | Turn-based RPG dungeon crawler | Pure Nudge, Stateful Hero, Combat |
+| [Computer Automation](examples/computer-automation/) | Observe → decide → act desktop loop | Computer Use, Replay, Drift check |
 
 ```sh
 # Try any example
@@ -90,7 +91,7 @@ python3 out/chatbot.py
 | Feature | Description |
 |:---:|:---|
 | **Typed LLM Calls** | Output schema is a language type; violations trigger automatic repair |
-| **Effect System** | Pure / `LLM` / `Tool` / `IO` effects inferred and shown in signatures |
+| **Effect System** | Pure / `LLM` / `Tool` / `IO` / `Decision` / `Computer` effects inferred and shown in signatures |
 | **Deterministic Replay** | Full, hybrid, and live modes; traces are git-friendly JSONL |
 | **Budget Contracts** | Per-call, per-run, and per-repair USD ceilings with static estimation |
 | **Checkpoint Resume** | Crash, then `nudge resume` from the last checkpoint |
@@ -251,6 +252,8 @@ decision twice. See [Typed Decisions](#typed-decisions-v14).
 | `par map/all/race` + branch labels | ✅ | ✅ |
 | Streaming (`stream let`) | ✅ | ✅ |
 | Real providers | ✅ | ⬜ |
+| Typed decisions (`decide{}`) | ✅ | ✅ |
+| Computer use (`computer.*`) | ✅ | ✅ fake provider only |
 | MCP tools, checkpoint/resume, OTel | ✅ | ⬜ |
 
 ## MCP Integration
@@ -325,6 +328,12 @@ Everything a compiled Nudge program reads comes from these variables:
 | `NUDGE_DECISION_CACHE` | Path for the decision cache: validated answers for real providers persist across runs (replay takes precedence) |
 | `NUDGE_API_KEY` / `NUDGE_BASE_URL` | Credentials and endpoint for OpenAI-compatible providers |
 | `NUDGE_MCP_SERVERS` | MCP server registry JSON (see above) |
+| `NUDGE_COMPUTER_SERVERS` | Computer bridge registry (JSON): `{"cu": {"command": "python3 tools/cu_bridge.py"}}` (subprocess JSONL) or `{"cu": {"base_url": "http://localhost:9333"}}` (HTTP) |
+| `NUDGE_COMPUTER_PROVIDER` | Which registered bridge handles `computer.*` calls (default: `fake` — a deterministic in-memory desktop, so tests run at $0) |
+| `NUDGE_COMPUTER_KILL` | `1` refuses all computer work (kill switch) and aborts held mouse buttons |
+| `NUDGE_COMPUTER_DRIFT` | `1` re-observes live during replay and attaches a mechanical `Drift` diff — actions stay dry-run |
+| `NUDGE_COMPUTER_SCENARIO` | JSON scenes + `advance_on` for the fake desktop — script the UI your tests run against |
+| `NUDGE_COMPUTER_STRICT` | `1` turns soft `deadline_missed` outcomes into `ComputerTimeout` errors |
 | `NUDGE_TRACE` | Write a JSONL trace to this path while running |
 | `NUDGE_REPLAY` | Load a trace and replay it (`NUDGE_REPLAY_MODE=all` for tools+llm, `llm` for llm-only) |
 | `NUDGE_RESUME` | Continue a crashed run from its checkpoint, consuming the recorded trace prefix |
@@ -380,6 +389,46 @@ fn triage(t: string) -> string uses Decision {
 - `nudgec policy-sweep trace.jsonl --question dept --thresholds 0.5,0.8` re-cuts thresholds over recorded distributions — zero model calls.
 
 See [docs/decision.md](docs/decision.md) for the full contract.
+
+## Computer Use (v1.5)
+
+The machine is a typed effect, with the same guarantees as every other
+call. The language owns control and safety — app allowlists, deadlines,
+the kill switch, replay; the model owns perception and judgment:
+
+```nudge
+fn run(app: string) -> bool uses Computer, Decision {
+    let obs = computer.observe(app, allow = [app], deadline = 30000)
+    let sane = decide {
+        looks_right: "does this screen show the expected app?" yes/no
+    } on obs.tree
+    with { deadline: 100 }
+    let r = route {
+        press: computer.click(1, allow = [app]) when sane.looks_right.p > 0.4,
+        quit:  computer.key("Escape", allow = [app]) otherwise
+    }
+    r.ok
+}
+```
+
+- `computer.observe(app)` returns a typed `Observation` (`tree`, `elements`,
+  optional `screenshot`); `computer.click/type/key/scroll/set_value/drag/
+  perform/paste` return `ActionResult` with a dispatch receipt
+  (`action_sent` — only `false` is safe to retry).
+- **Replay never re-fires actions** — they run as dry-run audits. With
+  `NUDGE_COMPUTER_DRIFT=1` the runtime re-observes live and attaches a
+  mechanical `Drift` diff (tree diff + screenshot hash); interpreting it is
+  the model's job.
+- Bridges enforce hardening invariants: a single controller lease, stale
+  element indices refused (`stale_state` instead of a blind click), and
+  `abort` on exit so an interrupted drag never stays pressed.
+- The default **fake provider** is a deterministic virtual desktop
+  (`NUDGE_COMPUTER_SCENARIO` scripts the scenes), so the whole loop runs in
+  `nudgec test` at $0. Real desktops connect through the reference JSONL
+  bridge (`tools/cu_bridge.py` — AT-SPI + xdotool on X11) or any HTTP
+  transport speaking the same contract.
+
+Full RFC and wire contract: [docs/computer-use.md](docs/computer-use.md).
 
 ## Agent CI (GitHub Action)
 

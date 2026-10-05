@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img alt="版本" src="https://img.shields.io/badge/版本-1.2.1-blue">
+  <img alt="版本" src="https://img.shields.io/badge/版本-1.5-blue">
   <img alt="许可证" src="https://img.shields.io/badge/许可证-Apache--2.0-green">
   <img alt="平台" src="https://img.shields.io/badge/平台-Linux%20%7C%20macOS%20%7C%20Windows-green">
   <img alt="目标" src="https://img.shields.io/badge/目标-Python%20%7C%20TypeScript-yellow">
@@ -65,7 +65,7 @@ test "stays within budget on recorded trace" {
 | 功能 | 描述 |
 |:---:|:---|
 | **类型化 LLM 调用** | 输出模式是语言类型；违规触发自动修复 |
-| **效果系统** | 纯函数 / `LLM` / `Tool` / `IO` 效果推断并显示在签名中 |
+| **效果系统** | 纯函数 / `LLM` / `Tool` / `IO` / `Decision` / `Computer` 效果推断并显示在签名中 |
 | **确定性重放** | 完整、混合和实时模式；跟踪是 git 友好的 JSONL |
 | **预算契约** | 每次调用、每次运行和每次修复的 USD 上限，带静态估算 |
 | **检查点恢复** | 崩溃后，从最后一个检查点 `nudge resume` |
@@ -76,6 +76,10 @@ test "stays within budget on recorded trace" {
 | **跟踪查看器** | 本地 Web UI：时间线、token、成本、修复高亮 |
 | **跟踪差异** | 比较两个跟踪："编辑提示后什么改变了？" |
 | **计算机操作（Computer Use）** | `computer.observe` + 类型化动作：把机器变成可重放的效果 —— 语言掌控控制权，模型掌控感知 |
+| **类型化决策** | `decide { … choose / yes/no / score }`：JEV 系列批量决策，带分布、置信度、时限 |
+| **属性测试** | `for_all x in gen { … }`：对智能体逻辑做模糊测试（含注入语料），自动收缩失败用例 |
+| **Nudge CI** | GitHub Action：每次推送上的智能体回归测试，$0 |
+| **NTF** | 开放 trace 格式（冻结 v1）+ 一致性套件 —— 可重放的日志 |
 | **A2A 和 LSP 和 OTel** | 内置，非外挂 |
 
 </div>
@@ -222,6 +226,10 @@ export NUDGE_DECISION_SERVERS='{"laya": {"base_url": "http://localhost:8000"}}'
 | [研究代理](examples/research-agent/) | 多来源研究 | 置信度评分、Par map |
 | [数据分析器](examples/data-analyzer/) | 数据模式识别 | 洞察、建议 |
 | [翻译器](examples/translator/) | 多语言翻译 | 质量评分、并行 |
+| [分类器](examples/classifier/) | 工单分类与模型路由 | 路由模型选择、批处理 |
+| [RAG 代理](examples/rag-agent/) | 带引用的检索增强回答 | MCP 工具检索、有据回答 |
+| [地牢爬行者](examples/dungeon-crawler/) | 回合制 RPG 地牢游戏 | 纯 Nudge、有状态英雄、战斗 |
+| [计算机自动化](examples/computer-automation/) | 观察 → 决策 → 操作的桌面循环 | 计算机操作、重放、漂移检查 |
 
 ```sh
 # 试试任何示例
@@ -239,6 +247,8 @@ python3 out/chatbot.py
 | `par map/all/race` + 分支标签 | ✅ | ✅ |
 | 流式传输（`stream let`） | ✅ | ✅ |
 | 真实提供商 | ✅ | ⬜ |
+| 类型化决策（`decide{}`） | ✅ | ✅ |
+| 计算机操作（`computer.*`） | ✅ | 仅假提供者 |
 | MCP 工具、检查点/恢复、OTel | ✅ | ⬜ |
 
 ## MCP 集成
@@ -299,6 +309,12 @@ python3 out/hello.py
 | `NUDGE_DECISION_CACHE` | 决策缓存路径：真实提供者的已验证答案跨运行持久化（重放优先） |
 | `NUDGE_API_KEY` / `NUDGE_BASE_URL` | OpenAI 兼容提供商的凭证和端点 |
 | `NUDGE_MCP_SERVERS` | MCP 服务器注册表 JSON（见上文） |
+| `NUDGE_COMPUTER_SERVERS` | 计算机桥接注册表（JSON）：`{"cu": {"command": "python3 tools/cu_bridge.py"}}`（子进程 JSONL）或 `{"cu": {"base_url": "http://localhost:9333"}}`（HTTP） |
+| `NUDGE_COMPUTER_PROVIDER` | 处理 `computer.*` 调用的注册桥接（默认：`fake` —— 确定性内存桌面，测试 $0） |
+| `NUDGE_COMPUTER_KILL` | `1` 拒绝所有计算机操作（紧急开关）并释放按住的鼠标键 |
+| `NUDGE_COMPUTER_DRIFT` | `1` 在重放期间实时重新观察并附加机械 `Drift` 差异 —— 动作保持空运行 |
+| `NUDGE_COMPUTER_SCENARIO` | 假桌面的 JSON 场景 + `advance_on` —— 为测试编写 UI 脚本 |
+| `NUDGE_COMPUTER_STRICT` | `1` 把软性 `deadline_missed` 变成 `ComputerTimeout` 错误 |
 | `NUDGE_TRACE` | 运行时将 JSONL 跟踪写入此路径 |
 | `NUDGE_REPLAY` | 加载并重放跟踪（`NUDGE_REPLAY_MODE=all` 为工具+llm，`llm` 为仅 llm） |
 | `NUDGE_RESUME` | 从检查点继续崩溃的运行，消耗已记录的跟踪前缀 |
@@ -363,6 +379,32 @@ fn triage(t: string) -> string uses Decision {
 - `nudgec policy-sweep` 在已录制的分布上重切阈值 — 零模型调用。
 
 完整契约见 [docs/decision.md](docs/decision.md)。
+
+## 计算机操作（v1.5）
+
+机器成为类型化 effect，享有与其他调用相同的保证。语言掌控控制与安全 —— 应用白名单、时限、紧急开关、重放；模型掌控感知与判断：
+
+```nudge
+fn run(app: string) -> bool uses Computer, Decision {
+    let obs = computer.observe(app, allow = [app], deadline = 30000)
+    let sane = decide {
+        looks_right: "does this screen show the expected app?" yes/no
+    } on obs.tree
+    with { deadline: 100 }
+    let r = route {
+        press: computer.click(1, allow = [app]) when sane.looks_right.p > 0.4,
+        quit:  computer.key("Escape", allow = [app]) otherwise
+    }
+    r.ok
+}
+```
+
+- `computer.observe(app)` 返回类型化 `Observation`（`tree`、`elements`、可选 `screenshot`）；`computer.click/type/key/scroll/set_value/drag/perform/paste` 返回带调度回执的 `ActionResult`（`action_sent` —— 只有 `false` 才能安全重试）。
+- **重放绝不重复触发动作** —— 它们以空运行审计的方式执行。`NUDGE_COMPUTER_DRIFT=1` 时运行时实时重新观察并附加机械 `Drift` 差异（树 diff + 截图哈希）；解读是模型的工作。
+- 桥接强制执行加固不变量：单一控制器租约、拒绝过期元素索引（`stale_state` 而非盲点）、退出时 `abort` 以免中断的拖拽保持按下。
+- 默认的**假提供者**是确定性虚拟桌面（`NUDGE_COMPUTER_SCENARIO` 编写场景脚本），整个循环在 `nudgec test` 中 $0 运行。真实桌面通过参考 JSONL 桥接（`tools/cu_bridge.py` —— X11 上的 AT-SPI + xdotool）或任何说同一契约的 HTTP 传输连接。
+
+完整 RFC 与线上契约：[docs/computer-use.md](docs/computer-use.md)。
 
 ## Agent CI（GitHub Action）
 
