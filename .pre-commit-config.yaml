@@ -1,0 +1,28 @@
+# pre-commit.ci runs this automatically on every PR.
+# Run locally with: pre-commit run --all-files
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^assets/
+      - id: end-of-file-fixer
+        exclude: ^assets/
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt (compiler crates)
+        entry: bash -c 'cd crates && cargo fmt --all -- --check'
+        language: system
+        pass_filenames: false
+        files: ^crates/.*\.rs$
