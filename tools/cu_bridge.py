@@ -117,7 +117,7 @@ _SCENES, _ADVANCE_ON = _load_scenes()
 _SCENE = 0
 _STATE_IDS = 0
 # the observation the controller last saw — the staleness authority
-_LAST_OBS = {"state_id": None, "elements": []}
+_LAST_OBS = {"state_id": None, "elements": [], "window": None}
 # held mouse button parity (a real backend tracks the physical state)
 _BUTTON_HELD = False
 
@@ -137,10 +137,61 @@ def _sh(cmd, input_bytes=None):
     return r.stdout
 
 
-def _real_collect(app_filter):
-    """Walk the AT-SPI tree of the desktop and flatten it into element rows.
-    Windows/frames are always kept; leaf nodes are kept when they advertise
-    actions, editable text, or a value."""
+def _real_app_names():
+    import pyatspi
+    names = []
+    for app in pyatspi.Registry.getDesktop(0):
+        try:
+            names.append(app.name or "")
+        except Exception:
+            continue
+    return names
+
+
+def _real_resolve_app(app_filter):
+    """Exactly ONE application must match: an exact (case-insensitive)
+    name match wins, otherwise a UNIQUE substring match. Anything else is
+    a fail-closed error — allow-scoping a substring over multiple apps is
+    not a security boundary."""
+    import pyatspi
+    names = _real_app_names()
+    if not app_filter:
+        if len(names) == 1:
+            return names[0]
+        raise RuntimeError(
+            f"fail-closed: no app named and {len(names)} applications are present — name the app")
+    exact = [n for n in names if n and n.lower() == app_filter.lower()]
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        raise RuntimeError(f"fail-closed: app '{app_filter}' is ambiguous: {exact}")
+    subs = [n for n in names if n and app_filter.lower() in n.lower()]
+    if len(subs) == 1:
+        return subs[0]
+    if not subs:
+        raise RuntimeError(
+            f"fail-closed: no application matches '{app_filter}' (seen: {names})")
+    raise RuntimeError(f"fail-closed: app '{app_filter}' is ambiguous: {subs}")
+
+
+def _real_window_id(app_name):
+    """Resolve the app's visible X window id — the scope for screenshots,
+    focus checks and coordinate targets."""
+    for flag in ("--class", "--name"):
+        try:
+            out = _sh(["xdotool", "search", "--onlyvisible", flag, app_name])
+            ids = [i for i in out.decode().split() if i.strip()]
+            if ids:
+                return ids[0]
+        except Exception:
+            continue
+    return None
+
+
+def _real_collect(app_name):
+    """Walk the AT-SPI tree of the RESOLVED application only and flatten it
+    into element rows. Windows/frames are always kept; leaf nodes are kept
+    when they advertise actions, editable text, or a value."""
     import pyatspi
 
     def rows(node, depth):
@@ -151,8 +202,6 @@ def _real_collect(app_filter):
             name = node.name or ""
         except Exception:
             return
-        if not (role in ("window", "frame", "dialog", "application") or depth > 0):
-            pass
         actions = []
         try:
             act = node.queryAction()
@@ -204,20 +253,26 @@ def _real_collect(app_filter):
         for child in node:
             rows(child, depth + 1)
 
+    # walk ONLY the resolved application's subtree — a substring filter
+    # over the whole desktop could merge two apps into one authority
     for app in pyatspi.Registry.getDesktop(0):
         try:
-            app_name = app.name or ""
+            app_node_name = app.name or ""
         except Exception:
             continue
-        if app_filter and app_filter.lower() not in app_name.lower():
-            continue
-        rows(app, 0)
+        if app_node_name == app_name:
+            rows(app, 0)
+            break
 
 
-def _real_screenshot():
+def _real_screenshot(window_id=None):
     import base64
     import hashlib
-    png = _sh(["import", "-window", "root", "png:-"])
+    # scoped: capture the observed window, never the root desktop — a root
+    # grab under an allow scope would leak other apps' content
+    target = str(window_id) if window_id else "root"
+    png = _sh(["import", "-window", target, "png:-"])
+    # canonical hash: SHA-256 of the raw PNG bytes
     digest = hashlib.sha256(png).hexdigest()
     return {"data_url": "data:image/png;base64,"
             + base64.b64encode(png).decode(),
@@ -226,29 +281,80 @@ def _real_screenshot():
 
 def _real_observe(app, include_screenshot):
     global _STATE_IDS
+    # fail-closed: an unknown or ambiguous app is an error, never an
+    # empty-but-successful observation
+    resolved = _real_resolve_app(app)
     _STATE_IDS += 1
     _REAL_ELS.clear()
-    _real_collect(app)
+    _real_collect(resolved)
+    window = _real_window_id(resolved)
     elements = []
     for _, el in _REAL_ELS.values():
         el = dict(el)
         el["index"] = len(elements)
         elements.append(el)
     obs = {"state_id": f"b-{_STATE_IDS}",
-           "title": app or "desktop", "elements": elements}
+           "title": resolved, "elements": elements}
     if include_screenshot:
-        obs["screenshot"] = _real_screenshot()
+        if not window:
+            raise RuntimeError(
+                f"fail-closed: cannot scope a screenshot to '{resolved}' — no visible window found")
+        obs["screenshot"] = _real_screenshot(window)
     _LAST_OBS["state_id"] = obs["state_id"]
     _LAST_OBS["elements"] = elements
+    # the observed window is the action authority for focus/coordinate checks
+    _LAST_OBS["window"] = window
     return obs
+
+
+def _window_geometry(window_id):
+    """(x, y, w, h) of an X window, or None."""
+    import re
+    try:
+        out = _sh(["xdotool", "getwindowgeometry", str(window_id)]).decode()
+    except Exception:
+        return None
+    pos = re.search(r"Position:\s*(-?\d+),(-?\d+)", out)
+    geo = re.search(r"Geometry:\s*(\d+)x(\d+)", out)
+    if not (pos and geo):
+        return None
+    return (int(pos.group(1)), int(pos.group(2)),
+            int(geo.group(1)), int(geo.group(2)))
+
+
+def _focus_moved_reason():
+    """type/key/paste go to the FOCUSED window — if focus left the
+    observed app since the observation, dispatching blind input would
+    write into whatever app the user happens to be in."""
+    window = _LAST_OBS.get("window")
+    if not window:
+        return "no observed window to verify focus against — re-observe"
+    try:
+        active = _sh(["xdotool", "getactivewindow"]).decode().strip()
+    except Exception as e:
+        return f"could not verify focus: {e}"
+    if active != str(window):
+        return (f"focus moved since the observation: active window is {active}, "
+                f"observed window is {window} — re-observe before typing")
+    return None
 
 
 def _center(target):
     """Resolve a target to desktop pixels: an observed element's bounds
-    center, or an explicit {x, y} raster point."""
+    center, or an explicit {x, y} raster point (validated against the
+    observed window's geometry — coordinates may not reach other apps)."""
     index = target.get("index", -1)
     if index == -1 and isinstance(target.get("x"), (int, float)):
-        return float(target["x"]), float(target["y"])
+        x, y = float(target["x"]), float(target["y"])
+        window = _LAST_OBS.get("window")
+        geo = _window_geometry(window) if window else None
+        if geo:
+            gx, gy, gw, gh = geo
+            if not (gx <= x < gx + gw and gy <= y < gy + gh):
+                raise RuntimeError(
+                    f"coordinate ({x}, {y}) is outside the observed window's "
+                    f"geometry {geo} — coordinate targets may not reach other apps")
+        return x, y
     entry = _REAL_ELS.get(index)
     if entry is None:
         raise RuntimeError(f"element {index} is not in the last observation")
@@ -271,26 +377,56 @@ def _real_act(op, req):
     try:
         target = req.get("target") or {}
         if op == "click":
+            # prefer the element's OWN semantic action (AT-SPI doAction) —
+            # it is bound to the element's authority, not to wherever the
+            # global X pointer/focus happens to be; fall back to a physical
+            # pointer click for elementless/coordinate targets
+            entry = _REAL_ELS.get(target.get("index", -1))
+            if entry is not None:
+                actions = entry[1].get("actions") or []
+                for name in ("click", "press", "AXPress"):
+                    if name in actions:
+                        try:
+                            entry[0].queryAction().doAction(actions.index(name))
+                            return result("ok", "sent")
+                        except Exception:
+                            break
             x, y = _center(target)
             _sh(["xdotool", "mousemove", str(int(x)), str(int(y)),
                  "click", "1"])
             return result("ok", "sent")
         if op == "type":
+            moved = _focus_moved_reason()
+            if moved:
+                return result("stale_state", "not_sent", moved)
             _sh(["xdotool", "type", "--delay", "20", "--", str(req.get("text", ""))])
             return result("ok", "sent")
         if op == "key":
+            moved = _focus_moved_reason()
+            if moved:
+                return result("stale_state", "not_sent", moved)
             _sh(["xdotool", "key", "--", str(req.get("key", ""))])
             return result("ok", "sent")
         if op == "scroll":
-            button = {"up": "4", "down": "5", "left": "6", "right": "7"}.get(
-                str(req.get("direction", "down")))
+            direction = str(req.get("direction", ""))
+            button = {"up": "4", "down": "5", "left": "6", "right": "7"}.get(direction)
             if not button:
-                return result("ok", "not_sent",
-                              f"unknown scroll direction '{req.get('direction')}'")
+                return result("not_actionable", "not_sent",
+                              f"unknown scroll direction '{direction}' "
+                              f"(up/down/left/right)")
+            try:
+                pages = int(req.get("pages", 1))
+            except (TypeError, ValueError):
+                return result("not_actionable", "not_sent",
+                              f"pages must be an integer, got {req.get('pages')!r}")
+            if pages <= 0 or pages > 20:
+                return result("not_actionable", "not_sent",
+                              f"pages must be 1..=20 (got {pages}) — cap bounds "
+                              f"the dispatch volume")
             x, y = _center(target) if target.get("index", -1) != -1 else (0, 0)
             if x or y:
                 _sh(["xdotool", "mousemove", str(int(x)), str(int(y))])
-            for _ in range(int(req.get("pages", 1)) * 3):
+            for _ in range(pages * 3):
                 _sh(["xdotool", "click", button])
             return result("ok", "sent")
         if op == "set_value":
@@ -318,17 +454,36 @@ def _real_act(op, req):
             entry[0].queryAction().doAction(actions.index(action))
             return result("ok", "sent")
         if op == "paste":
+            moved = _focus_moved_reason()
+            if moved:
+                return result("stale_state", "not_sent", moved)
             text = str(req.get("text", ""))
-            _sh(["xclip", "-selection", "clipboard"], text.encode())
-            _sh(["xdotool", "key", "--", "ctrl+v"])
-            return result("ok", "sent")
+            # borrow/restore: save the user's clipboard, paste ours, then
+            # put theirs back — best-effort on the restore, never skip it
+            old_clip = b""
+            try:
+                old_clip = _sh(["xclip", "-selection", "clipboard", "-o"])
+            except Exception:
+                pass
+            try:
+                _sh(["xclip", "-selection", "clipboard"], text.encode())
+                _sh(["xdotool", "key", "--", "ctrl+v"])
+                return result("ok", "sent")
+            finally:
+                try:
+                    _sh(["xclip", "-selection", "clipboard"], old_clip)
+                except Exception:
+                    pass
         if op == "drag":
             x1, y1 = _center(target)
             x2, y2 = _center(req.get("to") or {})
-            _sh(["xdotool", "mousemove", str(int(x1)), str(int(y1)),
-                 "mousedown", "1"])
-            _sh(["xdotool", "mousemove", str(int(x2)), str(int(y2))])
-            _sh(["xdotool", "mouseup", "1"])
+            try:
+                _sh(["xdotool", "mousemove", str(int(x1)), str(int(y1)),
+                     "mousedown", "1"])
+                _sh(["xdotool", "mousemove", str(int(x2)), str(int(y2))])
+            finally:
+                # a failed drag must NEVER leave the button held
+                _sh(["xdotool", "mouseup", "1"])
             return result("ok", "sent")
         return result("ok", "not_sent", f"op '{op}' is not supported by the real backend")
     except RuntimeError as e:

@@ -102,17 +102,18 @@ mode: this observation was re-taken live).
 
 | Field | Type | Meaning |
 |:---|:---|:---|
-| `action` | string | `click`, `type`, `key`, `scroll`, `set_value`, `drag` |
+| `action` | string | `click`, `type`, `key`, `scroll`, `set_value`, `drag`, `perform`, `paste` |
 | `app` | string | App the action targeted |
 | `target` | number \| object | Element index, or `{"x": ..., "y": ...}` raster pixels |
-| `outcome` | string | `"ok"` or an error tag |
+| `outcome` | string | The provider's own outcome tag: `"ok"`, `stale_state`, `not_actionable`, `denied`, `error`, `dry_run`, … — the deadline is NEVER an overwrite of it |
 | `latency_ms` | number | Measured wall time |
 
 Additive: `ok` (boolean success), `action_sent` (dispatch receipt — False
 only when the bridge knows the input was NOT dispatched; that is the only
-safe-to-retry case), `error` (message when not ok), `value` (text payload
-for `type`/`set_value`/`paste`), `dry_run: true` (replay mode — the action
-was NOT re-executed), `deadline_ms`, `branch`. Replay never re-fires
+safe-to-retry case), `deadline_missed: true` (additive latency metadata —
+never an outcome overwrite), `error` (message when not ok), `value` (text
+payload for `type`/`set_value`/`paste`), `dry_run: true` (replay mode — the
+action was NOT re-executed), `deadline_ms`, `branch`. Replay never re-fires
 actions: `dry_run: true` is how an auditor tells a replayed run from a
 live one.
 

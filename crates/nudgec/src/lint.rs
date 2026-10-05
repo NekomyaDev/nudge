@@ -222,7 +222,11 @@ fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut V
                 walk_expr(ctx, v, records, out);
             }
         }
-        ExprKind::ComputerCall { method, kwargs, .. } => {
+        ExprKind::ComputerCall {
+            method,
+            args,
+            kwargs,
+        } => {
             // W0006: unscoped automation — without `allow`, the runtime may
             // bind and act on ANY app on the machine
             if !kwargs.iter().any(|(k, _)| k == "allow") {
@@ -232,6 +236,19 @@ fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut V
                         "in {ctx}: computer.{method} has no `allow` option — the automation may touch any app on the machine; scope it, e.g. computer.{method}(target, allow: [\"Notes\"])"
                     ),
                 ));
+            } else if kwargs.iter().any(|(k, v)| {
+                k == "allow" && matches!(&v.kind, ExprKind::ListLit(xs) if xs.is_empty())
+            }) {
+                // allow: [] is a denial, not a wildcard — flag the likely mixup
+                out.push(lint(
+                    "W0006",
+                    format!(
+                        "in {ctx}: computer.{method} passes `allow: []` — an empty scope allows NOTHING and every action will be denied; drop the option for unscoped or list the apps"
+                    ),
+                ));
+            }
+            for a in args {
+                walk_expr(ctx, a, records, out);
             }
             for (_, v) in kwargs {
                 walk_expr(ctx, v, records, out);

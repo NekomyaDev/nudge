@@ -626,7 +626,10 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
                 opts
             )
         }
-        // v1.5 computer-use surface: camelCase rt.* counterparts
+        // v1.5 computer-use surface: camelCase rt.* counterparts. The rt.*
+        // API takes an options OBJECT (never bare kwargs), at a
+        // method-specific position: paste/scroll carry an optional
+        // positional before it.
         ExprKind::ComputerCall {
             method,
             args,
@@ -634,7 +637,7 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
         } => {
             let camel = |m: &str| -> String {
                 let mut out = String::with_capacity(m.len());
-                let mut up = false;
+                let mut up = true; // the leading char capitalizes too
                 for c in m.chars() {
                     if c == '_' {
                         up = true;
@@ -647,13 +650,44 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
                 }
                 out
             };
-            let mut parts: Vec<String> = args.iter().map(|a| ts(a, aliases, sigs)).collect();
-            parts.extend(
-                kwargs
-                    .iter()
-                    .map(|(k, v)| format!("{}: {}", js_key(k), ts(v, aliases, sigs))),
-            );
-            format!("rt.computer{}({})", camel(method), parts.join(", "))
+            let opts = kwargs
+                .iter()
+                .map(|(k, v)| format!("{}: {}", js_key(k), ts(v, aliases, sigs)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let call = |positional: Vec<String>| {
+                let mut parts = positional;
+                if !opts.is_empty() {
+                    parts.push(format!("{{ {opts} }}"));
+                }
+                format!("rt.computer{}({})", camel(method), parts.join(", "))
+            };
+            match method.as_str() {
+                "observe" | "click" | "type" | "key" | "set_value" | "perform" | "drag" => {
+                    call(args.iter().map(|a| ts(a, aliases, sigs)).collect())
+                }
+                "scroll" => {
+                    // rt.computerScroll(target, direction, pages = 1, options)
+                    let mut positional: Vec<String> =
+                        args.iter().map(|a| ts(a, aliases, sigs)).collect();
+                    if positional.len() < 3 {
+                        positional.push("1".into());
+                    }
+                    call(positional)
+                }
+                "paste" => {
+                    // rt.computerPaste(text, format = null, options)
+                    let mut positional: Vec<String> =
+                        args.iter().map(|a| ts(a, aliases, sigs)).collect();
+                    if positional.len() < 2 {
+                        positional.push("null".into());
+                    }
+                    call(positional)
+                }
+                other => format!(
+                    "/* warning: unknown computer method {other} (rejected by the checker) */ null"
+                ),
+            }
         }
     }
 }
@@ -758,7 +792,7 @@ mod tests {
     /// Erase the simple annotation forms the emitter produces (test-only;
     /// lets node run the output without a TS toolchain). Dependency-free:
     /// scans for `: <SimpleTy>` followed by one of `, ) { = ; <space>`.
-    fn strip_ts(code: &str) -> String {
+    pub(super) fn strip_ts(code: &str) -> String {
         const TYS: [&str; 8] = [
             "Record<string, any>",
             "string",
@@ -1078,5 +1112,77 @@ mod tests {
         assert!(!out.status.success(), "run wall must fire");
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(stderr.contains("BudgetExceeded"), "stderr: {stderr}");
+    }
+}
+
+#[cfg(test)]
+mod computer_tests {
+    use super::*;
+    use crate::lexer::lex;
+    use crate::parser::parse;
+
+    fn gen_ts(src: &str) -> String {
+        emit_ts(&parse(lex(src).unwrap()).unwrap())
+    }
+
+    #[test]
+    fn ts_computer_calls_lower_to_options_objects() {
+        // kwargs must become an options object, never bare `k: v` inside
+        // the call (that is not valid JS/TS — caught by node, not cargo)
+        let src = "fn run(app: string) -> bool uses Computer { let obs = computer.observe(app, allow = [app], screenshot = true)\n    let r = computer.click(1, allow = [\"Notes\"])\n    let s = computer.scroll(1, \"down\", 2, allow = [\"Notes\"])\n    let p = computer.paste(\"hi\", allow = [\"Notes\"])\n    r.ok }";
+        let out = gen_ts(src);
+        assert!(
+            out.contains("rt.computerObserve(app, { allow: [app], screenshot: true })"),
+            "got:\n{out}"
+        );
+        assert!(
+            out.contains("rt.computerClick(1, { allow: [\"Notes\"] })"),
+            "got:\n{out}"
+        );
+        // scroll's optional positional pages sits BEFORE the options object
+        assert!(
+            out.contains("rt.computerScroll(1, \"down\", 2, { allow: [\"Notes\"] })"),
+            "got:\n{out}"
+        );
+        // paste with no format argument still fills the null slot
+        assert!(
+            out.contains("rt.computerPaste(\"hi\", null, { allow: [\"Notes\"] })"),
+            "got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn ts_computer_program_runs_under_node() {
+        // Nudge source → TS codegen → node → fake desktop: the full chain
+        // CI runs; without it an invalid lowering ships green.
+        use std::process::Command;
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let runtime = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
+        if !runtime.exists() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("nudge_tscomputer_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = "fn main(app: string) -> bool uses Computer { let obs = computer.observe(app, allow = [app], screenshot = true)\n    let r = computer.click(1, allow = [app])\n    let p = computer.paste(\"hi\", allow = [app])\n    r.ok }";
+        let emitted = super::tests::strip_ts(&gen_ts(src))
+            .replace("./nudge_runtime.ts", "./nudge_runtime.mjs");
+        std::fs::write(dir.join("main.mjs"), &emitted).unwrap();
+        let rt_src = std::fs::read_to_string(runtime.join("nudge_runtime.ts")).unwrap();
+        std::fs::write(dir.join("nudge_runtime.mjs"), rt_src).unwrap();
+        let out = Command::new("node")
+            .arg(dir.join("main.mjs"))
+            .arg("FakeApp")
+            .env("NUDGE_COMPUTER_PROVIDER", "fake")
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "true");
     }
 }

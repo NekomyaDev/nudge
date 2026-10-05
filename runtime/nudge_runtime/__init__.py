@@ -3063,9 +3063,21 @@ def _computer_registry():
     return data if isinstance(data, dict) else {}
 
 
+def _commit_last_observed(app, state_id):
+    """Commit the last-good observation authority — only ever called after
+    a successful (validated) observation, so a failed observe can never
+    leave actions pointed at a cleared or half-updated state."""
+    _LAST_OBSERVED_APP["app"] = str(app)
+    _LAST_OBSERVED_APP["state_id"] = str(state_id)
+
+
 def _computer_allow_ok(allow, app):
-    if not allow:
+    # semantics: absent (None) = unscoped, an empty list = allow NOTHING —
+    # treating [] as a wildcard would turn a denial into a grant
+    if allow is None:
         return True
+    if not allow:
+        return False
     return str(app) in [str(a) for a in allow]
 
 
@@ -3121,11 +3133,33 @@ def _normalize_observation(app, raw):
     if not isinstance(raw_elements, list):
         raise RuntimeError("computer provider observation has no `elements` list")
     elements = []
+    seen_indices = set()
     for el in raw_elements:
         if not isinstance(el, dict) or "index" not in el:
             raise RuntimeError("computer provider element has no `index`")
+        idx = el["index"]
+        # index is the addressing currency — it must be a unique,
+        # non-negative integer, or the whole authority model degrades
+        if not isinstance(idx, int) or isinstance(idx, bool) or idx < 0:
+            raise RuntimeError(
+                f"computer provider element index must be a non-negative int, got {idx!r}")
+        if idx in seen_indices:
+            raise RuntimeError(
+                f"computer provider observation has duplicate element index {idx}")
+        seen_indices.add(idx)
         raw_bounds = el.get("bounds")
-        bounds = [float(b) for b in raw_bounds] if isinstance(raw_bounds, (list, tuple)) and len(raw_bounds) == 4 else []
+        if isinstance(raw_bounds, (list, tuple)) and len(raw_bounds) == 4:
+            try:
+                bounds = [float(b) for b in raw_bounds]
+            except (TypeError, ValueError):
+                raise RuntimeError(
+                    "computer provider element bounds must be 4 finite numbers")
+            if not all(b == b and abs(b) != float("inf") for b in bounds) \
+                    or bounds[2] < 0 or bounds[3] < 0:
+                raise RuntimeError(
+                    "computer provider element bounds must be finite with non-negative width/height")
+        else:
+            bounds = []
         elements.append({
             "index": int(el["index"]),
             "role": str(el.get("role", "element")),
@@ -3140,6 +3174,8 @@ def _normalize_observation(app, raw):
             # element sits — they are NEVER a click-coordinate source
             "bounds": bounds,
         })
+    # canonical deterministic order: by index, whatever order the provider sent
+    elements.sort(key=lambda e: e["index"])
     shot = raw.get("screenshot") or {}
     screenshot = ""
     screenshot_hash = raw.get("screenshot_hash", "")
@@ -3165,15 +3201,20 @@ def _normalize_observation(app, raw):
 def _normalize_result(raw):
     if not isinstance(raw, dict):
         raise RuntimeError("computer provider returned a non-object result")
-    dispatch = str(raw.get("dispatch", "sent"))
+    # dispatch receipt: only sent / not_sent / unknown are canonical — a
+    # missing or malformed value is "unknown", never an invented "sent"
+    dispatch = str(raw.get("dispatch", "unknown"))
+    if dispatch not in ("sent", "not_sent", "unknown"):
+        dispatch = "unknown"
     return {
         "ok": bool(raw.get("ok", False)),
         "outcome": str(raw.get("outcome", "ok" if raw.get("ok") else "error")),
         "latency_ms": int(raw.get("latency_ms", 0)),
         "error": str(raw.get("error", "")),
-        # dispatch receipt (docs/computer-use.md §3): True only when the
-        # bridge KNOWS the input was dispatched; a "not_sent" action may be
-        # retried, a "sent"/"unknown" one must be re-observed instead
+        # True only when the bridge KNOWS the input was dispatched (or the
+        # provider is the in-process fake, which dispatches by
+        # construction); a "not_sent" action may be retried, anything else
+        # must be re-observed instead
         "action_sent": dispatch != "not_sent",
     }
 
@@ -3243,16 +3284,42 @@ def _fake_observe(app, include_screenshot):
 def _fake_act(action, app, params):
     with _FAKE_DESKTOP_LOCK:
         scenes, advance_on = _fake_scenes()
+        scene_idx = _FAKE_DESKTOP["scene"] % len(scenes)
+        scene = scenes[scene_idx]
+        # the fake desktop enforces the SAME fail-closed contract as the
+        # real bridge — stale state, unknown targets and unadvertised
+        # actions must fail here too, or `nudgec test` PASSes programs the
+        # real desktop will reject (test parity, docs/computer-use.md §3)
+        want_state = f"s-{scene_idx + 1}"
+        if str(params.get("state_id") or "") != want_state:
+            return {"ok": False, "outcome": "stale_state", "latency_ms": 1,
+                    "error": (f"state {params.get('state_id')!r} is stale; "
+                              f"current is {want_state}"),
+                    "dispatch": "not_sent"}
+        target = params.get("target") or {}
+        idx = target.get("index", -1)
+        hit = {}
+        if idx != -1:
+            hit = next((el for el in scene.get("elements", [])
+                        if el.get("index") == idx), {})
+            if not hit:
+                return {"ok": False, "outcome": "not_actionable", "latency_ms": 1,
+                        "error": f"element {idx} is not in the current scene",
+                        "dispatch": "not_sent"}
+        if action == "perform":
+            actions = hit.get("actions") or []
+            act_name = str(params.get("action", ""))
+            if act_name not in actions:
+                return {"ok": False, "outcome": "not_actionable", "latency_ms": 1,
+                        "error": f"element {idx} does not advertise '{act_name}'",
+                        "dispatch": "not_sent"}
         if advance_on and ":" in advance_on:
             want_action, want_label = advance_on.split(":", 1)
-            target = params.get("target") or {}
-            scene = scenes[_FAKE_DESKTOP["scene"] % len(scenes)]
-            hit = next((el for el in scene.get("elements", [])
-                        if el.get("index") == target.get("index")), {})
             acted_title = hit.get("title", "")
             if action == want_action and acted_title == want_label:
                 _FAKE_DESKTOP["scene"] += 1
-    return {"ok": True, "outcome": "ok", "latency_ms": 1, "error": ""}
+    return {"ok": True, "outcome": "ok", "latency_ms": 1, "error": "",
+            "dispatch": "sent"}
 
 
 _FAKE_DESKTOP_LOCK = threading.Lock()
@@ -3423,8 +3490,8 @@ def computer_observe(app, allow=None, deadline=None, screenshot=False):
     mechanical `drift` diff against the recorded observation (actions stay
     dry-run — the model interprets the drift, not the language)."""
     started = time.monotonic()
-    _LAST_OBSERVED_APP["app"] = str(app)
-    _LAST_OBSERVED_APP["state_id"] = ""
+    # the last-good authority is committed ONLY after a successful,
+    # validated observation — a failed observe must not clobber it
     mode = _replay_mode()
     provider = _computer_provider()
     include_screenshot = bool(screenshot)
@@ -3460,6 +3527,7 @@ def computer_observe(app, allow=None, deadline=None, screenshot=False):
         latency_ms = int((time.monotonic() - started) * 1000)
         outcome = _computer_check_deadline(latency_ms, deadline)
         live["drift"] = _computer_diff_drift(live, recorded)
+        _commit_last_observed(app, live["state_id"])
         record = {
             "kind": "computer.observe", "app": str(app),
             "state_id": live["state_id"],
@@ -3476,7 +3544,7 @@ def computer_observe(app, allow=None, deadline=None, screenshot=False):
         # plain replay: the recorded observation IS the observation
         # (elements + tree land in the record; the screenshot data URL
         # does not — only its hash, keeping traces human-sized)
-        _LAST_OBSERVED_APP["state_id"] = str(recorded.get("state_id", ""))
+        _commit_last_observed(app, str(recorded.get("state_id", "")))
         return _attr(_normalize_observation(app, recorded))
 
     # live path
@@ -3490,7 +3558,7 @@ def computer_observe(app, allow=None, deadline=None, screenshot=False):
          "include_screenshot": include_screenshot},
         app, include_screenshot)
     obs = _normalize_observation(app, msg["observation"])
-    _LAST_OBSERVED_APP["state_id"] = obs["state_id"]
+    _commit_last_observed(app, obs["state_id"])
     latency_ms = int((time.monotonic() - started) * 1000)
     outcome = _computer_check_deadline(latency_ms, deadline)
     # one NTF record per step, always (llm/tool convention: traces default
@@ -3574,10 +3642,15 @@ def _computer_act(action, app, payload, allow=None, deadline=None):
                               app, False)
     result = _normalize_result(msg["result"])
     result["latency_ms"] = int((time.monotonic() - started) * 1000)
-    outcome = _computer_check_deadline(result["latency_ms"], deadline)
-    if outcome == "deadline_missed":
-        result["outcome"] = outcome
-        result["deadline_missed"] = True
+    # the provider's own failure reason (stale_state, not_actionable,
+    # error, …) IS the outcome — the deadline is additive metadata,
+    # never an overwrite of it (NTF failed-record semantics)
+    outcome = str(result["outcome"])
+    missed = deadline is not None and result["latency_ms"] > int(deadline)
+    if missed and os.environ.get("NUDGE_COMPUTER_STRICT") == "1":
+        raise ComputerTimeout(
+            f"computer call took {result['latency_ms']} ms over the {int(deadline)} ms deadline"
+        )
     record = {
         "kind": "computer.act", "action": action, "app": str(app),
         "target": payload.get("target"), "outcome": outcome,
@@ -3585,6 +3658,8 @@ def _computer_act(action, app, payload, allow=None, deadline=None):
         "action_sent": result["action_sent"],
         "provider": provider,
     }
+    if missed:
+        record["deadline_missed"] = True
     if result["error"]:
         record["error"] = result["error"]
     if payload.get("text"):

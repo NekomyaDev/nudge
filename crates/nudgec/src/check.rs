@@ -1390,17 +1390,26 @@ fn check_expr(
                 }
                 "click" | "drag" | "set_value" | "type" | "key" | "scroll" | "perform"
                 | "paste" => {
-                    let min_args = match method.as_str() {
-                        "click" | "type" | "key" | "paste" => 1,
-                        "set_value" | "drag" | "perform" => 2,
-                        _ => 2, // scroll(target, direction[, pages])
+                    // exact signatures: an extra positional would silently
+                    // land in a different slot of the generated runtime call
+                    // (e.g. allow) and change security semantics
+                    let (min_args, max_args) = match method.as_str() {
+                        "click" | "type" | "key" => (1, 1),
+                        "paste" => (1, 2),
+                        "set_value" | "drag" | "perform" => (2, 2),
+                        _ => (2, 3), // scroll(target, direction[, pages])
                     };
-                    if args.len() < min_args {
+                    if args.len() < min_args || args.len() > max_args {
+                        let expected = if min_args == max_args {
+                            format!("exactly {min_args}")
+                        } else {
+                            format!("{min_args} to {max_args}")
+                        };
                         errs.push(CheckError {
                             span: None,
                             code: "E0902",
                             msg: format!(
-                                "computer.{method} takes at least {min_args} argument(s), got {}",
+                                "computer.{method} takes {expected} argument(s), got {}",
                                 args.len()
                             ),
                         });
@@ -1440,6 +1449,18 @@ fn check_expr(
                 }
                 let t = check_expr(v, locals, g, errs);
                 match k.as_str() {
+                    "screenshot" if method != "observe" => {
+                        // the generated action calls have no screenshot
+                        // parameter — a static pass here would TypeError
+                        // at runtime
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0901",
+                            msg: format!(
+                                "computer.{method} does not take a 'screenshot' option (only computer.observe does)"
+                            ),
+                        });
+                    }
                     "allow" if !matches!(t, Ty::List(_) | Ty::Unknown) => {
                         errs.push(CheckError {
                             span: None,

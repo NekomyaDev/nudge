@@ -339,9 +339,22 @@ mod tests {
 mod computer_tests {
     use crate::stdlib::computer;
     use crate::vm::Value;
+    use std::sync::Mutex;
+
+    // these tests share process-global state (env vars + the VM's
+    // last-observation authority) — they must not run concurrently
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn lock() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
     #[test]
     fn test_computer_fake_observe_and_act() {
+        let _g = lock();
+        computer::reset_authority_for_tests();
+        // canonical language surface: observe(app), then actions carry the
+        // target ONLY — the runtime owns the app + state authority
         let obs = computer::execute(
             "computer.observe",
             vec![Value::String("FakeApp".to_string())],
@@ -349,25 +362,44 @@ mod computer_tests {
         .expect("fake observe works");
         match &obs {
             Value::Map(m) => {
-                let ok = m.get("ok").cloned().unwrap_or(Value::None);
-                assert_eq!(ok, Value::Bool(true));
-                assert!(m.contains_key("observation"));
+                assert_eq!(m.get("state_id"), Some(&Value::String("s-1".into())));
+                assert_eq!(m.get("app"), Some(&Value::String("FakeApp".into())));
+                assert!(m.contains_key("elements"));
             }
-            other => panic!("expected a map, got {other:?}"),
+            other => panic!("expected an Observation map, got {other:?}"),
         }
-        let r = computer::execute(
-            "computer.click",
-            vec![Value::String("FakeApp".to_string()), Value::Int(1)],
-        )
-        .expect("fake act works");
+        let r = computer::execute("computer.click", vec![Value::Int(1)]).expect("fake act works");
         match &r {
-            Value::Map(m) => assert!(m.contains_key("result")),
-            other => panic!("expected a map, got {other:?}"),
+            Value::Map(m) => {
+                assert_eq!(m.get("ok"), Some(&Value::Bool(true)));
+                assert!(m.contains_key("outcome"));
+            }
+            other => panic!("expected an ActionResult map, got {other:?}"),
         }
     }
 
     #[test]
+    fn test_computer_fake_enforces_fail_closed_contract() {
+        let _g = lock();
+        computer::reset_authority_for_tests();
+        // acting without a prior observe must fail — never silently succeed
+        let err = computer::execute("computer.click", vec![Value::Int(1)])
+            .expect_err("action without observe must fail");
+        assert!(err.contains("observe"), "{err}");
+        // stale/unknown targets fail against the fake desktop too
+        computer::execute(
+            "computer.observe",
+            vec![Value::String("FakeApp".to_string())],
+        )
+        .expect("observe works");
+        let err = computer::execute("computer.click", vec![Value::Int(42)])
+            .expect_err("unknown element must fail");
+        assert!(err.contains("not_actionable"), "{err}");
+    }
+
+    #[test]
     fn test_computer_kill_switch_denies() {
+        let _g = lock();
         std::env::set_var("NUDGE_COMPUTER_KILL", "1");
         let err = computer::execute(
             "computer.observe",
@@ -380,6 +412,8 @@ mod computer_tests {
 
     #[test]
     fn test_computer_bridge_transport() {
+        let _g = lock();
+        computer::reset_authority_for_tests();
         // real subprocess JSONL round trip through the reference bridge
         let manifest = env!("CARGO_MANIFEST_DIR");
         let bridge = format!("{manifest}/../../tools/cu_bridge.py");
@@ -392,9 +426,11 @@ mod computer_tests {
             .expect("bridge observe works");
         match &obs {
             Value::Map(m) => {
-                assert!(m.contains_key("observation"), "{m:?}");
+                // the canonical surface returns the Observation itself
+                assert!(m.contains_key("state_id"), "{m:?}");
+                assert!(m.contains_key("elements"), "{m:?}");
             }
-            other => panic!("expected a map, got {other:?}"),
+            other => panic!("expected an Observation map, got {other:?}"),
         }
         std::env::remove_var("NUDGE_COMPUTER_PROVIDER");
         std::env::remove_var("NUDGE_COMPUTER_SERVERS");

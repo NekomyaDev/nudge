@@ -72,13 +72,17 @@ fn fix_note(app: string, target_index: int) -> bool uses Computer, Decision {
 
 - `allow: [AppName, ...]` — the apps this call may touch (W0006 warns when
   a computer call carries no `allow`; the runtime refuses apps outside the
-  list with `ComputerDenied`).
+  list with `ComputerDenied`). Semantics: `allow` ABSENT is unscoped, but
+  `allow: []` allows NOTHING — an empty scope is a denial, not a wildcard
+  (W0006 flags the likely mixup).
 - `deadline: ms` — soft by default: an overrun annotates the record
   `deadline_missed`; `NUDGE_COMPUTER_STRICT=1` makes it raise
-  `ComputerTimeout` (the decide-deadline semantics, unchanged).
+  `ComputerTimeout`. The deadline is ADDITIVE metadata — it never
+  overwrites the provider's own failure outcome.
 - `screenshot: bool` (observe only) — include a screenshot; the result
   carries it as a data URL in `.screenshot` plus its sha256 in
-  `.screenshot_hash`.
+  `.screenshot_hash`. The checker rejects `screenshot` on action methods
+  (the generated runtimes have no such parameter).
 
 ### Result types
 
@@ -160,6 +164,30 @@ Hardening invariants every bridge MUST enforce (fail closed):
 - Element observations may carry `bounds: [x, y, w, h]` — diagnostic
   geometry only, never a click-coordinate source (the provider owns the
   frame authority).
+- **App/window authority** — the reference bridge resolves the requested
+  app to EXACTLY ONE application (exact case-insensitive name match wins;
+  otherwise a unique substring). Unknown or ambiguous apps fail closed —
+  there is no empty-but-successful observation, and two apps sharing a
+  substring are never merged into one authority.
+- **Scoped screenshots** — the real backend captures the observed
+  window (`import -window <id>`), never the root desktop: a root grab
+  under an allow scope would leak other apps' content. The screenshot
+  hash is canonical: SHA-256 of the raw PNG bytes (same definition on
+  every provider).
+- **Focus-safe text input** — `type`/`key`/`paste` verify the ACTIVE X
+  window still matches the observed window before dispatching; if focus
+  moved since the observation the action is refused with `stale_state`
+  and `dispatch: "not_sent"` (blind input into whatever the user is
+  doing is the classic allow-scope bypass).
+- **Coordinate containment** — an explicit `{x, y}` target must fall
+  inside the observed window's geometry; coordinates may not reach other
+  apps.
+- **Semantic actions first** — `click` prefers the element's own
+  AT-SPI action (`click`/`press`) over a raw pointer click: the semantic
+  action is bound to the element, not to wherever the global pointer or
+  focus happens to be. `scroll` validates direction/pages (1..=20) before
+  dispatching, a `drag` releases the button on ANY failure, and `paste`
+  restores the borrowed clipboard.
 
 Adapter validation is strict (the decision-adapter rules apply): unknown
 operations, missing fields, non-finite numbers and unnormalized trees are

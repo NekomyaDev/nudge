@@ -1312,7 +1312,10 @@ function computerProvider() {
 }
 
 function computerAllowOk(allow, app) {
-  if (!allow || !allow.length) return true;
+  // absent = unscoped, an empty list = allow NOTHING (a denial, not a
+  // wildcard — treating [] as a grant would invert the security meaning)
+  if (allow === undefined || allow === null) return true;
+  if (!Array.isArray(allow) || !allow.length) return false;
   return allow.map(String).includes(String(app));
 }
 
@@ -1352,21 +1355,48 @@ function normalizeObservation(app, raw) {
   if (!Array.isArray(raw.elements)) {
     throw new Error("computer provider observation has no `elements` list");
   }
-  const elements = raw.elements.map((el) => ({
-    index: Number(el.index),
-    role: String(el.role || "element"),
-    title: String(el.title || ""),
-    value: String(el.value || ""),
-    pressable: Boolean(el.pressable),
-    editable: Boolean(el.editable),
-    focused: Boolean(el.focused),
-    enabled: el.enabled !== false,
-    actions: (el.actions || []).map(String),
-    // diagnostic geometry (zcode rule): bounds describe where the
-    // element sits — they are NEVER a click-coordinate source
-    bounds: Array.isArray(el.bounds) && el.bounds.length === 4
-      ? el.bounds.map(Number) : [],
-  }));
+  const elements = [];
+  const seenIndices = new Set();
+  for (const el of raw.elements) {
+    if (!el || typeof el !== "object" || !("index" in el)) {
+      throw new Error("computer provider element has no `index`");
+    }
+    // index is the addressing currency: unique non-negative integers
+    // only — Number() would silently map garbage to NaN
+    const idx = el.index;
+    if (typeof idx !== "number" || !Number.isInteger(idx) || idx < 0) {
+      throw new Error(
+        `computer provider element index must be a non-negative int, got ${JSON.stringify(idx)}`);
+    }
+    if (seenIndices.has(idx)) {
+      throw new Error(`computer provider observation has duplicate element index ${idx}`);
+    }
+    seenIndices.add(idx);
+    let bounds = [];
+    if (Array.isArray(el.bounds) && el.bounds.length === 4) {
+      bounds = el.bounds.map(Number);
+      if (bounds.some((b) => !Number.isFinite(b)) || bounds[2] < 0 || bounds[3] < 0) {
+        throw new Error(
+          "computer provider element bounds must be finite with non-negative width/height");
+      }
+    }
+    elements.push({
+      index: idx,
+      role: String(el.role || "element"),
+      title: String(el.title || ""),
+      value: String(el.value || ""),
+      pressable: Boolean(el.pressable),
+      editable: Boolean(el.editable),
+      focused: Boolean(el.focused),
+      enabled: el.enabled !== false,
+      actions: (el.actions || []).map(String),
+      // diagnostic geometry (zcode rule): bounds describe where the
+      // element sits — they are NEVER a click-coordinate source
+      bounds,
+    });
+  }
+  // canonical deterministic order: by index, whatever order the provider sent
+  elements.sort((a, b) => a.index - b.index);
   const shot = raw.screenshot || {};
   const screenshot = typeof shot === "string" && shot.startsWith("data:") ? shot
     : (shot && typeof shot === "object" && shot.data_url) ? String(shot.data_url) : "";
@@ -1388,7 +1418,11 @@ function normalizeResult(raw) {
   if (!raw || typeof raw !== "object") {
     throw new Error("computer provider returned a non-object result");
   }
-  const dispatch = String(raw.dispatch || "sent");
+  // dispatch receipt: only sent / not_sent / unknown are canonical — a
+  // missing or malformed value is "unknown", never an invented "sent"
+  const rawDispatch = String(raw.dispatch || "unknown");
+  const dispatch = ["sent", "not_sent", "unknown"].includes(rawDispatch)
+    ? rawDispatch : "unknown";
   return {
     ok: Boolean(raw.ok),
     outcome: String(raw.outcome || (raw.ok ? "ok" : "error")),
@@ -1441,15 +1475,40 @@ function fakeObserve(app, includeScreenshot) {
 }
 
 function fakeAct(action, params) {
+  // the fake desktop enforces the SAME fail-closed contract as the real
+  // bridge — stale state, unknown targets and unadvertised actions must
+  // fail here too, or tests PASS programs the real desktop will reject
+  const [scenes] = fakeScenes();
+  const sceneIdx = _fakeScene % scenes.length;
+  const scene = scenes[sceneIdx];
+  const wantState = `s-${sceneIdx + 1}`;
+  if (String(params.state_id || "") !== wantState) {
+    return { ok: false, outcome: "stale_state", latency_ms: 1,
+      error: `state ${JSON.stringify(params.state_id || "")} is stale; current is ${wantState}`,
+      dispatch: "not_sent" };
+  }
+  const idx = (params.target || {}).index;
+  let hit = null;
+  if (idx !== -1 && idx !== undefined) {
+    hit = (scene.elements || []).find((el) => el.index === idx);
+    if (!hit) {
+      return { ok: false, outcome: "not_actionable", latency_ms: 1,
+        error: `element ${idx} is not in the current scene`, dispatch: "not_sent" };
+    }
+  }
+  if (action === "perform") {
+    const actions = (hit && hit.actions) || [];
+    if (!actions.includes(String(params.action || ""))) {
+      return { ok: false, outcome: "not_actionable", latency_ms: 1,
+        error: `element ${idx} does not advertise '${params.action}'`, dispatch: "not_sent" };
+    }
+  }
   const [, advanceOn] = fakeScenes();
   if (advanceOn && advanceOn.includes(":")) {
     const [wantAction, wantLabel] = advanceOn.split(":", 2);
-    const [scenes] = fakeScenes();
-    const scene = scenes[_fakeScene % scenes.length];
-    const hit = (scene.elements || []).find((el) => el.index === (params.target || {}).index);
     if (action === wantAction && hit && hit.title === wantLabel) _fakeScene += 1;
   }
-  return { ok: true, outcome: "ok", latency_ms: 1, error: "" };
+  return { ok: true, outcome: "ok", latency_ms: 1, error: "", dispatch: "sent" };
 }
 
 function computerDiffDrift(live, recorded) {
@@ -1467,6 +1526,9 @@ function computerDiffDrift(live, recorded) {
   if (removed.length) parts.push(`${removed.length} element(s) gone`);
   if (added.length) parts.push(`${added.length} new element(s)`);
   if (shotChanged) parts.push("screenshot changed");
+  // the tree can change through value/focused/actions drift that the
+  // key diff above misses — never report changed=true with an empty summary
+  if (!parts.length && changed) parts.push("tree changed");
   return { changed, screenshot_changed: shotChanged, added, removed, summary: parts.join("; ") };
 }
 
@@ -1490,8 +1552,8 @@ function computerLiveCall(payload, app, includeScreenshot) {
 
 export function computerObserve(app, options = {}) {
   const started = Date.now();
-  _lastObservedApp = String(app);
-  _lastObservedStateId = "";
+  // the last-good authority is committed ONLY after a successful,
+  // validated observation — a failed observe must not clobber it
   const allow = options.allow || null;
   const includeScreenshot = Boolean(options.screenshot);
   const replaying = Boolean(process.env.NUDGE_REPLAY);
@@ -1517,6 +1579,8 @@ export function computerObserve(app, options = {}) {
       { op: "observe", app: String(app), include_screenshot: includeScreenshot },
       app, includeScreenshot);
     const live = normalizeObservation(app, msg.observation);
+    _lastObservedApp = String(app);
+    _lastObservedStateId = live.state_id;
     const latency = Date.now() - started;
     const outcome = computerCheckDeadline(latency, options.deadline);
     live.drift = computerDiffDrift(live, recorded);
@@ -1531,6 +1595,7 @@ export function computerObserve(app, options = {}) {
   }
   if (recorded) {
     // plain replay: the recorded observation IS the observation
+    _lastObservedApp = String(app);
     _lastObservedStateId = String(recorded.state_id || "");
     return normalizeObservation(app, recorded);
   }
@@ -1544,6 +1609,7 @@ export function computerObserve(app, options = {}) {
     { op: "observe", app: String(app), include_screenshot: includeScreenshot },
     app, includeScreenshot);
   const obs = normalizeObservation(app, msg.observation);
+  _lastObservedApp = String(app);
   _lastObservedStateId = obs.state_id;
   const latency = Date.now() - started;
   const outcome = computerCheckDeadline(latency, options.deadline);
@@ -1605,10 +1671,14 @@ function computerAct(action, payload, options = {}) {
     { op: action, app, ...payload, state_id: _lastObservedStateId }, app, false);
   const result = normalizeResult(msg.result);
   result.latency_ms = Date.now() - started;
-  const outcome = computerCheckDeadline(result.latency_ms, options.deadline);
-  if (outcome === "deadline_missed") {
-    result.outcome = outcome;
-    result.deadline_missed = true;
+  // the provider's own failure reason (stale_state, not_actionable,
+  // error, …) IS the outcome — the deadline is additive metadata,
+  // never an overwrite of it (NTF failed-record semantics)
+  const outcome = String(result.outcome);
+  const missed = options.deadline != null && result.latency_ms > Number(options.deadline);
+  if (missed && process.env.NUDGE_COMPUTER_STRICT === "1") {
+    throw new ComputerTimeout(
+      `computer call took ${result.latency_ms} ms over the ${Number(options.deadline)} ms deadline`);
   }
   {
     const record = {
@@ -1617,6 +1687,7 @@ function computerAct(action, payload, options = {}) {
       action_sent: result.action_sent,
       provider: computerProvider(),
     };
+    if (missed) record.deadline_missed = true;
     if (result.error) record.error = result.error;
     if (payload.text) record.value = payload.text;
     if (payload.value) record.value = payload.value;
