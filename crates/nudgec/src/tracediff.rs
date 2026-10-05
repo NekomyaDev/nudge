@@ -39,11 +39,14 @@ struct Totals {
     llm: usize,
     tools: usize,
     decisions: usize,
+    observes: usize,
+    acts: usize,
     tin: f64,
     tout: f64,
     cost: f64,
     repairs: usize,
     latency: f64,
+    computer_latency: f64,
 }
 
 fn totals(recs: &[Json]) -> Totals {
@@ -51,11 +54,14 @@ fn totals(recs: &[Json]) -> Totals {
         llm: 0,
         tools: 0,
         decisions: 0,
+        observes: 0,
+        acts: 0,
         tin: 0.0,
         tout: 0.0,
         cost: 0.0,
         repairs: 0,
         latency: 0.0,
+        computer_latency: 0.0,
     };
     for r in recs {
         match s(r, "kind").as_str() {
@@ -75,6 +81,16 @@ fn totals(recs: &[Json]) -> Totals {
             "decision.call" => {
                 t.decisions += 1;
                 t.latency += num(r, "latency_ms");
+            }
+            // v1.5: computer steps price in milliseconds too — observes and
+            // acts are the loop's step count, latency is the wall-clock bill
+            "computer.observe" => {
+                t.observes += 1;
+                t.computer_latency += num(r, "latency_ms");
+            }
+            "computer.act" => {
+                t.acts += 1;
+                t.computer_latency += num(r, "latency_ms");
             }
             _ => {}
         }
@@ -162,6 +178,16 @@ pub fn diff(a_text: &str, b_text: &str) -> String {
         tb.latency,
         delta(ta.latency, tb.latency, " ms")
     ));
+    out.push_str(&format!(
+        "computer  {} -> {} observe(s), {} -> {} act(s)   latency {:.0} ms -> {:.0} ms{}\n",
+        ta.observes,
+        tb.observes,
+        ta.acts,
+        tb.acts,
+        ta.computer_latency,
+        tb.computer_latency,
+        delta(ta.computer_latency, tb.computer_latency, " ms")
+    ));
 
     // per-record comparison, aligned by position (seq is 1..=n in a valid trace)
     let n = a.len().max(b.len());
@@ -174,6 +200,10 @@ pub fn diff(a_text: &str, b_text: &str) -> String {
                     "llm.call" => format!("llm.call {}", s(ra, "model")),
                     "tool.call" => format!("tool.call {}", s(ra, "tool")),
                     "decision.call" => format!("decision.call {}", s(ra, "model")),
+                    "computer.observe" => format!("computer.observe {}", s(ra, "app")),
+                    "computer.act" => {
+                        format!("computer.act {} ({})", s(ra, "action"), s(ra, "app"))
+                    }
                     "fn.return" => format!("fn.return {}", s(ra, "fn")),
                     _ => {
                         let name = s(ra, "fn");
@@ -386,5 +416,34 @@ mod tests {
         let clean = format!("{}\n", llm(1, "\"o\"", 1, 1, 0.001));
         let r = diff(&format!("{repaired}\n"), &clean);
         assert!(r.contains("repairs   1 -> 0 (-1)"), "{r}");
+    }
+
+    #[test]
+    fn computer_steps_are_totalled_and_labelled() {
+        let rec = |kind: &str, extra: &str, latency: f64| {
+            format!(
+                r#"{{"v": 1, "seq": 1, "kind": "{kind}", "app": "FakeApp", {extra} "latency_ms": {latency}, "outcome": "ok"}}"#
+            ) + "\n"
+        };
+        let a = format!(
+            "{}{}",
+            rec("computer.observe", r#""elements": [], "#, 12.0),
+            rec("computer.act", r#""action": "click", "target": 1, "#, 30.0)
+        );
+        let r = diff(&a, &a);
+        assert!(
+            r.contains("computer  1 -> 1 observe(s), 1 -> 1 act(s)"),
+            "{r}"
+        );
+        assert!(r.contains("latency 42 ms -> 42 ms"), "{r}");
+        assert!(r.contains("traces identical"), "{r}");
+        let b = rec("computer.act", r#""action": "type", "target": 3, "#, 55.0);
+        let r = diff(&a, &format!("{}\n", b.trim_end()));
+        assert!(r.contains("#1 computer.observe FakeApp"), "{r}");
+        assert!(
+            r.contains("kind      computer.observe -> computer.act"),
+            "{r}"
+        );
+        assert!(r.contains("#2 computer.act — only in A"), "{r}");
     }
 }
