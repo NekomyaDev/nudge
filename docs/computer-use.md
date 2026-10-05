@@ -117,6 +117,16 @@ NUDGE_COMPUTER_SERVERS='{"remote": {"base_url": "http://localhost:9333"}}' \
 NUDGE_COMPUTER_PROVIDER=remote nudgec build agent.ndg && python3 out/agent.py
 ```
 
+The reference bridge has two backends behind the same contract:
+`CU_BRIDGE_BACKEND=real` (X11 only) drives the **live desktop** — the
+accessibility tree comes from AT-SPI (pyatspi), clicks/keys/scrolls/drag
+run through `xdotool`, screenshots via ImageMagick `import`, the clipboard
+via `xclip`. Everything else — the lease, `state_id` staleness fail-closed,
+dispatch receipts, `abort` — is enforced identically on the virtual and
+the real backend (verified live: a Nudge program observed a real GTK
+dialog and its click closed it). On Wayland only the screenshot half may
+work, depending on the compositor's X11 compatibility.
+
 Wire contract (both transports, one round trip per call):
 
 - request: `{"id": n, "op": "observe"|"click"|"type"|"key"|"scroll"|"set_value"|"drag"|"perform"|"paste"|"abort", "app": "...", ...params}`

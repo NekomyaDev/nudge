@@ -27,12 +27,19 @@ Hardening invariants (mirroring the zcode Computer Use design):
   interrupted drag must never stay pressed) and is sent by the runtime at
   process exit and when the kill switch fires.
 
-This reference implementation drives a **virtual desktop** (the same scene
-model as the runtime's fake provider): ``CU_BRIDGE_SCENARIO`` names a JSON
-file with ``scenes`` + ``advance_on``; without it a fixed FakeApp scene is
-served. Swap the bottom ``_observe``/``_act`` implementations for a real
-backend (AT-SPI + xdotool on Linux, an OS automation API, or a remote
-agent) — the wire contract stays identical.
+This reference implementation has two backends:
+
+- **virtual** (default) — the same scene model as the runtime's fake
+  provider: ``CU_BRIDGE_SCENARIO`` names a JSON file with ``scenes`` +
+  ``advance_on``; without it a fixed FakeApp scene is served.
+- **real** (``CU_BRIDGE_BACKEND=real``) — a live X11 desktop: the
+  accessibility tree comes from AT-SPI (pyatspi), actions run through
+  ``xdotool``, screenshots via ImageMagick ``import``, the clipboard via
+  ``xclip``. The wire contract and every hardening invariant are identical
+  on both backends.
+
+Swap the bottom ``_observe``/``_act`` implementations for any other backend
+(an OS automation API, or a remote agent) — the contract stays identical.
 
 Usage (from the Nudge side):
     NUDGE_COMPUTER_SERVERS='{"cu": {"command": "python3 tools/cu_bridge.py"}}' \
@@ -62,7 +69,6 @@ def _load_scenes():
 
 
 # ── controller lease (fail-closed, stale-pid-aware) ──────────────────
-
 class Lease:
     """One live controller per bridge backend. A lockfile with the owning
     pid; a stale lease (owner process gone) is re-claimable."""
@@ -115,8 +121,234 @@ _LAST_OBS = {"state_id": None, "elements": []}
 # held mouse button parity (a real backend tracks the physical state)
 _BUTTON_HELD = False
 
+# ── real X11 backend (pyatspi + xdotool) ─────────────────────────────
+
+_BACKEND = os.environ.get("CU_BRIDGE_BACKEND", "virtual").lower()
+# live element table of the last real observation: index -> atspi object
+_REAL_ELS = {}
+_MAX_ELEMENTS = 200
+
+
+def _sh(cmd, input_bytes=None):
+    import subprocess
+    r = subprocess.run(cmd, input=input_bytes, capture_output=True, timeout=10)
+    if r.returncode != 0:
+        raise RuntimeError(f"{cmd[0]} failed: {r.stderr.decode(errors='replace').strip()[:200]}")
+    return r.stdout
+
+
+def _real_collect(app_filter):
+    """Walk the AT-SPI tree of the desktop and flatten it into element rows.
+    Windows/frames are always kept; leaf nodes are kept when they advertise
+    actions, editable text, or a value."""
+    import pyatspi
+
+    def rows(node, depth):
+        if node is None or depth > 12 or len(_REAL_ELS) >= _MAX_ELEMENTS:
+            return
+        try:
+            role = node.getRoleName()
+            name = node.name or ""
+        except Exception:
+            return
+        if not (role in ("window", "frame", "dialog", "application") or depth > 0):
+            pass
+        actions = []
+        try:
+            act = node.queryAction()
+            actions = [act.getName(i) for i in range(act.nActions)]
+        except Exception:
+            pass
+        editable = False
+        value = None
+        try:
+            text = node.queryText()
+            editable = bool(node.getState().contains(pyatspi.STATE_EDITABLE))
+            value = text.getText(0, -1)
+        except Exception:
+            try:
+                value = str(node.queryValue().currentValue)
+            except Exception:
+                value = None
+        focused = False
+        try:
+            focused = bool(node.getState().contains(pyatspi.STATE_FOCUSED))
+        except Exception:
+            pass
+        interesting = (actions or editable or role in
+                       ("window", "frame", "dialog", "push button",
+                        "text", "entry", "check box", "radio button",
+                        "page tab", "menu item", "combo box", "slider"))
+        if interesting:
+            bounds = []
+            try:
+                ext = node.queryComponent().getExtents(pyatspi.DESKTOP_COORDS)
+                if ext.width and ext.height:
+                    bounds = [float(ext.x), float(ext.y),
+                              float(ext.width), float(ext.height)]
+            except Exception:
+                pass
+            el = {"index": 0, "role": role, "title": name}
+            if value is not None:
+                el["value"] = value
+            el["pressable"] = "press" in actions or "click" in actions
+            if editable:
+                el["editable"] = True
+            if focused:
+                el["focused"] = True
+            if actions:
+                el["actions"] = actions
+            if bounds:
+                el["bounds"] = bounds
+            _REAL_ELS[len(_REAL_ELS)] = (node, el)
+        for child in node:
+            rows(child, depth + 1)
+
+    for app in pyatspi.Registry.getDesktop(0):
+        try:
+            app_name = app.name or ""
+        except Exception:
+            continue
+        if app_filter and app_filter.lower() not in app_name.lower():
+            continue
+        rows(app, 0)
+
+
+def _real_screenshot():
+    import base64
+    import hashlib
+    png = _sh(["import", "-window", "root", "png:-"])
+    digest = hashlib.sha256(png).hexdigest()
+    return {"data_url": "data:image/png;base64,"
+            + base64.b64encode(png).decode(),
+            "sha256": f"sha256:{digest}"}
+
+
+def _real_observe(app, include_screenshot):
+    global _STATE_IDS
+    _STATE_IDS += 1
+    _REAL_ELS.clear()
+    _real_collect(app)
+    elements = []
+    for _, el in _REAL_ELS.values():
+        el = dict(el)
+        el["index"] = len(elements)
+        elements.append(el)
+    obs = {"state_id": f"b-{_STATE_IDS}",
+           "title": app or "desktop", "elements": elements}
+    if include_screenshot:
+        obs["screenshot"] = _real_screenshot()
+    _LAST_OBS["state_id"] = obs["state_id"]
+    _LAST_OBS["elements"] = elements
+    return obs
+
+
+def _center(target):
+    """Resolve a target to desktop pixels: an observed element's bounds
+    center, or an explicit {x, y} raster point."""
+    index = target.get("index", -1)
+    if index == -1 and isinstance(target.get("x"), (int, float)):
+        return float(target["x"]), float(target["y"])
+    entry = _REAL_ELS.get(index)
+    if entry is None:
+        raise RuntimeError(f"element {index} is not in the last observation")
+    bounds = entry[1].get("bounds")
+    if not bounds or len(bounds) != 4:
+        raise RuntimeError(f"element {index} has no usable bounds")
+    x, y, w, h = bounds
+    return x + w / 2.0, y + h / 2.0
+
+
+def _real_act(op, req):
+    import time
+    started = time.monotonic()
+
+    def result(outcome, dispatch, error=""):
+        return {"ok": outcome == "ok", "outcome": outcome,
+                "latency_ms": int((time.monotonic() - started) * 1000),
+                "error": error, "dispatch": dispatch}
+
+    try:
+        target = req.get("target") or {}
+        if op == "click":
+            x, y = _center(target)
+            _sh(["xdotool", "mousemove", str(int(x)), str(int(y)),
+                 "click", "1"])
+            return result("ok", "sent")
+        if op == "type":
+            _sh(["xdotool", "type", "--delay", "20", "--", str(req.get("text", ""))])
+            return result("ok", "sent")
+        if op == "key":
+            _sh(["xdotool", "key", "--", str(req.get("key", ""))])
+            return result("ok", "sent")
+        if op == "scroll":
+            button = {"up": "4", "down": "5", "left": "6", "right": "7"}.get(
+                str(req.get("direction", "down")))
+            if not button:
+                return result("ok", "not_sent",
+                              f"unknown scroll direction '{req.get('direction')}'")
+            x, y = _center(target) if target.get("index", -1) != -1 else (0, 0)
+            if x or y:
+                _sh(["xdotool", "mousemove", str(int(x)), str(int(y))])
+            for _ in range(int(req.get("pages", 1)) * 3):
+                _sh(["xdotool", "click", button])
+            return result("ok", "sent")
+        if op == "set_value":
+            entry = _REAL_ELS.get(target.get("index", -1))
+            if entry is None:
+                return result("stale_state", "not_sent",
+                              f"element {target.get('index')} is not in the last observation")
+            try:
+                entry[0].queryEditableText().setTextContents(str(req.get("value", "")))
+                return result("ok", "sent")
+            except Exception:
+                return result("ok", "not_sent",
+                              f"element {target.get('index')} has no editable text interface")
+        if op == "perform":
+            index = target.get("index", -1)
+            entry = _REAL_ELS.get(index)
+            if entry is None:
+                return result("stale_state", "not_sent",
+                              f"element {index} is not in the last observation")
+            action = str(req.get("action", ""))
+            actions = entry[1].get("actions") or []
+            if action not in actions:
+                return result("not_actionable", "not_sent",
+                              f"element {index} does not advertise '{action}'")
+            entry[0].queryAction().doAction(actions.index(action))
+            return result("ok", "sent")
+        if op == "paste":
+            text = str(req.get("text", ""))
+            _sh(["xclip", "-selection", "clipboard"], text.encode())
+            _sh(["xdotool", "key", "--", "ctrl+v"])
+            return result("ok", "sent")
+        if op == "drag":
+            x1, y1 = _center(target)
+            x2, y2 = _center(req.get("to") or {})
+            _sh(["xdotool", "mousemove", str(int(x1)), str(int(y1)),
+                 "mousedown", "1"])
+            _sh(["xdotool", "mousemove", str(int(x2)), str(int(y2))])
+            _sh(["xdotool", "mouseup", "1"])
+            return result("ok", "sent")
+        return result("ok", "not_sent", f"op '{op}' is not supported by the real backend")
+    except RuntimeError as e:
+        # xdotool/import/xclip failures: we know nothing was dispatched for
+        # ops that never reached the tool — be honest, never claim "sent"
+        return result("error", "not_sent", str(e))
+
+
+def _real_abort():
+    try:
+        _sh(["xdotool", "mouseup", "1"])
+    except Exception:
+        pass  # best-effort: never crash the pipe on abort
+    return {"ok": True, "outcome": "ok", "latency_ms": 0, "error": ""}
+
+
 
 def _observe(app, include_screenshot):
+    if _BACKEND == "real":
+        return _real_observe(app, include_screenshot)
     global _STATE_IDS
     _STATE_IDS += 1
     scene = _SCENES[_SCENE % len(_SCENES)]
@@ -150,6 +382,12 @@ def _stale_reason(req):
 
 
 def _act(op, req):
+    if _BACKEND == "real":
+        reason = _stale_reason(req)
+        if reason:
+            return {"ok": False, "outcome": "stale_state", "latency_ms": 0,
+                    "error": reason, "dispatch": "not_sent"}
+        return _real_act(op, req)
     reason = _stale_reason(req)
     if reason:
         return {"ok": False, "outcome": "stale_state", "latency_ms": 0,
@@ -178,6 +416,8 @@ def _act(op, req):
 def _abort(_req):
     # release any held mouse button — an interrupted drag must never stay
     # pressed (zcode kill-switch parity)
+    if _BACKEND == "real":
+        return _real_abort()
     return {"ok": True, "outcome": "ok", "latency_ms": 0, "error": ""}
 
 
