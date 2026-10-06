@@ -192,6 +192,45 @@ fn lint_llm_call(
     }
 }
 
+/// True when the expression contains a `computer.*` call — the unambiguous
+/// world-effect the race-lint must catch anywhere inside a branch.
+fn has_computer_call(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::ComputerCall { .. } => true,
+        ExprKind::ListLit(xs) | ExprKind::ParAll(xs) | ExprKind::ParRace(xs) => {
+            xs.iter().any(has_computer_call)
+        }
+        ExprKind::Binary { l, r, .. } => has_computer_call(l) || has_computer_call(r),
+        ExprKind::Unary { x, .. } => has_computer_call(x),
+        ExprKind::Field { obj, .. } => has_computer_call(obj),
+        ExprKind::Merge { l, r } => has_computer_call(l) || has_computer_call(r),
+        ExprKind::ParMap {
+            coll, kwargs, body, ..
+        } => {
+            has_computer_call(coll)
+                || has_computer_call(body)
+                || kwargs.iter().any(|(_, v)| has_computer_call(v))
+        }
+        ExprKind::Route { arms } => arms
+            .iter()
+            .any(|(_, v, c)| has_computer_call(v) || c.as_ref().is_some_and(has_computer_call)),
+        ExprKind::LlmCall {
+            prompt, options, ..
+        } => has_computer_call(prompt) || options.iter().any(|(_, v)| has_computer_call(v)),
+        ExprKind::DecideCall {
+            questions: _,
+            state,
+            options,
+        } => has_computer_call(state) || options.iter().any(|(_, v)| has_computer_call(v)),
+        ExprKind::Call { func, args, kwargs } => {
+            has_computer_call(func)
+                || args.iter().any(has_computer_call)
+                || kwargs.iter().any(|(_, v)| has_computer_call(v))
+        }
+        _ => false,
+    }
+}
+
 fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut Vec<Lint>) {
     match &e.kind {
         ExprKind::LlmCall {
@@ -254,8 +293,25 @@ fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut V
                 walk_expr(ctx, v, records, out);
             }
         }
-        ExprKind::ListLit(xs) | ExprKind::ParAll(xs) | ExprKind::ParRace(xs) => {
+        ExprKind::ListLit(xs) | ExprKind::ParAll(xs) => {
             for x in xs {
+                walk_expr(ctx, x, records, out);
+            }
+        }
+        ExprKind::ParRace(xs) => {
+            // W0007: losing par race branches are NOT cancelled — python
+            // threads cannot be interrupted after a winner returns, so any
+            // side effect a loser performs (computer action, tool call,
+            // llm spend) still happens and still counts against the budget
+            for (i, x) in xs.iter().enumerate() {
+                if has_computer_call(x) {
+                    out.push(lint(
+                        "W0007",
+                        format!(
+                            "in {ctx}: race branch {i} performs a computer.* action — losing par race branches are NOT cancelled (their computer actions, tool effects and llm spend still happen and still count against the budget); prefer race for read-only branches"
+                        ),
+                    ));
+                }
                 walk_expr(ctx, x, records, out);
             }
         }
@@ -539,6 +595,22 @@ mod tests {
 }"#;
         let ls = lints(src);
         assert!(ls.iter().any(|l| l.code == "W0001"), "{ls:?}");
+    }
+
+    #[test]
+    fn race_branch_with_computer_action_warns_w0007() {
+        let src = r#"fn f() -> bool uses Computer {
+    par race [computer.click(1, allow = ["Notes"]), false]
+}"#;
+        let ls = lints(src);
+        assert!(ls.iter().any(|l| l.code == "W0007"), "{ls:?}");
+        // read-only branches are silent
+        let clean = lints(
+            r#"fn f() -> bool uses LLM {
+    par race [llm"""try plan A please""" with { model: "fake" }, llm"""try plan B please""" with { model: "fake" }]
+}"#,
+        );
+        assert!(!clean.iter().any(|l| l.code == "W0007"), "{clean:?}");
     }
 
     #[test]

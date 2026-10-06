@@ -27,6 +27,10 @@ jobs:
         run: cargo test --workspace
       - name: Run the TS runtime tests
         run: node --experimental-strip-types --test runtime/nudge_runtime.test.mjs
+      - name: Run the Python runtime + bridge tests
+        run: |
+          python3 -m unittest runtime.test_nudge_runtime -v
+          python3 bridges/test_bridges.py
 
   lint:
     name: clippy + rustfmt

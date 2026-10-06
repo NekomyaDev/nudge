@@ -517,6 +517,7 @@ test("computer: screenshot replay fidelity via the content-addressed sidecar", (
   const p = "/tmp/nudge-cu-sidecar.jsonl";
   withEnv({ NUDGE_TRACE: p }, () => {
     fs.rmSync(p + ".assets", { recursive: true, force: true });
+    fs.rmSync(p, { force: true });
     const obs = computerObserve("FakeApp", { allow: ["FakeApp"], screenshot: true });
     assert.ok(obs.screenshot.startsWith("data:image/png;base64,"));
     const recs = fs.readFileSync(p, "utf8").trim().split("\n").map(JSON.parse);
@@ -532,4 +533,5 @@ test("computer: screenshot replay fidelity via the content-addressed sidecar", (
       "replay sees the same pixels the record run saw");
   });
   fs.rmSync(p + ".assets", { recursive: true, force: true });
+  fs.rmSync(p, { force: true });
 });

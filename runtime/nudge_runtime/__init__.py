@@ -334,35 +334,57 @@ def _replay_mode():
     return os.environ.get("NUDGE_REPLAY_MODE", "all")
 
 
-_REPLAY_TOOL_STATE = {"outputs": None, "idx": {}}
+_REPLAY_TOOL_STATE = {"records": None, "idx": {}, "consumed": None}
 
 
-def _replay_tool_outputs():
-    if _REPLAY_TOOL_STATE["outputs"] is None:
+def _replay_tool_records():
+    if _REPLAY_TOOL_STATE["records"] is None:
         trace = Trace(os.environ["NUDGE_REPLAY"])
         by_tool = {}
         for r in trace.tool_calls():
-            by_tool.setdefault(r.get("tool"), []).append(r.get("output"))
-        _REPLAY_TOOL_STATE["outputs"] = by_tool
-    return _REPLAY_TOOL_STATE["outputs"]
+            by_tool.setdefault(r.get("tool"), []).append(r)
+        _REPLAY_TOOL_STATE["records"] = by_tool
+        _REPLAY_TOOL_STATE["consumed"] = set()
+    return _REPLAY_TOOL_STATE
 
 
-def _replay_tool_output(name):
-    """Full-replay tool mock: the recorded output for this tool's next call,
-    or ``[]`` when the trace holds none (design §6.2 mock default)."""
-    outputs = _replay_tool_outputs()
-    idx = _REPLAY_TOOL_STATE["idx"].get(name, 0)
-    recorded = outputs.get(name, [])
-    if idx < len(recorded):
-        _REPLAY_TOOL_STATE["idx"][name] = idx + 1
-        return recorded[idx]
-    return []
+def _tool_request_hash(name, server, args):
+    """Canonical tool-call identity: server + tool + arguments — the same
+    tool name on two servers (or with two different inputs) is never the
+    same call."""
+    return _request_hash({"op": "tool", "tool": name, "server": server,
+                          "input": _jsonable(args)})
 
 
-def _replay_tool_available(name):
-    """True while the trace still holds an unconsumed output for this tool."""
-    recorded = _replay_tool_outputs().get(name, [])
-    return _REPLAY_TOOL_STATE["idx"].get(name, 0) < len(recorded)
+def _replay_tool_take(name, server, cur_hash):
+    """Identity-first tool replay: consume the first unconsumed record for
+    this tool whose request_hash matches (server + input) — parallel
+    branches replaying the same tool can never cross-consume each other's
+    results, and a changed input cannot silently take an old output.
+    Returns (matched, output). Legacy records without request_hash keep
+    per-tool order consumption."""
+    st = _replay_tool_records()
+    with _REPLAY_LOCK:
+        recs = st["records"].get(name, [])
+        if recs and all(r.get("request_hash") for r in recs):
+            match = next(
+                (i for i, r in enumerate(recs)
+                 if i not in st["consumed"] and r.get("request_hash") == cur_hash),
+                None)
+            if match is None:
+                raise ReplayMismatch(
+                    f"replay signature mismatch: no recorded tool.call for "
+                    f"'{name}' matches this server/arguments (request_hash "
+                    f"{cur_hash}) — the program changed its tool calls")
+            st["consumed"].add(match)
+            return True, recs[match].get("output")
+        # legacy trace: per-tool order (as before)
+        idx = st["idx"].get(name, 0)
+        outputs = [r.get("output") for r in recs]
+        if idx < len(outputs):
+            st["idx"][name] = idx + 1
+            return True, outputs[idx]
+        return False, None
 
 
 def _mcp_registry():
@@ -474,27 +496,44 @@ class ToolDenied(PermissionError):
     asked nicely. The refusal is traced (outcome "denied")."""
 
 
-_TOOL_GRANTS_CACHE = None
+_TOOL_GRANTS_UNSET = object()
+_TOOL_GRANTS_CACHE = _TOOL_GRANTS_UNSET
 
 
 def _tool_grants():
     """NUDGE_TOOL_GRANTS (C5): JSON policy mapping keys to fnmatch rules.
     Keys: tool name ("web_search"), server-qualified ("kb/retrieve"),
     server-wide ("kb/*") or "*" (default policy). Values: ["*"] allow,
-    specific patterns allow those tools, [] denies. No env = unrestricted
-    (today's behavior). A policy present without a matching key = deny
-    (fail closed)."""
+    specific patterns allow those tools, [] denies.
+
+    Fail-closed contract: no env = unrestricted (today's behavior), but a
+    PRESENT policy is authoritative — ``{}`` denies everything, and a
+    malformed or non-object policy is a hard configuration error (a
+    silently ignored policy would run tools unrestricted, which is exactly
+    the bypass this variable exists to prevent)."""
     global _TOOL_GRANTS_CACHE
-    if _TOOL_GRANTS_CACHE is None:
-        grants = None
+    if _TOOL_GRANTS_CACHE is _TOOL_GRANTS_UNSET:
         raw = os.environ.get("NUDGE_TOOL_GRANTS")
-        if raw:
+        if raw is None:
+            grants = None
+        else:
             try:
                 data = json.loads(raw)
-                grants = data if isinstance(data, dict) else None
             except Exception as e:
-                print(f"warning: NUDGE_TOOL_GRANTS ignored ({e})", file=sys.stderr)
-        _TOOL_GRANTS_CACHE = grants or {}
+                raise RuntimeError(f"NUDGE_TOOL_GRANTS is not valid JSON: {e}") from e
+            if not isinstance(data, dict):
+                raise RuntimeError(
+                    "NUDGE_TOOL_GRANTS must be a JSON object of {key: [rule, ...]}"
+                )
+            for key, rules in data.items():
+                if not isinstance(rules, list) or not all(
+                    isinstance(r, str) for r in rules
+                ):
+                    raise RuntimeError(
+                        f"NUDGE_TOOL_GRANTS rule for '{key}' must be a list of glob strings"
+                    )
+            grants = data
+        _TOOL_GRANTS_CACHE = grants
     return _TOOL_GRANTS_CACHE
 
 
@@ -502,16 +541,18 @@ def _tool_allowed(name, server):
     import fnmatch
 
     grants = _tool_grants()
-    if not grants:
+    if grants is None:
         return True
-    keys = [name]
+    # least-privilege precedence: the MOST SPECIFIC rule wins, so a
+    # server-specific restriction can never be bypassed by a broader
+    # global rule (server/tool > server/* > tool > *)
+    keys = []
     if server:
         keys += [f"{server}/{name}", f"{server}/*"]
+    keys += [name, "*"]
     for key in keys:
         if key in grants:
             return any(fnmatch.fnmatch(name, r) for r in grants[key])
-    if "*" in grants:
-        return any(fnmatch.fnmatch(name, r) for r in grants["*"])
     return False
 
 
@@ -535,18 +576,20 @@ def tool_stub(name, args=None, server=None):
                 f"(registry has: {', '.join(sorted(registry))})"
             )
     if _replay_mode() == "all":
-        if not os.environ.get("NUDGE_RESUME"):
+        # identity-first: the record must match THIS call (server + tool +
+        # arguments) — a changed program cannot consume an old output
+        matched, taken = _replay_tool_take(
+            name, server, _tool_request_hash(name, server, args))
+        if not matched and not os.environ.get("NUDGE_RESUME"):
             # design §6.2/v1.9: exhausting the recorded prefix WITHOUT resume
             # raises — a program that changed its tool-call pattern must fail
             # the replay, not silently mock [] (same strictness as llm calls)
-            if not _replay_tool_available(name):
-                raise ReplayMismatch(
-                    f"program called tool '{name}' more times than the trace "
-                    "holds (tool replay exhaustion raises like llm replay)"
-                )
-            return _replay_tool_output(name)
-        if _replay_tool_available(name):
-            return _replay_tool_output(name)
+            raise ReplayMismatch(
+                f"program called tool '{name}' more times than the trace "
+                "holds (tool replay exhaustion raises like llm replay)"
+            )
+        if matched:
+            return taken
         # resume past the recorded prefix: fall through to a live call
     if not _tool_allowed(name, server):
         record = {
@@ -582,6 +625,8 @@ def tool_stub(name, args=None, server=None):
             args if isinstance(args, dict) else list(args) if args is not None else []
         ),
         "output": _jsonable(result),
+        # additive replay identity: server + tool + canonical arguments
+        "request_hash": _tool_request_hash(name, server, args),
     }
     if server is not None:
         record["server"] = server
@@ -733,7 +778,8 @@ def _otel_export(record: dict) -> None:
 
 
 def _trace_call(model, prompt, out, repair_round, outcome, extra=None,
-                provider="fake", tokens=None, cost=None):
+                provider="fake", tokens=None, cost=None, schema=None,
+                images=None):
     # MVP: input/output are inline (design §6.1 content-addressed payload
     # store lands post-MVP — v1-compatible additive fields)
     record = {
@@ -747,6 +793,9 @@ def _trace_call(model, prompt, out, repair_round, outcome, extra=None,
         "repair_round": repair_round,
         "outcome": outcome,
         "provider": provider,
+        # additive replay identity: replay must PROVE this is the same call
+        # (prompt + model + schema + params) before serving the output
+        "request_hash": _llm_request_hash(model, prompt, schema, images),
     }
     if _pricing_unknown(provider, model):
         # additive NTF field: cost_usd is a $0 placeholder, not a measurement
@@ -761,6 +810,34 @@ def _trace_call(model, prompt, out, repair_round, outcome, extra=None,
 
 
 # ── replay (design §6.2, §6.3) ──────────────────────────────────────
+
+
+def _request_hash(payload):
+    """Canonical request identity (additive NTF field `request_hash`):
+    sha256 over the sorted-key JSON of everything that affects the
+    response. Replay compares it BEFORE serving a record — a changed
+    prompt/model/schema/arguments cannot consume an old answer
+    (replay = prove this is the same call, then serve its result)."""
+    import hashlib
+
+    return "sha256:" + hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                   default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def _llm_request_hash(model, prompt, schema, images):
+    return _request_hash({
+        "op": "llm", "model": model or "default", "input": str(prompt),
+        "schema": schema, "params": {"temperature": 0},
+        "images": list(images or []),
+    })
+
+
+def _decision_request_hash(model, questions, state):
+    return _request_hash({"op": "decision", "model": str(model),
+                          "questions": questions, "state": state})
+
 
 class Trace:
     """A recorded run, loaded from JSONL. Property-test input (§6.3)."""
@@ -807,27 +884,95 @@ def replay(path):
     return Trace(path)
 
 
-_REPLAY_STATE = {"outputs": None, "idx": 0}
+_REPLAY_STATE = {"records": None, "outputs": None, "idx": 0,
+                 "consumed": None}
+
+
+def _replay_llm_state():
+    if _REPLAY_STATE["records"] is None:
+        trace = Trace(os.environ["NUDGE_REPLAY"])
+        _REPLAY_STATE["records"] = trace.llm_calls()
+        _REPLAY_STATE["outputs"] = [r.get("output") for r in trace.llm_calls()]
+        _REPLAY_STATE["consumed"] = set()
+    return _REPLAY_STATE
+
+
+def _replay_take_llm(request_hash):
+    """Identity-first replay consumption: serve the recorded output of a
+    call whose request_hash matches THIS call — regardless of wall-clock
+    record order (par lanes complete out of order, so global order is not
+    identity). Legacy traces without request_hash fall back to global
+    order. A matching call is never served twice; a changed call cannot
+    consume an old answer (ReplayMismatch)."""
+    st = _replay_llm_state()
+    with _REPLAY_LOCK:
+        recs = st["records"]
+        if recs and all(r.get("request_hash") for r in recs):
+            match = next(
+                (i for i in range(len(recs))
+                 if i not in st["consumed"] and recs[i].get("request_hash") == request_hash),
+                None)
+            if match is None:
+                if any(i not in st["consumed"] for i in range(len(recs))):
+                    raise ReplayMismatch(
+                        "replay signature mismatch: no recorded llm call matches "
+                        "this prompt/model/schema (request_hash "
+                        f"{request_hash}) — the program changed its LLM calls")
+                return None  # everything consumed — exhaustion at the caller
+            st["consumed"].add(match)
+            return st["outputs"][match]
+        # legacy trace (records without request_hash): global order
+        idx = st["idx"]
+        if idx < len(st["outputs"]):
+            st["idx"] += 1
+            return st["outputs"][idx]
+        return None
+
+
 # decision.call records replay with the same take-and-bump discipline as
 # llm calls (par lanes consume concurrently)
-_DECISION_REPLAY_STATE = {"answers": None, "idx": 0}
+_DECISION_REPLAY_STATE = {"records": None, "answers": None, "idx": 0,
+                          "consumed": None}
 
 
-def _replay_decision_answers():
-    if _DECISION_REPLAY_STATE["answers"] is None:
+def _replay_decision_state():
+    if _DECISION_REPLAY_STATE["records"] is None:
         trace = Trace(os.environ["NUDGE_REPLAY"])
+        _DECISION_REPLAY_STATE["records"] = trace.decision_calls()
         _DECISION_REPLAY_STATE["answers"] = [r.get("answers") for r in trace.decision_calls()]
-    return _DECISION_REPLAY_STATE["answers"]
+        _DECISION_REPLAY_STATE["consumed"] = set()
+    return _DECISION_REPLAY_STATE
+
+
+def _replay_take_decision(request_hash):
+    """Identity-first consumption for decision records — same contract as
+    `_replay_take_llm` (state + questions + model must match)."""
+    st = _replay_decision_state()
+    with _REPLAY_LOCK:
+        recs = st["records"]
+        if recs and all(r.get("request_hash") for r in recs):
+            match = next(
+                (i for i in range(len(recs))
+                 if i not in st["consumed"] and recs[i].get("request_hash") == request_hash),
+                None)
+            if match is None:
+                if any(i not in st["consumed"] for i in range(len(recs))):
+                    raise ReplayMismatch(
+                        "replay signature mismatch: no recorded decide call matches "
+                        "this state/questions/model (request_hash "
+                        f"{request_hash}) — the program changed its decisions")
+                return None
+            st["consumed"].add(match)
+            return st["answers"][match]
+        idx = st["idx"]
+        if idx < len(st["answers"]):
+            st["idx"] += 1
+            return st["answers"][idx]
+        return None
+
 # par_map/par_race lanes replay concurrently — take-and-bump must be atomic
 # or two lanes consume the same record while another is skipped
 _REPLAY_LOCK = threading.Lock()
-
-
-def _replay_outputs():
-    if _REPLAY_STATE["outputs"] is None:
-        trace = Trace(os.environ["NUDGE_REPLAY"])
-        _REPLAY_STATE["outputs"] = [r.get("output") for r in trace.llm_calls()]
-    return _REPLAY_STATE["outputs"]
 
 
 # ── budget (design §4.3) ─────────────────────────────────────────────
@@ -1235,6 +1380,17 @@ def _call_cost(provider, model, in_t, out_t):
     prices = _env_pricing().get(bare) or _MODEL_PRICING.get(bare)
     if prices is None:
         if _pricing_unknown(provider, model):
+            # a HARD run budget is a financial wall: an unknown-priced real
+            # model would spend externally while consuming $0 internally —
+            # that must fail closed, not warn (P1-9). Opt out explicitly
+            # with NUDGE_BUDGET_ALLOW_UNKNOWN=1.
+            if _budget_limit() is not None and os.environ.get("NUDGE_BUDGET_ALLOW_UNKNOWN") != "1":
+                raise BudgetExceeded(
+                    f"hard run budget armed but no pricing entry for '{_split_model(model)[1]}' "
+                    f"({provider}) — unknown-priced spend cannot be tracked against a "
+                    "financial wall; add the model to NUDGE_PRICING or set "
+                    "NUDGE_BUDGET_ALLOW_UNKNOWN=1 to accept the blind spot"
+                )
             bare = _split_model(model)[1]
             if bare not in _PRICING_WARNED and os.environ.get("NUDGE_PRICING_WARN", "1") != "0":
                 _PRICING_WARNED.add(bare)
@@ -1423,6 +1579,8 @@ class AgentState:
         # on resume the recorded checkpoint must survive until the replayed
         # prefix is verified — writing defaults over it here would destroy
         # both the resume point and the divergence-guard reference
+        if resuming:
+            atexit.register(self._resume_finalized)
 
     def __getattr__(self, name):
         try:
@@ -1463,6 +1621,20 @@ class AgentState:
                 f"new run"
             )
 
+    def _resume_finalized(self):
+        """End-of-prefix finalization check (P1-6): if the process ends
+        while suppression is still active, the replayed program performed
+        FEWER state writes than the recorded prefix — a changed program
+        must not be able to finish a resume silently. At process exit the
+        mismatch surfaces as a nonzero exit + traceback."""
+        if getattr(self, "_suppress", 0) > 0:
+            raise ReplayMismatch(
+                f"resume divergence in agent '{self._agent}': the program "
+                f"ended {self._suppress} state write(s) short of the "
+                "recorded prefix — the program changed since the crash; "
+                "start a new run"
+            )
+
     def __repr__(self):
         return f"AgentState({self._agent!r}, {self._values!r})"
 
@@ -1472,9 +1644,16 @@ class AgentState:
             "values": _jsonable(self._values),
             "writes": self._writes,
         }
-        (self._dir / "checkpoint.json").write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        # atomic write (same discipline as the decision cache): same-dir
+        # temp file, flush + fsync, atomic rename — a crash mid-write must
+        # leave the PREVIOUS checkpoint readable, never a torn file
+        target = self._dir / "checkpoint.json"
+        tmp = self._dir / ".checkpoint.json.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, target)
 
 
 # ── model routing (design §4.4) ─────────────────────────────────────
@@ -1881,7 +2060,8 @@ def llm_stream(prompt, model=None, schema=None, retry=0, repair=False,
                 # wall and "trace complete up to the crash point" hold
                 _trace_call(model, prompt, "".join(acc), round_no, "error",
                             provider=provider, tokens=dict(usage),
-                            cost=_call_cost(provider, model, usage["in"], usage["out"]))
+                            cost=_call_cost(provider, model, usage["in"], usage["out"]),
+                            schema=schema, images=None)
                 charge_site(_call_cost(provider, model, usage["in"], usage["out"]))
                 raise
             text = "".join(acc)
@@ -1893,7 +2073,8 @@ def llm_stream(prompt, model=None, schema=None, retry=0, repair=False,
                 last_errors, last_raw = [f"stream aborted: {aborted}"], text
                 _trace_call(model, prompt, text, round_no, "schema_violation",
                             extra=_x({"streamed": True, "chunks": consumed, "early_abort": True}),
-                            provider=provider, tokens=tok, cost=cost)
+                            provider=provider, tokens=tok, cost=cost,
+                            schema=schema, images=None)
                 charge_site(cost)
                 prompt = _REPAIR_HINT.format(errors="stream aborted: " + aborted) + "\n" + str(prompt)
                 continue
@@ -1901,20 +2082,23 @@ def llm_stream(prompt, model=None, schema=None, retry=0, repair=False,
             if schema is None:
                 _trace_call(model, prompt, out, round_no, "ok",
                             extra=_x({"streamed": True, "chunks": consumed}),
-                            provider=provider, tokens=tok, cost=cost)
+                            provider=provider, tokens=tok, cost=cost,
+                            schema=schema, images=None)
                 charge_site(cost)
                 return out
             errors = validate(schema, out)
             if not errors:
                 _trace_call(model, prompt, out, round_no, "ok",
                             extra=_x({"streamed": True, "chunks": consumed}),
-                            provider=provider, tokens=tok, cost=cost)
+                            provider=provider, tokens=tok, cost=cost,
+                            schema=schema, images=None)
                 charge_site(cost)
                 return _attr(out)
             last_errors, last_raw = errors, out
             _trace_call(model, prompt, out, round_no, "schema_violation",
                         extra=_x({"streamed": True, "chunks": consumed}),
-                        provider=provider, tokens=tok, cost=cost)
+                        provider=provider, tokens=tok, cost=cost,
+                        schema=schema, images=None)
             charge_site(cost)
             prompt = _REPAIR_HINT.format(errors="; ".join(errors)) + "\n" + str(prompt)
             continue
@@ -1937,25 +2121,29 @@ def llm_stream(prompt, model=None, schema=None, retry=0, repair=False,
         if aborted is not None:
             last_errors, last_raw = [f"stream aborted: {aborted}"], out
             _trace_call(model, prompt, out, round_no, "schema_violation",
-                        extra=_x({"streamed": True, "chunks": consumed, "early_abort": True}))
+                        extra=_x({"streamed": True, "chunks": consumed, "early_abort": True}),
+                        schema=schema, images=None)
             charge_site(FAKE_CALL_COST)
             # design §4.5: an unsatisfiable prefix aborts early and triggers repair
             prompt = _REPAIR_HINT.format(errors="stream aborted: " + aborted) + "\n" + str(prompt)
             continue
         if schema is None:
             _trace_call(model, prompt, out, 0, "ok",
-                        extra=_x({"streamed": True, "chunks": consumed}))
+                        extra=_x({"streamed": True, "chunks": consumed}),
+                        schema=schema, images=None)
             charge_site(FAKE_CALL_COST)
             return out
         errors = validate(schema, out)
         if not errors:
             _trace_call(model, prompt, out, round_no, "ok",
-                        extra=_x({"streamed": True, "chunks": consumed}))
+                        extra=_x({"streamed": True, "chunks": consumed}),
+                        schema=schema, images=None)
             charge_site(FAKE_CALL_COST)
             return out
         last_errors, last_raw = errors, out
         _trace_call(model, prompt, out, round_no, "schema_violation",
-                    extra=_x({"streamed": True, "chunks": consumed}))
+                    extra=_x({"streamed": True, "chunks": consumed}),
+                    schema=schema, images=None)
         charge_site(FAKE_CALL_COST)
         # design §4.2 step 1: feed raw output errors back to the model
         prompt = _REPAIR_HINT.format(errors="; ".join(errors)) + "\n" + str(prompt)
@@ -2092,20 +2280,17 @@ def llm_call(prompt, model=None, schema=None, retry=0, repair=False,
         if round_no >= 1 and provider != "replay":
             _repair_budget_precheck()
         if provider == "replay":
-            outputs = _replay_outputs()
-            # reserve the record index atomically (v1.2.1): the exhaustion
-            # check and the increment must happen under the same lock, or
-            # two par threads can both see the last record as available
-            with _REPLAY_LOCK:
-                exhausted = _REPLAY_STATE["idx"] >= len(outputs)
-                if not exhausted:
-                    out = outputs[_REPLAY_STATE["idx"]]
-                    _REPLAY_STATE["idx"] += 1
+            # identity-first consumption: the record must match THIS call's
+            # request_hash (prompt + model + schema + params) — a changed
+            # program cannot consume an old answer (P0 replay identity)
+            cur_hash = _llm_request_hash(model, prompt, schema, images)
+            out = _replay_take_llm(cur_hash)
+            exhausted = out is None
             if exhausted:
                 if not os.environ.get("NUDGE_RESUME"):
                     raise ReplayMismatch(
                         "program made more llm calls than the trace holds "
-                        f"({len(outputs)} records)"
+                        f"({len(_replay_llm_state()['outputs'])} records)"
                     )
                 # resume (design §7): the recorded prefix is exhausted —
                 # continue live against the real provider and trace it
@@ -2128,7 +2313,8 @@ def llm_call(prompt, model=None, schema=None, retry=0, repair=False,
                     extra = {**(extra or {}), "guard": guard_applied}
                 _trace_call(model, prompt, out, 0, "ok", extra=extra,
                             provider=provider, tokens={"in": in_t, "out": out_t},
-                            cost=_call_cost(provider, model, in_t, out_t))
+                            cost=_call_cost(provider, model, in_t, out_t),
+                            schema=schema, images=None)
                 charge_site(_call_cost(provider, model, in_t, out_t))
             return out
         errors = validate(schema, out)
@@ -2140,7 +2326,8 @@ def llm_call(prompt, model=None, schema=None, retry=0, repair=False,
                     extra = {**(extra or {}), "guard": guard_applied}
                 _trace_call(model, prompt, out, round_no, "ok", extra=extra,
                             provider=provider, tokens={"in": in_t, "out": out_t},
-                            cost=_call_cost(provider, model, in_t, out_t))
+                            cost=_call_cost(provider, model, in_t, out_t),
+                            schema=schema, images=None)
                 charge_site(_call_cost(provider, model, in_t, out_t))
             # validated records support Nudge's `.field` syntax (AttrDict)
             return _attr(out)
@@ -2148,7 +2335,8 @@ def llm_call(prompt, model=None, schema=None, retry=0, repair=False,
         if provider != "replay":
             _trace_call(model, prompt, out, round_no, "schema_violation", extra=route_extra,
                         provider=provider, tokens={"in": in_t, "out": out_t},
-                        cost=_call_cost(provider, model, in_t, out_t))
+                        cost=_call_cost(provider, model, in_t, out_t),
+                        schema=schema, images=None)
             charge_site(_call_cost(provider, model, in_t, out_t))
         # design §4.2 step 1: feed raw output errors back to the model
         prompt = _REPAIR_HINT.format(errors="; ".join(errors)) + "\n" + str(prompt)
@@ -2744,18 +2932,22 @@ def predict_batch(questions, states, options=None):
     answers = [None] * len(states)
 
     if os.environ.get("NUDGE_REPLAY") and _replay_mode() == "all":
-        outs = _replay_decision_answers()
-        with _REPLAY_LOCK:
-            for i in range(len(states)):
-                if _DECISION_REPLAY_STATE["idx"] >= len(outs) and not os.environ.get("NUDGE_RESUME"):
+        # identity-first per state: each state's record must match its own
+        # request_hash (state + questions + model)
+        for i, st in enumerate(states):
+            recorded = _replay_take_decision(
+                _decision_request_hash(model, questions, st))
+            if recorded is None:
+                if not os.environ.get("NUDGE_RESUME"):
                     raise ReplayMismatch(
                         "program made more decide calls than the trace holds "
                         "(decision replay exhaustion raises like llm replay)"
                     )
-                if _DECISION_REPLAY_STATE["idx"] < len(outs):
-                    answers[i] = _attr(outs[_DECISION_REPLAY_STATE["idx"]])
-                    _DECISION_REPLAY_STATE["idx"] += 1
-        return answers
+                break
+            answers[i] = _attr(recorded)
+        if all(a is not None for a in answers):
+            return answers
+        # resume: fall through to a live call below for the remainder
 
     if provider == "fake":
         for i, state in enumerate(states):
@@ -2784,7 +2976,9 @@ def predict_batch(questions, states, options=None):
             if hit is not None:
                 answers[i] = _attr(hit)
                 _write_decision_record(model, provider, questions, hit,
-                                       0, opts.get("deadline"), "ok", True)
+                                       0, opts.get("deadline"), "ok", True,
+                                       request_hash=_decision_request_hash(
+                                           model, questions, states[i]))
                 continue
         miss_idx.append(i)
     wall_ms = 0
@@ -2810,7 +3004,10 @@ def predict_batch(questions, states, options=None):
             if cache_path:
                 _decision_cache_put(cache_path, _decision_cache_key(states[i], questions, model), got[pos])
             _write_decision_record(model, provider, questions, got[pos],
-                                   per_ms, deadline, outcome, False, batch=batch_meta)
+                                   per_ms, deadline, outcome, False,
+                                   batch=batch_meta,
+                                   request_hash=_decision_request_hash(
+                                       model, questions, states[i]))
     return answers
 
 
@@ -2831,21 +3028,19 @@ def decide(questions, state, options=None):
     # NUDGE_PROVIDER=fake explicitly overrides model prefixes (llm parity);
     # an UNSET NUDGE_PROVIDER does not silently fake a named provider
     if os.environ.get("NUDGE_REPLAY") and _replay_mode() == "all":
-        # full replay: consume recorded answers in order — strict
-        # exhaustion like llm replay (a changed decide shape must fail the
-        # replay, not silently mock); NUDGE_RESUME continues live past the
-        # recorded prefix and keeps recording
-        outs = _replay_decision_answers()
-        with _REPLAY_LOCK:
-            if _DECISION_REPLAY_STATE["idx"] >= len(outs) and not os.environ.get("NUDGE_RESUME"):
-                raise ReplayMismatch(
-                    "program made more decide calls than the trace holds "
-                    "(decision replay exhaustion raises like llm replay)"
-                )
-            if _DECISION_REPLAY_STATE["idx"] < len(outs):
-                recorded = outs[_DECISION_REPLAY_STATE["idx"]]
-                _DECISION_REPLAY_STATE["idx"] += 1
-                return _attr(recorded)
+        # full replay, identity-first: the record must match THIS call's
+        # request_hash (state + questions + model) — a changed decide shape
+        # cannot consume an old answer (replay signature, P0); NUDGE_RESUME
+        # continues live past the recorded prefix and keeps recording
+        recorded = _replay_take_decision(
+            _decision_request_hash(model, questions, state))
+        if recorded is not None:
+            return _attr(recorded)
+        if not os.environ.get("NUDGE_RESUME"):
+            raise ReplayMismatch(
+                "program made more decide calls than the trace holds "
+                "(decision replay exhaustion raises like llm replay)"
+            )
         # resume: fall through to a live call below
     elif provider == "fake" or os.environ.get("NUDGE_PROVIDER") == "fake":
         answers = _fake_decide(questions, state, opts)
@@ -2865,12 +3060,14 @@ def decide(questions, state, options=None):
         for a in answers.values():
             a["deadline_missed"] = True
     _write_decision_record(model, provider, questions, answers,
-                           latency_ms, deadline, outcome, cache_hit)
+                           latency_ms, deadline, outcome, cache_hit,
+                           request_hash=_decision_request_hash(model, questions, state))
     return _attr(answers)
 
 
 def _write_decision_record(model, provider, questions, answers,
-                           latency_ms, deadline, outcome, cache_hit=False, batch=None):
+                           latency_ms, deadline, outcome, cache_hit=False,
+                           batch=None, request_hash=None):
     """One `decision.call` NTF record (design §11.4): questions keyed by
     name (the wire shape), answers as returned, measured latency."""
     if not os.environ.get("NUDGE_TRACE"):
@@ -2884,6 +3081,9 @@ def _write_decision_record(model, provider, questions, answers,
         "latency_ms": latency_ms,
         "outcome": outcome,
     }
+    if request_hash:
+        # additive replay identity: state + questions + model (P0)
+        record["request_hash"] = request_hash
     if cache_hit:
         # additive: this record came from NUDGE_DECISION_CACHE, not the wire
         record["cache"] = "hit"
@@ -3469,6 +3669,17 @@ def _replay_actions():
     return _computer_replay_records("acts")
 
 
+def _computer_request_hash(action, app, payload):
+    """Canonical computer-action identity: app + action + the FULL payload
+    (text, key, direction+pages, value, destination target, paste format)
+    — app and target equality alone must not let `computer.type("A")`
+    replay a `computer.type("B")` record. state_id is excluded: the
+    observation authority is implied by app + the staleness contract."""
+    body = {k: v for k, v in payload.items() if k != "state_id"}
+    return _request_hash({"op": "computer", "action": action,
+                          "app": str(app), **body})
+
+
 def _canonical_computer_target(t):
     """Canonical comparison form for replay signature checks: an index
     target and an {x, y} raster target normalize to fixed shapes (no
@@ -3480,32 +3691,74 @@ def _canonical_computer_target(t):
     return {"index": int(t.get("index", -1))}
 
 
-def _write_trace_asset(screenshot_hash, data_url):
+def _local_screenshot_digest(data_url):
+    """Runtime-owned screenshot identity: the pixels are decoded and
+    hashed LOCALLY — a provider-supplied screenshot_hash is verification
+    input, never the filename authority (a hostile provider must not get
+    to choose where files land, or what they are named)."""
+    import base64
+    import hashlib
+
+    payload = data_url
+    if data_url.startswith("data:") and "," in data_url:
+        payload = data_url.split(",", 1)[1]
+    try:
+        data = base64.b64decode(payload, validate=True)
+    except Exception:
+        data = data_url.encode("utf-8")
+    return hashlib.sha256(data).hexdigest()
+
+
+def _write_trace_asset(digest, data_url):
     """Content-addressed screenshot sidecar next to the trace — the trace
     keeps the hash, the asset keeps the pixels, so replay reconstructs the
     full Observation (screenshot replay fidelity) without bloating the
-    JSONL. Returns the asset file name, or None when unwritable."""
+    JSONL. The filename is the locally computed digest ONLY: exactly 64
+    lowercase hex chars (path traversal via a crafted hash is impossible
+    by construction). Returns the asset file name, or None when
+    unwritable."""
+    import re
+
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        return None
     try:
         assets = _trace_path().parent / (_trace_path().name + ".assets")
         assets.mkdir(parents=True, exist_ok=True)
-        name = (screenshot_hash or "sha256:unhashed").split(":", 1)[-1] + ".txt"
-        (assets / name).write_text(data_url, encoding="utf-8")
-        return name
+        path = assets / (digest + ".txt")
+        # containment is checked on the RESOLVED path — a symlinked asset
+        # directory entry must not point outside
+        if path.resolve().parent != assets.resolve():
+            return None
+        path.write_text(data_url, encoding="utf-8")
+        return digest + ".txt"
     except OSError:
         return None
 
 
-def _read_trace_asset(name):
+def _read_trace_asset(name, digest=None):
     if not name:
         return ""
     # assets are read from the trace we are REPLAYING, not the one the
     # current run is writing (NUDGE_TRACE may point elsewhere mid-replay)
+    import re
+
+    if not re.fullmatch(r"[0-9a-f]{64}\.txt", str(name)):
+        return ""
     src = os.environ.get("NUDGE_REPLAY") or str(_trace_path())
-    base = Path(src).parent / (Path(src).name + ".assets")
+    p = Path(src)
+    base = (p.parent / (p.name + ".assets")).resolve()
+    path = (base / name).resolve()
+    if path.parent != base:
+        return ""
     try:
-        return (base / name).read_text(encoding="utf-8")
+        content = path.read_text(encoding="utf-8")
     except OSError:
         return ""
+    # a crafted trace must not serve pixels whose content disagrees with
+    # the recorded digest — unverified pixels are not served at all
+    if digest and _local_screenshot_digest(content) != digest:
+        return ""
+    return content
 
 
 def _computer_diff_drift(live, recorded):
@@ -3619,7 +3872,10 @@ def computer_observe(app, allow=None, deadline=None, screenshot=False):
         # replay see the same Observation)
         _commit_last_observed(app, str(recorded.get("state_id", "")))
         obs = _normalize_observation(app, recorded)
-        shot = _read_trace_asset(recorded.get("screenshot_asset"))
+        shot = _read_trace_asset(
+            recorded.get("screenshot_asset"),
+            (recorded.get("screenshot_hash") or "").split(":", 1)[-1] or None,
+        )
         if shot:
             obs["screenshot"] = shot
         return _attr(obs)
@@ -3635,6 +3891,11 @@ def computer_observe(app, allow=None, deadline=None, screenshot=False):
          "include_screenshot": include_screenshot},
         app, include_screenshot, deadline)
     obs = _normalize_observation(app, msg["observation"])
+    if obs.get("screenshot"):
+        # the runtime owns screenshot identity: hash the pixels LOCALLY —
+        # a provider-supplied screenshot_hash is verification input, never
+        # the filename/hash authority (P0 sidecar traversal fix)
+        obs["screenshot_hash"] = "sha256:" + _local_screenshot_digest(obs["screenshot"])
     _commit_last_observed(app, obs["state_id"])
     latency_ms = int((time.monotonic() - started) * 1000)
     outcome = _computer_check_deadline(latency_ms, deadline)
@@ -3660,7 +3921,9 @@ def computer_observe(app, allow=None, deadline=None, screenshot=False):
     if obs["screenshot_hash"]:
         record["screenshot_hash"] = obs["screenshot_hash"]
     if obs["screenshot"]:
-        asset = _write_trace_asset(obs["screenshot_hash"], obs["screenshot"])
+        asset = _write_trace_asset(
+            (obs["screenshot_hash"] or "sha256:").split(":", 1)[-1], obs["screenshot"]
+        )
         if asset:
             record["screenshot_asset"] = asset
     if deadline is not None:
@@ -3716,6 +3979,25 @@ def _computer_act(action, app, payload, allow=None, deadline=None):
             raise ReplayMismatch(
                 f"replay signature mismatch: trace target {rec_target}, "
                 f"program target {payload['target']}")
+        # full-payload identity (P0 replay): the recorded call must carry
+        # the same text/key/value/direction/pages/format/destination —
+        # `type("A")` must never replay a `type("B")` record
+        rec_hash = recorded.get("request_hash")
+        cur_hash = _computer_request_hash(action, app, payload)
+        if rec_hash:
+            if rec_hash != cur_hash:
+                raise ReplayMismatch(
+                    "replay signature mismatch: trace request "
+                    f"{rec_hash}, program request {cur_hash} — the action "
+                    "payload changed")
+        elif "value" in recorded:
+            cur_value = payload.get("text")
+            if cur_value is None:
+                cur_value = payload.get("value")
+            if str(recorded.get("value")) != str(cur_value):
+                raise ReplayMismatch(
+                    f"replay signature mismatch: trace value "
+                    f"{recorded.get('value')!r}, program value {cur_value!r}")
         result = _normalize_result(recorded)
         if drift_mode:
             # drift-check audit: the action was NOT re-executed
@@ -3758,6 +4040,8 @@ def _computer_act(action, app, payload, allow=None, deadline=None):
         "latency_ms": result["latency_ms"], "ok": result["ok"],
         "action_sent": result["action_sent"],
         "provider": provider,
+        # additive replay identity: app + action + full payload
+        "request_hash": _computer_request_hash(action, app, payload),
     }
     if missed:
         record["deadline_missed"] = True
@@ -3767,6 +4051,9 @@ def _computer_act(action, app, payload, allow=None, deadline=None):
         record["value"] = payload["text"]
     if payload.get("value"):
         record["value"] = payload["value"]
+    for f in ("key", "direction", "pages", "to", "format"):
+        if payload.get(f) is not None:
+            record[f] = payload[f]
     if deadline is not None:
         record["deadline_ms"] = int(deadline)
     _write_computer_record(record)

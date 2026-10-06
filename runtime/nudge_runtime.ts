@@ -116,34 +116,69 @@ function _emitTrace(record) {
 // content-addressed screenshot sidecar next to the trace — the trace
 // keeps the hash, the asset keeps the pixels, so replay reconstructs
 // the full Observation (screenshot replay fidelity) without bloating
-// the JSONL
+// the JSONL. The runtime owns screenshot identity: pixels are hashed
+// LOCALLY and the filename is the 64-hex digest ONLY — a provider- or
+// trace-supplied string can never traverse out of the assets directory.
 function _traceAssetDir() {
   return _tracePath() + ".assets";
 }
 
-function writeTraceAsset(screenshotHash, dataUrl) {
+function localScreenshotDigest(dataUrl) {
+  let payload = dataUrl;
+  if (dataUrl.startsWith("data:") && dataUrl.includes(",")) {
+    payload = dataUrl.slice(dataUrl.indexOf(",") + 1);
+  }
+  let data;
   try {
-    const dir = _traceAssetDir();
-    fs.mkdirSync(dir, { recursive: true });
-    const name = String(screenshotHash || "sha256:unhashed").split(":").pop() + ".txt";
-    fs.writeFileSync(dir + "/" + name, dataUrl);
-    return name;
+    data = Buffer.from(payload, "base64");
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(payload.replace(/\s/g, ""))) {
+      // not real base64 — hash the raw string bytes instead
+      data = Buffer.from(dataUrl, "utf8");
+    }
+  } catch {
+    data = Buffer.from(dataUrl, "utf8");
+  }
+  return crypto.createHash("sha256").update(data).digest("hex");
+}
+
+function writeTraceAsset(digest, dataUrl) {
+  if (!/^[0-9a-f]{64}$/.test(String(digest))) return null;
+  try {
+    const resolved = path.resolve(_traceAssetDir());
+    fs.mkdirSync(resolved, { recursive: true });
+    const file = path.join(resolved, digest + ".txt");
+    fs.writeFileSync(file, dataUrl);
+    // post-write containment: the resolved entry must still sit in the
+    // assets directory (a symlink swap must not redirect the write)
+    if (path.dirname(fs.realpathSync(file)) !== fs.realpathSync(resolved)) {
+      fs.rmSync(file, { force: true });
+      return null;
+    }
+    return digest + ".txt";
   } catch {
     return null;
   }
 }
 
-function readTraceAsset(name) {
+function readTraceAsset(name, digest) {
   if (!name) return "";
+  if (!/^[0-9a-f]{64}\.txt$/.test(String(name))) return "";
   // assets are read from the trace we are REPLAYING, not the one the
   // current run is writing (NUDGE_TRACE may point elsewhere mid-replay)
   const src = process.env.NUDGE_REPLAY || _tracePath();
-  const dir = src + ".assets";
+  const base = path.resolve(src + ".assets");
+  const file = path.resolve(base, name);
+  if (path.dirname(file) !== base) return "";
+  let content;
   try {
-    return fs.readFileSync(dir + "/" + name, "utf8");
+    content = fs.readFileSync(file, "utf8");
   } catch {
     return "";
   }
+  // a crafted trace must not serve pixels whose content disagrees with
+  // the recorded digest — unverified pixels are not served at all
+  if (digest && localScreenshotDigest(content) !== digest) return "";
+  return content;
 }
 
 function _budgetCharge(cost, budget) {
@@ -266,18 +301,66 @@ function _synth(sch) {
   }
 }
 
-let _replayOutputsCache = null;
-let _replayIdx = 0;
+// canonical request identity (additive NTF `request_hash`): sha256 over
+// the sorted-key JSON of everything that affects the response — replay
+// must PROVE a record is the same call before serving it (P0 identity)
+function _stableStringify(v) {
+  if (v === null || typeof v !== "object") return JSON.stringify(v);
+  if (Array.isArray(v)) return "[" + v.map(_stableStringify).join(",") + "]";
+  return "{" + Object.keys(v).sort().map((k) => JSON.stringify(k) + ":" + _stableStringify(v[k])).join(",") + "}";
+}
 
-function _replayOutputs() {
-  if (_replayOutputsCache === null) {
+function requestHash(payload) {
+  return "sha256:" + crypto.createHash("sha256").update(_stableStringify(payload)).digest("hex");
+}
+
+function llmRequestHash(model, prompt, schema) {
+  return requestHash({ op: "llm", model: model || "default", input: String(prompt),
+    schema: schema === undefined ? null : schema, params: { temperature: 0 }, images: [] });
+}
+
+function toolRequestHash(name, server, args) {
+  return requestHash({ op: "tool", tool: name, server: server === undefined ? null : server,
+    input: args === undefined ? null : args });
+}
+
+function decisionRequestHash(model, questions, state) {
+  return requestHash({ op: "decision", model: String(model), questions, state });
+}
+
+let _replayRecordsCache = null;
+let _replayIdx = 0;
+const _replayConsumed = new Set();
+
+function _replayLlmRecords() {
+  if (_replayRecordsCache === null) {
     const p = process.env.NUDGE_REPLAY;
-    _replayOutputsCache = p
+    _replayRecordsCache = p
       ? fs.readFileSync(p, "utf8").split("\n").filter(Boolean).map(JSON.parse)
-          .filter((r) => r.kind === "llm.call").map((r) => r.output)
+          .filter((r) => r.kind === "llm.call")
       : [];
   }
-  return _replayOutputsCache;
+  return _replayRecordsCache;
+}
+
+function _replayTakeLlm(curHash) {
+  // identity-first consumption (parity with the python runtime): a record
+  // whose request_hash matches THIS call is served regardless of record
+  // order (par branches complete out of order); legacy traces without
+  // request_hash fall back to global order
+  const recs = _replayLlmRecords();
+  if (recs.length && recs.every((r) => r.request_hash)) {
+    const anyLeft = recs.some((_, i) => !_replayConsumed.has(i));
+    const match = recs.findIndex((r, i) => !_replayConsumed.has(i) && r.request_hash === curHash);
+    if (match < 0 && anyLeft) {
+      throw new Error(`ReplayMismatch: no recorded llm call matches this prompt/model/schema (request_hash ${curHash}) — the program changed its LLM calls`);
+    }
+    if (match < 0) return null; // everything consumed — exhaustion at the caller
+    _replayConsumed.add(match);
+    return recs[match].output;
+  }
+  if (_replayIdx < recs.length) return recs[_replayIdx++].output;
+  return null;
 }
 
 // NTF v1.1 (additive): records emitted inside a par lane carry a `branch`
@@ -347,11 +430,14 @@ export function applyOutputGuards(value) {
 export function llmCall(opts) {
   const { prompt, model = null, schema: sch = null, budget = null } = opts;
   if (process.env.NUDGE_REPLAY) {
-    const outs = _replayOutputs();
-    if (_replayIdx >= outs.length) {
+    const outs = _replayLlmRecords();
+    if (!outs.length || (!outs.every((r) => r.request_hash) && _replayIdx >= outs.length)) {
       throw new Error(`ReplayMismatch: program made more llm calls than the trace holds (${outs.length} records)`);
     }
-    const recorded = outs[_replayIdx++];
+    const recorded = _replayTakeLlm(llmRequestHash(model, prompt, sch));
+    if (recorded === null) {
+      throw new Error(`ReplayMismatch: program made more llm calls than the trace holds (${outs.length} records)`);
+    }
     if (sch) {
       // replay strictness (design §6.2, parity with the python runtime's
       // _PrefixValidator): a recorded output that violates the declared
@@ -381,6 +467,8 @@ export function llmCall(opts) {
     params: { temperature: 0 },
     input: String(prompt),
     output: out,
+    // additive replay identity (P0)
+    request_hash: llmRequestHash(model, prompt, sch),
     tokens: {
       in: String(prompt).split(/\s+/).filter(Boolean).length,
       out: String(out).split(/\s+/).filter(Boolean).length,
@@ -401,15 +489,16 @@ export function llmCall(opts) {
 
 let _replayToolCache = null;
 const _replayToolIdx = {};
+const _replayToolConsumed = new Set();
 
-function _replayToolOutputs() {
+function _replayToolRecords() {
   if (_replayToolCache === null) {
     const p = process.env.NUDGE_REPLAY;
     _replayToolCache = {};
     if (p) {
       for (const r of fs.readFileSync(p, "utf8").split("\n").filter(Boolean).map(JSON.parse)
         .filter((r) => r.kind === "tool.call")) {
-        (_replayToolCache[r.tool] = _replayToolCache[r.tool] || []).push(r.output);
+        (_replayToolCache[r.tool] = _replayToolCache[r.tool] || []).push(r);
       }
     }
   }
@@ -439,6 +528,8 @@ export function llmStream(opts) {
     params: { temperature: 0 },
     input: String(prompt),
     output: out,
+    // additive replay identity (P0)
+    request_hash: llmRequestHash(model, prompt, sch),
     tokens: {
       in: String(prompt).split(/\s+/).filter(Boolean).length,
       out: String(out).split(/\s+/).filter(Boolean).length,
@@ -460,8 +551,11 @@ export function llmStream(opts) {
 
 // C5: NUDGE_TOOL_GRANTS — execution-layer capability policy. Keys: tool
 // name, "server/tool", "server/*" or "*"; values: fnmatch rules (["*"]
-// allows). No env = unrestricted; policy present without a matching key
-// fails closed. Denials are traced with outcome "denied".
+// allows). No env = unrestricted; a PRESENT policy is authoritative —
+// {} denies everything, malformed/non-object policies are hard errors
+// (fail closed), and the MOST SPECIFIC rule wins (server/tool >
+// server/* > tool > *), so a server restriction can't be bypassed by a
+// broad global rule. Denials are traced with outcome "denied".
 export class ToolDenied extends Error {
   constructor(msg) {
     super(msg);
@@ -469,19 +563,29 @@ export class ToolDenied extends Error {
   }
 }
 
-let _toolGrantsCache = null;
+const _TOOL_GRANTS_UNSET = Symbol("unset");
+let _toolGrantsCache = _TOOL_GRANTS_UNSET;
 
 function toolGrants() {
-  if (_toolGrantsCache === null) {
-    let grants = {};
+  if (_toolGrantsCache === _TOOL_GRANTS_UNSET) {
     const raw = process.env.NUDGE_TOOL_GRANTS;
-    if (raw) {
+    let grants = undefined;
+    if (raw !== undefined) {
+      let data;
       try {
-        const data = JSON.parse(raw);
-        if (data && typeof data === "object") grants = data;
+        data = JSON.parse(raw);
       } catch (e) {
-        process.stderr.write(`warning: NUDGE_TOOL_GRANTS ignored (${e.message})\n`);
+        throw new Error(`NUDGE_TOOL_GRANTS is not valid JSON: ${e.message}`);
       }
+      if (!data || typeof data !== "object" || Array.isArray(data)) {
+        throw new Error("NUDGE_TOOL_GRANTS must be a JSON object of {key: [rule, ...]}");
+      }
+      for (const [key, rules] of Object.entries(data)) {
+        if (!Array.isArray(rules) || !rules.every((r) => typeof r === "string")) {
+          throw new Error(`NUDGE_TOOL_GRANTS rule for '${key}' must be a list of glob strings`);
+        }
+      }
+      grants = data;
     }
     _toolGrantsCache = grants;
   }
@@ -490,9 +594,11 @@ function toolGrants() {
 
 function toolAllowed(name, server) {
   const grants = toolGrants();
-  if (!Object.keys(grants).length) return true;
-  const keys = [name];
+  if (grants === undefined) return true;
+  // least-privilege precedence: the most specific rule wins
+  const keys = [];
   if (server) keys.push(`${server}/${name}`, `${server}/*`);
+  keys.push(name, "*");
   const matches = (rules) => rules.some((r) => wildcardMatch(name, r));
   for (const key of keys) {
     if (key in grants) return matches(grants[key]);
@@ -512,20 +618,34 @@ export function toolStub(name, args = [], opts = {}) {
   // full-replay parity with the python runtime: tool calls are mocked from
   // the trace and write NO record (the trace stays untouched during replay)
   if (process.env.NUDGE_REPLAY) {
-    const recorded = _replayToolOutputs()[name] || [];
+    // identity-first (parity with the python runtime): the record must
+    // match THIS call — server + tool + arguments (P0 replay identity)
+    const recs = _replayToolRecords()[name] || [];
+    const curHash = toolRequestHash(name, opts.server, args);
+    if (recs.length && recs.every((r) => r.request_hash)) {
+      const match = recs.findIndex((r, i) => !_replayToolConsumed.has(i) && r.request_hash === curHash);
+      if (match < 0) {
+        throw new Error(
+          `ReplayMismatch: no recorded tool.call for '${name}' matches this server/arguments (request_hash ${curHash}) — the program changed its tool calls`
+        );
+      }
+      _replayToolConsumed.add(match);
+      return recs[match].output;
+    }
     const i = _replayToolIdx[name] || 0;
     _replayToolIdx[name] = i + 1;
-    if (i >= recorded.length) {
+    if (i >= recs.length) {
       // parity with the python runtime (v1.9): tool replay exhaustion is
       // a mismatch, not a silent fabricated empty result
       throw new Error(
-        `ReplayMismatch: program made more tool calls to '${name}' than the trace holds (${recorded.length} records)`
+        `ReplayMismatch: program made more tool calls to '${name}' than the trace holds (${recs.length} records)`
       );
     }
-    return recorded[i];
+    return recs[i].output;
   }
   if (!toolAllowed(name, opts.server)) {
-    const record = { kind: "tool.call", tool: name, input: args, output: null, outcome: "denied" };
+    const record = { kind: "tool.call", tool: name, input: args, output: null, outcome: "denied",
+      request_hash: toolRequestHash(name, opts.server, args) };
     if (opts.server) record.server = opts.server;
     if (_branchId !== null) record.branch = _branchId;
     _emitTrace(record);
@@ -533,7 +653,8 @@ export function toolStub(name, args = [], opts = {}) {
       `tool '${name}'${opts.server ? ` on server '${opts.server}'` : ""} is not granted by NUDGE_TOOL_GRANTS`,
     );
   }
-  const record = { kind: "tool.call", tool: name, input: args, output: [] };
+  const record = { kind: "tool.call", tool: name, input: args, output: [],
+    request_hash: toolRequestHash(name, opts.server, args) };
   if (opts.server) record.server = opts.server;
   if (_branchId !== null) record.branch = _branchId;
   _emitTrace(record);
@@ -564,12 +685,30 @@ export function agentState(agent, defaults) {
     // replay from the DEFAULTS (not the checkpoint) so augmented writes
     // (+=/-=) re-accumulate instead of double-applying
     suppress = writes;
+    // end-of-prefix finalization check (P1-6, parity with the python
+    // runtime): a process that ends while suppression is still active
+    // performed FEWER state writes than the recorded prefix — a changed
+    // program must not finish a resume silently
+    // the node:process ESM namespace lacks .on — go through globalThis
+    globalThis.process.on("exit", () => {
+      if (suppress > 0) {
+        globalThis.process.stderr.write(
+          `ReplayMismatch: resume divergence in agent '${agent}': the program ended ${suppress} state write(s) short of the recorded prefix — the program changed since the crash\n`,
+        );
+        globalThis.process.exitCode = 1;
+      }
+    });
   }
   function checkpoint() {
+    // atomic write (parity with the python runtime + the decision cache):
+    // same-dir temp file then atomic rename — a crash mid-write must
+    // leave the PREVIOUS checkpoint readable, never a torn file
+    const tmp = `${ckptPath}.tmp`;
     fs.writeFileSync(
-      ckptPath,
+      tmp,
       JSON.stringify({ agent, values, writes }, null, 2) + "\n",
     );
+    fs.renameSync(tmp, ckptPath);
   }
   const state = new Proxy(
     {},
@@ -842,27 +981,48 @@ function decisionCachePut(path, key, answers) {
   fs.renameSync(tmp, path);
 }
 
-function _replayDecisionAnswers() {
+function _replayDecisionRecords() {
   if (_decisionReplayCache === null) {
     _decisionReplayCache = fs
       .readFileSync(process.env.NUDGE_REPLAY, "utf8")
       .split("\n")
       .filter(Boolean)
       .map(JSON.parse)
-      .filter((r) => r.kind === "decision.call")
-      .map((r) => r.answers);
+      .filter((r) => r.kind === "decision.call");
   }
   return _decisionReplayCache;
 }
 
+const _decisionReplayConsumed = new Set();
+
+function _replayTakeDecision(curHash) {
+  // identity-first (parity with the python runtime): state + questions +
+  // model must match; legacy traces fall back to global order
+  const recs = _replayDecisionRecords();
+  if (recs.length && recs.every((r) => r.request_hash)) {
+    const anyLeft = recs.some((_, i) => !_decisionReplayConsumed.has(i));
+    const match = recs.findIndex((r, i) => !_decisionReplayConsumed.has(i) && r.request_hash === curHash);
+    if (match < 0 && anyLeft) {
+      throw new Error(`ReplayMismatch: no recorded decide call matches this state/questions/model (request_hash ${curHash}) — the program changed its decisions`);
+    }
+    if (match < 0) return null;
+    _decisionReplayConsumed.add(match);
+    return recs[match].answers;
+  }
+  if (_decisionReplayIdx < recs.length) return recs[_decisionReplayIdx++].answers;
+  return null;
+}
+
 // frozen v1 + additive decision.call record (design §11.4)
-function decisionRecord(model, provider, questions, answers, options, started, cacheHit) {
+function decisionRecord(model, provider, questions, answers, options, started, cacheHit, state) {
   const record = {
     kind: "decision.call",
     model,
     provider,
     questions: Object.fromEntries(questions.map((q) => [q.name, q])),
     answers,
+    // additive replay identity: state + questions + model (P0)
+    request_hash: decisionRequestHash(model, questions, state),
     latency_ms: Date.now() - started,
     outcome: Object.values(answers).some((a) => a.deadline_missed)
       ? "deadline_missed"
@@ -879,13 +1039,19 @@ export function decide(questions, state, options = {}) {
   const started = Date.now();
   // full replay: consume recorded answers in order, strict exhaustion
   if (process.env.NUDGE_REPLAY) {
-    const outs = _replayDecisionAnswers();
-    if (_decisionReplayIdx >= outs.length) {
+    const outs = _replayDecisionRecords();
+    if (!outs.length || (!outs.every((r) => r.request_hash) && _decisionReplayIdx >= outs.length)) {
       throw new Error(
         `ReplayMismatch: program made more decide calls than the trace holds (${outs.length} records)`,
       );
     }
-    return _decisionReplayIdx < outs.length ? outs[_decisionReplayIdx++] : null;
+    const recorded = _replayTakeDecision(decisionRequestHash(model, questions, state));
+    if (recorded === null) {
+      throw new Error(
+        `ReplayMismatch: program made more decide calls than the trace holds (${outs.length} records)`,
+      );
+    }
+    return recorded;
   }
   const reg = process.env.NUDGE_DECISION_SERVERS;
   if (provider !== "fake" && process.env.NUDGE_PROVIDER !== "fake") {
@@ -906,7 +1072,7 @@ export function decide(questions, state, options = {}) {
       const hit = decisionCacheGet(cachePath, key);
       if (hit) {
         const finished = finishDecide(hit, options, started);
-        _emitTrace(decisionRecord(model, provider, questions, hit, options, started, true));
+        _emitTrace(decisionRecord(model, provider, questions, hit, options, started, true, state));
         return finished;
       }
     }
@@ -920,7 +1086,7 @@ export function decide(questions, state, options = {}) {
   }
   const answers = fakeDecide(questions, state, options);
   const finished = finishDecide(answers, options, started);
-  _emitTrace(decisionRecord(model, provider, questions, answers, options, started, false));
+  _emitTrace(decisionRecord(model, provider, questions, answers, options, started, false, state));
   return finished;
 }
 
@@ -935,14 +1101,16 @@ export function predictBatch(questions, statesInput, options = {}) {
   const states = statesInput.map((s) => String(s));
   const started = Date.now();
   if (process.env.NUDGE_REPLAY) {
-    const outs = _replayDecisionAnswers();
-    return states.map((_, i) => {
-      if (_decisionReplayIdx >= outs.length) {
+    // identity-first per state (parity with the python runtime)
+    return states.map((st) => {
+      const rec = _replayTakeDecision(decisionRequestHash(model, questions, st));
+      if (rec === null) {
+        const outs = _replayDecisionRecords();
         throw new Error(
           `ReplayMismatch: program made more decide calls than the trace holds (${outs.length} records)`,
         );
       }
-      return outs[_decisionReplayIdx++];
+      return rec;
     });
   }
   const prov = process.env.NUDGE_PROVIDER === "fake" ? "fake" : provider;
@@ -1642,7 +1810,9 @@ export function computerObserve(app, options = {}) {
     _lastObservedApp = String(app);
     _lastObservedStateId = String(recorded.state_id || "");
     const obs = normalizeObservation(app, recorded);
-    const shot = readTraceAsset(recorded.screenshot_asset);
+    const shot = readTraceAsset(
+      recorded.screenshot_asset,
+      String(recorded.screenshot_hash || "").split(":").pop() || undefined);
     if (shot) obs.screenshot = shot;
     return obs;
   }
@@ -1656,6 +1826,11 @@ export function computerObserve(app, options = {}) {
     { op: "observe", app: String(app), include_screenshot: includeScreenshot },
     app, includeScreenshot);
   const obs = normalizeObservation(app, msg.observation);
+  if (obs.screenshot) {
+    // the runtime owns screenshot identity: hash the pixels LOCALLY — a
+    // provider-supplied hash is verification input, never the authority
+    obs.screenshot_hash = "sha256:" + localScreenshotDigest(obs.screenshot);
+  }
   _lastObservedApp = String(app);
   _lastObservedStateId = obs.state_id;
   const latency = Date.now() - started;
@@ -1671,7 +1846,8 @@ export function computerObserve(app, options = {}) {
     if (obs.tree) record.tree = obs.tree;
     if (obs.screenshot_hash) record.screenshot_hash = obs.screenshot_hash;
     if (obs.screenshot) {
-      const asset = writeTraceAsset(obs.screenshot_hash, obs.screenshot);
+      const asset = writeTraceAsset(
+        String(obs.screenshot_hash || "sha256:").split(":").pop(), obs.screenshot);
       if (asset) record.screenshot_asset = asset;
     }
     if (options.deadline != null) record.deadline_ms = Number(options.deadline);
@@ -1714,6 +1890,23 @@ function computerAct(action, payload, options = {}) {
       throw replaySignatureError(
         `trace target ${JSON.stringify(recTarget)}, program target ${JSON.stringify(payload.target)}`);
     }
+    // full-payload identity (P0 replay): the recorded call must carry the
+    // same text/key/value/direction/pages/format/destination
+    const recHash = recorded.request_hash;
+    const curHash = requestHash({ op: "computer", action, app: String(app),
+      ...Object.fromEntries(Object.entries(payload).filter(([k]) => k !== "state_id")) });
+    if (recHash) {
+      if (recHash !== curHash) {
+        throw replaySignatureError(
+          `trace request ${recHash}, program request ${curHash} — the action payload changed`);
+      }
+    } else if ("value" in recorded) {
+      const curValue = payload.text != null ? payload.text : payload.value;
+      if (String(recorded.value) !== String(curValue == null ? "" : curValue)) {
+        throw replaySignatureError(
+          `trace value ${JSON.stringify(recorded.value)}, program value ${JSON.stringify(curValue == null ? "" : curValue)}`);
+      }
+    }
     const result = normalizeResult(recorded);
     if (driftMode) {
       // drift-check audit: the action was NOT re-executed
@@ -1754,11 +1947,17 @@ function computerAct(action, payload, options = {}) {
       outcome, latency_ms: result.latency_ms, ok: result.ok,
       action_sent: result.action_sent,
       provider: computerProvider(),
+      // additive replay identity: app + action + full payload
+      request_hash: requestHash({ op: "computer", action, app,
+        ...Object.fromEntries(Object.entries(payload).filter(([k]) => k !== "state_id")) }),
     };
     if (missed) record.deadline_missed = true;
     if (result.error) record.error = result.error;
     if (payload.text) record.value = payload.text;
     if (payload.value) record.value = payload.value;
+    for (const f of ["key", "direction", "pages", "to", "format"]) {
+      if (payload[f] != null) record[f] = payload[f];
+    }
     if (options.deadline != null) record.deadline_ms = Number(options.deadline);
     computerRecord(record);
   }
