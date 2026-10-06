@@ -78,7 +78,11 @@ fn fix_note(app: string, target_index: int) -> bool uses Computer, Decision {
 - `deadline: ms` — soft by default: an overrun annotates the record
   `deadline_missed`; `NUDGE_COMPUTER_STRICT=1` makes it raise
   `ComputerTimeout`. The deadline is ADDITIVE metadata — it never
-  overwrites the provider's own failure outcome.
+  overwrites the provider's own failure outcome. It is also enforced at
+  the TRANSPORT level: a bridge that never answers is killed at the
+  deadline and the call raises `ComputerTimeout` with the dispatch
+  outcome UNKNOWN (re-observe before retrying) — a hung pipe must never
+  hang the program.
 - `screenshot: bool` (observe only) — include a screenshot; the result
   carries it as a data URL in `.screenshot` plus its sha256 in
   `.screenshot_hash`. The checker rejects `screenshot` on action methods
@@ -212,12 +216,24 @@ re-fire a click. The three modes:
 2. **`NUDGE_REPLAY=all`.** Observations come from the trace (in `seq`
    order, strict exhaustion like LLM replay); actions are dry-run — the
    recorded `ActionResult` is returned, nothing executes, nothing costs.
+   Replay is **signature-verified**: the recorded call must be THE call
+   the program makes — observe checks the app, actions check the action
+   name, the app and the (canonicalized) target — any divergence raises
+   `ReplayMismatch` instead of silently replaying a decision that was
+   never made. Screenshot pixels are not stored in the JSONL: the trace
+   keeps the sha256 hash and the `screenshot_asset` name; the pixels live
+   in a content-addressed sidecar (`<trace>.assets/<hash>.txt`) that
+   replay reads to rebuild the full Observation.
 3. **Drift check (`NUDGE_REPLAY=all` + `NUDGE_COMPUTER_DRIFT=1`).**
    Observations are re-taken **live** (read-only, safe) and compared
    against the recorded ones: element tree diff (added/removed rows) and
    screenshot hash. The live observation carries the `drift` record —
    `changed`, `screenshot_changed`, `added`, `removed`, and a one-line
    `summary`. Actions stay dry-run.
+
+All three runtimes implement the same contract — the Python runtime, the
+generated TypeScript runtime, and the VM's native computer functions
+(which read the same NTF trace records).
 
 The drift record is *evidence, not judgment*: the language computes the
 mechanical difference; what it means for the task is the model's call.
@@ -239,8 +255,9 @@ Should the recorded plan still run? Answer replan or abort."""
 Two additive record kinds (docs/ntf-spec.md; consumers MUST accept them):
 
 - `computer.observe` — `app`, `state_id`, `element_count`, `outcome`,
-  `latency_ms`; additive: `title`, `tree`, `screenshot_hash`, `drift`,
-  `branch`, `deadline_ms`.
+  `latency_ms`; additive: `title`, `tree`, `screenshot_hash`,
+  `screenshot_asset`, `elements`, `snapshot_mode`, `drift`, `branch`,
+  `deadline_ms`.
 - `computer.act` — `action`, `app`, `target`, `outcome`, `latency_ms`;
   additive: `ok`, `error`, `value`, `dry_run`, `deadline_missed`,
   `deadline_ms`, `branch`.

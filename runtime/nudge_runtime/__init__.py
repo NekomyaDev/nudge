@@ -3325,10 +3325,15 @@ def _fake_act(action, app, params):
 _FAKE_DESKTOP_LOCK = threading.Lock()
 
 
-def _computer_bridge_call(command, payload):
+def _computer_bridge_call(command, payload, deadline=None):
     """Subprocess JSONL bridge (long-lived, like an MCP stdio session):
     one request object per line on stdin, one response per line on stdout,
-    matched by id. A dead bridge raises — never a silent fake result."""
+    matched by id. A dead bridge raises — never a silent fake result.
+    `deadline` is enforced AT THE PIPE (a hung bridge must not block the
+    program forever) — on timeout the session is killed and
+    ComputerTimeout raises; whether the side effect happened stays
+    unknown (never claim a dispatch either way)."""
+    import select
     import shlex
     import subprocess
 
@@ -3349,8 +3354,23 @@ def _computer_bridge_call(command, payload):
         my_id = sess["rid"]
         sess["proc"].stdin.write(json.dumps({"id": my_id, **payload}) + "\n")
         sess["proc"].stdin.flush()
+        timeout = None if deadline is None else max(deadline / 1000.0, 0.05)
         while True:
-            line = sess["proc"].stdout.readline()
+            if timeout is None:
+                line = sess["proc"].stdout.readline()
+            else:
+                ready, _, _ = select.select([sess["proc"].stdout], [], [], timeout)
+                if not ready:
+                    try:
+                        sess["proc"].kill()
+                    except Exception:
+                        pass
+                    _COMPUTER_SESSIONS.pop(command, None)
+                    raise ComputerTimeout(
+                        f"computer bridge did not answer within the "
+                        f"{int(deadline)} ms deadline — dispatch outcome "
+                        "UNKNOWN, re-observe before retrying")
+                line = sess["proc"].stdout.readline()
             if not line:
                 raise RuntimeError("computer bridge closed the pipe mid-call")
             msg = json.loads(line)
@@ -3362,7 +3382,7 @@ def _computer_bridge_call(command, payload):
     return msg
 
 
-def _computer_http_call(base_url, payload):
+def _computer_http_call(base_url, payload, deadline=None):
     import urllib.request
     req = urllib.request.Request(
         base_url.rstrip("/") + "/v1/computer",
@@ -3370,14 +3390,16 @@ def _computer_http_call(base_url, payload):
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    # transport-level deadline, same semantics as the bridge pipe
+    http_timeout = 60 if deadline is None else max(deadline / 1000.0, 0.05)
+    with urllib.request.urlopen(req, timeout=http_timeout) as resp:
         msg = json.loads(resp.read().decode())
     if not msg.get("ok"):
         raise RuntimeError(f"computer server error: {msg.get('error')}")
     return msg
 
 
-def _computer_live_call(payload, app, include_screenshot):
+def _computer_live_call(payload, app, include_screenshot, deadline=None):
     """Route one live call to the configured provider (fake, HTTP or
     subprocess bridge)."""
     provider = _computer_provider()
@@ -3396,9 +3418,9 @@ def _computer_live_call(payload, app, include_screenshot):
             "the fake provider"
         )
     if entry.get("command"):
-        return _computer_bridge_call(entry["command"], payload)
+        return _computer_bridge_call(entry["command"], payload, deadline)
     if entry.get("base_url"):
-        return _computer_http_call(entry["base_url"], payload)
+        return _computer_http_call(entry["base_url"], payload, deadline)
     raise RuntimeError(
         f"computer provider '{provider}' needs a base_url or command in "
         "NUDGE_COMPUTER_SERVERS"
@@ -3445,6 +3467,45 @@ def _replay_observations():
 
 def _replay_actions():
     return _computer_replay_records("acts")
+
+
+def _canonical_computer_target(t):
+    """Canonical comparison form for replay signature checks: an index
+    target and an {x, y} raster target normalize to fixed shapes (no
+    int/float mismatch false positives)."""
+    if not isinstance(t, dict):
+        return t
+    if "x" in t or "y" in t:
+        return {"x": float(t.get("x", 0)), "y": float(t.get("y", 0))}
+    return {"index": int(t.get("index", -1))}
+
+
+def _write_trace_asset(screenshot_hash, data_url):
+    """Content-addressed screenshot sidecar next to the trace — the trace
+    keeps the hash, the asset keeps the pixels, so replay reconstructs the
+    full Observation (screenshot replay fidelity) without bloating the
+    JSONL. Returns the asset file name, or None when unwritable."""
+    try:
+        assets = _trace_path().parent / (_trace_path().name + ".assets")
+        assets.mkdir(parents=True, exist_ok=True)
+        name = (screenshot_hash or "sha256:unhashed").split(":", 1)[-1] + ".txt"
+        (assets / name).write_text(data_url, encoding="utf-8")
+        return name
+    except OSError:
+        return None
+
+
+def _read_trace_asset(name):
+    if not name:
+        return ""
+    # assets are read from the trace we are REPLAYING, not the one the
+    # current run is writing (NUDGE_TRACE may point elsewhere mid-replay)
+    src = os.environ.get("NUDGE_REPLAY") or str(_trace_path())
+    base = Path(src).parent / (Path(src).name + ".assets")
+    try:
+        return (base / name).read_text(encoding="utf-8")
+    except OSError:
+        return ""
 
 
 def _computer_diff_drift(live, recorded):
@@ -3514,6 +3575,10 @@ def computer_observe(app, allow=None, deadline=None, screenshot=False):
 
     if drift_mode and recorded is not None:
         # live re-observation (read-only, safe) compared to the recording
+        if str(recorded.get("app", "")) != str(app):
+            raise ReplayMismatch(
+                f"replay signature mismatch: trace observed app "
+                f"'{recorded.get('app')}', program observed '{app}'")
         if os.environ.get("NUDGE_COMPUTER_KILL") == "1":
             raise ComputerDenied("NUDGE_COMPUTER_KILL=1 refuses all computer work")
         if not _computer_allow_ok(allow, app):
@@ -3522,7 +3587,7 @@ def computer_observe(app, allow=None, deadline=None, screenshot=False):
         msg = _computer_live_call(
             {"op": "observe", "app": str(app),
              "include_screenshot": include_screenshot},
-            app, include_screenshot)
+            app, include_screenshot, deadline)
         live = _normalize_observation(app, msg["observation"])
         latency_ms = int((time.monotonic() - started) * 1000)
         outcome = _computer_check_deadline(latency_ms, deadline)
@@ -3541,11 +3606,23 @@ def computer_observe(app, allow=None, deadline=None, screenshot=False):
         return _attr(live)
 
     if recorded is not None:
+        # replay signature check: a program that observes a DIFFERENT app
+        # than the trace recorded must diverge loudly — side-effectful
+        # replay rests on call equality, not just "next record"
+        if str(recorded.get("app", "")) != str(app):
+            raise ReplayMismatch(
+                f"replay signature mismatch: trace observed app "
+                f"'{recorded.get('app')}', program observed '{app}'")
         # plain replay: the recorded observation IS the observation
-        # (elements + tree land in the record; the screenshot data URL
-        # does not — only its hash, keeping traces human-sized)
+        # (elements + tree land in the record; the screenshot pixels live
+        # in the content-addressed sidecar — restore them so record and
+        # replay see the same Observation)
         _commit_last_observed(app, str(recorded.get("state_id", "")))
-        return _attr(_normalize_observation(app, recorded))
+        obs = _normalize_observation(app, recorded)
+        shot = _read_trace_asset(recorded.get("screenshot_asset"))
+        if shot:
+            obs["screenshot"] = shot
+        return _attr(obs)
 
     # live path
     if os.environ.get("NUDGE_COMPUTER_KILL") == "1":
@@ -3556,7 +3633,7 @@ def computer_observe(app, allow=None, deadline=None, screenshot=False):
     msg = _computer_live_call(
         {"op": "observe", "app": str(app),
          "include_screenshot": include_screenshot},
-        app, include_screenshot)
+        app, include_screenshot, deadline)
     obs = _normalize_observation(app, msg["observation"])
     _commit_last_observed(app, obs["state_id"])
     latency_ms = int((time.monotonic() - started) * 1000)
@@ -3582,6 +3659,10 @@ def computer_observe(app, allow=None, deadline=None, screenshot=False):
         record["tree"] = obs["tree"]
     if obs["screenshot_hash"]:
         record["screenshot_hash"] = obs["screenshot_hash"]
+    if obs["screenshot"]:
+        asset = _write_trace_asset(obs["screenshot_hash"], obs["screenshot"])
+        if asset:
+            record["screenshot_asset"] = asset
     if deadline is not None:
         record["deadline_ms"] = int(deadline)
     _write_computer_record(record)
@@ -3613,8 +3694,28 @@ def _computer_act(action, app, payload, allow=None, deadline=None):
                 )
 
     if recorded is not None:
+        # replay signature check: the recorded call must be THE call this
+        # program makes — action name, app and target must all match, or
+        # the next recorded ActionResult belongs to a different decision
+        rec_action = str(recorded.get("action", ""))
+        if rec_action != action:
+            raise ReplayMismatch(
+                f"replay signature mismatch: trace action '{rec_action}', "
+                f"program called '{action}'")
+        rec_app = str(recorded.get("app", ""))
         if not app:
-            app = str(recorded.get("app", ""))
+            app = rec_app
+        elif rec_app and rec_app != str(app):
+            raise ReplayMismatch(
+                f"replay signature mismatch: trace app '{rec_app}', "
+                f"program acted on '{app}'")
+        rec_target = recorded.get("target")
+        if (rec_target is not None and payload.get("target") is not None
+                and _canonical_computer_target(rec_target)
+                != _canonical_computer_target(payload["target"])):
+            raise ReplayMismatch(
+                f"replay signature mismatch: trace target {rec_target}, "
+                f"program target {payload['target']}")
         result = _normalize_result(recorded)
         if drift_mode:
             # drift-check audit: the action was NOT re-executed
@@ -3639,7 +3740,7 @@ def _computer_act(action, app, payload, allow=None, deadline=None):
             f"app '{app}' is outside the allow scope {list(allow or [])}")
     payload = dict(payload, state_id=_LAST_OBSERVED_APP.get("state_id", ""))
     msg = _computer_live_call({"op": action, "app": str(app), **payload},
-                              app, False)
+                              app, False, deadline)
     result = _normalize_result(msg["result"])
     result["latency_ms"] = int((time.monotonic() - started) * 1000)
     # the provider's own failure reason (stale_state, not_actionable,

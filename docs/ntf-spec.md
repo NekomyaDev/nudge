@@ -92,7 +92,11 @@ Additive: `title` (window title), `tree` (rendered accessibility tree — the
 text a model would read), `elements` (the full element table — lets replay
 and the drift diff rebuild the Observation), `snapshot_mode` (`"full"`
 today; delta observations are a future extension), `screenshot_hash`
-(sha256 of the screenshot when `include_screenshot` was set), `drift`
+(sha256 of the screenshot when `include_screenshot` was set),
+`screenshot_asset` (name of the screenshot's content-addressed sidecar
+file — the pixels live in `<trace>.assets/<hash>.txt` next to the trace,
+never in the JSONL; replay reads the sidecar to rebuild the full
+Observation), `drift`
 (`{changed, screenshot_changed, added, removed, summary}` — populated in
 drift-check replay mode when the live observation differs from the
 recorded one), `deadline_ms`, `branch`, `replay_check: true` (drift-check
@@ -115,7 +119,10 @@ never an outcome overwrite), `error` (message when not ok), `value` (text
 payload for `type`/`set_value`/`paste`), `dry_run: true` (replay mode — the
 action was NOT re-executed), `deadline_ms`, `branch`. Replay never re-fires
 actions: `dry_run: true` is how an auditor tells a replayed run from a
-live one.
+live one. Replay is also signature-verified: the recorded action name,
+app and target must match the program's call (targets compared in
+canonical form — index or `{x, y}`) or replay raises `ReplayMismatch`
+instead of replaying a decision that was never made.
 
 ## Additive fields (already shipping in v1, all optional)
 

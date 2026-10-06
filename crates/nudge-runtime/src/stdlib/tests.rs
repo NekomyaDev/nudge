@@ -435,4 +435,168 @@ mod computer_tests {
         std::env::remove_var("NUDGE_COMPUTER_PROVIDER");
         std::env::remove_var("NUDGE_COMPUTER_SERVERS");
     }
+
+    fn fake_elements() -> String {
+        r#"[{"index":0,"role":"window","title":"FakeApp"},
+            {"index":1,"role":"button","title":"OK","pressable":true},
+            {"index":2,"role":"button","title":"Cancel","pressable":true},
+            {"index":3,"role":"textfield","title":"Search","editable":true}]"#
+            .replace('\n', "")
+    }
+
+    fn write_trace(name: &str, records: &[String]) -> String {
+        let path = std::env::temp_dir().join(name);
+        std::fs::write(&path, records.join("\n") + "\n").expect("write trace");
+        path.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn test_computer_replay_observe_and_act_dry_run() {
+        let _g = lock();
+        computer::reset_authority_for_tests();
+        let trace = write_trace(
+            "nudge-cu-replay-ok.jsonl",
+            &[
+                format!(
+                    r#"{{"kind":"computer.observe","app":"Notes","state_id":"s-9","elements":{}}}"#,
+                    fake_elements()
+                ),
+                r#"{"kind":"computer.act","action":"click","app":"Notes","target":{"index":1},"ok":true,"outcome":"ok","latency_ms":3}"#.to_string(),
+            ],
+        );
+        std::env::set_var("NUDGE_REPLAY", &trace);
+        let obs = computer::execute("computer.observe", vec![Value::String("Notes".into())])
+            .expect("replay observe returns the recorded observation");
+        // the recorded ActionResult is returned DRY-RUN — no provider runs
+        let r = computer::execute("computer.click", vec![Value::Int(1)]).expect("dry-run act");
+        // exhaustion raises like llm replay — a third observe has no record
+        let err = computer::execute("computer.observe", vec![Value::String("Notes".into())])
+            .expect_err("exhaustion must raise");
+        std::env::remove_var("NUDGE_REPLAY");
+        match &obs {
+            Value::Map(m) => {
+                assert_eq!(m.get("state_id"), Some(&Value::String("s-9".into())));
+                assert_eq!(m.get("app"), Some(&Value::String("Notes".into())));
+            }
+            other => panic!("expected an Observation map, got {other:?}"),
+        }
+        match &r {
+            Value::Map(m) => {
+                assert_eq!(m.get("ok"), Some(&Value::Bool(true)));
+                assert_eq!(m.get("outcome"), Some(&Value::String("ok".into())));
+            }
+            other => panic!("expected an ActionResult map, got {other:?}"),
+        }
+        assert!(err.contains("ReplayMismatch"), "{err}");
+        assert!(err.contains("more computer.observe calls"), "{err}");
+    }
+
+    #[test]
+    fn test_computer_replay_signature_mismatch() {
+        let _g = lock();
+        computer::reset_authority_for_tests();
+        // app mismatch: replaying a decision made on a DIFFERENT app
+        let trace = write_trace(
+            "nudge-cu-replay-app.jsonl",
+            &[format!(
+                r#"{{"kind":"computer.observe","app":"Notes","state_id":"s-9","elements":{}}}"#,
+                fake_elements()
+            )],
+        );
+        std::env::set_var("NUDGE_REPLAY", trace);
+        let err = computer::execute("computer.observe", vec![Value::String("Other".into())])
+            .expect_err("app mismatch must raise");
+        assert!(err.contains("trace observed app 'Notes'"), "{err}");
+        assert!(err.contains("program observed 'Other'"), "{err}");
+        std::env::remove_var("NUDGE_REPLAY");
+
+        // action mismatch: the recorded act belongs to a different call
+        let trace = write_trace(
+            "nudge-cu-replay-act.jsonl",
+            &[
+                format!(
+                    r#"{{"kind":"computer.observe","app":"Notes","state_id":"s-9","elements":{}}}"#,
+                    fake_elements()
+                ),
+                r#"{"kind":"computer.act","action":"click","app":"Notes","target":{"index":1},"ok":true,"outcome":"ok","latency_ms":1}"#.to_string(),
+            ],
+        );
+        std::env::set_var("NUDGE_REPLAY", trace);
+        computer::execute("computer.observe", vec![Value::String("Notes".into())])
+            .expect("observe matches");
+        let err = computer::execute("computer.key", vec![Value::String("Return".into())])
+            .expect_err("action mismatch must raise");
+        assert!(err.contains("trace action 'click'"), "{err}");
+        std::env::remove_var("NUDGE_REPLAY");
+
+        // target mismatch: same action name, different target
+        let trace = write_trace(
+            "nudge-cu-replay-target.jsonl",
+            &[
+                format!(
+                    r#"{{"kind":"computer.observe","app":"Notes","state_id":"s-9","elements":{}}}"#,
+                    fake_elements()
+                ),
+                r#"{"kind":"computer.act","action":"click","app":"Notes","target":{"index":1},"ok":true,"outcome":"ok","latency_ms":1}"#.to_string(),
+            ],
+        );
+        std::env::set_var("NUDGE_REPLAY", trace);
+        computer::execute("computer.observe", vec![Value::String("Notes".into())])
+            .expect("observe matches");
+        let err = computer::execute("computer.click", vec![Value::Int(2)])
+            .expect_err("target mismatch must raise");
+        std::env::remove_var("NUDGE_REPLAY");
+        assert!(err.contains("ReplayMismatch"), "{err}");
+        assert!(err.contains("target"), "{err}");
+    }
+
+    #[test]
+    fn test_computer_replay_drift_live_reobserve() {
+        let _g = lock();
+        computer::reset_authority_for_tests();
+        // drift mode: live re-observation (fake desktop) + mechanical diff
+        // against the recording — the fake scene is unchanged, so no drift;
+        // actions stay DRY-RUN (they consume the recorded ActionResult)
+        let trace = write_trace(
+            "nudge-cu-replay-drift.jsonl",
+            &[
+                format!(
+                    r#"{{"kind":"computer.observe","app":"FakeApp","state_id":"s-9","elements":{}}}"#,
+                    fake_elements()
+                ),
+                r#"{"kind":"computer.act","action":"click","app":"FakeApp","target":{"index":1},"ok":true,"outcome":"ok","latency_ms":2}"#.to_string(),
+            ],
+        );
+        std::env::set_var("NUDGE_REPLAY", trace);
+        std::env::set_var("NUDGE_COMPUTER_DRIFT", "1");
+        let obs = computer::execute("computer.observe", vec![Value::String("FakeApp".into())])
+            .expect("drift observe works");
+        let act = computer::execute("computer.click", vec![Value::Int(1)]);
+        // clean up BEFORE asserting — leaked env vars poison sibling tests
+        std::env::remove_var("NUDGE_REPLAY");
+        std::env::remove_var("NUDGE_COMPUTER_DRIFT");
+        match &obs {
+            Value::Map(m) => {
+                // the LIVE state (fake desktop), not the recorded one
+                assert_eq!(m.get("state_id"), Some(&Value::String("s-1".into())));
+                let drift = m.get("drift").expect("drift map attached");
+                match drift {
+                    Value::Map(d) => {
+                        assert_eq!(d.get("changed"), Some(&Value::Bool(false)));
+                        assert_eq!(d.get("added"), Some(&Value::List(Vec::new())));
+                    }
+                    other => panic!("expected a drift map, got {other:?}"),
+                }
+            }
+            other => panic!("expected an Observation map, got {other:?}"),
+        }
+        // dry-run: the recorded result, not a live dispatch
+        match act.expect("dry-run act under drift") {
+            Value::Map(m) => {
+                assert_eq!(m.get("ok"), Some(&Value::Bool(true)));
+                assert_eq!(m.get("outcome"), Some(&Value::String("ok".into())));
+            }
+            other => panic!("expected an ActionResult map, got {other:?}"),
+        }
+    }
 }

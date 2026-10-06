@@ -50,6 +50,17 @@ static BRIDGE: Mutex<Option<Bridge>> = Mutex::new(None);
 /// on what you saw and carry the state_id fail-closed, exactly like the
 /// Python/TS runtimes (docs/computer-use.md §3)
 static LAST_OBS: Mutex<Option<(String, String)>> = Mutex::new(None);
+/// Replay state (`NUDGE_REPLAY=all`): the computer.observe/act records of
+/// the trace being replayed, keyed by trace path (a new path resets the
+/// consumption cursors — replay loops, tests).
+struct ReplayRecords {
+    obs: Vec<Json>,
+    acts: Vec<Json>,
+    obs_idx: usize,
+    act_idx: usize,
+}
+
+static REPLAY: Mutex<Option<(String, ReplayRecords)>> = Mutex::new(None);
 
 /// Fake desktop parity with the Python/TS runtimes: one scene, four
 /// elements, `s-1` state ids, deterministic results.
@@ -206,6 +217,293 @@ pub fn reset_authority_for_tests() {
     if let Ok(mut g) = LAST_OBS.lock() {
         *g = None;
     }
+    if let Ok(mut g) = REPLAY.lock() {
+        *g = None;
+    }
+}
+
+/// Replay takes precedence over the configured provider: with
+/// `NUDGE_REPLAY=all` the recorded observation IS the observation and the
+/// recorded ActionResult is returned dry-run — with signature checks so a
+/// program that diverges from the trace fails loudly instead of replaying
+/// a decision that was never made (parity with the Python/TS runtimes).
+fn replaying() -> bool {
+    if std::env::var("NUDGE_REPLAY").unwrap_or_default().is_empty() {
+        return false;
+    }
+    std::env::var("NUDGE_REPLAY_MODE").unwrap_or_else(|_| "all".into()) == "all"
+}
+
+fn replay_records(path: &str) -> Result<ReplayRecords, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| {
+        format!("ReplayMismatch: cannot read the NUDGE_REPLAY trace '{path}': {e}")
+    })?;
+    let mut recs = ReplayRecords {
+        obs: Vec::new(),
+        acts: Vec::new(),
+        obs_idx: 0,
+        act_idx: 0,
+    };
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(rec) = parse(line) else { continue };
+        match rec.get("kind").and_then(Json::as_str) {
+            Some("computer.observe") => recs.obs.push(rec),
+            Some("computer.act") => recs.acts.push(rec),
+            _ => {}
+        }
+    }
+    Ok(recs)
+}
+
+/// Consume the next recorded `kind` ("obs" | "acts") — None when the trace
+/// is exhausted (replay exhaustion raises like llm replay).
+fn replay_take(kind: &str) -> Result<Option<Json>, String> {
+    let path = std::env::var("NUDGE_REPLAY").unwrap_or_default();
+    let mut guard = REPLAY.lock().map_err(|_| "computer replay lock poisoned")?;
+    if guard.as_ref().map(|(p, _)| p.as_str()) != Some(path.as_str()) {
+        *guard = Some((path.clone(), replay_records(&path)?));
+    }
+    let state = &mut guard.as_mut().unwrap().1;
+    let (list, idx) = match kind {
+        "obs" => (&mut state.obs, &mut state.obs_idx),
+        _ => (&mut state.acts, &mut state.act_idx),
+    };
+    if *idx < list.len() {
+        let rec = list[*idx].clone();
+        *idx += 1;
+        Ok(Some(rec))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Canonical comparison form for replay signature checks — an index target
+/// and an {x, y} raster target normalize to fixed shapes (no int/float
+/// mismatch false positives), parity with `_canonical_computer_target`.
+fn canonical_target(t: Option<&Json>) -> Json {
+    match t {
+        Some(Json::Obj(_)) if t.and_then(|t| t.get("x")).is_some() || t.and_then(|t| t.get("y")).is_some() => {
+            let num = |k: &str| t.and_then(|t| t.get(k)).and_then(Json::as_num).unwrap_or(0.0);
+            obj(vec![("x", Json::Num(num("x"))), ("y", Json::Num(num("y")))])
+        }
+        Some(Json::Obj(_)) => {
+            let index = t
+                .and_then(|t| t.get("index"))
+                .and_then(Json::as_num)
+                .unwrap_or(-1.0);
+            obj(vec![("index", Json::Num(index as i64 as f64))])
+        }
+        _ => obj(vec![("index", Json::Num(-1.0))]),
+    }
+}
+
+fn drift_diff(live: &Json, recorded: &Json) -> Json {
+    // mechanical observation diff: removed/added tree rows (by element
+    // index + role + title) and the screenshot hash. Evidence, not
+    // judgment — interpreting the summary is the model's job.
+    let key = |el: &Json| {
+        format!(
+            "{}:{}:{}",
+            el.get("index").and_then(Json::as_num).unwrap_or(-1.0),
+            el.get("role").and_then(Json::as_str).unwrap_or(""),
+            el.get("title").and_then(Json::as_str).unwrap_or("")
+        )
+    };
+    let elements = |j: &Json| -> Vec<String> {
+        match j.get("elements") {
+            Some(Json::Arr(els)) => els.iter().map(&key).collect(),
+            _ => Vec::new(),
+        }
+    };
+    let recorded_keys: std::collections::BTreeSet<String> = elements(recorded).into_iter().collect();
+    let live_keys: std::collections::BTreeSet<String> = elements(live).into_iter().collect();
+    let added: Vec<String> = live_keys.difference(&recorded_keys).cloned().collect();
+    let removed: Vec<String> = recorded_keys.difference(&live_keys).cloned().collect();
+    let recorded_hash = recorded.get("screenshot_hash").and_then(Json::as_str).unwrap_or("");
+    let live_hash = live.get("screenshot_hash").and_then(Json::as_str).unwrap_or("");
+    let shot_changed = !live_hash.is_empty() && !recorded_hash.is_empty() && live_hash != recorded_hash;
+    let tree_changed = recorded.get("tree") != live.get("tree")
+        && (recorded.get("tree").is_some() || live.get("tree").is_some());
+    let changed = !added.is_empty() || !removed.is_empty() || shot_changed || tree_changed;
+    let mut parts: Vec<String> = Vec::new();
+    if !removed.is_empty() {
+        parts.push(format!("{} element(s) gone", removed.len()));
+    }
+    if !added.is_empty() {
+        parts.push(format!("{} new element(s)", added.len()));
+    }
+    if shot_changed {
+        parts.push("screenshot changed".into());
+    }
+    obj(vec![
+        ("changed", Json::Bool(changed)),
+        ("screenshot_changed", Json::Bool(shot_changed)),
+        (
+            "added",
+            Json::Arr(added.into_iter().map(Json::Str).collect()),
+        ),
+        (
+            "removed",
+            Json::Arr(removed.into_iter().map(Json::Str).collect()),
+        ),
+        ("summary", Json::Str(parts.join("; "))),
+    ])
+}
+
+/// The screenshot pixels of a recorded observation live in the
+/// content-addressed sidecar next to the trace — restore them so replay
+/// sees the same Observation the record saw.
+fn read_trace_asset(name: &str) -> String {
+    if name.is_empty() {
+        return String::new();
+    }
+    let path = std::env::var("NUDGE_REPLAY").unwrap_or_default();
+    if path.is_empty() {
+        return String::new();
+    }
+    let p = std::path::Path::new(&path);
+    let file = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    let asset = p.parent().unwrap_or(p).join(format!("{file}.assets/{name}"));
+    std::fs::read_to_string(asset).unwrap_or_default()
+}
+
+/// Replay path for `computer.observe`: the recorded observation IS the
+/// observation (app signature checked), or a LIVE re-observation with a
+/// mechanical `drift` diff attached when NUDGE_COMPUTER_DRIFT=1 — actions
+/// stay dry-run in drift mode; the model interprets the drift.
+fn replay_observe(app: &str) -> Result<Value, String> {
+    let recorded = match replay_take("obs")? {
+        Some(rec) => rec,
+        None => {
+            return Err("ReplayMismatch: program made more computer.observe calls than the trace holds (replay exhaustion raises like llm replay)".into())
+        }
+    };
+    let rec_app = recorded.get("app").and_then(Json::as_str).unwrap_or("");
+    if rec_app != app {
+        return Err(format!(
+            "ReplayMismatch: replay signature mismatch: trace observed app '{rec_app}', program observed '{app}'"
+        ));
+    }
+    let drift_mode = std::env::var("NUDGE_COMPUTER_DRIFT").as_deref() == Ok("1");
+    if drift_mode {
+        if std::env::var("NUDGE_COMPUTER_KILL").as_deref() == Ok("1") {
+            return Err("ComputerDenied: NUDGE_COMPUTER_KILL=1 refuses all computer work".into());
+        }
+        // live re-observation (read-only, safe) compared to the recording
+        let live = live_call("observe", app, &[])?;
+        let drift = drift_diff(&live, &recorded);
+        let mut value = json_to_value(&live)?;
+        if let Value::Map(m) = &mut value {
+            m.insert("drift".into(), json_to_value(&drift)?);
+        }
+        if let Value::Map(m) = &value {
+            let state_id = match m.get("state_id") {
+                Some(Value::String(s)) => s.clone(),
+                _ => String::new(),
+            };
+            if let Ok(mut g) = LAST_OBS.lock() {
+                *g = Some((app.to_string(), state_id));
+            }
+        }
+        return Ok(value);
+    }
+    // plain replay: the recorded observation IS the observation
+    let mut pairs = vec![
+        (
+            "state_id",
+            Json::Str(
+                recorded
+                    .get("state_id")
+                    .and_then(Json::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+            ),
+        ),
+        ("app", Json::Str(app.to_string())),
+    ];
+    for field in ["title", "tree", "screenshot_hash"] {
+        if let Some(v) = recorded.get(field) {
+            pairs.push((field, v.clone()));
+        }
+    }
+    pairs.push((
+        "elements",
+        recorded
+            .get("elements")
+            .cloned()
+            .unwrap_or(Json::Arr(Vec::new())),
+    ));
+    let asset = recorded
+        .get("screenshot_asset")
+        .and_then(Json::as_str)
+        .unwrap_or("");
+    let shot = read_trace_asset(asset);
+    if !shot.is_empty() {
+        pairs.push(("screenshot", Json::Str(shot)));
+    }
+    let value = json_to_value(&obj(pairs))?;
+    commit_authority(app, &value);
+    Ok(value)
+}
+
+/// Replay path for actions: the recorded ActionResult is returned
+/// DRY-RUN (nothing executes) after the call signature — action name,
+/// app and target — is verified against the record.
+fn replay_act(op: &str, app: &str, payload_args: &[Value]) -> Result<Value, String> {
+    let recorded = match replay_take("acts")? {
+        Some(rec) => rec,
+        None => {
+            return Err("ReplayMismatch: program made more computer actions than the trace holds (replay exhaustion raises like llm replay)".into())
+        }
+    };
+    let rec_action = recorded.get("action").and_then(Json::as_str).unwrap_or("");
+    if rec_action != op {
+        return Err(format!(
+            "ReplayMismatch: replay signature mismatch: trace action '{rec_action}', program called '{op}'"
+        ));
+    }
+    let rec_app = recorded.get("app").and_then(Json::as_str).unwrap_or("");
+    if !rec_app.is_empty() && rec_app != app {
+        return Err(format!(
+            "ReplayMismatch: replay signature mismatch: trace app '{rec_app}', program acted on '{app}'"
+        ));
+    }
+    // only ops that carry a real target have one to verify (type/key/paste
+    // carry the recorded null target, like the Python/TS records)
+    let carries_target = matches!(op, "click" | "scroll" | "set_value" | "perform" | "drag");
+    if carries_target {
+        let rec_target = recorded.get("target");
+        let target = target_json(payload_args.first());
+        if rec_target.map(Json::is_obj).unwrap_or(false)
+            && canonical_target(rec_target) != canonical_target(Some(&target))
+        {
+            return Err(format!(
+                "ReplayMismatch: replay signature mismatch: trace target {}, program target {}",
+                json_to_string(rec_target.unwrap_or(&Json::Null)),
+                json_to_string(&target)
+            ));
+        }
+    }
+    // the recorded result IS the result, dry-run
+    let ok = match recorded.get("ok") {
+        Some(Json::Bool(b)) => *b,
+        _ => false,
+    };
+    let outcome = recorded
+        .get("outcome")
+        .and_then(Json::as_str)
+        .unwrap_or("unknown");
+    let latency = recorded.get("latency_ms").and_then(Json::as_num).unwrap_or(0.0);
+    json_to_value(&obj(vec![
+        ("ok", Json::Bool(ok)),
+        ("outcome", Json::Str(outcome.to_string())),
+        ("latency_ms", Json::Num(latency)),
+        ("error", Json::Str(String::new())),
+    ]))
 }
 
 pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
@@ -233,24 +531,32 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             .ok_or("computer action without a prior computer.observe — observe the app you intend to act on")?;
         (app.clone(), &args[..])
     };
-    let request = request_json(&op, &app, payload_args);
-    let provider = std::env::var("NUDGE_COMPUTER_PROVIDER").unwrap_or_else(|_| "fake".into());
-    if provider == "fake" {
-        let response = fake_call(&op, &request)?;
-        let value = json_to_value(&response)?;
-        if op == "observe" {
-            commit_authority(&app, &value);
-        }
-        return Ok(value);
+    if replaying() {
+        return if op == "observe" {
+            replay_observe(&app)
+        } else {
+            replay_act(&op, &app, payload_args)
+        };
     }
-    let registry = std::env::var("NUDGE_COMPUTER_SERVERS").unwrap_or_default();
-    let command = bridge_command(&registry, &provider)?;
-    let response = bridge_call(&command, &json_to_string(&request))?;
-    let value = json_to_value(&response)?;
+    let value = json_to_value(&live_call(&op, &app, payload_args)?)?;
     if op == "observe" {
         commit_authority(&app, &value);
     }
     Ok(value)
+}
+
+/// The configured provider (fake desktop by default, subprocess JSONL
+/// bridge via NUDGE_COMPUTER_SERVERS + NUDGE_COMPUTER_PROVIDER) — also the
+/// live re-observation source of drift mode.
+fn live_call(op: &str, app: &str, payload_args: &[Value]) -> Result<Json, String> {
+    let request = request_json(op, app, payload_args);
+    let provider = std::env::var("NUDGE_COMPUTER_PROVIDER").unwrap_or_else(|_| "fake".into());
+    if provider == "fake" {
+        return fake_call(op, &request);
+    }
+    let registry = std::env::var("NUDGE_COMPUTER_SERVERS").unwrap_or_default();
+    let command = bridge_command(&registry, &provider)?;
+    bridge_call(&command, &json_to_string(&request))
 }
 
 fn commit_authority(app: &str, v: &Value) {
@@ -266,11 +572,8 @@ fn commit_authority(app: &str, v: &Value) {
     }
 }
 
-fn request_json(op: &str, app: &str, args: &[Value]) -> Json {
-    // args here are the payload args AFTER the (optional) app — click(1),
-    // type("text"), scroll(t, "down", 2), set_value(i, v), perform(i, a),
-    // paste(text[, format]), drag(from, to)
-    let target = match args.first() {
+fn target_json(v: Option<&Value>) -> Json {
+    match v {
         Some(Value::Int(i)) => obj(vec![("index", Json::Num(*i as f64))]),
         Some(Value::Map(m)) => {
             // a {x, y} raster coordinate passes through verbatim
@@ -285,7 +588,14 @@ fn request_json(op: &str, app: &str, args: &[Value]) -> Json {
             )
         }
         _ => obj(vec![("index", Json::Num(-1.0))]),
-    };
+    }
+}
+
+fn request_json(op: &str, app: &str, args: &[Value]) -> Json {
+    // args here are the payload args AFTER the (optional) app — click(1),
+    // type("text"), scroll(t, "down", 2), set_value(i, v), perform(i, a),
+    // paste(text[, format]), drag(from, to)
+    let target = target_json(args.first());
     let text_at = |i: usize| args.get(i).map(value_to_text).unwrap_or_default();
     let pairs: Vec<(&str, Json)> = match op {
         "observe" => vec![],
@@ -294,10 +604,7 @@ fn request_json(op: &str, app: &str, args: &[Value]) -> Json {
             ("target", target),
             (
                 "to",
-                match args.get(1) {
-                    Some(Value::Int(i)) => obj(vec![("index", Json::Num(*i as f64))]),
-                    _ => obj(vec![("index", Json::Num(-1.0))]),
-                },
+                target_json(args.get(1)),
             ),
         ],
         "type" => vec![

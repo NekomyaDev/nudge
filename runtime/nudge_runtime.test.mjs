@@ -379,7 +379,7 @@ test("route: picks arm and attaches route label to trace record", () => {
 
 // ── computer use (v1.5) ───────────────────────────────────────────────
 
-import { computerObserve, computerClick, computerType, computerSetValue, computerPerform, computerPaste, ComputerDenied } from "./nudge_runtime.ts";
+import { computerObserve, computerClick, computerType, computerKey, computerSetValue, computerPerform, computerPaste, ComputerDenied } from "./nudge_runtime.ts";
 
 function withEnv(env, fn) {
   const prev = {};
@@ -482,4 +482,54 @@ test("computer: perform + paste with dispatch receipts and bounds", () => {
     assert.equal(recs[2].action, "paste");
     assert.equal(recs[1].action_sent, true);
   });
+});
+
+test("computer: replay verifies the call signature (app, action, target)", () => {
+  const obsRec = { v: 1, seq: 1, kind: "computer.observe", app: "Notes", state_id: "s-1",
+    title: "Notes", element_count: 2, outcome: "ok", latency_ms: 4,
+    elements: [{ index: 0, role: "window", title: "Notes" }, { index: 1, role: "button", title: "OK", pressable: true }] };
+  const actRec = { v: 1, seq: 2, kind: "computer.act", action: "click", app: "Notes",
+    target: { index: 1 }, outcome: "ok", latency_ms: 9, ok: true };
+
+  // observing a DIFFERENT app than the trace recorded must diverge loudly
+  const p1 = tracePath([obsRec]);
+  assert.throws(() => withEnv({ NUDGE_REPLAY: p1 }, () => computerObserve("Other", {})),
+    /ReplayMismatch.*app 'Notes', program observed 'Other'/);
+
+  // acting with a different action name than the recorded one
+  const p2 = tracePath([obsRec, actRec]);
+  withEnv({ NUDGE_REPLAY: p2 }, () => {
+    computerObserve("Notes", {});
+    assert.throws(() => computerKey("Escape", {}),
+      /ReplayMismatch.*trace action 'click', program called 'key'/);
+  });
+
+  // acting on a different target than the recorded one
+  const p3 = tracePath([obsRec, actRec]);
+  withEnv({ NUDGE_REPLAY: p3 }, () => {
+    computerObserve("Notes", {});
+    assert.throws(() => computerClick(2, {}),
+      /ReplayMismatch.*trace target .*program target/);
+  });
+});
+
+test("computer: screenshot replay fidelity via the content-addressed sidecar", () => {
+  const p = "/tmp/nudge-cu-sidecar.jsonl";
+  withEnv({ NUDGE_TRACE: p }, () => {
+    fs.rmSync(p + ".assets", { recursive: true, force: true });
+    const obs = computerObserve("FakeApp", { allow: ["FakeApp"], screenshot: true });
+    assert.ok(obs.screenshot.startsWith("data:image/png;base64,"));
+    const recs = fs.readFileSync(p, "utf8").trim().split("\n").map(JSON.parse);
+    assert.ok(recs[0].screenshot_asset, "sidecar name in the record");
+    const asset = fs.readFileSync(p + ".assets/" + recs[0].screenshot_asset, "utf8");
+    assert.ok(asset.startsWith("data:image/png;base64,"));
+  });
+  // replay: the recorded observation restores its screenshot from the sidecar
+  const recs = fs.readFileSync(p, "utf8").trim().split("\n").map(JSON.parse);
+  withEnv({ NUDGE_REPLAY: p }, () => {
+    const obs = computerObserve("FakeApp", {});
+    assert.equal(obs.screenshot, fs.readFileSync(p + ".assets/" + recs[0].screenshot_asset, "utf8"),
+      "replay sees the same pixels the record run saw");
+  });
+  fs.rmSync(p + ".assets", { recursive: true, force: true });
 });

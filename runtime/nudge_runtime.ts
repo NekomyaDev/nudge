@@ -113,6 +113,39 @@ function _emitTrace(record) {
   fs.appendFileSync(path, JSON.stringify({ v: 1, seq, ...record }) + "\n");
 }
 
+// content-addressed screenshot sidecar next to the trace — the trace
+// keeps the hash, the asset keeps the pixels, so replay reconstructs
+// the full Observation (screenshot replay fidelity) without bloating
+// the JSONL
+function _traceAssetDir() {
+  return _tracePath() + ".assets";
+}
+
+function writeTraceAsset(screenshotHash, dataUrl) {
+  try {
+    const dir = _traceAssetDir();
+    fs.mkdirSync(dir, { recursive: true });
+    const name = String(screenshotHash || "sha256:unhashed").split(":").pop() + ".txt";
+    fs.writeFileSync(dir + "/" + name, dataUrl);
+    return name;
+  } catch {
+    return null;
+  }
+}
+
+function readTraceAsset(name) {
+  if (!name) return "";
+  // assets are read from the trace we are REPLAYING, not the one the
+  // current run is writing (NUDGE_TRACE may point elsewhere mid-replay)
+  const src = process.env.NUDGE_REPLAY || _tracePath();
+  const dir = src + ".assets";
+  try {
+    return fs.readFileSync(dir + "/" + name, "utf8");
+  } catch {
+    return "";
+  }
+}
+
 function _budgetCharge(cost, budget) {
   // parity with the python runtime (design §4.3): the declared `budget` is a
   // PER-CALL wall against this call's own cost; NUDGE_BUDGET is the separate
@@ -1569,6 +1602,10 @@ export function computerObserve(app, options = {}) {
     }
   }
   if (driftMode && recorded) {
+    if (String(recorded.app || "") !== String(app)) {
+      throw replaySignatureError(
+        `trace observed app '${recorded.app}', program observed '${app}'`);
+    }
     if (process.env.NUDGE_COMPUTER_KILL === "1") {
       throw new ComputerDenied("NUDGE_COMPUTER_KILL=1 refuses all computer work");
     }
@@ -1594,10 +1631,20 @@ export function computerObserve(app, options = {}) {
     return live;
   }
   if (recorded) {
-    // plain replay: the recorded observation IS the observation
+    // replay signature check: observing a DIFFERENT app than the trace
+    // recorded must diverge loudly
+    if (String(recorded.app || "") !== String(app)) {
+      throw replaySignatureError(
+        `trace observed app '${recorded.app}', program observed '${app}'`);
+    }
+    // plain replay: the recorded observation IS the observation; the
+    // screenshot pixels come back from the content-addressed sidecar
     _lastObservedApp = String(app);
     _lastObservedStateId = String(recorded.state_id || "");
-    return normalizeObservation(app, recorded);
+    const obs = normalizeObservation(app, recorded);
+    const shot = readTraceAsset(recorded.screenshot_asset);
+    if (shot) obs.screenshot = shot;
+    return obs;
   }
   if (process.env.NUDGE_COMPUTER_KILL === "1") {
     throw new ComputerDenied("NUDGE_COMPUTER_KILL=1 refuses all computer work");
@@ -1623,6 +1670,10 @@ export function computerObserve(app, options = {}) {
     if (obs.title) record.title = obs.title;
     if (obs.tree) record.tree = obs.tree;
     if (obs.screenshot_hash) record.screenshot_hash = obs.screenshot_hash;
+    if (obs.screenshot) {
+      const asset = writeTraceAsset(obs.screenshot_hash, obs.screenshot);
+      if (asset) record.screenshot_asset = asset;
+    }
     if (options.deadline != null) record.deadline_ms = Number(options.deadline);
     computerRecord(record);
   }
@@ -1645,7 +1696,24 @@ function computerAct(action, payload, options = {}) {
   }
   let app = _lastObservedApp;
   if (recorded) {
-    if (!app) app = String(recorded.app || "");
+    const recAction = String(recorded.action || "");
+    if (recAction !== action) {
+      throw replaySignatureError(
+        `trace action '${recAction}', program called '${action}'`);
+    }
+    const recApp = String(recorded.app || "");
+    if (!app) app = recApp;
+    else if (recApp && recApp !== String(app)) {
+      throw replaySignatureError(
+        `trace app '${recApp}', program acted on '${app}'`);
+    }
+    const recTarget = recorded.target;
+    if (recTarget != null && payload.target != null &&
+        JSON.stringify(canonicalTarget(recTarget)) !==
+        JSON.stringify(canonicalTarget(payload.target))) {
+      throw replaySignatureError(
+        `trace target ${JSON.stringify(recTarget)}, program target ${JSON.stringify(payload.target)}`);
+    }
     const result = normalizeResult(recorded);
     if (driftMode) {
       // drift-check audit: the action was NOT re-executed
@@ -1695,6 +1763,18 @@ function computerAct(action, payload, options = {}) {
     computerRecord(record);
   }
   return result;
+}
+
+function canonicalTarget(t) {
+  if (!t || typeof t !== "object") return t;
+  if ("x" in t || "y" in t) return { x: Number(t.x || 0), y: Number(t.y || 0) };
+  return { index: Number(t.index ?? -1) };
+}
+
+function replaySignatureError(msg) {
+  const e = new Error(`ReplayMismatch: ${msg}`);
+  e.name = "ReplayMismatch";
+  return e;
 }
 
 function computerTarget(target) {
