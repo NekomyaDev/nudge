@@ -183,9 +183,19 @@ Hardening invariants every bridge MUST enforce (fail closed):
   moved since the observation the action is refused with `stale_state`
   and `dispatch: "not_sent"` (blind input into whatever the user is
   doing is the classic allow-scope bypass).
-- **Coordinate containment** — an explicit `{x, y}` target must fall
-  inside the observed window's geometry; coordinates may not reach other
-  apps.
+- **Coordinate containment, proven or denied** — an explicit `{x, y}`
+  target must fall inside the observed window's geometry; if the geometry
+  cannot be retrieved the target is REFUSED (fail closed) — inability to
+  prove containment is never permission.
+- **Honest dispatch receipts** — `dispatch: "not_sent"` is only ever
+  reported when NOTHING reached the desktop. A multi-stage action that
+  failed mid-way (some wheel clicks landed, mousedown pressed, clipboard
+  overwritten) reports `"unknown"` — a partial effect must never claim
+  the retry-safe `not_sent`.
+- **Every action carries state_id** — a missing or empty `state_id` is an
+  `invalid_request` refusal, not a bypass of the staleness check.
+- **set_value without an editable interface is `not_actionable`** — never
+  an internally contradictory `ok` result with `dispatch: "not_sent"`.
 - **Semantic actions first** — `click` prefers the element's own
   AT-SPI action (`click`/`press`) over a raw pointer click: the semantic
   action is bound to the element, not to wherever the global pointer or
@@ -217,8 +227,12 @@ re-fire a click. The three modes:
    order, strict exhaustion like LLM replay); actions are dry-run — the
    recorded `ActionResult` is returned, nothing executes, nothing costs.
    Replay is **signature-verified**: the recorded call must be THE call
-   the program makes — observe checks the app, actions check the action
-   name, the app and the (canonicalized) target — any divergence raises
+   the program makes — observe checks the app; actions check the action
+   name, the app and the full payload via the additive `request_hash`
+   (text, key, direction + pages, value, paste format, drag destination —
+   `computer.type("A")` can never replay a `computer.type("B")` record).
+   The same identity-first contract covers llm, decision and tool replay
+   (docs/ntf-spec.md `request_hash`): any divergence raises
    `ReplayMismatch` instead of silently replaying a decision that was
    never made. Screenshot pixels are not stored in the JSONL: the trace
    keeps the sha256 hash and the `screenshot_asset` name; the pixels live

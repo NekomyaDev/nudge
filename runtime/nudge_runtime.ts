@@ -689,12 +689,13 @@ export function agentState(agent, defaults) {
     // runtime): a process that ends while suppression is still active
     // performed FEWER state writes than the recorded prefix — a changed
     // program must not finish a resume silently
-    process.on("exit", () => {
+    // the node:process ESM namespace lacks .on — go through globalThis
+    globalThis.process.on("exit", () => {
       if (suppress > 0) {
-        process.stderr.write(
+        globalThis.process.stderr.write(
           `ReplayMismatch: resume divergence in agent '${agent}': the program ended ${suppress} state write(s) short of the recorded prefix — the program changed since the crash\n`,
         );
-        process.exitCode = 1;
+        globalThis.process.exitCode = 1;
       }
     });
   }

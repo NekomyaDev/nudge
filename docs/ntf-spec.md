@@ -129,6 +129,15 @@ instead of replaying a decision that was never made.
 Consumers MUST accept and preserve these; producers MAY emit them:
 
 - `pricing: "unknown"` — `cost_usd` is a $0 placeholder, not a measurement
+- `request_hash` (on `llm.call`, `decision.call`, `tool.call`,
+  `computer.act`) — sha256 over the canonical request (sorted-key JSON of
+  everything that affects the response: llm = prompt + model + schema +
+  params + images; decision = state + questions + model; tool = server +
+  tool + arguments; computer = app + action + full payload). Replay is
+  identity-first: a record is served only when its request_hash matches
+  the program's call, and never twice — a changed program cannot consume
+  an old answer (`ReplayMismatch`). Records without the field (legacy
+  traces) replay in global record order as before.
 - `route` (on `llm.call`) — which `route{}` arm selected this model
 - `server` (on `tool.call`) — MCP server the tool resolved to
 - `streamed` / `chunks` / `early_abort` — streaming bookkeeping

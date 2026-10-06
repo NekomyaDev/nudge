@@ -373,7 +373,11 @@ fn drift_diff(live: &Json, recorded: &Json) -> Json {
 /// EXACTLY a 64-hex digest + ".txt": a crafted trace cannot traverse out
 /// of the assets directory (parity with the Python/TS runtimes).
 fn read_trace_asset(name: &str) -> String {
-    if name.len() != 68 || !name.ends_with(".txt") || !name[..64].bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    if name.len() != 68
+        || !name.ends_with(".txt")
+        || !name[..64]
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
     {
         return String::new();
     }
@@ -528,7 +532,11 @@ fn replay_act(op: &str, app: &str, payload_args: &[Value]) -> Result<Value, Stri
         let v = payload_text(0);
         if v.is_empty() {
             let v = payload_text(1);
-            if v.is_empty() { None } else { Some(v) }
+            if v.is_empty() {
+                None
+            } else {
+                Some(v)
+            }
         } else {
             Some(v)
         }
@@ -546,10 +554,13 @@ fn replay_act(op: &str, app: &str, payload_args: &[Value]) -> Result<Value, Stri
         }
     }
     if let Some(rec_pages) = recorded.get("pages").and_then(Json::as_num) {
-        let prog_pages = payload_args.get(2).map(|v| match v {
-            Value::Int(i) => *i as f64,
-            _ => 1.0,
-        }).unwrap_or(1.0);
+        let prog_pages = payload_args
+            .get(2)
+            .map(|v| match v {
+                Value::Int(i) => *i as f64,
+                _ => 1.0,
+            })
+            .unwrap_or(1.0);
         if rec_pages != prog_pages {
             return Err(format!(
                 "ReplayMismatch: replay signature mismatch: trace pages {rec_pages}, program pages {prog_pages}"

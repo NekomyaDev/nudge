@@ -204,19 +204,24 @@ fn has_computer_call(e: &Expr) -> bool {
         ExprKind::Unary { x, .. } => has_computer_call(x),
         ExprKind::Field { obj, .. } => has_computer_call(obj),
         ExprKind::Merge { l, r } => has_computer_call(l) || has_computer_call(r),
-        ExprKind::ParMap { coll, kwargs, body, .. } => {
-            has_computer_call(coll) || has_computer_call(body)
+        ExprKind::ParMap {
+            coll, kwargs, body, ..
+        } => {
+            has_computer_call(coll)
+                || has_computer_call(body)
                 || kwargs.iter().any(|(_, v)| has_computer_call(v))
         }
         ExprKind::Route { arms } => arms
             .iter()
             .any(|(_, v, c)| has_computer_call(v) || c.as_ref().is_some_and(has_computer_call)),
-        ExprKind::LlmCall { prompt, options, .. } => {
-            has_computer_call(prompt) || options.iter().any(|(_, v)| has_computer_call(v))
-        }
-        ExprKind::DecideCall { questions: _, state, options } => {
-            has_computer_call(state) || options.iter().any(|(_, v)| has_computer_call(v))
-        }
+        ExprKind::LlmCall {
+            prompt, options, ..
+        } => has_computer_call(prompt) || options.iter().any(|(_, v)| has_computer_call(v)),
+        ExprKind::DecideCall {
+            questions: _,
+            state,
+            options,
+        } => has_computer_call(state) || options.iter().any(|(_, v)| has_computer_call(v)),
         ExprKind::Call { func, args, kwargs } => {
             has_computer_call(func)
                 || args.iter().any(has_computer_call)
@@ -590,6 +595,22 @@ mod tests {
 }"#;
         let ls = lints(src);
         assert!(ls.iter().any(|l| l.code == "W0001"), "{ls:?}");
+    }
+
+    #[test]
+    fn race_branch_with_computer_action_warns_w0007() {
+        let src = r#"fn f() -> bool uses Computer {
+    par race [computer.click(1, allow = ["Notes"]), false]
+}"#;
+        let ls = lints(src);
+        assert!(ls.iter().any(|l| l.code == "W0007"), "{ls:?}");
+        // read-only branches are silent
+        let clean = lints(
+            r#"fn f() -> bool uses LLM {
+    par race [llm"""try plan A please""" with { model: "fake" }, llm"""try plan B please""" with { model: "fake" }]
+}"#,
+        );
+        assert!(!clean.iter().any(|l| l.code == "W0007"), "{clean:?}");
     }
 
     #[test]
