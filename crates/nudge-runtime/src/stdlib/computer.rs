@@ -235,9 +235,8 @@ fn replaying() -> bool {
 }
 
 fn replay_records(path: &str) -> Result<ReplayRecords, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| {
-        format!("ReplayMismatch: cannot read the NUDGE_REPLAY trace '{path}': {e}")
-    })?;
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("ReplayMismatch: cannot read the NUDGE_REPLAY trace '{path}': {e}"))?;
     let mut recs = ReplayRecords {
         obs: Vec::new(),
         acts: Vec::new(),
@@ -286,8 +285,14 @@ fn replay_take(kind: &str) -> Result<Option<Json>, String> {
 /// mismatch false positives), parity with `_canonical_computer_target`.
 fn canonical_target(t: Option<&Json>) -> Json {
     match t {
-        Some(Json::Obj(_)) if t.and_then(|t| t.get("x")).is_some() || t.and_then(|t| t.get("y")).is_some() => {
-            let num = |k: &str| t.and_then(|t| t.get(k)).and_then(Json::as_num).unwrap_or(0.0);
+        Some(Json::Obj(_))
+            if t.and_then(|t| t.get("x")).is_some() || t.and_then(|t| t.get("y")).is_some() =>
+        {
+            let num = |k: &str| {
+                t.and_then(|t| t.get(k))
+                    .and_then(Json::as_num)
+                    .unwrap_or(0.0)
+            };
             obj(vec![("x", Json::Num(num("x"))), ("y", Json::Num(num("y")))])
         }
         Some(Json::Obj(_)) => {
@@ -319,13 +324,21 @@ fn drift_diff(live: &Json, recorded: &Json) -> Json {
             _ => Vec::new(),
         }
     };
-    let recorded_keys: std::collections::BTreeSet<String> = elements(recorded).into_iter().collect();
+    let recorded_keys: std::collections::BTreeSet<String> =
+        elements(recorded).into_iter().collect();
     let live_keys: std::collections::BTreeSet<String> = elements(live).into_iter().collect();
     let added: Vec<String> = live_keys.difference(&recorded_keys).cloned().collect();
     let removed: Vec<String> = recorded_keys.difference(&live_keys).cloned().collect();
-    let recorded_hash = recorded.get("screenshot_hash").and_then(Json::as_str).unwrap_or("");
-    let live_hash = live.get("screenshot_hash").and_then(Json::as_str).unwrap_or("");
-    let shot_changed = !live_hash.is_empty() && !recorded_hash.is_empty() && live_hash != recorded_hash;
+    let recorded_hash = recorded
+        .get("screenshot_hash")
+        .and_then(Json::as_str)
+        .unwrap_or("");
+    let live_hash = live
+        .get("screenshot_hash")
+        .and_then(Json::as_str)
+        .unwrap_or("");
+    let shot_changed =
+        !live_hash.is_empty() && !recorded_hash.is_empty() && live_hash != recorded_hash;
     let tree_changed = recorded.get("tree") != live.get("tree")
         && (recorded.get("tree").is_some() || live.get("tree").is_some());
     let changed = !added.is_empty() || !removed.is_empty() || shot_changed || tree_changed;
@@ -367,7 +380,10 @@ fn read_trace_asset(name: &str) -> String {
     }
     let p = std::path::Path::new(&path);
     let file = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
-    let asset = p.parent().unwrap_or(p).join(format!("{file}.assets/{name}"));
+    let asset = p
+        .parent()
+        .unwrap_or(p)
+        .join(format!("{file}.assets/{name}"));
     std::fs::read_to_string(asset).unwrap_or_default()
 }
 
@@ -497,7 +513,10 @@ fn replay_act(op: &str, app: &str, payload_args: &[Value]) -> Result<Value, Stri
         .get("outcome")
         .and_then(Json::as_str)
         .unwrap_or("unknown");
-    let latency = recorded.get("latency_ms").and_then(Json::as_num).unwrap_or(0.0);
+    let latency = recorded
+        .get("latency_ms")
+        .and_then(Json::as_num)
+        .unwrap_or(0.0);
     json_to_value(&obj(vec![
         ("ok", Json::Bool(ok)),
         ("outcome", Json::Str(outcome.to_string())),
@@ -600,13 +619,7 @@ fn request_json(op: &str, app: &str, args: &[Value]) -> Json {
     let pairs: Vec<(&str, Json)> = match op {
         "observe" => vec![],
         "click" => vec![("target", target)],
-        "drag" => vec![
-            ("target", target),
-            (
-                "to",
-                target_json(args.get(1)),
-            ),
-        ],
+        "drag" => vec![("target", target), ("to", target_json(args.get(1)))],
         "type" => vec![
             ("target", obj(vec![("index", Json::Num(-1.0))])),
             ("text", Json::Str(text_at(0))),
