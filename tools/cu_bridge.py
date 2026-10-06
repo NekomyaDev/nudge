@@ -88,8 +88,15 @@ class Lease:
                         pid = int(f.read().strip() or 0)
                     os.kill(pid, 0)  # alive? then the lease is real
                     return "controller_busy"
-                except (ValueError, ProcessLookupError, PermissionError):
-                    pass  # stale lease — re-claim
+                except ProcessLookupError:
+                    pass  # owner gone — stale lease, re-claim
+                except PermissionError:
+                    # EPERM means the owner EXISTS but we cannot signal it —
+                    # that is NOT a stale lease; reclaiming would steal a
+                    # live controller. Fail closed.
+                    return "controller_busy (owner alive, unverifiable)"
+                except ValueError:
+                    pass  # unparseable pid — stale lease, re-claim
                 os.unlink(self.path)
             fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             with os.fdopen(fd, "w") as f:
@@ -342,18 +349,24 @@ def _focus_moved_reason():
 def _center(target):
     """Resolve a target to desktop pixels: an observed element's bounds
     center, or an explicit {x, y} raster point (validated against the
-    observed window's geometry — coordinates may not reach other apps)."""
+    observed window's geometry — coordinates may not reach other apps).
+    FAIL CLOSED: if the window geometry cannot be proven, a coordinate
+    target is refused — inability to prove containment is never
+    permission."""
     index = target.get("index", -1)
     if index == -1 and isinstance(target.get("x"), (int, float)):
         x, y = float(target["x"]), float(target["y"])
         window = _LAST_OBS.get("window")
         geo = _window_geometry(window) if window else None
-        if geo:
-            gx, gy, gw, gh = geo
-            if not (gx <= x < gx + gw and gy <= y < gy + gh):
-                raise RuntimeError(
-                    f"coordinate ({x}, {y}) is outside the observed window's "
-                    f"geometry {geo} — coordinate targets may not reach other apps")
+        if not geo:
+            raise RuntimeError(
+                "could not verify the observed window's geometry — refusing "
+                f"the coordinate target ({x}, {y}) fail-closed (re-observe)")
+        gx, gy, gw, gh = geo
+        if not (gx <= x < gx + gw and gy <= y < gy + gh):
+            raise RuntimeError(
+                f"coordinate ({x}, {y}) is outside the observed window's "
+                f"geometry {geo} — coordinate targets may not reach other apps")
         return x, y
     entry = _REAL_ELS.get(index)
     if entry is None:
@@ -368,6 +381,12 @@ def _center(target):
 def _real_act(op, req):
     import time
     started = time.monotonic()
+    # dispatch tracking: "not_sent" is only honest when NOTHING reached
+    # the desktop yet — a multi-stage op (scroll clicks, drag press/move,
+    # paste clipboard write) that failed mid-way has already had a partial
+    # external effect, and that must be reported as "unknown", never as
+    # the retry-safe "not_sent"
+    dispatched = [False]
 
     def result(outcome, dispatch, error=""):
         return {"ok": outcome == "ok", "outcome": outcome,
@@ -426,8 +445,20 @@ def _real_act(op, req):
             x, y = _center(target) if target.get("index", -1) != -1 else (0, 0)
             if x or y:
                 _sh(["xdotool", "mousemove", str(int(x)), str(int(y))])
-            for _ in range(pages * 3):
-                _sh(["xdotool", "click", button])
+            clicks = pages * 3
+            done = 0
+            try:
+                for _ in range(clicks):
+                    _sh(["xdotool", "click", button])
+                    done += 1
+            except RuntimeError as e:
+                if done > 0:
+                    # some wheel clicks landed — a partial external effect
+                    # already happened, "not_sent" would be a lie
+                    return result("error", "unknown",
+                                  f"{done}/{clicks} wheel clicks dispatched before "
+                                  f"failure: {e}")
+                raise
             return result("ok", "sent")
         if op == "set_value":
             entry = _REAL_ELS.get(target.get("index", -1))
@@ -438,7 +469,9 @@ def _real_act(op, req):
                 entry[0].queryEditableText().setTextContents(str(req.get("value", "")))
                 return result("ok", "sent")
             except Exception:
-                return result("ok", "not_sent",
+                # never claim ok with error set — an element without an
+                # editable interface is a FAILURE, not a successful no-op
+                return result("not_actionable", "not_sent",
                               f"element {target.get('index')} has no editable text interface")
         if op == "perform":
             index = target.get("index", -1)
@@ -465,10 +498,21 @@ def _real_act(op, req):
                 old_clip = _sh(["xclip", "-selection", "clipboard", "-o"])
             except Exception:
                 pass
+            clipboard_written = [False]
             try:
-                _sh(["xclip", "-selection", "clipboard"], text.encode())
-                _sh(["xdotool", "key", "--", "ctrl+v"])
-                return result("ok", "sent")
+                try:
+                    _sh(["xclip", "-selection", "clipboard"], text.encode())
+                    clipboard_written[0] = True
+                    _sh(["xdotool", "key", "--", "ctrl+v"])
+                    return result("ok", "sent")
+                except RuntimeError as e:
+                    if clipboard_written[0]:
+                        # the clipboard was already overwritten — a partial
+                        # external effect happened, never "not_sent"
+                        return result("error", "unknown",
+                                      f"clipboard written but the paste did not "
+                                      f"complete: {e}")
+                    raise
             finally:
                 try:
                     _sh(["xclip", "-selection", "clipboard"], old_clip)
@@ -477,19 +521,29 @@ def _real_act(op, req):
         if op == "drag":
             x1, y1 = _center(target)
             x2, y2 = _center(req.get("to") or {})
+            pressed = [False]
             try:
                 _sh(["xdotool", "mousemove", str(int(x1)), str(int(y1)),
                      "mousedown", "1"])
+                pressed[0] = True
                 _sh(["xdotool", "mousemove", str(int(x2)), str(int(y2))])
+                return result("ok", "sent")
+            except RuntimeError as e:
+                if pressed[0]:
+                    # mousedown landed — the button was pressed on the
+                    # desktop, an effect already occurred
+                    return result("error", "unknown",
+                                  f"drag failed after mousedown: {e}")
+                raise
             finally:
                 # a failed drag must NEVER leave the button held
                 _sh(["xdotool", "mouseup", "1"])
-            return result("ok", "sent")
-        return result("ok", "not_sent", f"op '{op}' is not supported by the real backend")
+        return result("error", "not_sent",
+                      f"op '{op}' is not supported by the real backend")
     except RuntimeError as e:
-        # xdotool/import/xclip failures: we know nothing was dispatched for
-        # ops that never reached the tool — be honest, never claim "sent"
-        return result("error", "not_sent", str(e))
+        # xdotool/import/xclip failures before any dispatch: "not_sent" is
+        # honest; once any stage reached the desktop it is "unknown"
+        return result("error", "unknown" if dispatched[0] else "not_sent", str(e))
 
 
 def _real_abort():
@@ -522,11 +576,17 @@ def _observe(app, include_screenshot):
 
 
 def _stale_reason(req):
-    """Fail-closed staleness check: the action must reference the element
-    table of the observation it was decided on."""
-    want = req.get("state_id")
-    if want and want != _LAST_OBS["state_id"]:
-        return f"stale_state: observed {want}, current is {_LAST_OBS['state_id']}"
+    """Fail-closed staleness check: every action MUST carry the state_id of
+    the observation it was decided on — a missing or empty state_id is an
+    invalid request, not a bypass (acting without a proven observation is
+    exactly what the fail-closed contract exists to prevent)."""
+    want = str(req.get("state_id") or "")
+    current = _LAST_OBS["state_id"]
+    if not current or not want:
+        return ("invalid_request: action missing state_id — observe the app, "
+                "act on the state_id that observation returned")
+    if want != current:
+        return f"stale_state: observed {want}, current is {current}"
     target = req.get("target") or {}
     index = target.get("index", -1)
     if index == -1:

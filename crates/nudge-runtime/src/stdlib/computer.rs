@@ -369,9 +369,12 @@ fn drift_diff(live: &Json, recorded: &Json) -> Json {
 
 /// The screenshot pixels of a recorded observation live in the
 /// content-addressed sidecar next to the trace — restore them so replay
-/// sees the same Observation the record saw.
+/// sees the same Observation the record saw. The asset name must be
+/// EXACTLY a 64-hex digest + ".txt": a crafted trace cannot traverse out
+/// of the assets directory (parity with the Python/TS runtimes).
 fn read_trace_asset(name: &str) -> String {
-    if name.is_empty() {
+    if name.len() != 68 || !name.ends_with(".txt") || !name[..64].bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    {
         return String::new();
     }
     let path = std::env::var("NUDGE_REPLAY").unwrap_or_default();
@@ -501,6 +504,68 @@ fn replay_act(op: &str, app: &str, payload_args: &[Value]) -> Result<Value, Stri
                 "ReplayMismatch: replay signature mismatch: trace target {}, program target {}",
                 json_to_string(rec_target.unwrap_or(&Json::Null)),
                 json_to_string(&target)
+            ));
+        }
+    }
+    // full-payload identity (parity with the Python/TS request_hash check):
+    // the recorded action payload fields must match the program's call —
+    // `type("A")` must never replay a `type("B")` record
+    let payload_text = |i: usize| payload_args.get(i).map(value_to_text).unwrap_or_default();
+    let expect = |name: &str, expected: Option<String>| -> Result<(), String> {
+        let rec = recorded.get(name).and_then(Json::as_str).unwrap_or("");
+        if rec.is_empty() {
+            return Ok(());
+        }
+        if expected.as_deref() != Some(rec) {
+            return Err(format!(
+                "ReplayMismatch: replay signature mismatch: trace {name} '{rec}', program {name} '{}'",
+                expected.unwrap_or_default()
+            ));
+        }
+        Ok(())
+    };
+    expect("value", {
+        let v = payload_text(0);
+        if v.is_empty() {
+            let v = payload_text(1);
+            if v.is_empty() { None } else { Some(v) }
+        } else {
+            Some(v)
+        }
+    })?;
+    if op == "key" {
+        expect("key", Some(payload_text(0)))?;
+    }
+    if op == "scroll" {
+        expect("direction", Some(payload_text(1)))?;
+    }
+    if op == "paste" {
+        let fmt = payload_text(1);
+        if !fmt.is_empty() {
+            expect("format", Some(fmt))?;
+        }
+    }
+    if let Some(rec_pages) = recorded.get("pages").and_then(Json::as_num) {
+        let prog_pages = payload_args.get(2).map(|v| match v {
+            Value::Int(i) => *i as f64,
+            _ => 1.0,
+        }).unwrap_or(1.0);
+        if rec_pages != prog_pages {
+            return Err(format!(
+                "ReplayMismatch: replay signature mismatch: trace pages {rec_pages}, program pages {prog_pages}"
+            ));
+        }
+    }
+    if op == "drag" {
+        let rec_to = recorded.get("to");
+        let to = target_json(payload_args.get(1));
+        if rec_to.map(Json::is_obj).unwrap_or(false)
+            && canonical_target(rec_to) != canonical_target(Some(&to))
+        {
+            return Err(format!(
+                "ReplayMismatch: replay signature mismatch: trace destination {}, program destination {}",
+                json_to_string(rec_to.unwrap_or(&Json::Null)),
+                json_to_string(&to)
             ));
         }
     }
