@@ -6,7 +6,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 RUN cargo build --release -p nudgec
 
-FROM python:3.15-rc-slim-trixie AS builder
+FROM python:3.15-rc-alpine3.22 AS builder
 
 LABEL maintainer="NekomyaDev"
 LABEL description="Nudge - Typed, replayable, budget-aware programming language for LLM agents"
@@ -28,7 +28,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Final stage
-FROM python:3.15-rc-slim-trixie
+FROM python:3.15-rc-alpine3.22
 
 # Copy only necessary files from builder stages
 COPY --from=compiler /src/target/release/nudgec /usr/local/bin/nudgec
