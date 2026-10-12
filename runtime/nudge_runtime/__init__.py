@@ -1014,14 +1014,41 @@ _PROVIDER_KEY_ENVS = {
 # $0 — but a $0 on a metered provider is usually a missing table entry, not a
 # free call, so the runtime flags it (W9001 + trace `pricing: "unknown"`).
 _MODEL_PRICING = {
+    # Google Gemini
     "gemini-2.5-flash": (0.30, 2.50),
     "gemini-2.0-flash": (0.10, 0.40),
+    "gemini-2.0-flash-exp": (0.10, 0.40),
+    "gemini-1.5-flash": (0.075, 0.30),
+    "gemini-1.5-pro": (1.25, 5.00),
+    "gemini-3-flash": (0.15, 0.60),
+    "gemini-3.1-pro": (1.25, 5.00),
+    "gemini-3.6-flash-medium": (0.15, 0.60),
+    "gemini-3.8-flash-tiered": (0.15, 0.60),
+    # OpenAI
+    "gpt-4o": (2.50, 10.00),
     "gpt-4o-mini": (0.15, 0.60),
-    "llama-3.3-70b-versatile": (0.59, 0.79),
-    "mistral-small-latest": (0.10, 0.30),
-    "mistral-large-latest": (2.00, 6.00),
+    "o1": (15.00, 60.00),
+    "o1-mini": (1.10, 4.40),
+    "o3-mini": (1.10, 4.40),
+    "gpt-4-turbo": (10.00, 30.00),
+    "gpt-4": (30.00, 60.00),
+    "gpt-3.5-turbo": (0.50, 1.50),
+    # Anthropic
+    "claude-3-5-sonnet": (3.00, 15.00),
+    "claude-3-5-haiku": (0.80, 4.00),
+    "claude-3-opus": (15.00, 75.00),
     "claude-haiku-4-5": (1.00, 5.00),
     "claude-sonnet-4-5": (3.00, 15.00),
+    "claude-sonnet-4-6": (3.00, 15.00),
+    "claude-opus-4-6-thinking": (15.00, 75.00),
+    # DeepSeek & Open Source
+    "deepseek-chat": (0.14, 0.28),
+    "deepseek-reasoner": (0.55, 2.19),
+    "llama-3.3-70b-versatile": (0.59, 0.79),
+    "llama-3.1-8b-instant": (0.05, 0.08),
+    "mistral-small-latest": (0.10, 0.30),
+    "mistral-large-latest": (2.00, 6.00),
+    "codestral-latest": (0.30, 0.90),
 }
 
 

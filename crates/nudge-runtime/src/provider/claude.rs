@@ -1,4 +1,4 @@
-use super::{LlmRequest, LlmResponse, Provider};
+use super::{pricing, tokenizer, LlmRequest, LlmResponse, ModelInfo, Provider};
 use std::process::Command;
 
 #[derive(Debug, Clone)]
@@ -73,15 +73,90 @@ impl Provider for ClaudeProvider {
             .to_string();
 
         let usage = &json_resp["usage"];
-        let tokens_in = usage["input_tokens"].as_u64().unwrap_or(0);
-        let tokens_out = usage["output_tokens"].as_u64().unwrap_or(0);
+        let tokens_in = usage["input_tokens"]
+            .as_u64()
+            .unwrap_or_else(|| tokenizer::count_tokens(&req.prompt).max(1));
+        let tokens_out = usage["output_tokens"]
+            .as_u64()
+            .unwrap_or_else(|| tokenizer::count_tokens(&text).max(1));
+        let cache_read = usage["cache_read_input_tokens"].as_u64();
+        let cache_write = usage["cache_creation_input_tokens"].as_u64();
+        let cost_usd =
+            pricing::calculate_cost(&req.model, tokens_in, tokens_out, cache_read, cache_write);
 
         Ok(LlmResponse {
             text,
             tokens_in,
             tokens_out,
-            cost_usd: 0.0,
+            cost_usd,
             model: req.model.clone(),
+            cache_read,
+            cache_write,
         })
+    }
+
+    fn list_models(&self) -> Result<Vec<ModelInfo>, String> {
+        let output = Command::new("curl")
+            .arg("-s")
+            .arg("-X")
+            .arg("GET")
+            .arg("https://api.anthropic.com/v1/models")
+            .arg("-H")
+            .arg(format!("x-api-key: {}", self.api_key))
+            .arg("-H")
+            .arg("anthropic-version: 2023-06-01")
+            .output();
+
+        let mut models = Vec::new();
+        if let Ok(out) = output {
+            if out.status.success() {
+                if let Ok(resp_text) = String::from_utf8(out.stdout) {
+                    if let Ok(json_resp) = serde_json::from_str::<serde_json::Value>(&resp_text) {
+                        if let Some(data) = json_resp["data"].as_array() {
+                            for item in data {
+                                if let Some(id) = item["id"].as_str() {
+                                    let pricing = pricing::get_model_pricing(id);
+                                    models.push(ModelInfo {
+                                        id: id.to_string(),
+                                        name: id.to_string(),
+                                        provider: "anthropic".to_string(),
+                                        input_price_per_1m: pricing
+                                            .as_ref()
+                                            .map(|p| p.input_usd_per_1m),
+                                        output_price_per_1m: pricing
+                                            .as_ref()
+                                            .map(|p| p.output_usd_per_1m),
+                                        context_window: Some(200_000),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if models.is_empty() {
+            let defaults = [
+                "claude-3-5-sonnet-20241022",
+                "claude-3-5-haiku-20241022",
+                "claude-3-opus-20240229",
+                "claude-sonnet-4-5",
+                "claude-haiku-4-5",
+            ];
+            for id in defaults {
+                let pricing = pricing::get_model_pricing(id);
+                models.push(ModelInfo {
+                    id: id.to_string(),
+                    name: id.to_string(),
+                    provider: "anthropic".to_string(),
+                    input_price_per_1m: pricing.as_ref().map(|p| p.input_usd_per_1m),
+                    output_price_per_1m: pricing.as_ref().map(|p| p.output_usd_per_1m),
+                    context_window: Some(200_000),
+                });
+            }
+        }
+
+        Ok(models)
     }
 }

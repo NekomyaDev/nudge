@@ -103,6 +103,7 @@ impl VM {
         let mut os_module: HashMap<String, Value> = HashMap::new();
         let mut time_module: HashMap<String, Value> = HashMap::new();
         let mut env_module: HashMap<String, Value> = HashMap::new();
+        let mut llm_module: HashMap<String, Value> = HashMap::new();
 
         for (name, func) in stdlib_functions {
             // Register as global (e.g., "io.read")
@@ -130,6 +131,9 @@ impl VM {
             } else if name.starts_with("env.") {
                 let short = name.strip_prefix("env.").unwrap().to_string();
                 env_module.insert(short, func);
+            } else if name.starts_with("llm.") {
+                let short = name.strip_prefix("llm.").unwrap().to_string();
+                llm_module.insert(short, func);
             }
         }
 
@@ -143,6 +147,7 @@ impl VM {
         vm.globals
             .insert("time".to_string(), Value::Map(time_module));
         vm.globals.insert("env".to_string(), Value::Map(env_module));
+        vm.globals.insert("llm".to_string(), Value::Map(llm_module));
 
         // Register program functions as globals
         for (i, func) in vm.program.functions.iter().enumerate() {

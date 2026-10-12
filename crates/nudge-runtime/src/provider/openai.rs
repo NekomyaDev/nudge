@@ -1,4 +1,4 @@
-use super::{LlmRequest, LlmResponse, Provider};
+use super::{pricing, tokenizer, LlmRequest, LlmResponse, ModelInfo, Provider};
 use std::process::Command;
 
 #[derive(Debug, Clone)]
@@ -15,6 +15,16 @@ impl OpenAIProvider {
             .map_err(|_| "OPENAI_API_KEY environment variable not set".to_string())?;
 
         Ok(Self { base_url, api_key })
+    }
+
+    fn models_endpoint(&self) -> String {
+        if self.base_url.ends_with("/chat/completions") {
+            self.base_url.replace("/chat/completions", "/models")
+        } else if self.base_url.ends_with("/v1") || self.base_url.ends_with("/v1/") {
+            format!("{}/models", self.base_url.trim_end_matches('/'))
+        } else {
+            "https://api.openai.com/v1/models".to_string()
+        }
     }
 }
 
@@ -93,11 +103,15 @@ impl Provider for OpenAIProvider {
             .unwrap_or_default()
             .to_string();
 
-        let tokens_in = json_resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
-        let tokens_out = json_resp["usage"]["completion_tokens"]
+        let usage = &json_resp["usage"];
+        let tokens_in = usage["prompt_tokens"]
             .as_u64()
-            .unwrap_or(0);
-        let cost_usd = 0.0;
+            .unwrap_or_else(|| tokenizer::count_tokens(&req.prompt).max(1));
+        let tokens_out = usage["completion_tokens"]
+            .as_u64()
+            .unwrap_or_else(|| tokenizer::count_tokens(&text).max(1));
+        let cache_read = usage["prompt_tokens_details"]["cached_tokens"].as_u64();
+        let cost_usd = pricing::calculate_cost(&req.model, tokens_in, tokens_out, cache_read, None);
 
         Ok(LlmResponse {
             text,
@@ -105,6 +119,65 @@ impl Provider for OpenAIProvider {
             tokens_out,
             cost_usd,
             model: req.model.clone(),
+            cache_read,
+            cache_write: None,
         })
+    }
+
+    fn list_models(&self) -> Result<Vec<ModelInfo>, String> {
+        let endpoint = self.models_endpoint();
+        let output = Command::new("curl")
+            .arg("-s")
+            .arg("-X")
+            .arg("GET")
+            .arg(&endpoint)
+            .arg("-H")
+            .arg(format!("Authorization: Bearer {}", self.api_key))
+            .output()
+            .map_err(|e| format!("Failed to query OpenAI models: {}", e))?;
+
+        if !output.status.success() {
+            return Err(format!("curl error querying models: {}", output.status));
+        }
+
+        let resp_text = String::from_utf8(output.stdout)
+            .map_err(|e| format!("Invalid UTF-8 from OpenAI models response: {}", e))?;
+
+        let json_resp: serde_json::Value = serde_json::from_str(&resp_text)
+            .map_err(|e| format!("Failed to parse models JSON: {}", e))?;
+
+        let mut models = Vec::new();
+        if let Some(data) = json_resp["data"].as_array() {
+            for item in data {
+                if let Some(id) = item["id"].as_str() {
+                    let pricing = pricing::get_model_pricing(id);
+                    models.push(ModelInfo {
+                        id: id.to_string(),
+                        name: id.to_string(),
+                        provider: "openai".to_string(),
+                        input_price_per_1m: pricing.as_ref().map(|p| p.input_usd_per_1m),
+                        output_price_per_1m: pricing.as_ref().map(|p| p.output_usd_per_1m),
+                        context_window: Some(128_000),
+                    });
+                }
+            }
+        }
+
+        // Fallback default list if API returned empty
+        if models.is_empty() {
+            for &id in &["gpt-4o", "gpt-4o-mini", "o1", "o3-mini", "gpt-4-turbo"] {
+                let pricing = pricing::get_model_pricing(id);
+                models.push(ModelInfo {
+                    id: id.to_string(),
+                    name: id.to_string(),
+                    provider: "openai".to_string(),
+                    input_price_per_1m: pricing.as_ref().map(|p| p.input_usd_per_1m),
+                    output_price_per_1m: pricing.as_ref().map(|p| p.output_usd_per_1m),
+                    context_window: Some(128_000),
+                });
+            }
+        }
+
+        Ok(models)
     }
 }

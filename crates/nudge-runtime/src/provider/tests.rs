@@ -40,7 +40,6 @@ fn test_fake_provider_deterministic_response() {
 
 #[test]
 fn test_get_active_provider_default() {
-    // Ensure NUDGE_PROVIDER is unset or set to fake
     std::env::set_var("NUDGE_PROVIDER", "fake");
     let provider = get_active_provider();
     let req = LlmRequest {
@@ -58,9 +57,6 @@ fn test_get_active_provider_default() {
 
 #[test]
 fn test_vm_llm_call_execution() {
-    // Since OpCode::LlmCall might be handled by standard library or VM instruction,
-    // let's check how LlmCall is handled or if we can test executing a program or standard function using FakeProvider.
-    // Let's verify if stdlib has llm / prompt support or if VM handles OpCode::LlmCall.
     let provider = FakeProvider::new();
     let req = LlmRequest {
         prompt: "VM LLM Call test".to_string(),
@@ -71,4 +67,80 @@ fn test_vm_llm_call_execution() {
     };
     let res = provider.call(&req).unwrap();
     assert!(res.text.contains("VM LLM Call test"));
+    // Real pricing for gpt-4o:
+    assert!(res.cost_usd > 0.0);
+}
+
+#[test]
+fn test_pricing_and_token_counter() {
+    let text = "The quick brown fox jumps over the lazy dog. 12345.";
+    let tokens = tokenizer::count_tokens(text);
+    assert!((10..=20).contains(&tokens), "got {tokens}");
+
+    // gemini-2.5-flash: $0.30/1M in, $2.50/1M out
+    let cost = pricing::calculate_cost("gemini-2.5-flash", 1000, 1000, None, None);
+    // (1000 * 0.30 + 1000 * 2.50) / 1M = 2.80 / 1000 = 0.0028
+    assert!((cost - 0.0028).abs() < 1e-9);
+
+    // gpt-4o: $2.50/1M in, $10.00/1M out
+    let cost_gpt4o = pricing::calculate_cost("gpt-4o", 1000, 1000, None, None);
+    // (1000 * 2.50 + 1000 * 10.00) / 1M = 12.50 / 1000 = 0.0125
+    assert!((cost_gpt4o - 0.0125).abs() < 1e-9);
+}
+
+#[test]
+fn test_provider_list_models() {
+    let fake = FakeProvider::new();
+    let models = fake.list_models().unwrap();
+    assert!(!models.is_empty());
+    assert!(models.iter().any(|m| m.id == "fake-model"));
+
+    let antigravity = AntigravityProvider::new();
+    let ag_models = antigravity.list_models().unwrap();
+    assert!(!ag_models.is_empty());
+    assert!(ag_models.iter().any(|m| m.id == "gemini-3-flash"));
+    assert!(ag_models.iter().any(|m| m.id == "claude-sonnet-4-6"));
+}
+
+#[test]
+fn test_stdlib_llm_builtins() {
+    use crate::stdlib::llm::execute;
+    use crate::vm::Value;
+
+    // Test llm.tokens
+    let tok_val = execute(
+        "llm.tokens",
+        vec![Value::String("hello world from nudge".to_string())],
+    )
+    .unwrap();
+    if let Value::Int(n) = tok_val {
+        assert!(n >= 4);
+    } else {
+        panic!("expected Value::Int");
+    }
+
+    // Test llm.cost
+    let cost_val = execute(
+        "llm.cost",
+        vec![
+            Value::String("gpt-4o".to_string()),
+            Value::Int(1_000_000),
+            Value::Int(1_000_000),
+        ],
+    )
+    .unwrap();
+    if let Value::Float(f) = cost_val {
+        // 2.50 + 10.00 = 12.50 USD
+        assert!((f - 12.50).abs() < 1e-6);
+    } else {
+        panic!("expected Value::Float");
+    }
+
+    // Test llm.models
+    let models_val = execute("llm.models", vec![]).unwrap();
+    if let Value::List(list) = models_val {
+        assert!(!list.is_empty());
+    } else {
+        panic!("expected Value::List");
+    }
 }
