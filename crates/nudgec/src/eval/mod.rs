@@ -142,22 +142,98 @@ mod tests {
 
     #[test]
     fn test_eval_clean_diagnostics_unsupported() {
-        let src_par = r#"
-            fn main() -> [int] {
-                par map [1, 2, 3] |x| -> x * 2
+        let src_stream = r#"
+            fn main() -> int {
+                stream let x = 42
+                x
             }
         "#;
-        let items = parse_src(src_par);
+        let items = parse_src(src_stream);
         let err = run_program(&items, "main").unwrap_err();
-        assert!(err.contains("E-native-0101"), "got {err}");
+        assert!(err.contains("E-native-0100"), "got {err}");
 
-        let src_llm = r#"
-            fn main() -> string {
-                llm"""Hello""" with { model: "fake:default" }
+        let src_tool = r#"
+            tool test_tool() -> int {
+                impl: mcp("kb").test_tool()
+                side_effects: none
+            }
+            fn main() -> int {
+                test_tool()
             }
         "#;
-        let items = parse_src(src_llm);
+        let items = parse_src(src_tool);
+        std::env::set_var("NUDGE_PROVIDER", "openai");
         let err = run_program(&items, "main").unwrap_err();
-        assert!(err.contains("E-native-0300"), "got {err}");
+        std::env::set_var("NUDGE_PROVIDER", "fake");
+        assert!(err.contains("E-native-0201"), "got {err}");
+    }
+
+    #[test]
+    fn test_eval_llm_call_fake_offline() {
+        std::env::set_var("NUDGE_PROVIDER", "fake");
+        let src = r#"
+            fn main() -> string uses LLM {
+                llm"""Hello Nudge Language!""" with { model: "fake:default" }
+            }
+        "#;
+        let items = parse_src(src);
+        let res = run_program(&items, "main").expect("execution failed");
+        assert_eq!(
+            res,
+            NudgeVal::Str("fake: Hello Nudge Language!".to_string())
+        );
+    }
+
+    #[test]
+    fn test_eval_llm_structured_output_fake() {
+        std::env::set_var("NUDGE_PROVIDER", "fake");
+        let src = r#"
+            type Smoke = { title: string, confidence: float }
+            fn main() -> string uses LLM {
+                let r = llm"""Get title""" with { schema: Smoke, model: "fake:default" }
+                r.title
+            }
+        "#;
+        let items = parse_src(src);
+        let res = run_program(&items, "main").expect("execution failed");
+        assert_eq!(res, NudgeVal::Str("smoke test".to_string()));
+    }
+
+    #[test]
+    fn test_eval_par_map() {
+        let src = r#"
+            fn double(x: int) -> int {
+                x * 2
+            }
+            fn main() -> [int] {
+                let nums = [1, 2, 3]
+                par map(nums) |x| -> double(x)
+            }
+        "#;
+        let items = parse_src(src);
+        let res = run_program(&items, "main").expect("execution failed");
+        assert_eq!(
+            res,
+            NudgeVal::List(vec![NudgeVal::Int(2), NudgeVal::Int(4), NudgeVal::Int(6)])
+        );
+    }
+
+    #[test]
+    fn test_eval_fake_tool() {
+        std::env::set_var("NUDGE_PROVIDER", "fake");
+        let src = r#"
+            type Chunk = { doc: string, text: string, score: float }
+            tool retrieve(q: string, k: int) -> [Chunk] {
+                impl: mcp("kb").retrieve(q)
+                side_effects: none
+            }
+            fn main() -> int uses Tool {
+                let chunks = retrieve("test query", 2)
+                len(chunks)
+            }
+        "#;
+        let items = parse_src(src);
+        let res = run_program(&items, "main").expect("execution failed");
+        assert_eq!(res, NudgeVal::Int(1));
     }
 }

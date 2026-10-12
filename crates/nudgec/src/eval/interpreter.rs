@@ -1,6 +1,6 @@
 use crate::ast::{BinOp, DecisionQ, Expr, ExprKind, Item, StateOp, Stmt, StmtKind};
 use crate::eval::env::{AgentStore, Env};
-use crate::eval::val::NudgeVal;
+use crate::eval::val::{json_to_nudgeval, NudgeVal};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -253,10 +253,91 @@ impl Interpreter {
                 }
                 Ok(NudgeVal::Str(result))
             }
-            ExprKind::LlmCall { .. } => Err(
-                "error[E-native-0300]: 'llm' calls are not yet supported in Phase 1 native runtime"
-                    .into(),
-            ),
+            ExprKind::LlmCall {
+                prompt,
+                options,
+                repair: _,
+            } => {
+                let prompt_val = self.eval_expr(prompt, env)?;
+                let prompt_str = prompt_val.to_string();
+
+                let mut model_str = "fake:default".to_string();
+                let mut schema_name: Option<String> = None;
+                let mut budget_usd: Option<f64> = None;
+                let mut temperature: f64 = 0.7;
+
+                for (k, v_expr) in options {
+                    match k.as_str() {
+                        "model" => {
+                            let m_val = self.eval_expr(v_expr, env)?;
+                            model_str = match m_val {
+                                NudgeVal::Str(s) => s,
+                                other => other.to_string(),
+                            };
+                        }
+                        "schema" => {
+                            let s_str = match &v_expr.kind {
+                                ExprKind::Ident(id) => id.clone(),
+                                _ => match self.eval_expr(v_expr, env) {
+                                    Ok(val) => val.to_string(),
+                                    Err(_) => format!("{v_expr:?}"),
+                                },
+                            };
+                            schema_name = Some(s_str);
+                        }
+                        "budget" => {
+                            let b_val = self.eval_expr(v_expr, env)?;
+                            budget_usd = match b_val {
+                                NudgeVal::Float(f) => Some(f),
+                                NudgeVal::Int(i) => Some(i as f64),
+                                _ => None,
+                            };
+                        }
+                        "temperature" => {
+                            let t_val = self.eval_expr(v_expr, env)?;
+                            temperature = match t_val {
+                                NudgeVal::Float(f) => f,
+                                NudgeVal::Int(i) => i as f64,
+                                _ => 0.7,
+                            };
+                        }
+                        _ => {}
+                    }
+                }
+
+                let provider = nudge_runtime::provider::get_active_provider();
+                let req = nudge_runtime::provider::LlmRequest {
+                    prompt: prompt_str,
+                    model: model_str,
+                    schema: schema_name.clone(),
+                    temperature,
+                    budget_usd,
+                };
+
+                let resp = provider
+                    .call(&req)
+                    .map_err(|e| format!("error[E-native-0300]: LLM provider call failed: {e}"))?;
+
+                if schema_name.is_some() {
+                    let trimmed = resp.text.trim();
+                    let json_text = if let Some(stripped) = trimmed.strip_prefix("```json") {
+                        stripped.strip_suffix("```").unwrap_or(stripped).trim()
+                    } else if let Some(stripped) = trimmed.strip_prefix("```") {
+                        stripped.strip_suffix("```").unwrap_or(stripped).trim()
+                    } else {
+                        trimmed
+                    };
+
+                    match serde_json::from_str::<serde_json::Value>(json_text) {
+                        Ok(json_val) => Ok(json_to_nudgeval(json_val)),
+                        Err(e) => Err(format!(
+                            "error[E-native-0301]: failed to parse LLM structured response as JSON: {e}"
+                        )),
+                    }
+                } else {
+                    Ok(NudgeVal::Str(resp.text))
+                }
+            }
             ExprKind::Call { func, args, kwargs } => {
                 self.eval_call(func, args, kwargs, env)
             }
@@ -287,18 +368,67 @@ impl Interpreter {
             }
             ExprKind::Binary { op, l, r } => self.eval_binary(op, l, r, env),
             ExprKind::Unary { op, x } => self.eval_unary(op, x, env),
-            ExprKind::ParMap { .. } => Err(
-                "error[E-native-0101]: 'par map' is not yet supported in Phase 1 native runtime"
-                    .into(),
-            ),
-            ExprKind::ParAll(_) => Err(
-                "error[E-native-0102]: 'par all' is not yet supported in Phase 1 native runtime"
-                    .into(),
-            ),
-            ExprKind::ParRace(_) => Err(
-                "error[E-native-0103]: 'par race' is not yet supported in Phase 1 native runtime"
-                    .into(),
-            ),
+            ExprKind::ParMap {
+                coll,
+                kwargs: _,
+                params,
+                body,
+            } => {
+                let coll_val = self.eval_expr(coll, env)?;
+                let items = match coll_val {
+                    NudgeVal::List(xs) => xs,
+                    other => {
+                        return Err(format!(
+                            "par map requires a list collection, got {}",
+                            other.type_name()
+                        ))
+                    }
+                };
+
+                let mut results = Vec::with_capacity(items.len());
+                for item in items {
+                    let child_env = Rc::new(RefCell::new(Env::new_child(env.clone())));
+                    if params.len() == 1 {
+                        child_env.borrow_mut().define(params[0].clone(), item);
+                    } else if params.len() == 2 {
+                        match item {
+                            NudgeVal::Map(m) => {
+                                let first = m.get("first").cloned().unwrap_or(NudgeVal::Unit);
+                                let second = m.get("second").cloned().unwrap_or(NudgeVal::Unit);
+                                child_env.borrow_mut().define(params[0].clone(), first);
+                                child_env.borrow_mut().define(params[1].clone(), second);
+                            }
+                            NudgeVal::List(pair) => {
+                                let first = pair.first().cloned().unwrap_or(NudgeVal::Unit);
+                                let second = pair.get(1).cloned().unwrap_or(NudgeVal::Unit);
+                                child_env.borrow_mut().define(params[0].clone(), first);
+                                child_env.borrow_mut().define(params[1].clone(), second);
+                            }
+                            _ => {
+                                child_env.borrow_mut().define(params[0].clone(), item);
+                            }
+                        }
+                    } else {
+                        return Err("par map closure supports 1 or 2 parameters".into());
+                    }
+                    let res = self.eval_expr(body, &child_env)?;
+                    results.push(res);
+                }
+                Ok(NudgeVal::List(results))
+            }
+            ExprKind::ParAll(xs) => {
+                let mut results = Vec::with_capacity(xs.len());
+                for x in xs {
+                    results.push(self.eval_expr(x, env)?);
+                }
+                Ok(NudgeVal::List(results))
+            }
+            ExprKind::ParRace(xs) => {
+                if xs.is_empty() {
+                    return Ok(NudgeVal::Unit);
+                }
+                self.eval_expr(&xs[0], env)
+            }
             ExprKind::Merge { l, r } => {
                 let left = self.eval_expr(l, env)?;
                 let right = self.eval_expr(r, env)?;
@@ -392,10 +522,16 @@ impl Interpreter {
             }
 
             // Check tool execution
-            if self.tools.contains_key(name) {
-                return Err(format!(
-                    "error[E-native-0201]: tool '{name}' execution is not yet supported in Phase 1 native runtime"
-                ));
+            if let Some(tool_item) = self.tools.get(name).cloned() {
+                let provider_name =
+                    std::env::var("NUDGE_PROVIDER").unwrap_or_else(|_| "fake".to_string());
+                if provider_name == "fake" {
+                    return self.eval_fake_tool(&tool_item, args, kwargs, env);
+                } else {
+                    return Err(format!(
+                        "error[E-native-0201]: tool '{name}' execution is not yet supported in Phase 1 native runtime"
+                    ));
+                }
             }
 
             // Check user functions
@@ -458,6 +594,52 @@ impl Interpreter {
 
         self.active_agent = prev_agent;
         result
+    }
+
+    fn eval_fake_tool(
+        &mut self,
+        tool_item: &Item,
+        args: &[Expr],
+        _kwargs: &[(String, Expr)],
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<NudgeVal, String> {
+        let (name, ret_ty) = match tool_item {
+            Item::Tool { name, ret, .. } => (name.as_str(), ret),
+            _ => return Err("called item is not a tool".into()),
+        };
+
+        for arg in args {
+            let _ = self.eval_expr(arg, env)?;
+        }
+
+        if name == "retrieve" {
+            let mut chunk = HashMap::new();
+            chunk.insert(
+                "doc".to_string(),
+                NudgeVal::Str("design/spec.md".to_string()),
+            );
+            chunk.insert(
+                "text".to_string(),
+                NudgeVal::Str(
+                    "Nudge prevents silent cost overruns via compile-time budgets and static verification."
+                        .to_string(),
+                ),
+            );
+            chunk.insert("score".to_string(), NudgeVal::Float(0.95));
+            return Ok(NudgeVal::List(vec![NudgeVal::Map(chunk)]));
+        }
+
+        match ret_ty {
+            crate::ast::TypeExpr::List(_) => Ok(NudgeVal::List(Vec::new())),
+            crate::ast::TypeExpr::Record(_) => Ok(NudgeVal::Map(HashMap::new())),
+            crate::ast::TypeExpr::Named(n) if n == "string" => {
+                Ok(NudgeVal::Str(format!("fake_tool_{name}")))
+            }
+            crate::ast::TypeExpr::Named(n) if n == "int" => Ok(NudgeVal::Int(0)),
+            crate::ast::TypeExpr::Named(n) if n == "float" => Ok(NudgeVal::Float(0.0)),
+            crate::ast::TypeExpr::Named(n) if n == "bool" => Ok(NudgeVal::Bool(true)),
+            _ => Ok(NudgeVal::Unit),
+        }
     }
 
     fn call_stdlib(&mut self, name: &str, args: &[NudgeVal]) -> Result<NudgeVal, String> {

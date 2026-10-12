@@ -110,3 +110,31 @@ impl fmt::Display for NudgeVal {
         }
     }
 }
+
+/// Convert a serde_json::Value to NudgeVal recursively.
+pub fn json_to_nudgeval(v: serde_json::Value) -> NudgeVal {
+    match v {
+        serde_json::Value::Null => NudgeVal::Unit,
+        serde_json::Value::Bool(b) => NudgeVal::Bool(b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                NudgeVal::Int(i)
+            } else if let Some(f) = n.as_f64() {
+                NudgeVal::Float(f)
+            } else {
+                NudgeVal::Float(0.0)
+            }
+        }
+        serde_json::Value::String(s) => NudgeVal::Str(s),
+        serde_json::Value::Array(arr) => {
+            NudgeVal::List(arr.into_iter().map(json_to_nudgeval).collect())
+        }
+        serde_json::Value::Object(obj) => {
+            let mut map = HashMap::new();
+            for (k, val) in obj {
+                map.insert(k, json_to_nudgeval(val));
+            }
+            NudgeVal::Map(map)
+        }
+    }
+}

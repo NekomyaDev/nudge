@@ -199,6 +199,7 @@ name = "nudgec"
 version = "1.2.1"
 dependencies = [
  "nudge-runtime",
+ "serde_json",
 ]
 
 [[package]]
