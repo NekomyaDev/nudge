@@ -5,6 +5,7 @@
 pub mod computer;
 pub mod env;
 pub mod io;
+pub mod llm;
 pub mod math;
 pub mod os;
 pub mod string;
@@ -41,6 +42,9 @@ pub fn register_all() -> HashMap<String, Value> {
     // Register environment variable functions
     functions.extend(env::register());
 
+    // Register LLM functions
+    functions.extend(llm::register());
+
     functions
 }
 
@@ -60,6 +64,8 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
         time::execute(name, args)
     } else if name.starts_with("env.") {
         env::execute(name, args)
+    } else if name.starts_with("llm.") {
+        llm::execute(name, args)
     } else {
         Err(format!("Unknown standard library function: {}", name))
     }

@@ -7,6 +7,7 @@
 //! - Trace emission
 
 use crate::bytecode::{Constant, Instruction, OpCode, Program};
+use crate::provider;
 use std::collections::HashMap;
 
 /// Runtime value
@@ -682,6 +683,30 @@ impl VM {
                     }
                     _ => return Err("ReadLine requires string prompt".to_string()),
                 }
+            }
+
+            OpCode::LlmCall => {
+                // Pop prompt from stack (expect string).
+                // Wait, what does LlmCall expect on stack? Let's check prompt requirement or instructions.
+                // Task description: "When executing OpCode::LlmCall: Pop prompt from stack (expect string). Call crate::provider::get_active_provider().call(&req) with model and prompt. Push result Value::String(resp.text) onto the VM stack."
+                // What about model? Usually default or also on stack, or instruction arg / default model. Let's check if model is expected or what default model is used in the codebase.
+                let prompt_val = self.pop()?;
+                let prompt = match prompt_val {
+                    Value::String(s) => s,
+                    _ => return Err("LlmCall requires string prompt".to_string()),
+                };
+                let model = std::env::var("NUDGE_DEFAULT_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
+                let req = provider::LlmRequest {
+                    prompt,
+                    model,
+                    schema: None,
+                    temperature: 0.7,
+                    budget_usd: None,
+                };
+                let provider = provider::get_active_provider();
+                let resp = provider.call(&req)?;
+                self.stack.push(Value::String(resp.text));
+                self.advance_ip();
             }
 
             OpCode::NewList => {

@@ -74,7 +74,7 @@ impl AntigravityProvider {
             let profile_path = PathBuf::from(home).join(".openhands/profiles/antigravity-proxy.json");
             if let Ok(content) = fs::read_to_string(profile_path) {
                 // Parse using crate::json if possible, or basic parsing
-                if let Ok(val) = crate::json::parse_json(&content) {
+                if let Ok(val) = crate::json::parse(&content) {
                     let base_url = val.get("base_url").and_then(|v| v.as_str()).map(|s| s.to_string());
                     let model = val.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
                     let api_key = val.get("api_key").and_then(|v| v.as_str()).map(|s| s.to_string());
@@ -89,7 +89,7 @@ impl AntigravityProvider {
         if let Some(home) = dirs_next_home() {
             let oauth_path = PathBuf::from(home).join(".jcode/antigravity_oauth.json");
             if let Ok(content) = fs::read_to_string(oauth_path) {
-                if let Ok(val) = crate::json::parse_json(&content) {
+                if let Ok(val) = crate::json::parse(&content) {
                     if let Some(token) = val.get("access_token").and_then(|v| v.as_str()) {
                         return Some(token.to_string());
                     }
@@ -158,13 +158,13 @@ impl Provider for AntigravityProvider {
         let response_body = String::from_utf8_lossy(&output.stdout);
 
         // Parse response using crate::json
-        let json_val = crate::json::parse_json(&response_body)
+        let json_val = crate::json::parse(&response_body)
             .map_err(|e| format!("Failed to parse JSON response from Antigravity proxy: {}. Body: {}", e, response_body))?;
 
         // Extract content from choices[0].message.content
         let content = json_val
             .get("choices")
-            .and_then(|c| c.get(0))
+            .and_then(|c| c.idx(0))
             .and_then(|ch| ch.get("message"))
             .and_then(|m| m.get("content"))
             .and_then(|v| v.as_str())
