@@ -349,12 +349,29 @@ impl Parser {
         self.expect(&Token::LParen)?;
         let mut params = Vec::new();
         while !matches!(self.peek(), Token::RParen) {
-            if let Token::Ident(p) = self.peek().clone() {
-                params.push(p);
-                self.advance();
-            }
+            let param = match self.peek().clone() {
+                Token::Ident(p) => {
+                    self.advance();
+                    p
+                }
+                other => {
+                    return Err(ParseError {
+                        message: format!("Expected parameter name, found {:?}", other),
+                        line: self.line,
+                    });
+                }
+            };
+            params.push(param);
             if matches!(self.peek(), Token::Comma) {
                 self.advance();
+            } else if !matches!(self.peek(), Token::RParen) {
+                return Err(ParseError {
+                    message: format!(
+                        "Expected ',' or ')' after parameter, found {:?}",
+                        self.peek()
+                    ),
+                    line: self.line,
+                });
             }
         }
         self.expect(&Token::RParen)?;
@@ -867,5 +884,12 @@ while x < 10 {
     fn test_tokenize_unterminated_string_backslash() {
         let tokens = Parser::tokenize(r#""abc\"#);
         assert_eq!(tokens[0], Token::String("abc\\".to_string()));
+    }
+
+    #[test]
+    fn test_parse_malformed_function_params_returns_error() {
+        assert!(parse("fn f(1) {}").is_err());
+        assert!(parse("fn f(a 1) {}").is_err());
+        assert!(parse("fn f(,) {}").is_err());
     }
 }
