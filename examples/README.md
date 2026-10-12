@@ -1,98 +1,79 @@
-# Nudge Examples
+# Nudge examples
 
-> [!NOTE]
-> **Testing & Preview Stage / 测试与技术预览阶段**: The examples in this directory serve as integration test fixtures, compiler validation suites, and technical previews. They are actively tested across CI matrices and continue to evolve alongside the Nudge language specification.
-
-
-## Examples
-
-### [AI Chatbot](chatbot/)
-A conversational AI agent with memory. Demonstrates:
-- Conversation history management
-- Schema-validated responses
-- Budget-controlled API calls
-
-### [Code Reviewer](code-reviewer/)
-An AI agent that reviews code for quality and security. Demonstrates:
-- Structured output with line numbers
-- Severity-based issue classification
-- Quality scoring
-
-### [Research Agent](research-agent/)
-An AI agent that researches topics and produces findings. Demonstrates:
-- Multi-source research
-- Confidence scoring
-- Research gap identification
-
-### [Data Analyzer](data-analyzer/)
-An AI agent that analyzes data and provides insights. Demonstrates:
-- Pattern recognition
-- Statistical analysis
-- Actionable recommendations
-
-### [Translator](translator/)
-An AI agent that translates text between languages. Demonstrates:
-- Multi-language support
-- Quality scoring
-- Parallel translation (par map)
-
-### [Support Ticket Classifier](classifier/)
-Classifies a batch of tickets with per-call model routing. Demonstrates:
-- `route{}` cost-aware model routing (cheap vs strong per ticket)
-- `par map` over a batch
-- Typed categories with repair
-
-### [RAG Agent](rag-agent/)
-A retrieval-augmented agent that answers only from retrieved context. Demonstrates:
-- MCP tool retrieval (`impl: mcp("kb").retrieve`)
-- Grounded answers with citations — and explicit refusal when evidence is thin
-- Budget-controlled synthesis with repair
-
-### [Dungeon Crawler RPG](dungeon-crawler/)
-A turn-based RPG adventure game engine written purely in Nudge. Demonstrates:
-- Pure Nudge game logic and turn-based combat mechanics
-- Stateful hero progression (HP, ATK, DEF, Potions, Gold, XP, Level)
-- Value-level policy switching with `route{}` (armor mitigation, critical hits, branching outcomes)
-- Merchant trading, weapon & armor forging, and shrine restoration
-
-## More Examples
-
-Compact single-file programs at the top of this directory, used by the compiler's CI and smoke tests:
-
-- [`hello_llm.ndg`](hello_llm.ndg) — the smallest possible LLM program
-- [`checkpoint_agent.ndg`](checkpoint_agent.ndg) — resume a crashed run from its checkpoint (`nudgec resume`)
-- [`smoke_provider.ndg`](smoke_provider.ndg) — exercises provider plumbing (also runnable against live providers via the smoke workflows)
-- [`research_agent.ndg`](research_agent.ndg) — the compiler's own acceptance fixture: every `cargo test` run compiles and type-checks this file
+This directory contains the supported Nudge examples and their replay fixtures.
+Every `.ndg` source file listed below is checked in CI with:
 
 ```sh
-nudgec test examples/hello_llm.ndg
+cargo run -p nudgec -- check examples/<path>.ndg
 ```
 
-Their replay fixtures live in [`traces/`](traces/).
+The examples compile to Python with `nudgec build`. Replay-backed tests run
+without API keys. Live LLM, MCP, or computer-automation runs require the
+corresponding provider or service configuration described below.
 
-## Quick Start
+## Supported examples
+
+| Example | Path | Demonstrates | External service for live runs |
+| --- | --- | --- | --- |
+| Hello LLM | [`hello_llm.ndg`](hello_llm.ndg) | Minimal typed LLM call and budget | LLM provider, or fake provider |
+| Chatbot | [`chatbot/`](chatbot/) | Conversation memory, schema output, replay | LLM provider |
+| Code reviewer | [`code-reviewer/`](code-reviewer/) | Structured review findings and scoring | LLM provider |
+| Support classifier | [`classifier/`](classifier/) | `route{}`, `par map`, typed classification | LLM provider |
+| Data analyzer | [`data-analyzer/`](data-analyzer/) | Structured insights and recommendations | LLM provider |
+| Translator | [`translator/`](translator/) | Typed translation and parallel mapping | LLM provider |
+| RAG agent | [`rag-agent/`](rag-agent/) | MCP retrieval, grounded answers, refusal | MCP knowledge-base server and LLM provider |
+| Research agent | [`research_agent.ndg`](research_agent.ndg) | MCP search, parallel research, replay | MCP search server and LLM provider |
+| Checkpoint agent | [`checkpoint_agent.ndg`](checkpoint_agent.ndg) | Stateful agents and checkpoint/resume | LLM provider for live runs |
+| Triage agent | [`triage-agent/`](triage-agent/) | `decide{}`, confidence policy routing | None for fake-provider tests |
+| Computer automation | [`computer-automation/`](computer-automation/) | Observe, decide, act, replay, drift checks | Fake computer provider or configured desktop |
+| Dungeon crawler | [`dungeon-crawler/`](dungeon-crawler/) | Pure Nudge state, combat, routing, and tests | None |
+| Property fuzz | [`property-fuzz/`](property-fuzz/) | `for_all`, generators, and shrinking | None |
+| Provider smoke | [`smoke_provider.ndg`](smoke_provider.ndg) | Real-provider adapter smoke test | Configured provider |
+
+## Check and test examples
+
+From the repository root:
 
 ```sh
-# Run any example
+cargo run -p nudgec -- check examples/hello_llm.ndg
+cargo run -p nudgec -- check examples/chatbot/chatbot.ndg
+cargo run -p nudgec -- test examples/property-fuzz/property-fuzz.ndg
+```
+
+To build an example from its directory:
+
+```sh
 cd examples/chatbot
 nudgec check chatbot.ndg
 nudgec build chatbot.ndg
 python3 out/chatbot.py
 ```
 
-## Features Demonstrated
+For replay-backed examples, `nudgec test` uses the committed trace fixture and
+does not contact a live provider. See each example's README for its specific
+run command and configuration.
 
-| Example | Typed LLM | Replay | Budget | Parallel | Effects |
-|:---|:---:|:---:|:---:|:---:|:---:|
-| Chatbot | ✅ | ✅ | ✅ | - | LLM |
-| Code Reviewer | ✅ | ✅ | ✅ | - | LLM |
-| Research Agent | ✅ | ✅ | ✅ | - | LLM |
-| Data Analyzer | ✅ | ✅ | ✅ | - | LLM |
-| Translator | ✅ | ✅ | ✅ | ✅ | LLM |
-| Classifier | ✅ | ✅ | ✅ | ✅ | LLM |
-| RAG Agent | ✅ | ✅ | ✅ | - | LLM, Tool |
-| Dungeon Crawler | - | - | - | - | Pure |
+## Special cases
+
+- `examples/research_agent.ndg` is the canonical research acceptance fixture.
+  The former `examples/research-agent/` copy was removed because it duplicated
+  the same concept with a separate trace and README.
+- `examples/notebooks/` was removed. The notebooks installed an external
+  `nudge-runtime` package, depended on machine-local Windows paths, and included
+  captured output from one developer's environment. They were not portable or
+  reproducible examples.
+- `examples/dungeon-crawler/index.html` and `play.py` are optional presentation
+  helpers. The source of truth remains `dungeon-crawler.ndg` and its compiler
+  checks.
+
+## Replay fixtures
+
+Recorded traces are kept next to the examples that use them. The shared
+[`traces/`](traces/) directory contains the acceptance fixture for
+`research_agent.ndg` and the small top-level demo trace.
 
 ## Contributing
 
-Want to add your own example? See [CONTRIBUTING.md](../CONTRIBUTING.md) for guidelines.
+New examples should be self-contained, use portable paths, include a README
+when they need configuration, and pass `nudgec check` from a clean checkout.
+See [`CONTRIBUTING.md`](../CONTRIBUTING.md) for project contribution guidance.

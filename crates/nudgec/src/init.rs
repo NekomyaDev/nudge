@@ -40,7 +40,7 @@ pub const TEMPLATES: &[(&str, &str, &str)] = &[
     (
         "research-agent",
         "multi-step research with tools and a report",
-        include_str!("../../../examples/research-agent/research-agent.ndg"),
+        include_str!("../../../examples/research_agent.ndg"),
     ),
     (
         "translator",
