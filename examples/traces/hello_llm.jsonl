@@ -1,2 +1,0 @@
-{"v": 1, "seq": 1, "kind": "llm.call", "model": "anthropic:sonnet-4.6", "params": {"temperature": 0}, "input": "Say hello to the Nudge language in one short sentence.", "output": "Hello! Welcome to Nudge.", "tokens": {"in": 10, "out": 6}, "cost_usd": 0.001, "repair_round": 0, "outcome": "ok", "provider": "fake"}
-{"v": 1, "seq": 2, "kind": "fn.return", "fn": "main", "output": "Hello! Welcome to Nudge."}
