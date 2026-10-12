@@ -268,6 +268,17 @@ fn builtin_record_ty(name: &str) -> Option<Ty> {
             ("removed", Ty::Unknown),
             ("summary", Ty::Str),
         ]),
+        "CursorPos" => r(vec![("x", Ty::Int), ("y", Ty::Int)]),
+        "ScreenSize" => r(vec![("width", Ty::Int), ("height", Ty::Int)]),
+        "WindowInfo" => r(vec![
+            ("app", Ty::Str),
+            ("title", Ty::Str),
+            ("width", Ty::Int),
+            ("height", Ty::Int),
+            ("x", Ty::Int),
+            ("y", Ty::Int),
+            ("focused", Ty::Bool),
+        ]),
         _ => None,
     }
 }
@@ -1388,15 +1399,43 @@ fn check_expr(
                     }
                     builtin_record_ty("Observation").unwrap()
                 }
+                "screen_size" | "cursor_pos" => {
+                    if args.len() != 0 {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0902",
+                            msg: format!("computer.{method} takes 0 arguments, got {}", args.len()),
+                        });
+                    }
+                    builtin_record_ty(if method == "screen_size" {
+                        "ScreenSize"
+                    } else {
+                        "CursorPos"
+                    })
+                    .unwrap()
+                }
+                "window_info" => {
+                    if args.len() > 1 {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0902",
+                            msg: format!(
+                                "computer.window_info takes 0 to 1 argument(s), got {}",
+                                args.len()
+                            ),
+                        });
+                    }
+                    builtin_record_ty("WindowInfo").unwrap()
+                }
                 "click" | "drag" | "set_value" | "type" | "key" | "scroll" | "perform"
-                | "paste" => {
+                | "paste" | "mouse_move" | "mouse_down" | "mouse_up" => {
                     // exact signatures: an extra positional would silently
                     // land in a different slot of the generated runtime call
                     // (e.g. allow) and change security semantics
                     let (min_args, max_args) = match method.as_str() {
-                        "click" | "type" | "key" => (1, 1),
+                        "click" | "type" | "key" | "mouse_down" | "mouse_up" => (1, 1),
                         "paste" => (1, 2),
-                        "set_value" | "drag" | "perform" => (2, 2),
+                        "set_value" | "drag" | "perform" | "mouse_move" => (2, 2),
                         _ => (2, 3), // scroll(target, direction[, pages])
                     };
                     if args.len() < min_args || args.len() > max_args {
@@ -1423,7 +1462,7 @@ fn check_expr(
                         span: None,
                         code: "E0901",
                         msg: format!(
-                            "unknown computer method '{other}' (known: observe, click, type, key, scroll, set_value, drag, perform, paste)"
+                            "unknown computer method '{other}' (known: observe, click, type, key, scroll, set_value, drag, perform, paste, screen_size, window_info, mouse_move, mouse_down, mouse_up, cursor_pos)"
                         ),
                     });
                     Ty::Unknown

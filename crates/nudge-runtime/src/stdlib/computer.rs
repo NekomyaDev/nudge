@@ -120,6 +120,13 @@ fn fake_call(op: &str, req: &Json) -> Result<Json, String> {
             ("height", Json::Num(1080.0)),
         ]));
     }
+    if op == "cursor_pos" {
+        let mouse = FAKE_MOUSE.lock().unwrap_or_else(|e| e.into_inner());
+        return Ok(obj(vec![
+            ("x", Json::Num(mouse.x)),
+            ("y", Json::Num(mouse.y)),
+        ]));
+    }
     if op == "window_info" {
         let target_app = if app.is_empty() { "FakeApp" } else { &app };
         return Ok(obj(vec![
@@ -172,6 +179,49 @@ fn fake_call(op: &str, req: &Json) -> Result<Json, String> {
                 "not_actionable: element {index} does not advertise '{action}'"
             ));
         }
+    }
+    if op == "mouse_move" {
+        let x = match req.get("x") {
+            Some(Json::Num(n)) => *n,
+            _ => 0.0,
+        };
+        let y = match req.get("y") {
+            Some(Json::Num(n)) => *n,
+            _ => 0.0,
+        };
+        if x < 0.0 || y < 0.0 || x > 1920.0 || y > 1080.0 {
+            return Err(format!(
+                "out_of_bounds: coordinates ({x}, {y}) are outside screen boundaries (0..1920, 0..1080)"
+            ));
+        }
+        let mut mouse = FAKE_MOUSE.lock().unwrap_or_else(|e| e.into_inner());
+        mouse.x = x;
+        mouse.y = y;
+        return Ok(obj(vec![
+            ("ok", Json::Bool(true)),
+            ("outcome", Json::Str("ok".into())),
+            ("latency_ms", Json::Num(0.0)),
+            ("error", Json::Str(String::new())),
+        ]));
+    }
+    if op == "mouse_down" || op == "mouse_up" {
+        let btn = match req.get("button") {
+            Some(Json::Num(n)) => *n as i64,
+            _ => 1,
+        };
+        if !(1..=3).contains(&btn) {
+            return Err(format!(
+                "not_actionable: mouse button must be 1, 2, or 3, got {btn}"
+            ));
+        }
+        let mut mouse = FAKE_MOUSE.lock().unwrap_or_else(|e| e.into_inner());
+        mouse.buttons[(btn - 1) as usize] = op == "mouse_down";
+        return Ok(obj(vec![
+            ("ok", Json::Bool(true)),
+            ("outcome", Json::Str("ok".into())),
+            ("latency_ms", Json::Num(0.0)),
+            ("error", Json::Str(String::new())),
+        ]));
     }
     Ok(obj(vec![
         ("ok", Json::Bool(true)),
@@ -255,6 +305,13 @@ pub fn reset_authority_for_tests() {
     }
     if let Ok(mut g) = REPLAY.lock() {
         *g = None;
+    }
+    if let Ok(mut g) = FAKE_MOUSE.lock() {
+        *g = FakeMouseState {
+            x: 0.0,
+            y: 0.0,
+            buttons: [false; 3],
+        };
     }
 }
 
@@ -534,6 +591,27 @@ fn replay_act(op: &str, app: &str, payload_args: &[Value]) -> Result<Value, Stri
     // only ops that carry a real target have one to verify (type/key/paste
     // carry the recorded null target, like the Python/TS records)
     let carries_target = matches!(op, "click" | "scroll" | "set_value" | "perform" | "drag");
+    let payload_text = |i: usize| payload_args.get(i).map(value_to_text).unwrap_or_default();
+    let expect = |name: &str, expected: Option<String>| -> Result<(), String> {
+        let rec = recorded.get(name).and_then(Json::as_str).unwrap_or("");
+        if rec.is_empty() {
+            return Ok(());
+        }
+        if expected.as_deref() != Some(rec) {
+            return Err(format!(
+                "ReplayMismatch: replay signature mismatch: trace {name} '{rec}', program {name} '{}'",
+                expected.unwrap_or_default()
+            ));
+        }
+        Ok(())
+    };
+    if op == "mouse_move" {
+        expect("x", Some(payload_text(0)))?;
+        expect("y", Some(payload_text(1)))?;
+    }
+    if op == "mouse_down" || op == "mouse_up" {
+        expect("button", Some(payload_text(0)))?;
+    }
     if carries_target {
         let rec_target = recorded.get("target");
         let target = target_json(payload_args.first());
@@ -550,20 +628,6 @@ fn replay_act(op: &str, app: &str, payload_args: &[Value]) -> Result<Value, Stri
     // full-payload identity (parity with the Python/TS request_hash check):
     // the recorded action payload fields must match the program's call —
     // `type("A")` must never replay a `type("B")` record
-    let payload_text = |i: usize| payload_args.get(i).map(value_to_text).unwrap_or_default();
-    let expect = |name: &str, expected: Option<String>| -> Result<(), String> {
-        let rec = recorded.get(name).and_then(Json::as_str).unwrap_or("");
-        if rec.is_empty() {
-            return Ok(());
-        }
-        if expected.as_deref() != Some(rec) {
-            return Err(format!(
-                "ReplayMismatch: replay signature mismatch: trace {name} '{rec}', program {name} '{}'",
-                expected.unwrap_or_default()
-            ));
-        }
-        Ok(())
-    };
     expect("value", {
         let v = payload_text(0);
         if v.is_empty() {
@@ -648,7 +712,7 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
     // canonical surface: only `observe` names an app — every action acts
     // on the app + state of the LAST successful observation (the runtime
     // owns the authority, like the Python/TS runtimes)
-    let (app, payload_args): (String, &[Value]) = if op == "screen_size" {
+    let (app, payload_args): (String, &[Value]) = if op == "screen_size" || op == "cursor_pos" {
         (String::new(), &args[..])
     } else if op == "observe" || op == "window_info" {
         let app = args.first();
@@ -656,7 +720,15 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             Some(v) => value_to_text(v),
             None => String::new(),
         };
-        let slice_start = if app.is_some() && op == "observe" { 1 } else { if op == "window_info" && app.is_some() { 1 } else { 0 } };
+        let slice_start = if app.is_some() && op == "observe" {
+            1
+        } else {
+            if op == "window_info" && app.is_some() {
+                1
+            } else {
+                0
+            }
+        };
         (app_str, &args[slice_start..])
     } else {
         let guard = LAST_OBS
@@ -734,9 +806,36 @@ fn request_json(op: &str, app: &str, args: &[Value]) -> Json {
     let target = target_json(args.first());
     let text_at = |i: usize| args.get(i).map(value_to_text).unwrap_or_default();
     let pairs: Vec<(&str, Json)> = match op {
-        "observe" | "screen_size" | "window_info" => vec![],
+        "observe" | "screen_size" | "window_info" | "cursor_pos" => vec![],
         "click" => vec![("target", target)],
         "drag" => vec![("target", target), ("to", target_json(args.get(1)))],
+        "mouse_move" => {
+            let num_at = |i: usize| -> f64 {
+                match args.get(i) {
+                    Some(Value::Int(n)) => *n as f64,
+                    Some(Value::Float(f)) => *f,
+                    _ => 0.0,
+                }
+            };
+            vec![
+                ("target", obj(vec![("index", Json::Num(-1.0))])),
+                ("x", Json::Num(num_at(0))),
+                ("y", Json::Num(num_at(1))),
+            ]
+        }
+        "mouse_down" | "mouse_up" => {
+            let int_at = |i: usize| -> i64 {
+                match args.get(i) {
+                    Some(Value::Int(n)) => *n,
+                    Some(Value::Float(f)) => *f as i64,
+                    _ => 1,
+                }
+            };
+            vec![
+                ("target", obj(vec![("index", Json::Num(-1.0))])),
+                ("button", Json::Num(int_at(0) as f64)),
+            ]
+        }
         "type" => vec![
             ("target", obj(vec![("index", Json::Num(-1.0))])),
             ("text", Json::Str(text_at(0))),

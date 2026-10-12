@@ -394,22 +394,31 @@ mod computer_tests {
         }
 
         // Test computer.window_info with app argument
-        let win = computer::execute("computer.window_info", vec![Value::String("FakeApp".into())]).expect("window_info works");
+        let win = computer::execute(
+            "computer.window_info",
+            vec![Value::String("FakeApp".into())],
+        )
+        .expect("window_info works");
         match &win {
             Value::Map(m) => {
                 assert_eq!(m.get("app"), Some(&Value::String("FakeApp".into())));
-                assert_eq!(m.get("title"), Some(&Value::String("FakeApp Window".into())));
+                assert_eq!(
+                    m.get("title"),
+                    Some(&Value::String("FakeApp Window".into()))
+                );
                 assert_eq!(m.get("focused"), Some(&Value::Bool(true)));
             }
             other => panic!("expected window info map, got {other:?}"),
         }
 
         // Observe to establish state authority
-        computer::execute("computer.observe", vec![Value::String("FakeApp".into())]).expect("observe works");
+        computer::execute("computer.observe", vec![Value::String("FakeApp".into())])
+            .expect("observe works");
 
         // Test computer.type (acting with text or raster movement / drag / type)
         // Note: type method in stdlib/computer.rs is registered as "computer.type"
-        let type_res = computer::execute("computer.type", vec![Value::String("Hello Nudge".into())]);
+        let type_res =
+            computer::execute("computer.type", vec![Value::String("Hello Nudge".into())]);
         assert!(type_res.is_ok());
 
         // Test computer.key
@@ -425,7 +434,10 @@ mod computer_tests {
         to_map.insert("x".into(), Value::Int(300));
         to_map.insert("y".into(), Value::Int(400));
 
-        let drag_res = computer::execute("computer.drag", vec![Value::Map(from_map), Value::Map(to_map)]);
+        let drag_res = computer::execute(
+            "computer.drag",
+            vec![Value::Map(from_map), Value::Map(to_map)],
+        );
         assert!(drag_res.is_ok());
     }
 
@@ -531,8 +543,9 @@ mod computer_tests {
         // exhaustion raises like llm replay — a third observe has no record
         let err = computer::execute("computer.observe", vec![Value::String("Notes".into())])
             .expect("second observe succeeds");
-        let err_exhaust = computer::execute("computer.observe", vec![Value::String("Notes".into())])
-            .expect_err("exhaustion must raise");
+        let err_exhaust =
+            computer::execute("computer.observe", vec![Value::String("Notes".into())])
+                .expect_err("exhaustion must raise");
         std::env::remove_var("NUDGE_REPLAY");
         match &obs {
             Value::Map(m) => {
@@ -549,7 +562,10 @@ mod computer_tests {
             other => panic!("expected an ActionResult map, got {other:?}"),
         }
         assert!(err_exhaust.contains("ReplayMismatch"), "{err_exhaust}");
-        assert!(err_exhaust.contains("more computer.observe calls"), "{err_exhaust}");
+        assert!(
+            err_exhaust.contains("more computer.observe calls"),
+            "{err_exhaust}"
+        );
     }
 
     #[test]
@@ -662,6 +678,75 @@ mod computer_tests {
     }
 
     #[test]
+    fn test_computer_mouse_and_cursor_pos() {
+        let _g = lock();
+        computer::reset_authority_for_tests();
+
+        // cursor_pos before observe / move
+        let pos1 = computer::execute("computer.cursor_pos", vec![]).expect("cursor_pos works");
+        match &pos1 {
+            Value::Map(m) => {
+                let x = m.get("x").unwrap();
+                assert!(matches!(x, Value::Float(0.0) | Value::Int(0)));
+                let y = m.get("y").unwrap();
+                assert!(matches!(y, Value::Float(0.0) | Value::Int(0)));
+            }
+            other => panic!("expected a CursorPos map, got {other:?}"),
+        }
+
+        computer::execute("computer.observe", vec![Value::String("FakeApp".into())])
+            .expect("observe works");
+
+        // mouse_move
+        let move_res = computer::execute(
+            "computer.mouse_move",
+            vec![Value::Int(150), Value::Int(250)],
+        )
+        .expect("mouse_move works");
+        match &move_res {
+            Value::Map(m) => {
+                assert_eq!(m.get("ok"), Some(&Value::Bool(true)));
+            }
+            other => panic!("expected ActionResult, got {other:?}"),
+        }
+
+        // cursor_pos after move
+        let pos2 = computer::execute("computer.cursor_pos", vec![]).expect("cursor_pos works");
+        match &pos2 {
+            Value::Map(m) => {
+                let x = m.get("x").unwrap();
+                assert!(matches!(x, Value::Float(150.0) | Value::Int(150)));
+                let y = m.get("y").unwrap();
+                assert!(matches!(y, Value::Float(250.0) | Value::Int(250)));
+            }
+            other => panic!("expected a CursorPos map, got {other:?}"),
+        }
+
+        // mouse_down and mouse_up
+        let down_res = computer::execute("computer.mouse_down", vec![Value::Int(1)])
+            .expect("mouse_down works");
+        match &down_res {
+            Value::Map(m) => assert_eq!(m.get("ok"), Some(&Value::Bool(true))),
+            other => panic!("expected ActionResult, got {other:?}"),
+        }
+
+        let up_res =
+            computer::execute("computer.mouse_up", vec![Value::Int(1)]).expect("mouse_up works");
+        match &up_res {
+            Value::Map(m) => assert_eq!(m.get("ok"), Some(&Value::Bool(true))),
+            other => panic!("expected ActionResult, got {other:?}"),
+        }
+
+        // out of bounds check
+        let err = computer::execute(
+            "computer.mouse_move",
+            vec![Value::Int(3000), Value::Int(500)],
+        )
+        .expect_err("out of bounds mouse_move must fail");
+        assert!(err.contains("out_of_bounds"), "{err}");
+    }
+
+    #[test]
     fn test_time_now_and_format() {
         let now_res = crate::stdlib::time::execute("time.now", vec![]);
         assert!(now_res.is_ok());
@@ -682,15 +767,15 @@ mod computer_tests {
             ],
         );
         assert!(fmt_res.is_ok());
-        assert_eq!(fmt_res.unwrap(), Value::String("1970-01-01 00:00:00".to_string()));
+        assert_eq!(
+            fmt_res.unwrap(),
+            Value::String("1970-01-01 00:00:00".to_string())
+        );
 
         // Test formatting dynamic timestamp with integer representation
         let fmt_int = crate::stdlib::time::execute(
             "time.format",
-            vec![
-                Value::Int(0),
-                Value::String("%Y".to_string()),
-            ],
+            vec![Value::Int(0), Value::String("%Y".to_string())],
         );
         assert!(fmt_int.is_ok());
         assert_eq!(fmt_int.unwrap(), Value::String("1970".to_string()));
@@ -748,7 +833,10 @@ mod computer_tests {
         // env.set sets variable
         let set_res = crate::stdlib::env::execute(
             "env.set",
-            vec![Value::String(key.to_string()), Value::String(val.to_string())],
+            vec![
+                Value::String(key.to_string()),
+                Value::String(val.to_string()),
+            ],
         );
         assert!(set_res.is_ok());
         assert_eq!(set_res.unwrap(), Value::None);

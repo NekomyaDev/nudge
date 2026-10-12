@@ -1111,6 +1111,12 @@ pub const COMPUTER_METHODS: &[&str] = &[
     "drag",
     "perform",
     "paste",
+    "screen_size",
+    "window_info",
+    "mouse_move",
+    "mouse_down",
+    "mouse_up",
+    "cursor_pos",
 ];
 
 /// Span covering two sibling expressions (composite node spans derive
