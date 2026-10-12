@@ -495,7 +495,7 @@ impl Interpreter {
                 match (a, b) {
                     (NudgeVal::List(l1), NudgeVal::List(l2)) => {
                         let mut zipped = Vec::new();
-                        for (x, y) in l1.into_iter().zip(l2.into_iter()) {
+                        for (x, y) in l1.into_iter().zip(l2) {
                             let mut rec = HashMap::new();
                             rec.insert("first".to_string(), x);
                             rec.insert("second".to_string(), y);

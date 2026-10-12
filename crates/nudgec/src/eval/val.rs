@@ -103,7 +103,7 @@ impl fmt::Display for NudgeVal {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{k}: {}", &fields[*k])?;
+                    write!(f, "{k}: {}", fields[*k])?;
                 }
                 write!(f, "}}")
             }
