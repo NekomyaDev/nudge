@@ -9,7 +9,7 @@ type Report = { title: string, findings: [Finding], gaps: [string] }
 tool web_search(q: string) -> [SearchResult] { impl: mcp("search").web(q)  side_effects: none }
 
 fn analyze(q: string, hits: [SearchResult]) -> [Finding] uses LLM {
-    llm"""Extract verifiable findings about {q} from: {hits}"""
+    llm"""Extract verifiable findings (claim, source, confidence) about {q} from: {hits}"""
     with { schema: [Finding], model: "anthropic:sonnet-4.6", budget: 0.03 USD, retry: 2 with repair }
 }
 
