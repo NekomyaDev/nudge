@@ -274,6 +274,12 @@ pub fn lex(src: &str) -> Result<Vec<Spanned>, LexError> {
                         }
                         // UTF-8: ASCII fast path, multibyte sequences copied as a slice.
                         Some(&ch) if ch < 0x80 => {
+                            if (ch as char).is_control() {
+                                return Err(LexError {
+                                    msg: format!("unescaped control character '\\x{:02x}' in string", ch),
+                                    at: i,
+                                });
+                            }
                             s.push(ch as char);
                             i += 1;
                         }
@@ -488,5 +494,20 @@ mod tests {
         assert!(t.contains(&Tok::Money(0.02, "USD".into())), "{t:?}");
         let t = toks("budget: 0.02\tUSD");
         assert!(t.contains(&Tok::Money(0.02, "USD".into())), "{t:?}");
+    }
+
+    #[test]
+    fn string_escape_validation() {
+        let t = toks("\"\\n\\t\\\"\\\\\"");
+        assert_eq!(t[0], Tok::Str("\n\t\"\\".into()));
+        assert!(lex("\"\\x\"").is_err());
+    }
+
+    #[test]
+    fn unescaped_control_characters_rejected() {
+        assert!(lex("\"hello\nworld\"").is_err());
+        assert!(lex("\"hello\rworld\"").is_err());
+        assert!(lex("\"hello\x00world\"").is_err());
+        assert!(lex("\"hello\x1fworld\"").is_err());
     }
 }
