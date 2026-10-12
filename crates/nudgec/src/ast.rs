@@ -3,6 +3,8 @@
 //! LSP attach them for precise locations. Expression-level spans land in
 //! stage 2.
 
+use std::fmt;
+
 /// Half-open byte span `[start, end)` into the source file.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Span {
@@ -17,6 +19,26 @@ pub enum TypeExpr {
     Record(Vec<(String, TypeExpr)>), // {k: T, ...}
     Refine(Box<TypeExpr>, String, Vec<Expr>), // float @range(0, 1)
                                      // TODO: Optional (T?) and union (T | U) — lexer/parser support lands with the type checker
+}
+
+impl fmt::Display for TypeExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TypeExpr::Named(n) => write!(f, "{n}"),
+            TypeExpr::List(inner) => write!(f, "[{inner}]"),
+            TypeExpr::Record(fields) => {
+                write!(f, "{{")?;
+                for (i, (k, v)) in fields.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{k}: {v}")?;
+                }
+                write!(f, "}}")
+            }
+            TypeExpr::Refine(inner, name, _) => write!(f, "{inner} @{name}(…)"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

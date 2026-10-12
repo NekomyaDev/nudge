@@ -35,7 +35,78 @@ fn test_fake_provider_deterministic_response() {
         .call(&req_schema)
         .expect("FakeProvider call with schema should succeed");
     assert!(resp_schema.text.contains("schema_applied"));
-    assert!(resp_schema.text.contains("{\"type\": \"object\"}"));
+    let parsed: serde_json::Value =
+        serde_json::from_str(&resp_schema.text).expect("must be valid JSON");
+    assert_eq!(parsed["schema_applied"], "{\"type\": \"object\"}");
+}
+
+#[test]
+fn test_fake_provider_json_escape_with_quotes_and_braces() {
+    let provider = FakeProvider::new();
+    let schema_with_quotes =
+        r#"{"type": "array", "description": "some \"nested\" quotes and {braces}"}"#;
+    let req = LlmRequest {
+        prompt: "Extract data with complex schema".to_string(),
+        model: "fake-model".to_string(),
+        schema: Some(schema_with_quotes.to_string()),
+        temperature: 0.0,
+        budget_usd: None,
+    };
+    let resp = provider
+        .call(&req)
+        .expect("FakeProvider call should succeed");
+    // The response must be valid JSON parseable by serde_json
+    let parsed: serde_json::Value = serde_json::from_str(&resp.text)
+        .expect("response with quotes in schema must be valid parseable JSON");
+    assert_eq!(parsed["status"], "success");
+    assert_eq!(parsed["schema_applied"], schema_with_quotes);
+}
+
+#[test]
+fn test_fake_provider_canned_responses_for_research_agent() {
+    let provider = FakeProvider::new();
+
+    // [Finding]
+    let req_finding = LlmRequest {
+        prompt: "Extract findings".to_string(),
+        model: "fake-model".to_string(),
+        schema: Some("[Finding]".to_string()),
+        temperature: 0.0,
+        budget_usd: None,
+    };
+    let resp = provider.call(&req_finding).expect("call succeeds");
+    let val: serde_json::Value = serde_json::from_str(&resp.text).expect("valid json array");
+    assert!(val.is_array());
+    assert!(val[0]["claim"].is_string());
+    assert!(val[0]["source"].is_string());
+    assert!(val[0]["confidence"].is_number());
+
+    // Report
+    let req_report = LlmRequest {
+        prompt: "Merge findings".to_string(),
+        model: "fake-model".to_string(),
+        schema: Some("Report".to_string()),
+        temperature: 0.0,
+        budget_usd: None,
+    };
+    let resp = provider.call(&req_report).expect("call succeeds");
+    let val: serde_json::Value = serde_json::from_str(&resp.text).expect("valid json object");
+    assert!(val.is_object());
+    assert!(val["title"].is_string());
+    assert!(val["findings"].is_array());
+    assert!(val["gaps"].is_array());
+
+    // [string]
+    let req_strings = LlmRequest {
+        prompt: "3 search angles".to_string(),
+        model: "fake-model".to_string(),
+        schema: Some("[string]".to_string()),
+        temperature: 0.0,
+        budget_usd: None,
+    };
+    let resp = provider.call(&req_strings).expect("call succeeds");
+    let val: serde_json::Value = serde_json::from_str(&resp.text).expect("valid json array");
+    assert_eq!(val.as_array().unwrap().len(), 3);
 }
 
 #[test]

@@ -276,12 +276,16 @@ impl Interpreter {
                             };
                         }
                         "schema" => {
-                            let s_str = match &v_expr.kind {
-                                ExprKind::Ident(id) => id.clone(),
-                                _ => match self.eval_expr(v_expr, env) {
-                                    Ok(val) => val.to_string(),
-                                    Err(_) => format!("{v_expr:?}"),
-                                },
+                            let s_str = if let Some(s) = schema_expr_to_string(v_expr) {
+                                s
+                            } else {
+                                match self.eval_expr(v_expr, env) {
+                                    Ok(val) => match val {
+                                        NudgeVal::Str(s) => s,
+                                        other => other.to_string(),
+                                    },
+                                    Err(_) => fallback_expr_string(v_expr),
+                                }
                             };
                             schema_name = Some(s_str);
                         }
@@ -1307,15 +1311,58 @@ fn fake_distribution(mut seed: u64, k: usize) -> Vec<f64> {
     weights.into_iter().map(|w| w / total).collect()
 }
 
-/// Public API: Execute a Nudge program from entry point with zero external dependencies.
-pub fn run_program(items: &[Item], entry: &str) -> Result<NudgeVal, String> {
+/// Public API: Execute a Nudge program from entry point with arguments.
+pub fn run_program(items: &[Item], entry: &str, args: &[NudgeVal]) -> Result<NudgeVal, String> {
     let mut interp = Interpreter::new();
     interp.load_items(items)?;
 
     // Check if the entry point exists
     if let Some((fn_item, agent_name)) = interp.fns.get(entry).cloned() {
-        let env = Rc::new(RefCell::new(Env::new()));
-        interp.call_user_fn(&fn_item, agent_name.as_deref(), &[], &[], &env)
+        let (params, body) = match &fn_item {
+            Item::Fn { params, body, .. } => (params, body),
+            _ => return Err("called item is not a function".into()),
+        };
+
+        if args.len() != params.len() {
+            let expected = params.len();
+            let s = if expected == 1 {
+                "argument"
+            } else {
+                "arguments"
+            };
+            let param_str = if params.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " ({})",
+                    params
+                        .iter()
+                        .map(|p| format!("{}: {}", p.name, p.ty))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            return Err(format!(
+                "entry '{entry}' expects {expected} {s}{param_str}, got {}",
+                args.len()
+            ));
+        }
+
+        let child_env = Rc::new(RefCell::new(Env::new()));
+        for (i, p) in params.iter().enumerate() {
+            child_env
+                .borrow_mut()
+                .define(p.name.clone(), args[i].clone());
+        }
+
+        let prev_agent = interp.active_agent.clone();
+        if agent_name.is_some() {
+            interp.active_agent = agent_name;
+        }
+
+        let result = interp.eval_body(body, &child_env);
+        interp.active_agent = prev_agent;
+        result
     } else if entry == "main" {
         // No `main` and no explicit --fn: this is not a silently successful
         // no-op. Report a clear, actionable entry-point diagnostic so a
@@ -1325,5 +1372,56 @@ pub fn run_program(items: &[Item], entry: &str) -> Result<NudgeVal, String> {
             .to_string())
     } else {
         Err(format!("function '{entry}' not found in program"))
+    }
+}
+
+/// Convenience alias for `run_program`.
+#[allow(dead_code)]
+pub fn run_program_with_args(
+    items: &[Item],
+    entry: &str,
+    args: &[NudgeVal],
+) -> Result<NudgeVal, String> {
+    run_program(items, entry, args)
+}
+
+/// Extracts a clean string representation of a schema expression.
+/// Handles identifiers (`Report` -> "Report"), list schemas (`[Finding]` -> "[Finding]"),
+/// and nested list schemas (`[[Finding]]` -> "[[Finding]]") recursively.
+pub(crate) fn schema_expr_to_string(expr: &Expr) -> Option<String> {
+    match &expr.kind {
+        ExprKind::Ident(id) => Some(id.clone()),
+        ExprKind::ListLit(xs) => {
+            if xs.is_empty() {
+                Some("[]".to_string())
+            } else if xs.len() == 1 {
+                let inner = schema_expr_to_string(&xs[0]).unwrap_or_else(|| "unknown".to_string());
+                Some(format!("[{inner}]"))
+            } else {
+                let items: Vec<String> = xs
+                    .iter()
+                    .map(|x| schema_expr_to_string(x).unwrap_or_else(|| "unknown".to_string()))
+                    .collect();
+                Some(format!("[{}]", items.join(", ")))
+            }
+        }
+        ExprKind::Str(s) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+/// Fallback for unexpected schema expressions that avoids Rust `{:?}` debug dumps.
+pub(crate) fn fallback_expr_string(expr: &Expr) -> String {
+    match &expr.kind {
+        ExprKind::Ident(id) => id.clone(),
+        ExprKind::Str(s) => s.clone(),
+        ExprKind::Int(i) => i.to_string(),
+        ExprKind::Float(f) => f.to_string(),
+        ExprKind::Bool(b) => b.to_string(),
+        ExprKind::ListLit(xs) => {
+            let items: Vec<String> = xs.iter().map(fallback_expr_string).collect();
+            format!("[{}]", items.join(", "))
+        }
+        _ => "unknown".to_string(),
     }
 }

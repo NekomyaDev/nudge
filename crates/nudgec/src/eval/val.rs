@@ -138,3 +138,86 @@ pub fn json_to_nudgeval(v: serde_json::Value) -> NudgeVal {
         }
     }
 }
+
+/// Parse a CLI argument string into a NudgeVal according to the CLI contract:
+/// - "none" or "()" -> Unit
+/// - JSON parse first:
+///   - "42" -> Int(42)
+///   - "3.5" -> Float(3.5)
+///   - "true" / "false" -> Bool
+///   - '["a","b"]' -> List
+///   - '{"k":1}' -> Map
+///   - "null" -> Unit
+/// - Non-JSON strings -> Str(s)
+pub fn parse_cli_arg(s: &str) -> NudgeVal {
+    if s == "none" || s == "()" {
+        return NudgeVal::Unit;
+    }
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(s) {
+        json_to_nudgeval(v)
+    } else {
+        NudgeVal::Str(s.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_cli_arg_int() {
+        assert_eq!(parse_cli_arg("42"), NudgeVal::Int(42));
+        assert_eq!(parse_cli_arg("-10"), NudgeVal::Int(-10));
+    }
+
+    #[test]
+    fn test_parse_cli_arg_float() {
+        assert_eq!(parse_cli_arg("3.5"), NudgeVal::Float(3.5));
+        assert_eq!(parse_cli_arg("-2.25"), NudgeVal::Float(-2.25));
+    }
+
+    #[test]
+    fn test_parse_cli_arg_bool() {
+        assert_eq!(parse_cli_arg("true"), NudgeVal::Bool(true));
+        assert_eq!(parse_cli_arg("false"), NudgeVal::Bool(false));
+    }
+
+    #[test]
+    fn test_parse_cli_arg_unit() {
+        assert_eq!(parse_cli_arg("none"), NudgeVal::Unit);
+        assert_eq!(parse_cli_arg("()"), NudgeVal::Unit);
+        assert_eq!(parse_cli_arg("null"), NudgeVal::Unit);
+    }
+
+    #[test]
+    fn test_parse_cli_arg_list() {
+        assert_eq!(
+            parse_cli_arg("[\"a\",\"b\"]"),
+            NudgeVal::List(vec![NudgeVal::Str("a".into()), NudgeVal::Str("b".into())])
+        );
+        assert_eq!(
+            parse_cli_arg("[1, 2]"),
+            NudgeVal::List(vec![NudgeVal::Int(1), NudgeVal::Int(2)])
+        );
+    }
+
+    #[test]
+    fn test_parse_cli_arg_map() {
+        let mut expected = HashMap::new();
+        expected.insert("k".to_string(), NudgeVal::Int(1));
+        assert_eq!(parse_cli_arg("{\"k\":1}"), NudgeVal::Map(expected));
+    }
+
+    #[test]
+    fn test_parse_cli_arg_string_fallback() {
+        assert_eq!(
+            parse_cli_arg("urgent: double charged"),
+            NudgeVal::Str("urgent: double charged".into())
+        );
+        assert_eq!(
+            parse_cli_arg("test input"),
+            NudgeVal::Str("test input".into())
+        );
+        assert_eq!(parse_cli_arg("hello"), NudgeVal::Str("hello".into()));
+    }
+}

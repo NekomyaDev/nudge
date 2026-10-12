@@ -933,6 +933,7 @@ fn main() {
         // block, or a single card wrapping the file's top-level fns
         "run" => {
             let mut entry = "main".to_string();
+            let mut raw_args = Vec::new();
             let mut i = 3;
             while i < args.len() {
                 match args[i].as_str() {
@@ -945,13 +946,15 @@ fn main() {
                             process::exit(64);
                         }
                     }
-                    other => {
-                        eprintln!("error: unknown run argument '{other}'");
-                        process::exit(64);
+                    _ => {
+                        raw_args.push(args[i].clone());
                     }
                 }
                 i += 1;
             }
+
+            let cli_args: Vec<eval::NudgeVal> =
+                raw_args.iter().map(|a| eval::parse_cli_arg(a)).collect();
 
             let items = match compile(&src) {
                 Ok(items) => items,
@@ -977,7 +980,7 @@ fn main() {
                 process::exit(1);
             }
 
-            match eval::run_program(&items, &entry) {
+            match eval::run_program(&items, &entry, &cli_args) {
                 Ok(val) => {
                     if val != eval::NudgeVal::Unit {
                         println!("{val}");

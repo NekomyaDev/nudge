@@ -26,12 +26,27 @@ impl Provider for FakeProvider {
                 r#"{"summary": "Code review findings", "issues": [{"severity": "critical", "line": 2, "message": "exec() allows arbitrary code execution", "suggestion": "Avoid exec"}], "score": 2.5}"#.to_string()
             } else if schema.contains("Answer") {
                 r#"{"answer": "Nudge prevents silent cost overruns with compile-time budget enforcement.", "citations": ["design/spec.md"], "grounded": true, "missing": []}"#.to_string()
+            } else if schema.contains("Report") {
+                r#"{"title": "Research Report: Best Rust Web Framework", "findings": [{"claim": "Axum provides modular design and strong Tokio integration.", "source": "https://docs.rs/axum", "confidence": 0.95}, {"claim": "Actix-web offers high raw throughput.", "source": "https://actix.rs", "confidence": 0.92}, {"claim": "Nudge prevents silent cost overruns.", "source": "https://example.com/nudge", "confidence": 0.98}], "gaps": ["long-term ecosystem benchmarks"]}"#.to_string()
+            } else if schema.contains("[Finding]")
+                || schema == "Finding"
+                || schema.contains("Finding")
+            {
+                r#"[{"claim": "Axum provides modular design and strong Tokio integration.", "source": "https://docs.rs/axum", "confidence": 0.95}, {"claim": "Actix-web offers high raw throughput.", "source": "https://actix.rs", "confidence": 0.92}, {"claim": "Nudge prevents silent cost overruns.", "source": "https://example.com/nudge", "confidence": 0.98}]"#.to_string()
+            } else if schema.contains("[string]")
+                || ((schema == "string" || schema.contains("string"))
+                    && (req.prompt.contains("angles") || req.prompt.contains("search")))
+            {
+                r#"["rust async runtimes", "nudge language design", "llm agent frameworks"]"#
+                    .to_string()
             } else {
                 let safe_prompt =
                     serde_json::to_string(&req.prompt).unwrap_or_else(|_| "\"\"".to_string());
+                let safe_schema =
+                    serde_json::to_string(schema).unwrap_or_else(|_| "\"\"".to_string());
                 format!(
-                    r#"{{"status": "success", "prompt": {}, "schema_applied": "{}"}}"#,
-                    safe_prompt, schema
+                    r#"{{"status": "success", "prompt": {}, "schema_applied": {}}}"#,
+                    safe_prompt, safe_schema
                 )
             }
         } else {
