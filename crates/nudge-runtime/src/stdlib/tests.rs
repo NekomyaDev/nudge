@@ -541,7 +541,7 @@ mod computer_tests {
         // the recorded ActionResult is returned DRY-RUN — no provider runs
         let r = computer::execute("computer.click", vec![Value::Int(1)]).expect("dry-run act");
         // exhaustion raises like llm replay — a third observe has no record
-        let err = computer::execute("computer.observe", vec![Value::String("Notes".into())])
+        let _err = computer::execute("computer.observe", vec![Value::String("Notes".into())])
             .expect("second observe succeeds");
         let err_exhaust =
             computer::execute("computer.observe", vec![Value::String("Notes".into())])

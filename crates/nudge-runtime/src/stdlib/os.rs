@@ -21,9 +21,7 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             if !args.is_empty() {
                 return Err("os.args takes no arguments".to_string());
             }
-            let args_vec: Vec<Value> = std::env::args()
-                .map(|s| Value::String(s))
-                .collect();
+            let args_vec: Vec<Value> = std::env::args().map(Value::String).collect();
             Ok(Value::List(args_vec))
         }
 
@@ -36,7 +34,10 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                     Some(s) => Ok(Value::String(s.to_string())),
                     None => Err("os.cwd: current directory path is not valid UTF-8".to_string()),
                 },
-                Err(e) => Err(format!("os.cwd: cannot get current working directory: {}", e)),
+                Err(e) => Err(format!(
+                    "os.cwd: cannot get current working directory: {}",
+                    e
+                )),
             }
         }
 

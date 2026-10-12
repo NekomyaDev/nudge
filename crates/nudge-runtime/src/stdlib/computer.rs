@@ -720,14 +720,10 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             Some(v) => value_to_text(v),
             None => String::new(),
         };
-        let slice_start = if app.is_some() && op == "observe" {
+        let slice_start = if app.is_some() && (op == "observe" || op == "window_info") {
             1
         } else {
-            if op == "window_info" && app.is_some() {
-                1
-            } else {
-                0
-            }
+            0
         };
         (app_str, &args[slice_start..])
     } else {

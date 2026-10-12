@@ -1400,7 +1400,7 @@ fn check_expr(
                     builtin_record_ty("Observation").unwrap()
                 }
                 "screen_size" | "cursor_pos" => {
-                    if args.len() != 0 {
+                    if !args.is_empty() {
                         errs.push(CheckError {
                             span: None,
                             code: "E0902",

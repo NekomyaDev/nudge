@@ -139,7 +139,8 @@ impl VM {
         vm.globals
             .insert("computer".to_string(), Value::Map(computer_module));
         vm.globals.insert("os".to_string(), Value::Map(os_module));
-        vm.globals.insert("time".to_string(), Value::Map(time_module));
+        vm.globals
+            .insert("time".to_string(), Value::Map(time_module));
         vm.globals.insert("env".to_string(), Value::Map(env_module));
 
         // Register program functions as globals

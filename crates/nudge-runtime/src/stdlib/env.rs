@@ -25,12 +25,10 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 return Err("env.get requires 1 argument (key)".to_string());
             }
             match &args[0] {
-                Value::String(key) => {
-                    match env::var(key) {
-                        Ok(val) => Ok(Value::String(val)),
-                        Err(_) => Ok(Value::None),
-                    }
-                }
+                Value::String(key) => match env::var(key) {
+                    Ok(val) => Ok(Value::String(val)),
+                    Err(_) => Ok(Value::None),
+                },
                 _ => Err("env.get: key must be a string".to_string()),
             }
         }

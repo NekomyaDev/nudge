@@ -8,11 +8,7 @@ use std::collections::HashMap;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const METHODS: [&str; 3] = [
-    "time.now",
-    "time.sleep",
-    "time.format",
-];
+const METHODS: [&str; 3] = ["time.now", "time.sleep", "time.format"];
 
 pub fn register() -> HashMap<String, Value> {
     let mut functions = HashMap::new();
@@ -54,24 +50,33 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
 
         "time.format" => {
             if args.len() != 2 {
-                return Err("time.format requires 2 arguments (timestamp, format string)".to_string());
+                return Err(
+                    "time.format requires 2 arguments (timestamp, format string)".to_string(),
+                );
             }
             let ts = match &args[0] {
                 Value::Float(v) => *v,
                 Value::Int(v) => *v as f64,
-                _ => return Err("time.format: first argument (timestamp) must be a number".to_string()),
+                _ => {
+                    return Err(
+                        "time.format: first argument (timestamp) must be a number".to_string()
+                    )
+                }
             };
             let fmt = match &args[1] {
                 Value::String(s) => s.clone(),
-                _ => return Err("time.format: second argument (format) must be a string".to_string()),
+                _ => {
+                    return Err("time.format: second argument (format) must be a string".to_string())
+                }
             };
 
             let secs = ts.floor() as i64;
             let nsecs = ((ts - ts.floor()) * 1_000_000_000.0) as u32;
-            let datetime = Utc.timestamp_opt(secs, nsecs)
+            let datetime = Utc
+                .timestamp_opt(secs, nsecs)
                 .single()
                 .ok_or_else(|| format!("time.format: invalid timestamp {}", ts))?;
-            
+
             let formatted = datetime.format(&fmt).to_string();
             Ok(Value::String(formatted))
         }
