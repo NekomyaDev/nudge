@@ -1670,4 +1670,26 @@ test "budget" {
             other => panic!("expected agent, got {other:?}"),
         }
     }
+
+    #[test]
+    fn deeply_nested_expressions_depth_limit() {
+        // Construct a deeply nested list literal `[[[[...1...]]]]` which increments depth via parse_primary -> LBracket without heavy precedence chain frames
+        let mut src = String::new();
+        for _ in 0..300 {
+            src.push('[');
+        }
+        src.push('1');
+        for _ in 0..300 {
+            src.push(']');
+        }
+        let full_src = format!("fn f() -> [int] {{ {} }}", src);
+        let res = parse(lex(&full_src).unwrap());
+        assert!(res.is_err());
+        let err = res.unwrap_err();
+        assert!(err.msg.contains("nesting too deep"));
+
+        // Verify that subsequent parsing still works correctly and depth counter did not desync
+        let normal_res = parse(lex("fn f() -> int { 1 + 2 }").unwrap());
+        assert!(normal_res.is_ok());
+    }
 }
