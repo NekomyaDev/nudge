@@ -153,6 +153,9 @@ fn run_py(e: &E2e, file: &std::path::Path, extra: &[(&str, &str)]) -> std::proce
         .env("NUDGE_PROVIDER", "fake")
         .env("NUDGE_TRACE", e.dir.join("trace.jsonl"))
         .env("PYTHONPATH", &e.runtime)
+        // a parallel test may hold NUDGE_REPLAY set in this process — the
+        // child must not inherit it (extras re-add it when a test wants it)
+        .env_remove("NUDGE_REPLAY")
         // hermetic cwd: run-local state (.nudge/) lands in the test dir
         .current_dir(&e.dir);
     for (k, v) in extra {
@@ -322,6 +325,7 @@ fn test_block_runs_against_recorded_trace() {
         .arg(&driver)
         .current_dir(&e.dir)
         .env("PYTHONPATH", &e.runtime)
+        .env_remove("NUDGE_REPLAY")
         .output()
         .unwrap();
     assert!(
@@ -399,6 +403,7 @@ fn replay_version_mismatch_raises() {
     let output = std::process::Command::new("python3")
         .arg(&driver)
         .env("PYTHONPATH", &e.runtime)
+        .env_remove("NUDGE_REPLAY")
         .output()
         .unwrap();
     assert!(!output.status.success(), "expected failure");

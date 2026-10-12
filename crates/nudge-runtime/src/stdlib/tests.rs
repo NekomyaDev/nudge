@@ -365,6 +365,15 @@ mod computer_tests {
                 assert_eq!(m.get("state_id"), Some(&Value::String("s-1".into())));
                 assert_eq!(m.get("app"), Some(&Value::String("FakeApp".into())));
                 assert!(m.contains_key("elements"));
+                // the canonical zcode `tree` — byte-identical to the
+                // Python/TS `_render_tree` for the same scene
+                assert_eq!(
+                    m.get("tree"),
+                    Some(&Value::String(
+                        "[0] window \"FakeApp\"\n[1] button \"OK\" actions=['press'] (pressable)\n[2] button \"Cancel\" actions=['press'] (pressable)\n[3] textfield \"Search\" (focused,editable)"
+                            .into()
+                    ))
+                );
             }
             other => panic!("expected an Observation map, got {other:?}"),
         }
@@ -511,6 +520,12 @@ mod computer_tests {
             .replace('\n', "")
     }
 
+    /// The canonical zcode tree of the fake scene (byte-parity with the
+    /// Python/TS `_render_tree` and the fake desktop's live `tree`).
+    fn fake_tree() -> &'static str {
+        r#""[0] window \"FakeApp\"\n[1] button \"OK\" actions=['press'] (pressable)\n[2] button \"Cancel\" actions=['press'] (pressable)\n[3] textfield \"Search\" (focused,editable)""#
+    }
+
     fn write_trace(name: &str, records: &[String]) -> String {
         let path = std::env::temp_dir().join(name);
         std::fs::write(&path, records.join("\n") + "\n").expect("write trace");
@@ -638,7 +653,8 @@ mod computer_tests {
             "nudge-cu-replay-drift.jsonl",
             &[
                 format!(
-                    r#"{{"kind":"computer.observe","app":"FakeApp","state_id":"s-9","elements":{}}}"#,
+                    r#"{{"kind":"computer.observe","app":"FakeApp","state_id":"s-9","tree":{},"elements":{}}}"#,
+                    fake_tree(),
                     fake_elements()
                 ),
                 r#"{"kind":"computer.act","action":"click","app":"FakeApp","target":{"index":1},"ok":true,"outcome":"ok","latency_ms":2}"#.to_string(),

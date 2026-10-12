@@ -417,4 +417,137 @@ mod tests {
             "entry 'pair' expects 2 arguments (a: int, b: string), got 0"
         );
     }
+
+    // ── computer bridge (v1.5): the native interpreter speaks the same
+    //    computer-use surface as the Python/TS runtimes and the VM ────
+
+    /// The computer statics (last-observation authority, replay cursors)
+    /// and NUDGE_REPLAY are process-global — serialize the bridge tests.
+    static COMPUTER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn computer_guard() -> std::sync::MutexGuard<'static, ()> {
+        COMPUTER_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Removes an env var on drop so a panicking test never leaks it into
+    /// sibling tests (or their python subprocesses).
+    struct EnvReset(&'static str);
+    impl Drop for EnvReset {
+        fn drop(&mut self) {
+            std::env::remove_var(self.0);
+        }
+    }
+
+    #[test]
+    fn test_eval_computer_fake_desktop_offline() {
+        let _g = computer_guard();
+        nudge_runtime::stdlib::computer::reset_authority_for_tests();
+        // no env needed: the deterministic fake desktop is the default
+        // provider — observe/click work fully offline
+        let src = r#"
+            fn look(app: string) -> string uses Computer {
+                let obs = computer.observe(app, allow = [app], deadline = 5000)
+                obs.tree
+            }
+            fn press() -> bool uses Computer {
+                let obs = computer.observe("FakeApp")
+                let r = computer.click(1)
+                let t = computer.type("hello")
+                r.ok and t.ok
+            }
+        "#;
+        let items = parse_src(src);
+        let tree = run_program(&items, "look", &[NudgeVal::Str("FakeApp".into())])
+            .expect("native computer.observe works");
+        // the zcode tree rendered from the fake scene (byte-parity with
+        // the Python/TS runtimes)
+        assert_eq!(
+            tree,
+            NudgeVal::Str(
+                "[0] window \"FakeApp\"\n[1] button \"OK\" actions=['press'] (pressable)\n[2] button \"Cancel\" actions=['press'] (pressable)\n[3] textfield \"Search\" (focused,editable)"
+                    .into()
+            )
+        );
+        let ok = run_program(&items, "press", &[]).expect("native computer.click works");
+        assert_eq!(ok, NudgeVal::Bool(true));
+    }
+
+    #[test]
+    fn test_eval_computer_errors_surface() {
+        let _g = computer_guard();
+        nudge_runtime::stdlib::computer::reset_authority_for_tests();
+        // an action without a prior observe is a clear E-native failure —
+        // the stdlib error propagates, never a silent success
+        let src = r#"
+            fn main() -> bool uses Computer {
+                let r = computer.click(1)
+                r.ok
+            }
+        "#;
+        let items = parse_src(src);
+        let err = run_program(&items, "main", &[]).unwrap_err();
+        assert!(err.contains("E-native-0202"), "{err}");
+        assert!(err.contains("computer.click"), "{err}");
+        assert!(err.contains("observe"), "{err}");
+        // unknown options fail loudly instead of passing through
+        let src = r#"
+            fn main() -> bool uses Computer {
+                let r = computer.click(1, mode = "yolo")
+                r.ok
+            }
+        "#;
+        let items = parse_src(src);
+        let err = run_program(&items, "main", &[]).unwrap_err();
+        assert!(err.contains("E-native-0203"), "{err}");
+        assert!(err.contains("mode"), "{err}");
+    }
+
+    #[test]
+    fn test_eval_computer_replay_dry_run() {
+        let _g = computer_guard();
+        nudge_runtime::stdlib::computer::reset_authority_for_tests();
+        let _cleanup = EnvReset("NUDGE_REPLAY");
+        let trace = std::env::temp_dir().join(format!(
+            "nudge-eval-computer-replay-{}.jsonl",
+            std::process::id()
+        ));
+        std::fs::write(
+            &trace,
+            concat!(
+                "{\"kind\":\"computer.observe\",\"app\":\"FakeApp\",\"state_id\":\"s-9\",\"elements\":[]}\n",
+                "{\"kind\":\"computer.act\",\"action\":\"click\",\"app\":\"FakeApp\",\"target\":{\"index\":1},\"ok\":true,\"outcome\":\"ok\",\"latency_ms\":3}\n",
+            ),
+        )
+        .expect("write trace");
+        let src = r#"
+            fn main() -> bool uses Computer {
+                let obs = computer.observe("FakeApp", allow = ["FakeApp"])
+                let r = computer.click(1)
+                r.ok
+            }
+        "#;
+        let items = parse_src(src);
+        std::env::set_var("NUDGE_REPLAY", &trace);
+        let res = run_program(&items, "main", &[]);
+        assert_eq!(
+            res.expect("replayed observe + dry-run click"),
+            NudgeVal::Bool(true)
+        );
+
+        // a program that DIVERGES from the trace raises ReplayMismatch —
+        // wrapped as a clear E-native error, never a silent replay
+        nudge_runtime::stdlib::computer::reset_authority_for_tests();
+        let diverging = r#"
+            fn main() -> bool uses Computer {
+                let obs = computer.observe("FakeApp")
+                let r = computer.key("Return")
+                r.ok
+            }
+        "#;
+        let items = parse_src(diverging);
+        let err = run_program(&items, "main", &[]).unwrap_err();
+        assert!(err.contains("E-native-0202"), "{err}");
+        assert!(err.contains("ReplayMismatch"), "{err}");
+        assert!(err.contains("computer.key"), "{err}");
+    }
 }

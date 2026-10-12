@@ -935,13 +935,22 @@ impl Parser {
             // contextual: only special as `computer . <method> (`; anything
             // else keeps `computer` an ordinary identifier
             Tok::Ident(s) if s == "computer" && self.peek2() == &Tok::Dot => {
-                let method = matches!(self.t.get(self.i + 2).map(|t| &t.tok), Some(Tok::Ident(m)) if COMPUTER_METHODS.contains(&m.as_str()));
+                let method = match self.t.get(self.i + 2).map(|t| &t.tok) {
+                    Some(Tok::Ident(m)) if COMPUTER_METHODS.contains(&m.as_str()) => {
+                        Some(m.clone())
+                    }
+                    // `type` lexes as a keyword but names a computer
+                    // method (`computer.type(...)`) — same contextual
+                    // policy as the ident methods
+                    Some(Tok::Type) => Some(String::from("type")),
+                    _ => None,
+                };
                 let called = matches!(self.t.get(self.i + 3).map(|t| &t.tok), Some(Tok::LParen));
-                if method && called {
+                if let Some(method) = method.filter(|_| called) {
                     let start = self.pos();
                     self.bump(); // computer
                     self.bump(); // .
-                    let method = self.ident()?;
+                    self.bump(); // method (ident, or the `type` keyword)
                     let (args, kwargs) = self.parse_call_args()?;
                     let span = Span {
                         start,
@@ -1422,6 +1431,26 @@ fn run(app: string) -> int uses Computer {
             }
             _ => panic!("expected fn"),
         }
+    }
+
+    #[test]
+    fn computer_type_parses_despite_the_keyword() {
+        // `type` lexes as a keyword (type aliases) but `computer.type(...)`
+        // is the documented typing op in COMPUTER_METHODS — it must parse
+        // as a ComputerCall like every other computer method
+        let items =
+            parse_str("fn f() -> bool uses Computer { let r = computer.type(\"hi\")\n    r.ok }");
+        let Some(Item::Fn { body, .. }) = items.first() else {
+            panic!("expected fn");
+        };
+        let StmtKind::Let { value, .. } = &body[0].kind else {
+            panic!("expected let");
+        };
+        assert!(
+            matches!(&value.kind, ExprKind::ComputerCall { method, .. } if method == "type"),
+            "expected computer.type call, got {:?}",
+            value.kind
+        );
     }
 
     #[test]

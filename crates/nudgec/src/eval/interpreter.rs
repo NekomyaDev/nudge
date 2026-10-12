@@ -1,6 +1,6 @@
 use crate::ast::{BinOp, DecisionQ, Expr, ExprKind, Item, StateOp, Stmt, StmtKind};
 use crate::eval::env::{AgentStore, Env};
-use crate::eval::val::{json_to_nudgeval, NudgeVal};
+use crate::eval::val::{json_to_nudgeval, nudgeval_to_value, value_to_nudgeval, NudgeVal};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -342,9 +342,7 @@ impl Interpreter {
                     Ok(NudgeVal::Str(resp.text))
                 }
             }
-            ExprKind::Call { func, args, kwargs } => {
-                self.eval_call(func, args, kwargs, env)
-            }
+            ExprKind::Call { func, args, kwargs } => self.eval_call(func, args, kwargs, env),
             ExprKind::Field { obj, name } => {
                 if let ExprKind::Ident(id) = &obj.kind {
                     if id == "state" {
@@ -444,10 +442,57 @@ impl Interpreter {
                 state,
                 options,
             } => self.eval_decide(questions, state, options, env),
-            ExprKind::ComputerCall { .. } => Err(
-                "error[E-native-0200]: 'computer' operations are not yet supported in Phase 1 native runtime".into(),
-            ),
+            ExprKind::ComputerCall {
+                method,
+                args,
+                kwargs,
+            } => self.eval_computer(method, args, kwargs, env),
         }
+    }
+
+    /// Evaluate `computer.<method>(...)` against the shared computer-use
+    /// stdlib (crates/nudge-runtime/src/stdlib/computer.rs): the SAME
+    /// surface the Python/TS runtimes and the VM speak — deterministic fake
+    /// desktop by default, subprocess bridge via NUDGE_COMPUTER_SERVERS +
+    /// NUDGE_COMPUTER_PROVIDER, dry-run trace replay via NUDGE_REPLAY. All
+    /// 15 parser methods route here; every stdlib failure surfaces as a
+    /// clear E-native error — a computer call never reports silent success.
+    fn eval_computer(
+        &mut self,
+        method: &str,
+        args: &[Expr],
+        kwargs: &[(String, Expr)],
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<NudgeVal, String> {
+        // The VM call surface is positional only (stdlib/computer.rs): the
+        // documented Python/TS options `allow`/`deadline`/`screenshot` are
+        // advisory policy knobs the positional surface does not consume.
+        // Evaluate them (so errors inside still surface) and drop them;
+        // any other option is a clear failure, never a silent pass-through.
+        const ADVISORY_OPTIONS: [&str; 3] = ["allow", "deadline", "screenshot"];
+        for (k, v_expr) in kwargs {
+            if !ADVISORY_OPTIONS.contains(&k.as_str()) {
+                return Err(format!(
+                    "error[E-native-0203]: unknown option '{k}' for computer.{method} — the native computer surface accepts only 'allow', 'deadline' or 'screenshot'"
+                ));
+            }
+            let _ = self.eval_expr(v_expr, env)?;
+        }
+
+        let mut call_args = Vec::with_capacity(args.len());
+        for a in args {
+            let val = self.eval_expr(a, env)?;
+            let converted = nudgeval_to_value(&val)
+                .map_err(|e| format!("error[E-native-0203]: computer.{method}: {e}"))?;
+            call_args.push(converted);
+        }
+
+        let name = format!("computer.{method}");
+        let result = nudge_runtime::stdlib::computer::execute(&name, call_args)
+            .map_err(|e| format!("error[E-native-0202]: computer.{method} failed: {e}"))?;
+
+        value_to_nudgeval(&result)
+            .map_err(|e| format!("error[E-native-0203]: computer.{method}: {e}"))
     }
 
     fn eval_call(

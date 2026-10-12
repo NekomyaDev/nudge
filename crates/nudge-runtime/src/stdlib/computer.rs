@@ -86,11 +86,106 @@ fn obj(pairs: Vec<(&str, Json)>) -> Json {
     Json::Obj(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
 }
 
+/// JSON truthiness for the tree renderer (parity with the Python/TS
+/// runtimes: missing `enabled` defaults to enabled).
+fn truthy(j: Option<&Json>) -> bool {
+    match j {
+        None | Some(Json::Null) => false,
+        Some(Json::Bool(b)) => *b,
+        Some(Json::Num(n)) => *n != 0.0,
+        Some(Json::Str(s)) => !s.is_empty(),
+        Some(Json::Arr(xs)) => !xs.is_empty(),
+        Some(Json::Obj(_)) => true,
+    }
+}
+
+/// Rendered AX-style tree (zcode shape): `[N] role "title" = value
+/// (flags)` — the text a model reads. Providers MAY send their own
+/// `tree`; this renders it from elements when they don't (parity with
+/// `_render_tree` in the Python/TS runtimes — same order and flags).
+fn render_tree(elements: &[Json]) -> String {
+    let mut lines: Vec<String> = Vec::with_capacity(elements.len());
+    for el in elements {
+        let mut flags: Vec<&str> = Vec::new();
+        if truthy(el.get("focused")) {
+            flags.push("focused");
+        }
+        if truthy(el.get("selected")) {
+            flags.push("selected");
+        }
+        if truthy(el.get("editable")) {
+            flags.push("editable");
+        }
+        if truthy(el.get("pressable")) {
+            flags.push("pressable");
+        }
+        if !el.get("enabled").map(|v| truthy(Some(v))).unwrap_or(true) {
+            flags.push("disabled");
+        }
+        let index = match el.get("index") {
+            Some(Json::Num(n)) if n.fract() == 0.0 && n.is_finite() && n.abs() < 9e15 => {
+                format!("{}", *n as i64)
+            }
+            Some(Json::Num(n)) => format!("{n}"),
+            _ => "0".to_string(),
+        };
+        let role = el.get("role").and_then(Json::as_str).unwrap_or("element");
+        let title = el.get("title").and_then(Json::as_str).unwrap_or("");
+        let mut head = format!("[{index}] {role}");
+        if !title.is_empty() {
+            head.push_str(&format!(" \"{title}\""));
+        }
+        if truthy(el.get("value")) {
+            head.push_str(&format!(" = {}", json_scalar_text(el.get("value"))));
+        }
+        if truthy(el.get("actions")) {
+            let acts: Vec<String> = match el.get("actions") {
+                Some(Json::Arr(xs)) => xs
+                    .iter()
+                    .map(|x| format!("'{}'", x.as_str().unwrap_or("")))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            head.push_str(&format!(" actions=[{}]", acts.join(", ")));
+        }
+        if !flags.is_empty() {
+            head.push_str(&format!(" ({})", flags.join(",")));
+        }
+        lines.push(head);
+    }
+    lines.join("\n")
+}
+
+/// Scalar display text for tree values (str/num/bool pass through).
+fn json_scalar_text(j: Option<&Json>) -> String {
+    match j {
+        Some(Json::Str(s)) => s.clone(),
+        Some(Json::Num(n)) => json_to_string(&Json::Num(*n)),
+        Some(Json::Bool(b)) => b.to_string(),
+        _ => String::new(),
+    }
+}
+
+/// The empty `Drift` record every Observation carries outside drift mode
+/// (parity with the Python/TS runtimes' normalized Observation).
+fn empty_drift() -> Json {
+    obj(vec![
+        ("changed", Json::Bool(false)),
+        ("screenshot_changed", Json::Bool(false)),
+        ("added", Json::Arr(Vec::new())),
+        ("removed", Json::Arr(Vec::new())),
+        ("summary", Json::Str(String::new())),
+    ])
+}
+
 fn fake_call(op: &str, req: &Json) -> Result<Json, String> {
     let app = match req.get("app") {
         Some(Json::Str(s)) => s.clone(),
         _ => String::new(),
     };
+    // canonical Element records (parity with the Python/TS fake scene and
+    // the `Element` builtin record): every field the language can read is
+    // present, so `obs.elements[i].actions`-style access never misses
     let elements: Vec<Json> = [
         ("window", "FakeApp"),
         ("button", "OK"),
@@ -100,18 +195,25 @@ fn fake_call(op: &str, req: &Json) -> Result<Json, String> {
     .iter()
     .enumerate()
     .map(|(i, (role, title))| {
-        let mut pairs = vec![
+        let pressable = (1..=2).contains(&i);
+        let editable = i == 3;
+        let actions: Vec<Json> = if pressable {
+            vec![Json::Str("press".into())]
+        } else {
+            Vec::new()
+        };
+        obj(vec![
             ("index", Json::Num(i as f64)),
             ("role", Json::Str(role.to_string())),
             ("title", Json::Str(title.to_string())),
-        ];
-        if i > 0 && i < 3 {
-            pairs.push(("pressable", Json::Bool(true)));
-        }
-        if i == 3 {
-            pairs.push(("editable", Json::Bool(true)));
-        }
-        obj(pairs)
+            ("value", Json::Str(String::new())),
+            ("pressable", Json::Bool(pressable)),
+            ("editable", Json::Bool(editable)),
+            ("focused", Json::Bool(i == 3)),
+            ("enabled", Json::Bool(true)),
+            ("actions", Json::Arr(actions)),
+            ("bounds", Json::Arr(Vec::new())),
+        ])
     })
     .collect();
     if op == "screen_size" {
@@ -140,11 +242,19 @@ fn fake_call(op: &str, req: &Json) -> Result<Json, String> {
         ]));
     }
     if op == "observe" {
+        // canonical Observation record (the `Observation` builtin type):
+        // tree rendered zcode-style, screenshot fields empty (the fake
+        // desktop has no pixels unless a scenario supplies them)
+        let tree = render_tree(&elements);
         return Ok(obj(vec![
             ("state_id", Json::Str("s-1".into())),
             ("title", Json::Str("FakeApp".into())),
             ("app", Json::Str(app)),
             ("elements", Json::Arr(elements)),
+            ("tree", Json::Str(tree)),
+            ("screenshot_hash", Json::Str(String::new())),
+            ("screenshot", Json::Str(String::new())),
+            ("drift", empty_drift()),
         ]));
     }
     // the fake desktop enforces the SAME fail-closed contract as the real
@@ -202,6 +312,8 @@ fn fake_call(op: &str, req: &Json) -> Result<Json, String> {
             ("outcome", Json::Str("ok".into())),
             ("latency_ms", Json::Num(0.0)),
             ("error", Json::Str(String::new())),
+            // the in-process fake dispatches by construction
+            ("action_sent", Json::Bool(true)),
         ]));
     }
     if op == "mouse_down" || op == "mouse_up" {
@@ -221,6 +333,8 @@ fn fake_call(op: &str, req: &Json) -> Result<Json, String> {
             ("outcome", Json::Str("ok".into())),
             ("latency_ms", Json::Num(0.0)),
             ("error", Json::Str(String::new())),
+            // the in-process fake dispatches by construction
+            ("action_sent", Json::Bool(true)),
         ]));
     }
     Ok(obj(vec![
@@ -228,6 +342,8 @@ fn fake_call(op: &str, req: &Json) -> Result<Json, String> {
         ("outcome", Json::Str("ok".into())),
         ("latency_ms", Json::Num(1.0)),
         ("error", Json::Str(String::new())),
+        // the in-process fake dispatches by construction
+        ("action_sent", Json::Bool(true)),
     ]))
 }
 
@@ -527,8 +643,39 @@ fn replay_observe(app: &str) -> Result<Value, String> {
         }
         return Ok(value);
     }
-    // plain replay: the recorded observation IS the observation
-    let mut pairs = vec![
+    // plain replay: the recorded observation IS the observation — but the
+    // language always sees the canonical Observation record (a missing
+    // recorded `tree` is rendered from the elements, like the Python/TS
+    // runtimes' `_normalize_observation`)
+    let elements = recorded
+        .get("elements")
+        .cloned()
+        .unwrap_or(Json::Arr(Vec::new()));
+    let tree = match recorded.get("tree").filter(|t| truthy(Some(t))) {
+        Some(t) => t.clone(),
+        None => {
+            let els: Vec<Json> = match &elements {
+                Json::Arr(xs) => xs.clone(),
+                _ => Vec::new(),
+            };
+            Json::Str(render_tree(&els))
+        }
+    };
+    let asset = recorded
+        .get("screenshot_asset")
+        .and_then(Json::as_str)
+        .unwrap_or("");
+    let shot = read_trace_asset(asset);
+    let str_field = |name: &str| {
+        Json::Str(
+            recorded
+                .get(name)
+                .and_then(Json::as_str)
+                .unwrap_or("")
+                .to_string(),
+        )
+    };
+    let pairs = vec![
         (
             "state_id",
             Json::Str(
@@ -540,27 +687,13 @@ fn replay_observe(app: &str) -> Result<Value, String> {
             ),
         ),
         ("app", Json::Str(app.to_string())),
+        ("title", str_field("title")),
+        ("elements", elements),
+        ("tree", tree),
+        ("screenshot_hash", str_field("screenshot_hash")),
+        ("screenshot", Json::Str(shot)),
+        ("drift", empty_drift()),
     ];
-    for field in ["title", "tree", "screenshot_hash"] {
-        if let Some(v) = recorded.get(field) {
-            pairs.push((field, v.clone()));
-        }
-    }
-    pairs.push((
-        "elements",
-        recorded
-            .get("elements")
-            .cloned()
-            .unwrap_or(Json::Arr(Vec::new())),
-    ));
-    let asset = recorded
-        .get("screenshot_asset")
-        .and_then(Json::as_str)
-        .unwrap_or("");
-    let shot = read_trace_asset(asset);
-    if !shot.is_empty() {
-        pairs.push(("screenshot", Json::Str(shot)));
-    }
     let value = json_to_value(&obj(pairs))?;
     commit_authority(app, &value);
     Ok(value)
@@ -693,11 +826,15 @@ fn replay_act(op: &str, app: &str, payload_args: &[Value]) -> Result<Value, Stri
         .get("latency_ms")
         .and_then(Json::as_num)
         .unwrap_or(0.0);
+    // dispatch receipt parity with the Python/TS `_normalize_result`:
+    // false only when the record KNOWS the input was not dispatched
+    let action_sent = recorded.get("dispatch").and_then(Json::as_str) != Some("not_sent");
     json_to_value(&obj(vec![
         ("ok", Json::Bool(ok)),
         ("outcome", Json::Str(outcome.to_string())),
         ("latency_ms", Json::Num(latency)),
         ("error", Json::Str(String::new())),
+        ("action_sent", Json::Bool(action_sent)),
     ]))
 }
 

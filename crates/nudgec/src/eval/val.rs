@@ -139,6 +139,71 @@ pub fn json_to_nudgeval(v: serde_json::Value) -> NudgeVal {
     }
 }
 
+/// Convert a nudge_runtime VM value back to NudgeVal recursively (the
+/// bridge for `computer.*` results — crates/nudge-runtime/src/stdlib).
+pub fn value_to_nudgeval(v: &nudge_runtime::vm::Value) -> Result<NudgeVal, String> {
+    use nudge_runtime::vm::Value;
+    Ok(match v {
+        Value::None => NudgeVal::Unit,
+        Value::Bool(b) => NudgeVal::Bool(*b),
+        Value::Int(i) => NudgeVal::Int(*i),
+        Value::Float(f) => NudgeVal::Float(*f),
+        Value::String(s) => NudgeVal::Str(s.clone()),
+        Value::List(xs) => NudgeVal::List(
+            xs.iter()
+                .map(value_to_nudgeval)
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        Value::Map(m) => {
+            let mut map = HashMap::new();
+            for (k, val) in m {
+                map.insert(k.clone(), value_to_nudgeval(val)?);
+            }
+            NudgeVal::Map(map)
+        }
+        Value::Function(idx) => {
+            return Err(format!(
+                "cannot convert runtime function value (index {idx}) back to a Nudge value"
+            ))
+        }
+        Value::Native(name) => {
+            return Err(format!(
+                "cannot convert runtime native function '{name}' back to a Nudge value"
+            ))
+        }
+    })
+}
+
+/// Convert NudgeVal to a nudge_runtime VM value recursively — the argument
+/// bridge for `computer.*` calls (String/Int/Float/Bool/List/Map/Unit).
+pub fn nudgeval_to_value(v: &NudgeVal) -> Result<nudge_runtime::vm::Value, String> {
+    use nudge_runtime::vm::Value;
+    Ok(match v {
+        NudgeVal::Unit => Value::None,
+        NudgeVal::Bool(b) => Value::Bool(*b),
+        NudgeVal::Int(i) => Value::Int(*i),
+        NudgeVal::Float(f) => Value::Float(*f),
+        NudgeVal::Str(s) => Value::String(s.clone()),
+        NudgeVal::List(xs) => Value::List(
+            xs.iter()
+                .map(nudgeval_to_value)
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        NudgeVal::Map(m) => {
+            let mut map = HashMap::new();
+            for (k, val) in m {
+                map.insert(k.clone(), nudgeval_to_value(val)?);
+            }
+            Value::Map(map)
+        }
+        NudgeVal::AgentState { name, .. } => {
+            return Err(format!(
+                "cannot convert agent state '{name}' to a runtime value"
+            ))
+        }
+    })
+}
+
 /// Parse a CLI argument string into a NudgeVal according to the CLI contract:
 /// - "none" or "()" -> Unit
 /// - JSON parse first:
@@ -219,5 +284,65 @@ mod tests {
             NudgeVal::Str("test input".into())
         );
         assert_eq!(parse_cli_arg("hello"), NudgeVal::Str("hello".into()));
+    }
+
+    #[test]
+    fn test_runtime_value_roundtrip() {
+        use nudge_runtime::vm::Value;
+        let mut inner = HashMap::new();
+        inner.insert("k".to_string(), NudgeVal::Int(1));
+        let cases = vec![
+            NudgeVal::Unit,
+            NudgeVal::Bool(true),
+            NudgeVal::Int(-7),
+            NudgeVal::Float(2.5),
+            NudgeVal::Str("Search".into()),
+            NudgeVal::List(vec![NudgeVal::Int(1), NudgeVal::Str("two".into())]),
+            NudgeVal::Map(inner),
+        ];
+        for case in cases {
+            let val = nudgeval_to_value(&case).expect("convert to runtime value");
+            assert_eq!(value_to_nudgeval(&val).expect("convert back"), case);
+        }
+        // unit maps to the VM's None
+        assert_eq!(nudgeval_to_value(&NudgeVal::Unit).unwrap(), Value::None);
+    }
+
+    #[test]
+    fn test_runtime_value_conversion_rejects_unconvertible() {
+        use nudge_runtime::vm::Value;
+        // agent state has no runtime-value representation — fail loudly
+        let agent = NudgeVal::AgentState {
+            name: "Counter".into(),
+            fields: HashMap::new(),
+        };
+        let err = nudgeval_to_value(&agent).unwrap_err();
+        assert!(err.contains("agent state 'Counter'"), "{err}");
+        // runtime function values never come back silently either
+        let err = value_to_nudgeval(&Value::Function(3)).unwrap_err();
+        assert!(err.contains("function"), "{err}");
+        let err = value_to_nudgeval(&Value::Native("computer.click")).unwrap_err();
+        assert!(err.contains("computer.click"), "{err}");
+    }
+
+    #[test]
+    fn test_runtime_value_conversion_nested() {
+        use nudge_runtime::vm::Value;
+        let mut m = HashMap::new();
+        m.insert(
+            "list".to_string(),
+            NudgeVal::List(vec![NudgeVal::Map(HashMap::from([(
+                "n".to_string(),
+                NudgeVal::Float(1.5),
+            )]))]),
+        );
+        let Value::Map(vm) = nudgeval_to_value(&NudgeVal::Map(m.clone())).unwrap() else {
+            panic!("expected runtime map")
+        };
+        assert!(matches!(vm.get("list"), Some(Value::List(_))));
+        assert_eq!(
+            value_to_nudgeval(&Value::Map(vm)).unwrap(),
+            NudgeVal::Map(m)
+        );
     }
 }
