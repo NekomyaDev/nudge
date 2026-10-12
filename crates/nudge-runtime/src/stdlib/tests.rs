@@ -468,6 +468,10 @@ mod computer_tests {
         // real subprocess JSONL round trip through the reference bridge
         let manifest = env!("CARGO_MANIFEST_DIR");
         let bridge = format!("{manifest}/../../tools/cu_bridge.py");
+        // Clean any stale lease file in /tmp or temp dir so cu_bridge does not return controller_busy
+        let _ = std::fs::remove_file("/tmp/cu_bridge.lock");
+        let _ = std::fs::remove_file(std::env::temp_dir().join("cu_bridge.lock"));
+
         std::env::set_var(
             "NUDGE_COMPUTER_SERVERS",
             format!(r#"{{"cu": {{"command": "python3 {bridge}"}}}}"#),
@@ -655,7 +659,7 @@ mod computer_tests {
     fn test_time_now_and_format() {
         let now_res = crate::stdlib::time::execute("time.now", vec![]);
         assert!(now_res.is_ok());
-        let ts = match now_res.unwrap() {
+        let _ts = match now_res.unwrap() {
             Value::Float(f) => {
                 assert!(f > 0.0);
                 f
