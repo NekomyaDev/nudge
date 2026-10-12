@@ -929,6 +929,19 @@ fn main() {
         }
         // design §9 (v1.0): A2A agent-card export — one card per agent
         // block, or a single card wrapping the file's top-level fns
+        "run" => {
+            let program_def = nudge_runtime::parser::parse(&src).unwrap_or_else(|e| {
+                eprintln!("error: parse error at line {}: {}", e.line, e.message);
+                process::exit(1);
+            });
+            let mut compiler = nudge_runtime::codegen::Compiler::new();
+            let program = compiler.compile_program(&program_def);
+            let mut vm = nudge_runtime::vm::VM::new(program);
+            if let Err(e) = vm.run() {
+                eprintln!("error: runtime execution failed: {e}");
+                process::exit(1);
+            }
+        }
         "a2a" => match compile(&src) {
             Ok(items) => {
                 let stem = std::path::Path::new(&args[2])

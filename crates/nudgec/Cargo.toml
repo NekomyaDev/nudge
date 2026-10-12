@@ -11,3 +11,4 @@ name = "nudgec"
 path = "src/main.rs"
 
 [dependencies]
+nudge-runtime = { path = "../nudge-runtime" }
