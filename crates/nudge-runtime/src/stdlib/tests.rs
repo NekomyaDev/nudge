@@ -517,6 +517,10 @@ mod computer_tests {
                     fake_elements()
                 ),
                 r#"{"kind":"computer.act","action":"click","app":"Notes","target":{"index":1},"ok":true,"outcome":"ok","latency_ms":3}"#.to_string(),
+                format!(
+                    r#"{{"kind":"computer.observe","app":"Notes","state_id":"s-9","elements":{}}}"#,
+                    fake_elements()
+                ),
             ],
         );
         std::env::set_var("NUDGE_REPLAY", &trace);
@@ -526,6 +530,8 @@ mod computer_tests {
         let r = computer::execute("computer.click", vec![Value::Int(1)]).expect("dry-run act");
         // exhaustion raises like llm replay — a third observe has no record
         let err = computer::execute("computer.observe", vec![Value::String("Notes".into())])
+            .expect("second observe succeeds");
+        let err_exhaust = computer::execute("computer.observe", vec![Value::String("Notes".into())])
             .expect_err("exhaustion must raise");
         std::env::remove_var("NUDGE_REPLAY");
         match &obs {
@@ -542,8 +548,8 @@ mod computer_tests {
             }
             other => panic!("expected an ActionResult map, got {other:?}"),
         }
-        assert!(err.contains("ReplayMismatch"), "{err}");
-        assert!(err.contains("more computer.observe calls"), "{err}");
+        assert!(err_exhaust.contains("ReplayMismatch"), "{err_exhaust}");
+        assert!(err_exhaust.contains("more computer.observe calls"), "{err_exhaust}");
     }
 
     #[test]

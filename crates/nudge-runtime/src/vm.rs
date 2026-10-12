@@ -99,6 +99,9 @@ impl VM {
         let mut math_module: HashMap<String, Value> = HashMap::new();
         let mut str_module: HashMap<String, Value> = HashMap::new();
         let mut computer_module: HashMap<String, Value> = HashMap::new();
+        let mut os_module: HashMap<String, Value> = HashMap::new();
+        let mut time_module: HashMap<String, Value> = HashMap::new();
+        let mut env_module: HashMap<String, Value> = HashMap::new();
 
         for (name, func) in stdlib_functions {
             // Register as global (e.g., "io.read")
@@ -117,6 +120,15 @@ impl VM {
             } else if name.starts_with("computer.") {
                 let short = name.strip_prefix("computer.").unwrap().to_string();
                 computer_module.insert(short, func);
+            } else if name.starts_with("os.") {
+                let short = name.strip_prefix("os.").unwrap().to_string();
+                os_module.insert(short, func);
+            } else if name.starts_with("time.") {
+                let short = name.strip_prefix("time.").unwrap().to_string();
+                time_module.insert(short, func);
+            } else if name.starts_with("env.") {
+                let short = name.strip_prefix("env.").unwrap().to_string();
+                env_module.insert(short, func);
             }
         }
 
@@ -126,6 +138,9 @@ impl VM {
         vm.globals.insert("str".to_string(), Value::Map(str_module));
         vm.globals
             .insert("computer".to_string(), Value::Map(computer_module));
+        vm.globals.insert("os".to_string(), Value::Map(os_module));
+        vm.globals.insert("time".to_string(), Value::Map(time_module));
+        vm.globals.insert("env".to_string(), Value::Map(env_module));
 
         // Register program functions as globals
         for (i, func) in vm.program.functions.iter().enumerate() {
