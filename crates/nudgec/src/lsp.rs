@@ -12,12 +12,34 @@ use std::io::{Read, Write};
 fn line_col(src: &str, at: usize) -> (usize, usize) {
     let mut line = 0;
     let mut col = 0;
-    for ch in src[..at.min(src.len())].chars() {
-        if ch == '\n' {
+    let bytes = src.as_bytes();
+    let at = at.min(src.len());
+    let mut i = 0;
+    while i < at {
+        let b = bytes[i];
+        if b == b'\n' {
             line += 1;
             col = 0;
+            i += 1;
         } else {
-            col += 1;
+            // Decode UTF-8 char to count UTF-16 code units / character offset as expected by LSP
+            let ch = match std::str::from_utf8(&bytes[i..at]) {
+                Ok(s) => s.chars().next().unwrap_or('\u{FFFD}'),
+                Err(e) => {
+                    let valid_len = e.valid_up_to();
+                    if valid_len > 0 {
+                        std::str::from_utf8(&bytes[i..i + valid_len])
+                            .unwrap()
+                            .chars()
+                            .next()
+                            .unwrap_or('\u{FFFD}')
+                    } else {
+                        '\u{FFFD}'
+                    }
+                }
+            };
+            i += ch.len_utf8();
+            col += ch.len_utf16();
         }
     }
     (line, col)

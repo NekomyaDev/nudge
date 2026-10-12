@@ -331,4 +331,32 @@ mod tests {
             "{errs:?}"
         );
     }
+
+    #[test]
+    fn strict_frozen_v1_field_validation_edge_cases() {
+        let text = format!(
+            "{}\n{}\n{}\n{}\n",
+            r#"{"v": 1, "seq": 1, "kind": "tool.call", "input": "missing tool field", "output": "ok"}"#,
+            r#"{"v": 1, "seq": 2, "kind": "fn.return", "output": "missing fn field"}"#,
+            r#"{"v": 1, "seq": 3, "kind": "decision.call", "model": "m", "provider": "p", "questions": {}, "answers": {}, "outcome": "ok"}"#,
+            r#"{"v": 1, "seq": 4, "kind": "computer.observe", "app": "a", "state_id": "s1", "element_count": "not-a-number", "outcome": "ok", "latency_ms": 10}"#,
+        );
+        let errs = validate(&text);
+        assert!(
+            errs.iter().any(|e| e.contains("line 1") && e.contains("missing `tool`")),
+            "{errs:?}"
+        );
+        assert!(
+            errs.iter().any(|e| e.contains("line 2") && e.contains("missing `fn`")),
+            "{errs:?}"
+        );
+        assert!(
+            errs.iter().any(|e| e.contains("line 3") && e.contains("missing `latency_ms`")),
+            "{errs:?}"
+        );
+        assert!(
+            errs.iter().any(|e| e.contains("line 4") && e.contains("`element_count` must be Num")),
+            "{errs:?}"
+        );
+    }
 }
