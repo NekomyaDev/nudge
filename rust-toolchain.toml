@@ -1,0 +1,8 @@
+# Pin the toolchain so local and CI compile/lint with the exact same rustc,
+# clippy and rustfmt. Without this, CI floats on `stable` while a developer's
+# local `stable` can lag, so a clippy lint (or rustfmt diff) that passes
+# locally can fail the CI gate — and vice versa. Bump deliberately, not
+# accidentally.
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]

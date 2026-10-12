@@ -10,6 +10,9 @@ on:
     paths: ["examples/**", "action.yml", ".github/workflows/agent-ci.yml"]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   agents:
     runs-on: ubuntu-latest

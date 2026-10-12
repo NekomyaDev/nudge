@@ -14,6 +14,9 @@ on:
         default: groq
         options: [groq, gemini, mimo]
 
+permissions:
+  contents: read
+
 jobs:
   smoke:
     runs-on: ubuntu-latest
