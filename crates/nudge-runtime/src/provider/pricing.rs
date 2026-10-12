@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 /// Official pricing in USD per 1,000,000 tokens
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ModelPricing {
     pub input_usd_per_1m: f64,
     pub output_usd_per_1m: f64,

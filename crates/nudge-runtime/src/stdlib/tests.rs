@@ -854,4 +854,166 @@ mod computer_tests {
         // Clean up
         std::env::remove_var(key);
     }
+
+    #[test]
+    fn test_math_random_range() {
+        for _ in 0..100 {
+            let res = crate::stdlib::math::execute("math.random", vec![]).unwrap();
+            match res {
+                Value::Float(f) => {
+                    assert!((0.0..1.0).contains(&f), "random value {f} out of [0, 1)");
+                }
+                _ => panic!("math.random must return float"),
+            }
+        }
+        let err = crate::stdlib::math::execute("math.random", vec![Value::Int(1)]);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_math_random_int_bounds() {
+        // Positive interval [10, 20)
+        for _ in 0..100 {
+            let res = crate::stdlib::math::execute(
+                "math.random_int",
+                vec![Value::Int(10), Value::Int(20)],
+            )
+            .unwrap();
+            match res {
+                Value::Int(n) => {
+                    assert!((10..20).contains(&n), "random_int {n} out of [10, 20)");
+                }
+                _ => panic!("math.random_int must return int"),
+            }
+        }
+
+        // Negative interval [-50, -10)
+        for _ in 0..100 {
+            let res = crate::stdlib::math::execute(
+                "math.random_int",
+                vec![Value::Int(-50), Value::Int(-10)],
+            )
+            .unwrap();
+            match res {
+                Value::Int(n) => {
+                    assert!((-50..-10).contains(&n), "random_int {n} out of [-50, -10)");
+                }
+                _ => panic!("math.random_int must return int"),
+            }
+        }
+
+        // Error cases: min >= max
+        assert!(crate::stdlib::math::execute(
+            "math.random_int",
+            vec![Value::Int(10), Value::Int(10)],
+        )
+        .is_err());
+        assert!(crate::stdlib::math::execute(
+            "math.random_int",
+            vec![Value::Int(20), Value::Int(10)],
+        )
+        .is_err());
+
+        // Error cases: invalid types / wrong arity
+        assert!(crate::stdlib::math::execute("math.random_int", vec![Value::Int(1)]).is_err());
+        assert!(crate::stdlib::math::execute(
+            "math.random_int",
+            vec![Value::Float(1.0), Value::Int(2)],
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_time_format_epoch_values_and_specifiers() {
+        // 0 -> 1970-01-01 00:00:00 UTC (Thursday)
+        let f0 = crate::stdlib::time::execute(
+            "time.format",
+            vec![
+                Value::Float(0.0),
+                Value::String("%Y-%m-%d %H:%M:%S %a %A %b %B %p %I %y %Z %%".to_string()),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            f0,
+            Value::String(
+                "1970-01-01 00:00:00 Thu Thursday Jan January AM 12 70 UTC %".to_string()
+            )
+        );
+
+        // 1000000000 -> 2001-09-09 01:46:40 UTC (Sunday)
+        let f1b = crate::stdlib::time::execute(
+            "time.format",
+            vec![
+                Value::Int(1_000_000_000),
+                Value::String("%Y-%m-%d %H:%M:%S (%a, %b) %s %y".to_string()),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            f1b,
+            Value::String("2001-09-09 01:46:40 (Sun, Sep) 1000000000 01".to_string())
+        );
+
+        // Leap day: 951825600 -> 2000-02-29 12:00:00 UTC (Tuesday)
+        let fleap = crate::stdlib::time::execute(
+            "time.format",
+            vec![
+                Value::Float(951_825_600.0),
+                Value::String("%Y-%m-%d %H:%M:%S %a %b %p %I".to_string()),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            fleap,
+            Value::String("2000-02-29 12:00:00 Tue Feb PM 12".to_string())
+        );
+
+        // Fractional seconds %f
+        let ffract = crate::stdlib::time::execute(
+            "time.format",
+            vec![
+                Value::Float(1_000_000_000.5),
+                Value::String("%S.%f".to_string()),
+            ],
+        )
+        .unwrap();
+        assert_eq!(ffract, Value::String("40.500000000".to_string()));
+    }
+
+    #[test]
+    fn test_time_format_invalid_timestamps() {
+        assert!(crate::stdlib::time::execute(
+            "time.format",
+            vec![
+                Value::Float(f64::NAN),
+                Value::String("%Y-%m-%d".to_string())
+            ],
+        )
+        .is_err());
+
+        assert!(crate::stdlib::time::execute(
+            "time.format",
+            vec![
+                Value::Float(f64::INFINITY),
+                Value::String("%Y-%m-%d".to_string())
+            ],
+        )
+        .is_err());
+
+        assert!(crate::stdlib::time::execute(
+            "time.format",
+            vec![Value::Float(1e25), Value::String("%Y-%m-%d".to_string())],
+        )
+        .is_err());
+
+        assert!(crate::stdlib::time::execute(
+            "time.format",
+            vec![
+                Value::String("not a number".to_string()),
+                Value::String("%Y".to_string())
+            ],
+        )
+        .is_err());
+    }
 }

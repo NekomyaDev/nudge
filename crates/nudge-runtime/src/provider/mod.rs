@@ -33,7 +33,7 @@ pub struct LlmResponse {
     pub cache_write: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ModelInfo {
     pub id: String,
     pub name: String,

@@ -3,7 +3,70 @@
 //! Provides basic math, trigonometry, statistics, and random numbers.
 
 use crate::vm::Value;
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// SplitMix64 pseudo-random number generator.
+///
+/// Fast, robust 64-bit state PRNG with excellent statistical properties.
+/// Seeded automatically from current system timestamp and process id.
+struct SplitMix64 {
+    state: u64,
+}
+
+impl SplitMix64 {
+    fn new_seeded() -> Self {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let pid = std::process::id() as u128;
+        let mut seed = (nanos ^ (pid << 32) ^ 0x9E3779B97F4A7C15) as u64;
+        if seed == 0 {
+            seed = 0x853C49E6748FEA9B;
+        }
+        Self { state: seed }
+    }
+
+    #[inline]
+    fn next_u64(&mut self) -> u64 {
+        self.state = self.state.wrapping_add(0x9E3779B97F4A7C15);
+        let mut z = self.state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+        z ^ (z >> 31)
+    }
+
+    #[inline]
+    fn next_u128(&mut self) -> u128 {
+        let hi = self.next_u64() as u128;
+        let lo = self.next_u64() as u128;
+        (hi << 64) | lo
+    }
+
+    #[inline]
+    fn next_f64(&mut self) -> f64 {
+        // Uniform float in [0.0, 1.0) with 53 bits of precision
+        const SCALE: f64 = (1u64 << 53) as f64;
+        let bits = self.next_u64() >> 11;
+        (bits as f64) / SCALE
+    }
+}
+
+thread_local! {
+    static RNG: RefCell<SplitMix64> = RefCell::new(SplitMix64::new_seeded());
+}
+
+#[inline]
+fn random_f64() -> f64 {
+    RNG.with(|rng| rng.borrow_mut().next_f64())
+}
+
+#[inline]
+fn random_u128() -> u128 {
+    RNG.with(|rng| rng.borrow_mut().next_u128())
+}
 
 /// Register all math functions
 pub fn register() -> HashMap<String, Value> {
@@ -283,7 +346,7 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             if !args.is_empty() {
                 return Err("math.random requires no arguments".to_string());
             }
-            Ok(Value::Float(rand::random::<f64>()))
+            Ok(Value::Float(random_f64()))
         }
 
         "math.random_int" => {
@@ -296,7 +359,7 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                         return Err("math.random_int: min must be less than max".to_string());
                     }
                     let range = (*max as i128) - (*min as i128);
-                    let val = *min as i128 + (rand::random::<u128>() % range as u128) as i128;
+                    let val = *min as i128 + (random_u128() % range as u128) as i128;
                     Ok(Value::Int(val as i64))
                 }
                 _ => Err("math.random_int: arguments must be integers".to_string()),
