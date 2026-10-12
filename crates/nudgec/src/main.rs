@@ -21,6 +21,7 @@ mod codegen_ts;
 mod cost;
 mod dap;
 mod eval;
+mod evalcmd;
 mod fmt;
 mod fuzz;
 mod hints;
@@ -260,6 +261,7 @@ fn main() {
         && args[1] != "compare"
         && args[1] != "runs"
         && args[1] != "lint"
+        && args[1] != "run"
     {
         usage();
     }
@@ -666,7 +668,7 @@ fn main() {
                 eprintln!("error: eval needs --dataset <rows.jsonl>");
                 process::exit(64);
             };
-            let code = eval::run_cli(&items, &args[2], &dataset, &fname, &path, min_acc);
+            let code = evalcmd::run_cli(&items, &args[2], &dataset, &fname, &path, min_acc);
             process::exit(code);
         }
         "compare" => {
@@ -677,7 +679,7 @@ fn main() {
             }
             print!(
                 "{}",
-                eval::compare(&read_src(&args[2]), &read_src(&args[3]))
+                evalcmd::compare(&read_src(&args[2]), &read_src(&args[3]))
             );
         }
         "runs" => {
@@ -930,16 +932,65 @@ fn main() {
         // design §9 (v1.0): A2A agent-card export — one card per agent
         // block, or a single card wrapping the file's top-level fns
         "run" => {
-            let program_def = nudge_runtime::parser::parse(&src).unwrap_or_else(|e| {
-                eprintln!("error: parse error at line {}: {}", e.line, e.message);
+            let mut entry = "main".to_string();
+            let mut i = 3;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--fn" | "-f" => {
+                        i += 1;
+                        if let Some(f) = args.get(i) {
+                            entry = f.clone();
+                        } else {
+                            eprintln!("error: --fn requires a function name");
+                            process::exit(64);
+                        }
+                    }
+                    other => {
+                        eprintln!("error: unknown run argument '{other}'");
+                        process::exit(64);
+                    }
+                }
+                i += 1;
+            }
+
+            let items = match compile(&src) {
+                Ok(items) => items,
+                Err((msg, at)) => {
+                    eprintln!("error[E0002]: {msg} at byte {at}");
+                    print_hint("E0002");
+                    process::exit(1);
+                }
+            };
+
+            let errs = check::check(&items);
+            if !errs.is_empty() {
+                for e in &errs {
+                    match e.span {
+                        Some(sp) => {
+                            let (l, c) = line_col(&src, sp.start);
+                            eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
+                        }
+                        None => eprintln!("error[{}]: {}", e.code, e.msg),
+                    }
+                    print_hint(e.code);
+                }
                 process::exit(1);
-            });
-            let mut compiler = nudge_runtime::codegen::Compiler::new();
-            let program = compiler.compile_program(&program_def);
-            let mut vm = nudge_runtime::vm::VM::new(program);
-            if let Err(e) = vm.run() {
-                eprintln!("error: runtime execution failed: {e}");
-                process::exit(1);
+            }
+
+            match eval::run_program(&items, &entry) {
+                Ok(val) => {
+                    if val != eval::NudgeVal::Unit {
+                        println!("{val}");
+                    }
+                }
+                Err(e) => {
+                    if e.starts_with("error") {
+                        eprintln!("{e}");
+                    } else {
+                        eprintln!("error: {e}");
+                    }
+                    process::exit(1);
+                }
             }
         }
         "a2a" => match compile(&src) {
