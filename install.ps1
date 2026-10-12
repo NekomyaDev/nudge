@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 
 $REPO = "NekomyaDev/nudge"
 $BINARY = "nudgec"
-$VERSION = "v1.2.0"
+$VERSION = "v1.2.1"
 
 # Detect architecture
 $ARCH = if ([Environment]::Is64BitOperatingSystem) { "x86_64" } else { "x86" }
