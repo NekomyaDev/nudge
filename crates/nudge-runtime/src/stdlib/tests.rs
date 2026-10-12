@@ -379,6 +379,57 @@ mod computer_tests {
     }
 
     #[test]
+    fn test_computer_fake_geometry_and_movement() {
+        let _g = lock();
+        computer::reset_authority_for_tests();
+
+        // Test computer.screen_size
+        let size = computer::execute("computer.screen_size", vec![]).expect("screen_size works");
+        match &size {
+            Value::Map(m) => {
+                assert_eq!(m.get("width"), Some(&Value::Int(1920)));
+                assert_eq!(m.get("height"), Some(&Value::Int(1080)));
+            }
+            other => panic!("expected screen size map, got {other:?}"),
+        }
+
+        // Test computer.window_info with app argument
+        let win = computer::execute("computer.window_info", vec![Value::String("FakeApp".into())]).expect("window_info works");
+        match &win {
+            Value::Map(m) => {
+                assert_eq!(m.get("app"), Some(&Value::String("FakeApp".into())));
+                assert_eq!(m.get("title"), Some(&Value::String("FakeApp Window".into())));
+                assert_eq!(m.get("focused"), Some(&Value::Bool(true)));
+            }
+            other => panic!("expected window info map, got {other:?}"),
+        }
+
+        // Observe to establish state authority
+        computer::execute("computer.observe", vec![Value::String("FakeApp".into())]).expect("observe works");
+
+        // Test computer.type (acting with text or raster movement / drag / type)
+        // Note: type method in stdlib/computer.rs is registered as "computer.type"
+        let type_res = computer::execute("computer.type", vec![Value::String("Hello Nudge".into())]);
+        assert!(type_res.is_ok());
+
+        // Test computer.key
+        let key_res = computer::execute("computer.key", vec![Value::String("Return".into())]);
+        assert!(key_res.is_ok());
+
+        // Test computer.drag (with map coordinates or target indices)
+        let mut from_map = std::collections::HashMap::new();
+        from_map.insert("x".into(), Value::Int(100));
+        from_map.insert("y".into(), Value::Int(200));
+
+        let mut to_map = std::collections::HashMap::new();
+        to_map.insert("x".into(), Value::Int(300));
+        to_map.insert("y".into(), Value::Int(400));
+
+        let drag_res = computer::execute("computer.drag", vec![Value::Map(from_map), Value::Map(to_map)]);
+        assert!(drag_res.is_ok());
+    }
+
+    #[test]
     fn test_computer_fake_enforces_fail_closed_contract() {
         let _g = lock();
         computer::reset_authority_for_tests();
@@ -598,5 +649,111 @@ mod computer_tests {
             }
             other => panic!("expected an ActionResult map, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_time_now_and_format() {
+        let now_res = crate::stdlib::time::execute("time.now", vec![]);
+        assert!(now_res.is_ok());
+        let ts = match now_res.unwrap() {
+            Value::Float(f) => {
+                assert!(f > 0.0);
+                f
+            }
+            _ => panic!("time.now should return a float timestamp"),
+        };
+
+        // Test formatting fixed epoch timestamp 0 (1970-01-01 00:00:00 UTC)
+        let fmt_res = crate::stdlib::time::execute(
+            "time.format",
+            vec![
+                Value::Float(0.0),
+                Value::String("%Y-%m-%d %H:%M:%S".to_string()),
+            ],
+        );
+        assert!(fmt_res.is_ok());
+        assert_eq!(fmt_res.unwrap(), Value::String("1970-01-01 00:00:00".to_string()));
+
+        // Test formatting dynamic timestamp with integer representation
+        let fmt_int = crate::stdlib::time::execute(
+            "time.format",
+            vec![
+                Value::Int(0),
+                Value::String("%Y".to_string()),
+            ],
+        );
+        assert!(fmt_int.is_ok());
+        assert_eq!(fmt_int.unwrap(), Value::String("1970".to_string()));
+    }
+
+    #[test]
+    fn test_time_sleep() {
+        let start = std::time::Instant::now();
+        let res = crate::stdlib::time::execute("time.sleep", vec![Value::Int(10)]);
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), Value::None);
+        let elapsed = start.elapsed();
+        assert!(elapsed >= std::time::Duration::from_millis(5));
+    }
+
+    #[test]
+    fn test_os_process_functions() {
+        let args_res = crate::stdlib::os::execute("os.args", vec![]);
+        assert!(args_res.is_ok());
+        match args_res.unwrap() {
+            Value::List(v) => assert!(!v.is_empty()),
+            other => panic!("expected List, got {:?}", other),
+        }
+
+        let cwd_res = crate::stdlib::os::execute("os.cwd", vec![]);
+        assert!(cwd_res.is_ok());
+        match cwd_res.unwrap() {
+            Value::String(s) => assert!(!s.is_empty()),
+            other => panic!("expected String, got {:?}", other),
+        }
+
+        let pid_res = crate::stdlib::os::execute("os.pid", vec![]);
+        assert!(pid_res.is_ok());
+        match pid_res.unwrap() {
+            Value::Int(pid) => assert!(pid > 0),
+            other => panic!("expected Int, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_env_functions() {
+        let key = "NUDGE_TEST_ENV_VAR_12345";
+        let val = "test_value_987";
+
+        // env.has initially false
+        let has_res = crate::stdlib::env::execute("env.has", vec![Value::String(key.to_string())]);
+        assert!(has_res.is_ok());
+        assert_eq!(has_res.unwrap(), Value::Bool(false));
+
+        // env.get initially Value::None
+        let get_res = crate::stdlib::env::execute("env.get", vec![Value::String(key.to_string())]);
+        assert!(get_res.is_ok());
+        assert_eq!(get_res.unwrap(), Value::None);
+
+        // env.set sets variable
+        let set_res = crate::stdlib::env::execute(
+            "env.set",
+            vec![Value::String(key.to_string()), Value::String(val.to_string())],
+        );
+        assert!(set_res.is_ok());
+        assert_eq!(set_res.unwrap(), Value::None);
+
+        // env.has now true
+        let has_res2 = crate::stdlib::env::execute("env.has", vec![Value::String(key.to_string())]);
+        assert!(has_res2.is_ok());
+        assert_eq!(has_res2.unwrap(), Value::Bool(true));
+
+        // env.get now returns Value::String(val)
+        let get_res2 = crate::stdlib::env::execute("env.get", vec![Value::String(key.to_string())]);
+        assert!(get_res2.is_ok());
+        assert_eq!(get_res2.unwrap(), Value::String(val.to_string()));
+
+        // Clean up
+        std::env::remove_var(key);
     }
 }

@@ -3,9 +3,12 @@
 //! Provides built-in functions for I/O, math, string operations, and more.
 
 pub mod computer;
+pub mod env;
 pub mod io;
 pub mod math;
+pub mod os;
 pub mod string;
+pub mod time;
 
 #[cfg(test)]
 mod tests;
@@ -29,6 +32,15 @@ pub fn register_all() -> HashMap<String, Value> {
     // Register computer-use functions (v1.5, docs/computer-use.md)
     functions.extend(computer::register());
 
+    // Register os functions
+    functions.extend(os::register());
+
+    // Register time functions
+    functions.extend(time::register());
+
+    // Register environment variable functions
+    functions.extend(env::register());
+
     functions
 }
 
@@ -42,6 +54,12 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
         string::execute(name, args)
     } else if name.starts_with("computer.") {
         computer::execute(name, args)
+    } else if name.starts_with("os.") {
+        os::execute(name, args)
+    } else if name.starts_with("time.") {
+        time::execute(name, args)
+    } else if name.starts_with("env.") {
+        env::execute(name, args)
     } else {
         Err(format!("Unknown standard library function: {}", name))
     }
