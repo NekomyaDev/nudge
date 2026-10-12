@@ -18,7 +18,7 @@ use std::io::{BufRead, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
 
-const METHODS: [&str; 9] = [
+const METHODS: [&str; 15] = [
     "computer.observe",
     "computer.click",
     "computer.type",
@@ -28,6 +28,12 @@ const METHODS: [&str; 9] = [
     "computer.drag",
     "computer.perform",
     "computer.paste",
+    "computer.screen_size",
+    "computer.window_info",
+    "computer.mouse_move",
+    "computer.mouse_down",
+    "computer.mouse_up",
+    "computer.cursor_pos",
 ];
 
 pub fn register() -> HashMap<String, Value> {
@@ -61,6 +67,18 @@ struct ReplayRecords {
 }
 
 static REPLAY: Mutex<Option<(String, ReplayRecords)>> = Mutex::new(None);
+
+struct FakeMouseState {
+    x: f64,
+    y: f64,
+    buttons: [bool; 3],
+}
+
+static FAKE_MOUSE: Mutex<FakeMouseState> = Mutex::new(FakeMouseState {
+    x: 0.0,
+    y: 0.0,
+    buttons: [false; 3],
+});
 
 /// Fake desktop parity with the Python/TS runtimes: one scene, four
 /// elements, `s-1` state ids, deterministic results.
@@ -96,6 +114,24 @@ fn fake_call(op: &str, req: &Json) -> Result<Json, String> {
         obj(pairs)
     })
     .collect();
+    if op == "screen_size" {
+        return Ok(obj(vec![
+            ("width", Json::Num(1920.0)),
+            ("height", Json::Num(1080.0)),
+        ]));
+    }
+    if op == "window_info" {
+        let target_app = if app.is_empty() { "FakeApp" } else { &app };
+        return Ok(obj(vec![
+            ("app", Json::Str(target_app.to_string())),
+            ("title", Json::Str(format!("{target_app} Window"))),
+            ("width", Json::Num(1920.0)),
+            ("height", Json::Num(1080.0)),
+            ("x", Json::Num(0.0)),
+            ("y", Json::Num(0.0)),
+            ("focused", Json::Bool(true)),
+        ]));
+    }
     if op == "observe" {
         return Ok(obj(vec![
             ("state_id", Json::Str("s-1".into())),
@@ -612,11 +648,16 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
     // canonical surface: only `observe` names an app — every action acts
     // on the app + state of the LAST successful observation (the runtime
     // owns the authority, like the Python/TS runtimes)
-    let (app, payload_args): (String, &[Value]) = if op == "observe" {
-        let app = args
-            .first()
-            .ok_or_else(|| format!("{name} requires the app name to observe"))?;
-        (value_to_text(app), &args[1..])
+    let (app, payload_args): (String, &[Value]) = if op == "screen_size" {
+        (String::new(), &args[..])
+    } else if op == "observe" || op == "window_info" {
+        let app = args.first();
+        let app_str = match app {
+            Some(v) => value_to_text(v),
+            None => String::new(),
+        };
+        let slice_start = if app.is_some() && op == "observe" { 1 } else { if op == "window_info" && app.is_some() { 1 } else { 0 } };
+        (app_str, &args[slice_start..])
     } else {
         let guard = LAST_OBS
             .lock()
@@ -693,7 +734,7 @@ fn request_json(op: &str, app: &str, args: &[Value]) -> Json {
     let target = target_json(args.first());
     let text_at = |i: usize| args.get(i).map(value_to_text).unwrap_or_default();
     let pairs: Vec<(&str, Json)> = match op {
-        "observe" => vec![],
+        "observe" | "screen_size" | "window_info" => vec![],
         "click" => vec![("target", target)],
         "drag" => vec![("target", target), ("to", target_json(args.get(1)))],
         "type" => vec![
