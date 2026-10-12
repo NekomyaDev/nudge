@@ -2,8 +2,8 @@
 //!
 //! Provides llm.call for calling LLM models.
 
-use crate::vm::Value;
 use crate::provider;
+use crate::vm::Value;
 use std::collections::HashMap;
 
 /// Register all LLM functions
@@ -20,7 +20,10 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             // Expose llm.call(prompt: string, model: string) as a builtin function in the stdlib returning string or map.
             // Let's support either 1 argument (prompt, default model) or 2 arguments (prompt, model).
             if args.is_empty() || args.len() > 2 {
-                return Err("llm.call requires 1 or 2 arguments (prompt: string, [model: string])".to_string());
+                return Err(
+                    "llm.call requires 1 or 2 arguments (prompt: string, [model: string])"
+                        .to_string(),
+                );
             }
 
             let prompt = match &args[0] {

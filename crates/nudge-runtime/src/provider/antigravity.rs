@@ -1,7 +1,7 @@
 use super::{LlmRequest, LlmResponse, Provider};
-use std::process::Command;
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 
 #[derive(Debug, Clone)]
 pub struct AntigravityProvider {
@@ -9,6 +9,12 @@ pub struct AntigravityProvider {
     model: Option<String>,
     api_key: Option<String>,
     oauth_token: Option<String>,
+}
+
+impl Default for AntigravityProvider {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AntigravityProvider {
@@ -25,9 +31,10 @@ impl AntigravityProvider {
 
         // 2. Check ~/.openhands/profiles/antigravity-proxy.json
         if let Some(home) = dirs_next_home() {
-            let profile_path = PathBuf::from(&home).join(".openhands/profiles/antigravity-proxy.json");
+            let profile_path =
+                PathBuf::from(&home).join(".openhands/profiles/antigravity-proxy.json");
             if profile_path.exists() {
-                if let Ok(content) = fs::read_to_string(&profile_path) {
+                if let Ok(_content) = fs::read_to_string(&profile_path) {
                     // Simple manual parsing or JSON parsing if json helper is available in nudge_runtime
                     // nudge_runtime has a json module: crate::json::JsonValue or similar. Let's inspect crate::json or use simple string parsing/serde if available.
                     // Let's check what json module provides in crate::json.
@@ -37,7 +44,7 @@ impl AntigravityProvider {
             // 3. Check ~/.jcode/antigravity_oauth.json for access tokens
             let oauth_path = PathBuf::from(&home).join(".jcode/antigravity_oauth.json");
             if oauth_path.exists() {
-                if let Ok(content) = fs::read_to_string(&oauth_path) {
+                if let Ok(_content) = fs::read_to_string(&oauth_path) {
                     // parse token
                 }
             }
@@ -71,13 +78,23 @@ impl AntigravityProvider {
 
     fn read_openhands_profile() -> (Option<String>, Option<String>, Option<String>) {
         if let Some(home) = dirs_next_home() {
-            let profile_path = PathBuf::from(home).join(".openhands/profiles/antigravity-proxy.json");
+            let profile_path =
+                PathBuf::from(home).join(".openhands/profiles/antigravity-proxy.json");
             if let Ok(content) = fs::read_to_string(profile_path) {
                 // Parse using crate::json if possible, or basic parsing
                 if let Ok(val) = crate::json::parse(&content) {
-                    let base_url = val.get("base_url").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    let model = val.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    let api_key = val.get("api_key").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let base_url = val
+                        .get("base_url")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let model = val
+                        .get("model")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let api_key = val
+                        .get("api_key")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                     return (base_url, model, api_key);
                 }
             }
@@ -104,19 +121,24 @@ impl AntigravityProvider {
 }
 
 fn dirs_next_home() -> Option<String> {
-    std::env::var("HOME").ok().or_else(|| std::env::var("USERPROFILE").ok())
+    std::env::var("HOME")
+        .ok()
+        .or_else(|| std::env::var("USERPROFILE").ok())
 }
 
 impl Provider for AntigravityProvider {
     fn call(&self, req: &LlmRequest) -> Result<LlmResponse, String> {
         let model = self.model.as_deref().unwrap_or(&req.model);
-        let endpoint = format!("{}/v1/chat/completions", self.base_url.trim_end_matches('/'));
+        let endpoint = format!(
+            "{}/v1/chat/completions",
+            self.base_url.trim_end_matches('/')
+        );
 
         // Format OpenAI-compatible payload using crate::json or string formatting
         // {"model": model, "messages": [{"role": "user", "content": req.prompt}], "temperature": req.temperature}
         let escaped_prompt = escape_json_string(&req.prompt);
         let escaped_model = escape_json_string(model);
-        
+
         let mut json_payload = format!(
             r#"{{"model": "{}", "messages": [{{"role": "user", "content": "{}"}}], "temperature": {}}}"#,
             escaped_model, escaped_prompt, req.temperature
@@ -128,38 +150,50 @@ impl Provider for AntigravityProvider {
             // For OpenAI-compatible endpoints supporting json_object or schema:
             json_payload = format!(
                 r#"{{"model": "{}", "messages": [{{"role": "user", "content": "{}"}}], "temperature": {}, "response_format": {{"type": "json_object"}}}}"#,
-                escaped_model, escaped_schema_content(escaped_prompt, &escaped_schema), req.temperature
+                escaped_model,
+                escaped_schema_content(escaped_prompt, &escaped_schema),
+                req.temperature
             );
         }
 
         let mut cmd = Command::new("curl");
         cmd.arg("-s")
-           .arg("-X")
-           .arg("POST")
-           .arg(&endpoint)
-           .arg("-H")
-           .arg("Content-Type: application/json");
+            .arg("-X")
+            .arg("POST")
+            .arg(&endpoint)
+            .arg("-H")
+            .arg("Content-Type: application/json");
 
         if let Some(key) = &self.api_key {
             cmd.arg("-H").arg(format!("Authorization: Bearer {}", key));
         } else if let Some(token) = &self.oauth_token {
-            cmd.arg("-H").arg(format!("Authorization: Bearer {}", token));
+            cmd.arg("-H")
+                .arg(format!("Authorization: Bearer {}", token));
         }
 
         cmd.arg("-d").arg(&json_payload);
 
-        let output = cmd.output().map_err(|e| format!("Failed to execute curl command: {}", e))?;
+        let output = cmd
+            .output()
+            .map_err(|e| format!("Failed to execute curl command: {}", e))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("curl exited with status {}: {}", output.status, stderr));
+            return Err(format!(
+                "curl exited with status {}: {}",
+                output.status, stderr
+            ));
         }
 
         let response_body = String::from_utf8_lossy(&output.stdout);
 
         // Parse response using crate::json
-        let json_val = crate::json::parse(&response_body)
-            .map_err(|e| format!("Failed to parse JSON response from Antigravity proxy: {}. Body: {}", e, response_body))?;
+        let json_val = crate::json::parse(&response_body).map_err(|e| {
+            format!(
+                "Failed to parse JSON response from Antigravity proxy: {}. Body: {}",
+                e, response_body
+            )
+        })?;
 
         // Extract content from choices[0].message.content
         let content = json_val

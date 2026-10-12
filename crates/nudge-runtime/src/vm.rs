@@ -695,7 +695,8 @@ impl VM {
                     Value::String(s) => s,
                     _ => return Err("LlmCall requires string prompt".to_string()),
                 };
-                let model = std::env::var("NUDGE_DEFAULT_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
+                let model =
+                    std::env::var("NUDGE_DEFAULT_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
                 let req = provider::LlmRequest {
                     prompt,
                     model,

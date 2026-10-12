@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn test_fake_provider_deterministic_response() {
     let provider = FakeProvider::new();
-    
+
     // Test without schema
     let req = LlmRequest {
         prompt: "Hello, Nudge!".to_string(),
@@ -12,8 +12,10 @@ fn test_fake_provider_deterministic_response() {
         temperature: 0.7,
         budget_usd: None,
     };
-    
-    let resp = provider.call(&req).expect("FakeProvider call should succeed");
+
+    let resp = provider
+        .call(&req)
+        .expect("FakeProvider call should succeed");
     assert_eq!(resp.model, "fake-model");
     assert!(resp.text.contains("Hello, Nudge!"));
     assert!(resp.tokens_in > 0);
@@ -29,7 +31,9 @@ fn test_fake_provider_deterministic_response() {
         budget_usd: Some(0.01),
     };
 
-    let resp_schema = provider.call(&req_schema).expect("FakeProvider call with schema should succeed");
+    let resp_schema = provider
+        .call(&req_schema)
+        .expect("FakeProvider call with schema should succeed");
     assert!(resp_schema.text.contains("schema_applied"));
     assert!(resp_schema.text.contains("{\"type\": \"object\"}"));
 }
@@ -46,7 +50,9 @@ fn test_get_active_provider_default() {
         temperature: 0.5,
         budget_usd: None,
     };
-    let resp = provider.call(&req).expect("active provider call should succeed");
+    let resp = provider
+        .call(&req)
+        .expect("active provider call should succeed");
     assert!(resp.text.contains("test"));
 }
 
