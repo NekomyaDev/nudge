@@ -171,7 +171,8 @@ impl VM {
             }
 
             let frame = self.call_stack.last().unwrap();
-            let func = &self.program.functions[frame.function_index as usize];
+            let func = self.program.functions.get(frame.function_index as usize)
+                .ok_or_else(|| format!("function index {} out of bounds", frame.function_index))?;
 
             if frame.ip >= func.instructions.len() as u32 {
                 return Err("Instruction pointer out of bounds".to_string());
@@ -192,12 +193,13 @@ impl VM {
         match &inst.op {
             OpCode::Push => {
                 let idx = inst.arg.ok_or("Push requires argument")?;
-                let constant = self.program.constants[idx as usize].clone();
+                let constant = self.program.constants.get(idx as usize)
+                    .ok_or_else(|| format!("constant index {} out of bounds", idx))?;
                 let value = match constant {
-                    Constant::Int(v) => Value::Int(v),
-                    Constant::Float(v) => Value::Float(v),
-                    Constant::String(v) => Value::String(v),
-                    Constant::Bool(v) => Value::Bool(v),
+                    Constant::Int(v) => Value::Int(*v),
+                    Constant::Float(v) => Value::Float(*v),
+                    Constant::String(v) => Value::String(v.clone()),
+                    Constant::Bool(v) => Value::Bool(*v),
                     Constant::None => Value::None,
                 };
                 self.stack.push(value);
@@ -456,7 +458,9 @@ impl VM {
 
             OpCode::LoadGlobal => {
                 let idx = inst.arg.ok_or("LoadGlobal requires argument")?;
-                let name = match &self.program.constants[idx as usize] {
+                let constant = self.program.constants.get(idx as usize)
+                    .ok_or_else(|| format!("constant index {} out of bounds", idx))?;
+                let name = match constant {
                     Constant::String(s) => s.clone(),
                     _ => return Err("Global name must be a string".to_string()),
                 };
@@ -471,7 +475,9 @@ impl VM {
 
             OpCode::StoreGlobal => {
                 let idx = inst.arg.ok_or("StoreGlobal requires argument")?;
-                let name = match &self.program.constants[idx as usize] {
+                let constant = self.program.constants.get(idx as usize)
+                    .ok_or_else(|| format!("constant index {} out of bounds", idx))?;
+                let name = match constant {
                     Constant::String(s) => s.clone(),
                     _ => return Err("Global name must be a string".to_string()),
                 };
@@ -536,7 +542,8 @@ impl VM {
                 };
 
                 if let Some(idx) = resolved_idx {
-                    let func = &self.program.functions[idx as usize];
+                    let func = self.program.functions.get(idx as usize)
+                        .ok_or_else(|| format!("function index {} out of bounds", idx))?;
                     let arity = func.arity;
 
                     if arg_count != arity {
@@ -719,7 +726,9 @@ impl VM {
 
             OpCode::Field => {
                 let field_idx = inst.arg.ok_or("Field requires argument")?;
-                let field_name = match &self.program.constants[field_idx as usize] {
+                let constant = self.program.constants.get(field_idx as usize)
+                    .ok_or_else(|| format!("constant index {} out of bounds", field_idx))?;
+                let field_name = match constant {
                     Constant::String(s) => s.clone(),
                     _ => return Err("Field name must be a string".to_string()),
                 };
@@ -1204,5 +1213,66 @@ mod tests {
         let mut vm = VM::new(program);
         assert!(vm.run().is_ok());
         assert_eq!(vm.stack[0], Value::Int(42));
+    }
+
+    #[test]
+    fn test_invalid_constant_index() {
+        let program = make_program(
+            vec![
+                Instruction {
+                    op: OpCode::Push,
+                    arg: Some(999),
+                    line: 1,
+                },
+            ],
+            vec![],
+        );
+        let mut vm = VM::new(program);
+        let result = vm.run();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("constant index 999 out of bounds"));
+    }
+
+    #[test]
+    fn test_invalid_field_index() {
+        let program = make_program(
+            vec![
+                Instruction {
+                    op: OpCode::NewMap,
+                    arg: None,
+                    line: 1,
+                },
+                Instruction {
+                    op: OpCode::Field,
+                    arg: Some(999),
+                    line: 1,
+                },
+            ],
+            vec![],
+        );
+        let mut vm = VM::new(program);
+        let result = vm.run();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("constant index 999 out of bounds"));
+    }
+
+    #[test]
+    fn test_invalid_entry_point() {
+        let program = Program {
+            version: 1,
+            constants: vec![],
+            functions: vec![Function {
+                name: "main".to_string(),
+                arity: 0,
+                locals: 0,
+                instructions: vec![],
+                effects: vec![],
+            }],
+            entry_point: 99,
+        };
+        let bytes = program.to_bytes();
+        let deserialized = Program::from_bytes(&bytes);
+        assert!(deserialized.is_err());
+        assert!(deserialized.unwrap_err().contains("Entry point"));
     }
 }
