@@ -34,4 +34,13 @@ test "classifier labels every ticket" {
     let t = replay("traces/classifier.jsonl")
     assert len(t.output) == 3
     assert t.cost_usd < 0.03
+    assert t.output[0].category == "billing"
+    assert t.output[0].priority == "urgent"
+    assert t.output[1].category == "technical"
+    assert t.output[1].priority == "high"
+    assert t.output[2].category == "account"
+    assert t.output[2].priority == "normal"
+    assert t.output[0].summary != ""
+    assert t.output[1].summary != ""
+    assert t.output[2].summary != ""
 }
