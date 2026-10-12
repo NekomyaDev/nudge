@@ -362,6 +362,21 @@ impl Parser {
                 }
             };
             params.push(param);
+            // Skip optional parameter type annotation (: Type)
+            if matches!(self.peek(), Token::Colon) {
+                self.advance();
+                if matches!(self.peek(), Token::Ident(_)) {
+                    self.advance();
+                } else if matches!(self.peek(), Token::LBracket) {
+                    self.advance();
+                    if matches!(self.peek(), Token::Ident(_)) {
+                        self.advance();
+                    }
+                    if matches!(self.peek(), Token::RBracket) {
+                        self.advance();
+                    }
+                }
+            }
             if matches!(self.peek(), Token::Comma) {
                 self.advance();
             } else if !matches!(self.peek(), Token::RParen) {

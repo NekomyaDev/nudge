@@ -35,6 +35,9 @@ dependencies = [
 [[package]]
 name = "nudgec"
 version = "1.2.1"
+dependencies = [
+ "nudge-runtime",
+]
 
 [[package]]
 name = "ppv-lite86"
