@@ -223,7 +223,7 @@ export NUDGE_DECISION_SERVERS='{"laya": {"base_url": "http://localhost:8000"}}'
 |:---|:---|:---|
 | [AI 聊天机器人](examples/chatbot/) | 带记忆的对话代理 | 类型化 LLM、重放、预算 |
 | [代码审查器](examples/code-reviewer/) | 代码质量分析器 | 结构化输出、评分 |
-| [研究代理](examples/research-agent/) | 多来源研究 | 置信度评分、Par map |
+| [研究代理](examples/research_agent.ndg) | 多来源研究验收测试用例 | 置信度评分、Par map |
 | [数据分析器](examples/data-analyzer/) | 数据模式识别 | 洞察、建议 |
 | [翻译器](examples/translator/) | 多语言翻译 | 质量评分、并行 |
 | [分类器](examples/classifier/) | 工单分类与模型路由 | 路由模型选择、批处理 |
@@ -237,6 +237,17 @@ cd examples/chatbot
 nudgec check chatbot.ndg && nudgec build chatbot.ndg
 python3 out/chatbot.py
 ```
+
+## 原生独立执行引擎与去 Python 依赖路线图
+
+虽然 Nudge 目前通过转译为 Python 和 TypeScript 实现生态兼容，但 Nudge 正在积极推进成为**完全独立自足的原生编程语言**，实现零 Python/Node.js 依赖运行：
+
+- **第一阶段（进行中）：纯 Nudge AST 解释器（`nudgec run`）** — 在 Rust 内直接执行纯 Nudge 程序（状态机、算法、游戏），毫秒级极速冷启动。
+- **第二阶段：Rust 原生 AI 与工具运行时** — 内嵌 Tokio + Reqwest (rustls) HTTP/SSE 客户端、确定性 NTF 跟踪回放与原生 MCP stdio 通信。
+- **第三阶段：字节码 VM 与单二进制导出（`nudgec build --standalone`）** — 将代理应用打包为纯独立可执行文件分发。
+- **第四阶段：将 Python 解耦为可选互操作插件** — 仅在显式声明时按需加载 Python 桥接（`use python "pandas" as pd`）。
+
+详细技术 RFC 详见 [`docs/native-runtime-roadmap.md`](docs/native-runtime-roadmap.md)。
 
 ## 后端对等性
 

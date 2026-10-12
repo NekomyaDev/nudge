@@ -69,7 +69,7 @@ See what you can build with Nudge:
 |:---|:---|:---|
 | [AI Chatbot](examples/chatbot/) | Conversational agent with memory | Typed LLM, Replay, Budget |
 | [Code Reviewer](examples/code-reviewer/) | Code quality analyzer | Structured output, Scoring |
-| [Research Agent](examples/research-agent/) | Multi-source research | Confidence scores, Par map |
+| [Research Agent](examples/research_agent.ndg) | Multi-source research acceptance fixture | Confidence scores, Par map |
 | [Data Analyzer](examples/data-analyzer/) | Data pattern recognition | Insights, Recommendations |
 | [Translator](examples/translator/) | Multi-language translation | Quality scoring, Parallel |
 | [Classifier](examples/classifier/) | Support ticket triage & model routing | Route model choice, Batch |
@@ -83,6 +83,17 @@ cd examples/chatbot
 nudgec check chatbot.ndg && nudgec build chatbot.ndg
 python3 out/chatbot.py
 ```
+
+## Native Engine Roadmap & Language Independence
+
+While Nudge compiles to Python and TypeScript today for ecosystem interoperability, Nudge is actively evolving into a **fully self-contained, independent programming language** that runs with zero Python/Node.js dependencies:
+
+- **Phase 1 (In Progress): Pure Nudge AST Interpreter (`nudgec run`)** — execute pure Nudge programs (state machines, algorithms, games) directly in Rust with sub-millisecond startup.
+- **Phase 2: In-Tree Native AI & Tool Runtime** — embed native Tokio + Reqwest (rustls) HTTP/SSE clients, deterministic NTF trace engine, and native MCP stdio communication.
+- **Phase 3: Bytecode VM & Single-Binary AOT (`nudgec build --standalone`)** — distribute agents as self-contained standalone binaries.
+- **Phase 4: Python Decoupled as an Optional Plugin** — Python reserved strictly for opt-in legacy library bridging (`use python "pandas" as pd`).
+
+See the complete architecture RFC in [`docs/native-runtime-roadmap.md`](docs/native-runtime-roadmap.md).
 
 ## Features
 
