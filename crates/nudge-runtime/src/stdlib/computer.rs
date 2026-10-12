@@ -879,11 +879,171 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             replay_act(&op, &app, payload_args)
         };
     }
-    let value = json_to_value(&live_call(&op, &app, payload_args)?)?;
+    let started = std::time::Instant::now();
+    let live = live_call(&op, &app, payload_args)?;
+    let latency_ms = started.elapsed().as_millis() as u64;
+    trace_live_call(&op, &app, payload_args, &live, latency_ms)?;
+    let value = json_to_value(&live)?;
     if op == "observe" {
         commit_authority(&app, &value);
     }
     Ok(value)
+}
+
+/// The `computer.act` actions the frozen NTF v1 `action` enum covers
+/// (docs/ntf-spec.md) — every one becomes a `computer.act` record.
+const TRACED_ACTS: [&str; 8] = [
+    "click",
+    "type",
+    "key",
+    "scroll",
+    "set_value",
+    "drag",
+    "perform",
+    "paste",
+];
+
+/// json → serde_json for trace records. Integral numbers come out as
+/// JSON ints (parity with the Python runtime's element tables).
+fn json_to_serde(j: &Json) -> serde_json::Value {
+    use serde_json::Value as S;
+    match j {
+        Json::Num(n) => {
+            if n.fract() == 0.0 && n.is_finite() && n.abs() < 9e15 {
+                S::Number((*n as i64).into())
+            } else {
+                serde_json::Number::from_f64(*n)
+                    .map(S::Number)
+                    .unwrap_or(S::Null)
+            }
+        }
+        Json::Str(s) => S::String(s.clone()),
+        Json::Bool(b) => S::Bool(*b),
+        Json::Null => S::Null,
+        Json::Arr(xs) => S::Array(xs.iter().map(json_to_serde).collect()),
+        Json::Obj(pairs) => S::Object(
+            pairs
+                .iter()
+                .map(|(k, v)| (k.clone(), json_to_serde(v)))
+                .collect(),
+        ),
+    }
+}
+
+fn json_str_field(j: &Json, key: &str) -> String {
+    j.get(key)
+        .and_then(Json::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// One `computer.observe` / `computer.act` NTF record per successful live
+/// call (field set mirrors the Python runtime's `computer_observe` /
+/// `_computer_act` records). Replay never writes: a replayed run is
+/// distinguishable by the absence of fresh records.
+fn trace_live_call(
+    op: &str,
+    app: &str,
+    args: &[Value],
+    result: &Json,
+    latency_ms: u64,
+) -> Result<(), String> {
+    if !crate::trace::sink_active() {
+        return Ok(());
+    }
+    let provider = std::env::var("NUDGE_COMPUTER_PROVIDER").unwrap_or_else(|_| "fake".into());
+    if op == "observe" {
+        let elements = result
+            .get("elements")
+            .cloned()
+            .unwrap_or(Json::Arr(Vec::new()));
+        let element_count = match &elements {
+            Json::Arr(xs) => xs.len(),
+            _ => 0,
+        };
+        let mut record = serde_json::json!({
+            "kind": "computer.observe",
+            "app": app,
+            "state_id": json_str_field(result, "state_id"),
+            "element_count": element_count,
+            "outcome": "ok",
+            "latency_ms": latency_ms,
+            "provider": provider,
+            // additive + replay-critical: the element table lets replay
+            // rebuild the full Observation (not just the tree text)
+            "elements": json_to_serde(&elements),
+            "snapshot_mode": "full",
+        });
+        let obj = record.as_object_mut().unwrap();
+        for (key, out) in [
+            ("title", "title"),
+            ("tree", "tree"),
+            ("screenshot_hash", "screenshot_hash"),
+        ] {
+            let v = json_str_field(result, key);
+            if !v.is_empty() {
+                obj.insert(out.into(), serde_json::Value::String(v));
+            }
+        }
+        return crate::trace::emit(record);
+    }
+    if !TRACED_ACTS.contains(&op) {
+        // screen_size / window_info / cursor_pos / mouse_* are outside the
+        // frozen `action` enum — not trace records (yet)
+        return Ok(());
+    }
+    let request = request_json(op, app, args);
+    let mut record = serde_json::json!({
+        "kind": "computer.act",
+        "action": op,
+        "app": app,
+        "target": request
+            .get("target")
+            .map(json_to_serde)
+            .unwrap_or(serde_json::Value::Null),
+        "outcome": result
+            .get("outcome")
+            .and_then(Json::as_str)
+            .unwrap_or("ok"),
+        "latency_ms": latency_ms,
+        "ok": result
+            .get("ok")
+            .and_then(|b| match b {
+                Json::Bool(b) => Some(*b),
+                _ => None,
+            })
+            .unwrap_or(true),
+        // dispatch receipt: false only when the runtime KNOWS the input
+        // was not dispatched (parity with `_normalize_result`)
+        "action_sent": result
+            .get("action_sent")
+            .and_then(|b| match b {
+                Json::Bool(b) => Some(*b),
+                _ => None,
+            })
+            .unwrap_or(true),
+        "provider": provider,
+    });
+    let obj = record.as_object_mut().unwrap();
+    let error = json_str_field(result, "error");
+    if !error.is_empty() {
+        obj.insert("error".into(), serde_json::Value::String(error));
+    }
+    // the action payload (parity with the Python record's `value` +
+    // `key`/`direction`/`pages`/`to`/`format` fields)
+    for key in ["text", "value"] {
+        if let Some(Json::Str(v)) = request.get(key) {
+            if !v.is_empty() {
+                obj.insert("value".into(), serde_json::Value::String(v.clone()));
+            }
+        }
+    }
+    for key in ["key", "direction", "pages", "to", "format"] {
+        if let Some(v) = request.get(key) {
+            obj.insert(key.into(), json_to_serde(v));
+        }
+    }
+    crate::trace::emit(record)
 }
 
 /// The configured provider (fake desktop by default, subprocess JSONL

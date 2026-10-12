@@ -932,6 +932,10 @@ fn main() {
         // design §9 (v1.0): A2A agent-card export — one card per agent
         // block, or a single card wrapping the file's top-level fns
         "run" => {
+            // NTF v1 trace writing: `nudgec run` records to NUDGE_TRACE
+            // (default trace.jsonl) — the Python runtime's default-on
+            // behavior (docs/ntf-spec.md)
+            nudge_runtime::trace::enable_default_sink();
             let mut entry = "main".to_string();
             let mut raw_args = Vec::new();
             let mut i = 3;

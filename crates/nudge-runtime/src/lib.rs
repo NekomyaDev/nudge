@@ -4,6 +4,7 @@ pub mod json;
 pub mod parser;
 pub mod provider;
 pub mod stdlib;
+pub mod trace;
 pub mod vm;
 
 pub use provider::*;

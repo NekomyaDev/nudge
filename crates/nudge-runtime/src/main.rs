@@ -15,6 +15,8 @@ mod json;
 mod parser;
 pub mod provider;
 mod stdlib;
+#[allow(dead_code)]
+mod trace;
 mod vm;
 
 use std::{env, fs, process};

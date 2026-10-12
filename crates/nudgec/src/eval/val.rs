@@ -139,6 +139,28 @@ pub fn json_to_nudgeval(v: serde_json::Value) -> NudgeVal {
     }
 }
 
+/// NudgeVal → serde_json for `fn.return` trace records (the inverse of
+/// `json_to_nudgeval`). Map keys serialize in sorted order so records
+/// are deterministic across runs.
+pub fn nudgeval_to_json(v: &NudgeVal) -> serde_json::Value {
+    match v {
+        NudgeVal::Unit => serde_json::Value::Null,
+        NudgeVal::Bool(b) => serde_json::Value::Bool(*b),
+        NudgeVal::Int(i) => serde_json::json!(*i),
+        NudgeVal::Float(f) => serde_json::json!(f),
+        NudgeVal::Str(s) => serde_json::Value::String(s.clone()),
+        NudgeVal::List(xs) => serde_json::Value::Array(xs.iter().map(nudgeval_to_json).collect()),
+        NudgeVal::Map(m) | NudgeVal::AgentState { fields: m, .. } => {
+            let mut obj = serde_json::Map::new();
+            for (k, val) in m {
+                obj.insert(k.clone(), nudgeval_to_json(val));
+            }
+            // serde_json::Map is a BTreeMap: keys come out sorted
+            serde_json::Value::Object(obj)
+        }
+    }
+}
+
 /// Convert a nudge_runtime VM value back to NudgeVal recursively (the
 /// bridge for `computer.*` results — crates/nudge-runtime/src/stdlib).
 pub fn value_to_nudgeval(v: &nudge_runtime::vm::Value) -> Result<NudgeVal, String> {

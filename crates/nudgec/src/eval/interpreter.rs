@@ -1,6 +1,8 @@
-use crate::ast::{BinOp, DecisionQ, Expr, ExprKind, Item, StateOp, Stmt, StmtKind};
+use crate::ast::{BinOp, DecisionQ, Expr, ExprKind, Item, StateOp, Stmt, StmtKind, TypeExpr};
 use crate::eval::env::{AgentStore, Env};
-use crate::eval::val::{json_to_nudgeval, nudgeval_to_value, value_to_nudgeval, NudgeVal};
+use crate::eval::val::{
+    json_to_nudgeval, nudgeval_to_json, nudgeval_to_value, value_to_nudgeval, NudgeVal,
+};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -12,6 +14,10 @@ pub struct Interpreter {
     pub tests: Vec<Item>,
     pub agent_store: AgentStore,
     pub active_agent: Option<String>,
+    /// `type Name = ...` aliases — the LLM bridge needs them to rebuild
+    /// the JSON-Schema dict the Python runtime records in its
+    /// `request_hash` (replay identity).
+    pub aliases: HashMap<String, TypeExpr>,
 }
 
 impl Interpreter {
@@ -22,6 +28,7 @@ impl Interpreter {
             tests: Vec::new(),
             agent_store: AgentStore::new(),
             active_agent: None,
+            aliases: HashMap::new(),
         }
     }
 
@@ -31,8 +38,10 @@ impl Interpreter {
 
         for item in items {
             match item {
-                Item::TypeAlias { .. } => {
-                    // Type aliases have no runtime effect
+                Item::TypeAlias { name, ty } => {
+                    // Type aliases have no runtime effect — but the LLM
+                    // bridge rebuilds schema dicts from them
+                    self.aliases.insert(name.clone(), ty.clone());
                 }
                 Item::Fn { name, .. } => {
                     self.fns.insert(name.clone(), (item.clone(), None));
@@ -261,8 +270,9 @@ impl Interpreter {
                 let prompt_val = self.eval_expr(prompt, env)?;
                 let prompt_str = prompt_val.to_string();
 
-                let mut model_str = "fake:default".to_string();
+                let mut model_str: Option<String> = None;
                 let mut schema_name: Option<String> = None;
+                let mut schema_json: Option<serde_json::Value> = None;
                 let mut budget_usd: Option<f64> = None;
                 let mut temperature: f64 = 0.7;
 
@@ -270,10 +280,10 @@ impl Interpreter {
                     match k.as_str() {
                         "model" => {
                             let m_val = self.eval_expr(v_expr, env)?;
-                            model_str = match m_val {
+                            model_str = Some(match m_val {
                                 NudgeVal::Str(s) => s,
                                 other => other.to_string(),
-                            };
+                            });
                         }
                         "schema" => {
                             let s_str = if let Some(s) = schema_expr_to_string(v_expr) {
@@ -288,6 +298,9 @@ impl Interpreter {
                                 }
                             };
                             schema_name = Some(s_str);
+                            // replay identity: the JSON-Schema dict the
+                            // Python runtime would hand its provider
+                            schema_json = Some(schema_option_json(v_expr, &self.aliases));
                         }
                         "budget" => {
                             let b_val = self.eval_expr(v_expr, env)?;
@@ -309,37 +322,43 @@ impl Interpreter {
                     }
                 }
 
-                let provider = nudge_runtime::provider::get_active_provider();
-                let req = nudge_runtime::provider::LlmRequest {
-                    prompt: prompt_str,
-                    model: model_str,
-                    schema: schema_name.clone(),
+                // the shared native LLM bridge (nudge_runtime::trace):
+                // NUDGE_REPLAY serves the recorded answer (never a live
+                // provider), otherwise the call is provider-backed and
+                // recorded as one `llm.call` NTF record
+                let resp = nudge_runtime::trace::llm_call(&nudge_runtime::trace::LlmBridgeRequest {
+                    prompt: &prompt_str,
+                    model: model_str.as_deref(),
+                    default_model: "fake:default",
+                    schema_text: schema_name.as_deref(),
+                    schema_json: schema_json.clone(),
                     temperature,
                     budget_usd,
-                };
-
-                let resp = provider
-                    .call(&req)
-                    .map_err(|e| format!("error[E-native-0300]: LLM provider call failed: {e}"))?;
+                })
+                .map_err(|e| match e {
+                    nudge_runtime::trace::LlmBridgeError::Provider(msg) => {
+                        format!("error[E-native-0300]: LLM provider call failed: {msg}")
+                    }
+                    nudge_runtime::trace::LlmBridgeError::SchemaParse(msg) => {
+                        format!(
+                            "error[E-native-0301]: failed to parse LLM structured response as JSON: {msg}"
+                        )
+                    }
+                    nudge_runtime::trace::LlmBridgeError::Replay(msg) => {
+                        format!("error[E-native-0302]: LLM replay failed: {msg}")
+                    }
+                    nudge_runtime::trace::LlmBridgeError::Trace(msg) => {
+                        format!("error[E-native-0303]: trace write failed: {msg}")
+                    }
+                })?;
 
                 if schema_name.is_some() {
-                    let trimmed = resp.text.trim();
-                    let json_text = if let Some(stripped) = trimmed.strip_prefix("```json") {
-                        stripped.strip_suffix("```").unwrap_or(stripped).trim()
-                    } else if let Some(stripped) = trimmed.strip_prefix("```") {
-                        stripped.strip_suffix("```").unwrap_or(stripped).trim()
-                    } else {
-                        trimmed
-                    };
-
-                    match serde_json::from_str::<serde_json::Value>(json_text) {
-                        Ok(json_val) => Ok(json_to_nudgeval(json_val)),
-                        Err(e) => Err(format!(
-                            "error[E-native-0301]: failed to parse LLM structured response as JSON: {e}"
-                        )),
-                    }
+                    Ok(json_to_nudgeval(resp.output))
                 } else {
-                    Ok(NudgeVal::Str(resp.text))
+                    match resp.output {
+                        serde_json::Value::String(s) => Ok(NudgeVal::Str(s)),
+                        other => Ok(NudgeVal::Str(other.to_string())),
+                    }
                 }
             }
             ExprKind::Call { func, args, kwargs } => self.eval_call(func, args, kwargs, env),
@@ -600,8 +619,10 @@ impl Interpreter {
         kwargs: &[(String, Expr)],
         env: &Rc<RefCell<Env>>,
     ) -> Result<NudgeVal, String> {
-        let (params, body) = match fn_item {
-            Item::Fn { params, body, .. } => (params, body),
+        let (fn_name, params, body) = match fn_item {
+            Item::Fn {
+                name, params, body, ..
+            } => (name.as_str(), params, body),
             _ => return Err("called item is not a function".into()),
         };
 
@@ -642,6 +663,11 @@ impl Interpreter {
         let result = self.eval_body(body, &child_env);
 
         self.active_agent = prev_agent;
+        if let Ok(val) = &result {
+            // `fn.return` NTF record (parity with the Python runtime's
+            // `@effectful` wrapper — every fn return is one record)
+            emit_fn_return(fn_name, val)?;
+        }
         result
     }
 
@@ -1153,6 +1179,7 @@ impl Interpreter {
         options: &[(String, Expr)],
         env: &Rc<RefCell<Env>>,
     ) -> Result<NudgeVal, String> {
+        let started = std::time::Instant::now();
         let state_val = self.eval_expr(state, env)?;
         let state_text = state_val.to_string();
 
@@ -1231,6 +1258,44 @@ impl Interpreter {
                     answers.insert(name.clone(), NudgeVal::Map(q_res));
                 }
             }
+        }
+
+        // `decision.call` NTF record (v1.4): questions keyed by name (the
+        // wire shape), answers as computed, measured latency — replay
+        // runs stay silent (parity with the Python runtime)
+        if nudge_runtime::trace::sink_active() && !nudge_runtime::trace::replay_active() {
+            let mut qjson = serde_json::Map::new();
+            for (name, q) in questions {
+                let mut obj = serde_json::Map::new();
+                obj.insert("name".into(), serde_json::json!(name));
+                match q {
+                    DecisionQ::Choice { prompt, options } => {
+                        obj.insert("kind".into(), serde_json::json!("choice"));
+                        obj.insert("prompt".into(), serde_json::json!(prompt));
+                        obj.insert("options".into(), serde_json::json!(options));
+                    }
+                    DecisionQ::Noul { prompt } => {
+                        obj.insert("kind".into(), serde_json::json!("noul"));
+                        obj.insert("prompt".into(), serde_json::json!(prompt));
+                    }
+                    DecisionQ::Score { prompt, levels } => {
+                        obj.insert("kind".into(), serde_json::json!("score"));
+                        obj.insert("prompt".into(), serde_json::json!(prompt));
+                        obj.insert("levels".into(), serde_json::json!(levels));
+                    }
+                }
+                qjson.insert(name.clone(), serde_json::Value::Object(obj));
+            }
+            let record = serde_json::json!({
+                "kind": "decision.call",
+                "model": model_str,
+                "provider": std::env::var("NUDGE_PROVIDER").unwrap_or_else(|_| "fake".to_string()),
+                "questions": qjson,
+                "answers": nudgeval_to_json(&NudgeVal::Map(answers.clone())),
+                "latency_ms": started.elapsed().as_millis() as u64,
+                "outcome": "ok",
+            });
+            nudge_runtime::trace::emit(record)?;
         }
 
         Ok(NudgeVal::Map(answers))
@@ -1407,6 +1472,11 @@ pub fn run_program(items: &[Item], entry: &str, args: &[NudgeVal]) -> Result<Nud
 
         let result = interp.eval_body(body, &child_env);
         interp.active_agent = prev_agent;
+        if let Ok(val) = &result {
+            // the entry fn is a traced function boundary too (the Python
+            // runtime wraps `main` with @effectful like every other fn)
+            emit_fn_return(entry, val)?;
+        }
         result
     } else if entry == "main" {
         // No `main` and no explicit --fn: this is not a silently successful
@@ -1468,5 +1538,156 @@ pub(crate) fn fallback_expr_string(expr: &Expr) -> String {
             format!("[{}]", items.join(", "))
         }
         _ => "unknown".to_string(),
+    }
+}
+
+/// One `fn.return` NTF record per traced function boundary (parity with
+/// the Python runtime's `@effectful` wrapper: every fn return is one
+/// record — `Trace.output` reads the last one).
+fn emit_fn_return(name: &str, value: &NudgeVal) -> Result<(), String> {
+    if !nudge_runtime::trace::sink_active() {
+        return Ok(());
+    }
+    nudge_runtime::trace::emit(serde_json::json!({
+        "kind": "fn.return",
+        "fn": name,
+        "output": nudgeval_to_json(value),
+    }))
+}
+
+// ── schema JSON (LLM replay identity) ─────────────────────────────────
+//
+// The Python runtime hashes the JSON-Schema dict its codegen emits
+// (`expr_schema_py` / `schema_py` in codegen.rs) into `request_hash`.
+// These helpers mirror that lowering EXACTLY so a Python-recorded trace
+// replays in the native runtime: aliases expand to their dict, ints stay
+// ints, and unknown shapes degrade to `{}` just like codegen.
+
+fn is_builtin_type_name(n: &str) -> bool {
+    matches!(n, "string" | "int" | "float" | "bool" | "none" | "()")
+}
+
+/// A `schema:` option value (Ident / [Ident]) → the schema dict.
+pub(crate) fn schema_option_json(
+    e: &Expr,
+    aliases: &HashMap<String, TypeExpr>,
+) -> serde_json::Value {
+    match &e.kind {
+        ExprKind::Ident(n) => type_schema_json(&TypeExpr::Named(n.clone()), aliases, 0),
+        ExprKind::ListLit(xs) if xs.len() == 1 => match &xs[0].kind {
+            ExprKind::Ident(n) => type_schema_json(
+                &TypeExpr::List(Box::new(TypeExpr::Named(n.clone()))),
+                aliases,
+                0,
+            ),
+            _ => serde_json::json!({}),
+        },
+        _ => serde_json::json!({}),
+    }
+}
+
+/// TypeExpr → JSON-Schema value — parity with `schema_py` in codegen.rs
+/// (aliases expand to their dict, exactly what `json.dumps` serializes).
+fn type_schema_json(
+    t: &TypeExpr,
+    aliases: &HashMap<String, TypeExpr>,
+    depth: u32,
+) -> serde_json::Value {
+    use serde_json::json;
+    if depth > 32 {
+        return json!({}); // cyclic aliases: degrade instead of blowing the stack
+    }
+    match t {
+        TypeExpr::Named(n) => match n.as_str() {
+            "string" => json!({"type": "string"}),
+            "int" => json!({"type": "integer"}),
+            "float" => json!({"type": "number"}),
+            "bool" => json!({"type": "boolean"}),
+            "none" | "()" => json!({"type": "null"}),
+            _ => match aliases.get(n) {
+                Some(inner) => type_schema_json(inner, aliases, depth + 1),
+                None => json!({}),
+            },
+        },
+        TypeExpr::List(inner) => json!({
+            "type": "array",
+            "items": type_schema_json(inner, aliases, depth + 1),
+        }),
+        TypeExpr::Record(fs) => {
+            // `{string: T}` (single field keyed by a builtin name) is a
+            // string-keyed map, not a record — additionalProperties
+            if fs.len() == 1 && is_builtin_type_name(fs[0].0.as_str()) {
+                return json!({
+                    "type": "object",
+                    "additionalProperties": type_schema_json(&fs[0].1, aliases, depth + 1),
+                });
+            }
+            let mut props = serde_json::Map::new();
+            let mut required = Vec::new();
+            for (k, ft) in fs {
+                props.insert(k.clone(), type_schema_json(ft, aliases, depth + 1));
+                required.push(serde_json::Value::String(k.clone()));
+            }
+            json!({"type": "object", "properties": props, "required": required})
+        }
+        TypeExpr::Refine(base, name, args) => {
+            // codegen's refinement extras: range(lo, hi) / format(url|...)
+            let mut extras = serde_json::Map::new();
+            match (name.as_str(), args.len()) {
+                ("range", 2) => {
+                    if let Some(v) = const_json(&args[0]) {
+                        extras.insert("minimum".into(), v);
+                    }
+                    if let Some(v) = const_json(&args[1]) {
+                        extras.insert("maximum".into(), v);
+                    }
+                }
+                ("format", 1) => {
+                    let f = match &args[0].kind {
+                        ExprKind::Ident(s) | ExprKind::Str(s) => s.as_str(),
+                        _ => "url",
+                    };
+                    extras.insert(
+                        "format".into(),
+                        serde_json::Value::String(if f == "url" { "uri".into() } else { f.into() }),
+                    );
+                }
+                _ => {}
+            }
+            match base.as_ref() {
+                TypeExpr::Named(n) if is_builtin_type_name(n) => {
+                    let base_type = match n.as_str() {
+                        "int" => "integer",
+                        "float" => "number",
+                        "bool" => "boolean",
+                        _ => "string",
+                    };
+                    let mut obj = serde_json::Map::new();
+                    obj.insert("type".into(), serde_json::Value::String(base_type.into()));
+                    obj.extend(extras);
+                    serde_json::Value::Object(obj)
+                }
+                // rt.extend(base, extras) — extras override base keys
+                _ => {
+                    let mut b = type_schema_json(base, aliases, depth + 1);
+                    if let Some(obj) = b.as_object_mut() {
+                        obj.extend(extras);
+                    }
+                    b
+                }
+            }
+        }
+    }
+}
+
+/// Schema-level literal values (`@range(0, 1)`) — ints stay ints so the
+/// canonical hash matches Python's `json.dumps` byte for byte.
+fn const_json(e: &Expr) -> Option<serde_json::Value> {
+    match &e.kind {
+        ExprKind::Int(i) => Some(serde_json::json!(*i)),
+        ExprKind::Float(f) => Some(serde_json::json!(f)),
+        ExprKind::Str(s) => Some(serde_json::json!(s)),
+        ExprKind::Bool(b) => Some(serde_json::json!(b)),
+        _ => None,
     }
 }

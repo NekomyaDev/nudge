@@ -144,6 +144,7 @@ mod tests {
 
     #[test]
     fn test_eval_clean_diagnostics_unsupported() {
+        let _g = eval_guard();
         let src_stream = r#"
             fn main() -> int {
                 stream let x = 42
@@ -172,6 +173,7 @@ mod tests {
 
     #[test]
     fn test_eval_llm_call_fake_offline() {
+        let _g = eval_guard();
         std::env::set_var("NUDGE_PROVIDER", "fake");
         let src = r#"
             fn main() -> string uses LLM {
@@ -188,6 +190,7 @@ mod tests {
 
     #[test]
     fn test_eval_llm_structured_output_fake() {
+        let _g = eval_guard();
         std::env::set_var("NUDGE_PROVIDER", "fake");
         let src = r#"
             type Smoke = { title: string, confidence: float }
@@ -293,6 +296,7 @@ mod tests {
 
     #[test]
     fn test_eval_llm_structured_list_schema_output_fake() {
+        let _g = eval_guard();
         std::env::set_var("NUDGE_PROVIDER", "fake");
         let src = r#"
             type Finding = { claim: string, source: string, confidence: float }
@@ -335,6 +339,7 @@ mod tests {
 
     #[test]
     fn test_eval_fake_tool() {
+        let _g = eval_guard();
         std::env::set_var("NUDGE_PROVIDER", "fake");
         let src = r#"
             type Chunk = { doc: string, text: string, score: float }
@@ -421,12 +426,19 @@ mod tests {
     // ── computer bridge (v1.5): the native interpreter speaks the same
     //    computer-use surface as the Python/TS runtimes and the VM ────
 
-    /// The computer statics (last-observation authority, replay cursors)
-    /// and NUDGE_REPLAY are process-global — serialize the bridge tests.
+    /// The computer statics (last-observation authority, replay cursors),
+    /// the NUDGE_* bridge env vars and the trace/replay state are
+    /// process-global — serialize the bridge + LLM trace/replay tests.
     static COMPUTER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn computer_guard() -> std::sync::MutexGuard<'static, ()> {
         COMPUTER_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Same lock for every test that runs LLM calls or touches the
+    /// NUDGE_PROVIDER / NUDGE_REPLAY / NUDGE_TRACE bridge env.
+    fn eval_guard() -> std::sync::MutexGuard<'static, ()> {
+        computer_guard()
     }
 
     /// Removes an env var on drop so a panicking test never leaks it into
@@ -549,5 +561,180 @@ mod tests {
         assert!(err.contains("E-native-0202"), "{err}");
         assert!(err.contains("ReplayMismatch"), "{err}");
         assert!(err.contains("computer.key"), "{err}");
+    }
+
+    // ── NTF v1 trace writing + deterministic LLM replay ──────────────
+
+    /// Unique temp trace path per test (process id + label).
+    fn trace_tmp(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("nudge-eval-{label}-{}.jsonl", std::process::id()))
+    }
+
+    #[test]
+    fn test_eval_llm_trace_recorded_and_validates() {
+        let _g = eval_guard();
+        std::env::set_var("NUDGE_PROVIDER", "fake");
+        let path = trace_tmp("trace");
+        let _ = std::fs::remove_file(&path);
+        let _scope = nudge_runtime::trace::testing::scope(Some(path.clone()), None);
+        let src = r#"
+            fn main() -> string uses LLM {
+                llm"""Hello trace""" with { model: "fake:default" }
+            }
+        "#;
+        let items = parse_src(src);
+        let res = run_program(&items, "main", &[]).expect("execution failed");
+        assert_eq!(res, NudgeVal::Str("fake: Hello trace".to_string()));
+
+        let text = std::fs::read_to_string(&path).expect("trace file written");
+        // every record MUST conform to the frozen v1 schema
+        assert_eq!(crate::tracecheck::validate(&text), Vec::<String>::new());
+        let mut lines = text.lines();
+        let rec: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+        assert_eq!(rec["v"], 1);
+        assert_eq!(rec["seq"], 1);
+        assert_eq!(rec["kind"], "llm.call");
+        assert_eq!(rec["model"], "fake:default");
+        assert_eq!(rec["input"], "Hello trace");
+        assert_eq!(rec["output"], "fake: Hello trace");
+        assert_eq!(rec["params"]["temperature"], 0);
+        assert_eq!(rec["outcome"], "ok");
+        assert_eq!(rec["repair_round"], 0);
+        assert_eq!(rec["provider"], "fake");
+        assert!(rec["cost_usd"].is_number());
+        assert!(rec["tokens"]["in"].is_number());
+        assert!(rec["tokens"]["out"].is_number());
+        let hash = rec["request_hash"].as_str().expect("request_hash");
+        assert!(hash.starts_with("sha256:"), "{hash}");
+        // the traced function boundary lands as `fn.return` (parity with
+        // the Python runtime's @effectful wrapper)
+        let fret: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+        assert_eq!(fret["kind"], "fn.return");
+        assert_eq!(fret["fn"], "main");
+        assert_eq!(fret["output"], "fake: Hello trace");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_eval_llm_replay_round_trip() {
+        let _g = eval_guard();
+        std::env::set_var("NUDGE_PROVIDER", "fake");
+        let src = r#"
+            fn main() -> string uses LLM {
+                llm"""round trip""" with { model: "fake:default" }
+            }
+        "#;
+        let path = trace_tmp("roundtrip");
+        let _ = std::fs::remove_file(&path);
+        // record
+        {
+            let _scope = nudge_runtime::trace::testing::scope(Some(path.clone()), None);
+            let items = parse_src(src);
+            let live = run_program(&items, "main", &[]).expect("record run");
+            assert_eq!(live, NudgeVal::Str("fake: round trip".to_string()));
+        }
+        // replay: the recorded answer is served verbatim (never a provider)
+        {
+            let _scope = nudge_runtime::trace::testing::scope(None, Some(path.clone()));
+            let items = parse_src(src);
+            let replayed = run_program(&items, "main", &[]).expect("replay run");
+            assert_eq!(replayed, NudgeVal::Str("fake: round trip".to_string()));
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_eval_llm_replay_mismatch_is_loud() {
+        let _g = eval_guard();
+        std::env::set_var("NUDGE_PROVIDER", "fake");
+        let recorded = r#"
+            fn main() -> string uses LLM {
+                llm"""alpha""" with { model: "fake:default" }
+            }
+        "#;
+        let changed = r#"
+            fn main() -> string uses LLM {
+                llm"""beta""" with { model: "fake:default" }
+            }
+        "#;
+        let path = trace_tmp("mismatch");
+        let _ = std::fs::remove_file(&path);
+        {
+            let _scope = nudge_runtime::trace::testing::scope(Some(path.clone()), None);
+            let items = parse_src(recorded);
+            run_program(&items, "main", &[]).expect("record run");
+        }
+        {
+            // the program changed its prompt: no recorded llm.call may be
+            // consumed — a loud ReplayMismatch, never a silent provider call
+            let _scope = nudge_runtime::trace::testing::scope(None, Some(path.clone()));
+            let items = parse_src(changed);
+            let err = run_program(&items, "main", &[]).unwrap_err();
+            assert!(err.contains("E-native-0302"), "{err}");
+            assert!(err.contains("ReplayMismatch"), "{err}");
+            assert!(err.contains("request_hash"), "{err}");
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_eval_llm_replay_exhaustion_is_loud() {
+        let _g = eval_guard();
+        std::env::set_var("NUDGE_PROVIDER", "fake");
+        let one_call = r#"
+            fn main() -> string uses LLM {
+                llm"""alpha""" with { model: "fake:default" }
+            }
+        "#;
+        let two_calls = r#"
+            fn main() -> string uses LLM {
+                let a = llm"""alpha""" with { model: "fake:default" }
+                let b = llm"""alpha""" with { model: "fake:default" }
+                a
+            }
+        "#;
+        let path = trace_tmp("exhaust");
+        let _ = std::fs::remove_file(&path);
+        {
+            let _scope = nudge_runtime::trace::testing::scope(Some(path.clone()), None);
+            let items = parse_src(one_call);
+            run_program(&items, "main", &[]).expect("record run");
+        }
+        {
+            let _scope = nudge_runtime::trace::testing::scope(None, Some(path.clone()));
+            let items = parse_src(two_calls);
+            let err = run_program(&items, "main", &[]).unwrap_err();
+            assert!(err.contains("E-native-0302"), "{err}");
+            assert!(err.contains("more llm calls than the trace"), "{err}");
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_eval_computer_trace_records() {
+        let _g = eval_guard();
+        nudge_runtime::stdlib::computer::reset_authority_for_tests();
+        let path = trace_tmp("computer");
+        let _ = std::fs::remove_file(&path);
+        let _scope = nudge_runtime::trace::testing::scope(Some(path.clone()), None);
+        let src = r#"
+            fn main() -> bool uses Computer {
+                let obs = computer.observe("FakeApp", allow = ["FakeApp"])
+                let r = computer.click(1)
+                r.ok
+            }
+        "#;
+        let items = parse_src(src);
+        let res = run_program(&items, "main", &[]).expect("recorded computer run");
+        assert_eq!(res, NudgeVal::Bool(true));
+
+        let text = std::fs::read_to_string(&path).expect("computer trace written");
+        assert_eq!(crate::tracecheck::validate(&text), Vec::<String>::new());
+        assert!(text.contains("computer.observe"), "{text}");
+        assert!(text.contains("computer.act"), "{text}");
+        assert!(text.contains("\"action\": \"click\""), "{text}");
+        assert!(text.contains("\"state_id\": \"s-1\""), "{text}");
+        assert!(text.contains("\"element_count\": 4"), "{text}");
+        let _ = std::fs::remove_file(&path);
     }
 }
