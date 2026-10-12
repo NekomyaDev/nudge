@@ -1,6 +1,7 @@
 pub mod antigravity;
 pub mod claude;
 pub mod fake;
+pub mod http;
 pub mod openai;
 pub mod pricing;
 pub mod tokenizer;

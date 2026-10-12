@@ -1,5 +1,4 @@
-use super::{pricing, tokenizer, LlmRequest, LlmResponse, ModelInfo, Provider};
-use std::process::Command;
+use super::{http, pricing, tokenizer, LlmRequest, LlmResponse, ModelInfo, Provider};
 
 #[derive(Debug, Clone)]
 pub struct OpenAIProvider {
@@ -63,29 +62,15 @@ impl Provider for OpenAIProvider {
 
         let body_str = serde_json::Value::Object(body_map).to_string();
 
-        let output = Command::new("curl")
-            .arg("-s")
-            .arg("-X")
-            .arg("POST")
-            .arg(&self.base_url)
-            .arg("-H")
-            .arg(format!("Authorization: Bearer {}", self.api_key))
-            .arg("-H")
-            .arg("Content-Type: application/json")
-            .arg("-d")
-            .arg(&body_str)
-            .output()
-            .map_err(|e| format!("Failed to execute curl command: {}", e))?;
+        let headers = vec![
+            (
+                "Authorization".to_string(),
+                format!("Bearer {}", self.api_key),
+            ),
+            ("Content-Type".to_string(), "application/json".to_string()),
+        ];
 
-        if !output.status.success() {
-            return Err(format!(
-                "curl exited with non-zero status: {}",
-                output.status
-            ));
-        }
-
-        let resp_text = String::from_utf8(output.stdout)
-            .map_err(|e| format!("Invalid UTF-8 from OpenAI response: {}", e))?;
+        let (status, resp_text) = http::post_json(&self.base_url, &headers, &body_str)?;
 
         let json_resp: serde_json::Value = serde_json::from_str(&resp_text).map_err(|e| {
             format!(
@@ -96,6 +81,13 @@ impl Provider for OpenAIProvider {
 
         if let Some(err) = json_resp.get("error") {
             return Err(format!("OpenAI API error: {}", err));
+        }
+
+        if !(200..300).contains(&status) {
+            return Err(format!(
+                "OpenAI request failed with HTTP status {}: {}",
+                status, resp_text
+            ));
         }
 
         let text = json_resp["choices"][0]["message"]["content"]
@@ -126,39 +118,34 @@ impl Provider for OpenAIProvider {
 
     fn list_models(&self) -> Result<Vec<ModelInfo>, String> {
         let endpoint = self.models_endpoint();
-        let output = Command::new("curl")
-            .arg("-s")
-            .arg("-X")
-            .arg("GET")
-            .arg(&endpoint)
-            .arg("-H")
-            .arg(format!("Authorization: Bearer {}", self.api_key))
-            .output()
-            .map_err(|e| format!("Failed to query OpenAI models: {}", e))?;
-
-        if !output.status.success() {
-            return Err(format!("curl error querying models: {}", output.status));
-        }
-
-        let resp_text = String::from_utf8(output.stdout)
-            .map_err(|e| format!("Invalid UTF-8 from OpenAI models response: {}", e))?;
-
-        let json_resp: serde_json::Value = serde_json::from_str(&resp_text)
-            .map_err(|e| format!("Failed to parse models JSON: {}", e))?;
+        let headers = vec![(
+            "Authorization".to_string(),
+            format!("Bearer {}", self.api_key),
+        )];
 
         let mut models = Vec::new();
-        if let Some(data) = json_resp["data"].as_array() {
-            for item in data {
-                if let Some(id) = item["id"].as_str() {
-                    let pricing = pricing::get_model_pricing(id);
-                    models.push(ModelInfo {
-                        id: id.to_string(),
-                        name: id.to_string(),
-                        provider: "openai".to_string(),
-                        input_price_per_1m: pricing.as_ref().map(|p| p.input_usd_per_1m),
-                        output_price_per_1m: pricing.as_ref().map(|p| p.output_usd_per_1m),
-                        context_window: Some(128_000),
-                    });
+        if let Ok((status, resp_text)) = http::get(&endpoint, &headers) {
+            if (200..300).contains(&status) {
+                if let Ok(json_resp) = serde_json::from_str::<serde_json::Value>(&resp_text) {
+                    if let Some(data) = json_resp["data"].as_array() {
+                        for item in data {
+                            if let Some(id) = item["id"].as_str() {
+                                let pricing = pricing::get_model_pricing(id);
+                                models.push(ModelInfo {
+                                    id: id.to_string(),
+                                    name: id.to_string(),
+                                    provider: "openai".to_string(),
+                                    input_price_per_1m: pricing
+                                        .as_ref()
+                                        .map(|p| p.input_usd_per_1m),
+                                    output_price_per_1m: pricing
+                                        .as_ref()
+                                        .map(|p| p.output_usd_per_1m),
+                                    context_window: Some(128_000),
+                                });
+                            }
+                        }
+                    }
                 }
             }
         }

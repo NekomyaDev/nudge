@@ -1,5 +1,4 @@
-use super::{pricing, tokenizer, LlmRequest, LlmResponse, ModelInfo, Provider};
-use std::process::Command;
+use super::{http, pricing, tokenizer, LlmRequest, LlmResponse, ModelInfo, Provider};
 
 #[derive(Debug, Clone)]
 pub struct ClaudeProvider {
@@ -34,31 +33,13 @@ impl Provider for ClaudeProvider {
 
         let body_str = body.to_string();
 
-        let output = Command::new("curl")
-            .arg("-s")
-            .arg("-X")
-            .arg("POST")
-            .arg(&self.base_url)
-            .arg("-H")
-            .arg(format!("x-api-key: {}", self.api_key))
-            .arg("-H")
-            .arg("anthropic-version: 2023-06-01")
-            .arg("-H")
-            .arg("content-type: application/json")
-            .arg("-d")
-            .arg(&body_str)
-            .output()
-            .map_err(|e| format!("Failed to execute curl command for Anthropic: {}", e))?;
+        let headers = vec![
+            ("x-api-key".to_string(), self.api_key.clone()),
+            ("anthropic-version".to_string(), "2023-06-01".to_string()),
+            ("content-type".to_string(), "application/json".to_string()),
+        ];
 
-        if !output.status.success() {
-            return Err(format!(
-                "curl exited with non-zero status for Anthropic: {}",
-                output.status
-            ));
-        }
-
-        let resp_text = String::from_utf8(output.stdout)
-            .map_err(|e| format!("Invalid UTF-8 from Anthropic response: {}", e))?;
+        let (status, resp_text) = http::post_json(&self.base_url, &headers, &body_str)?;
 
         let json_resp: serde_json::Value = serde_json::from_str(&resp_text).map_err(|e| {
             format!(
@@ -66,6 +47,17 @@ impl Provider for ClaudeProvider {
                 e, resp_text
             )
         })?;
+
+        if let Some(err) = json_resp.get("error") {
+            return Err(format!("Anthropic API error: {}", err));
+        }
+
+        if !(200..300).contains(&status) {
+            return Err(format!(
+                "Anthropic request failed with HTTP status {}: {}",
+                status, resp_text
+            ));
+        }
 
         let text = json_resp["content"][0]["text"]
             .as_str()
@@ -96,39 +88,32 @@ impl Provider for ClaudeProvider {
     }
 
     fn list_models(&self) -> Result<Vec<ModelInfo>, String> {
-        let output = Command::new("curl")
-            .arg("-s")
-            .arg("-X")
-            .arg("GET")
-            .arg("https://api.anthropic.com/v1/models")
-            .arg("-H")
-            .arg(format!("x-api-key: {}", self.api_key))
-            .arg("-H")
-            .arg("anthropic-version: 2023-06-01")
-            .output();
+        let headers = vec![
+            ("x-api-key".to_string(), self.api_key.clone()),
+            ("anthropic-version".to_string(), "2023-06-01".to_string()),
+        ];
 
         let mut models = Vec::new();
-        if let Ok(out) = output {
-            if out.status.success() {
-                if let Ok(resp_text) = String::from_utf8(out.stdout) {
-                    if let Ok(json_resp) = serde_json::from_str::<serde_json::Value>(&resp_text) {
-                        if let Some(data) = json_resp["data"].as_array() {
-                            for item in data {
-                                if let Some(id) = item["id"].as_str() {
-                                    let pricing = pricing::get_model_pricing(id);
-                                    models.push(ModelInfo {
-                                        id: id.to_string(),
-                                        name: id.to_string(),
-                                        provider: "anthropic".to_string(),
-                                        input_price_per_1m: pricing
-                                            .as_ref()
-                                            .map(|p| p.input_usd_per_1m),
-                                        output_price_per_1m: pricing
-                                            .as_ref()
-                                            .map(|p| p.output_usd_per_1m),
-                                        context_window: Some(200_000),
-                                    });
-                                }
+        if let Ok((status, resp_text)) = http::get("https://api.anthropic.com/v1/models", &headers)
+        {
+            if (200..300).contains(&status) {
+                if let Ok(json_resp) = serde_json::from_str::<serde_json::Value>(&resp_text) {
+                    if let Some(data) = json_resp["data"].as_array() {
+                        for item in data {
+                            if let Some(id) = item["id"].as_str() {
+                                let pricing = pricing::get_model_pricing(id);
+                                models.push(ModelInfo {
+                                    id: id.to_string(),
+                                    name: id.to_string(),
+                                    provider: "anthropic".to_string(),
+                                    input_price_per_1m: pricing
+                                        .as_ref()
+                                        .map(|p| p.input_usd_per_1m),
+                                    output_price_per_1m: pricing
+                                        .as_ref()
+                                        .map(|p| p.output_usd_per_1m),
+                                    context_window: Some(200_000),
+                                });
                             }
                         }
                     }
