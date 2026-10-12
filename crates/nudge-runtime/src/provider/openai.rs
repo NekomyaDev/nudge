@@ -1,6 +1,5 @@
 use super::{LlmRequest, LlmResponse, Provider};
 use std::process::Command;
-use serde_json::json;
 
 #[derive(Debug, Clone)]
 pub struct OpenAIProvider {

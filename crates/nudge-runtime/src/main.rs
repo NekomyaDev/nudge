@@ -13,6 +13,7 @@ mod codegen;
 #[allow(dead_code)]
 mod json;
 mod parser;
+pub mod provider;
 mod stdlib;
 mod vm;
 

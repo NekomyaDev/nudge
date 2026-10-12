@@ -5,3 +5,5 @@ pub mod parser;
 pub mod provider;
 pub mod stdlib;
 pub mod vm;
+
+pub use provider::*;
