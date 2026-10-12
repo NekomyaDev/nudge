@@ -19,6 +19,12 @@ pub struct Compiler {
     jumps: Vec<(u32, String)>, // (instruction_index, label_name)
 }
 
+impl Default for Compiler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Compiler {
     pub fn new() -> Self {
         Compiler {

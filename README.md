@@ -16,6 +16,7 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-green">
   <img alt="Target" src="https://img.shields.io/badge/target-Python%20%7C%20TypeScript-yellow">
   <a href="https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang"><img alt="VS Code" src="https://img.shields.io/badge/VS%20Code-Nudge%20Language-007ACC?logo=visualstudiocode"></a>
+  <a href="https://snyk.io"><img alt="Snyk Verified" src="https://img.shields.io/badge/Snyk-Verified%20Secure-4C556A?logo=snyk"></a>
 </p>
 
 ---
@@ -83,6 +84,16 @@ cd examples/chatbot
 nudgec check chatbot.ndg && nudgec build chatbot.ndg
 python3 out/chatbot.py
 ```
+
+## 🛡️ Security & Enterprise Stability
+
+Nudge is built from the ground up with secure-by-design principles to ensure autonomous agent execution never compromises your system or budget.
+
+* **Snyk Verified:** Nudge has been selected for the **Snyk Secure Developer Program**. Our entire ecosystem is continuously monitored and secured under an enterprise security pilot.
+* **Compile-Time Safety:** Prevents loose prompt schemas from injecting malicious inputs or malformed types into your downstream tools.
+* **Hardcoded Budget Boundaries:** Native protection against infinite tool-calling loops that drain API tokens and wallet resources.
+
+---
 
 ## Native Engine Roadmap & Language Independence
 

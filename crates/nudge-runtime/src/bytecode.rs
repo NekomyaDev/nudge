@@ -332,7 +332,11 @@ impl Program {
         // Read entry point
         let entry_point = read_u32(data, &mut pos)?;
         if !functions.is_empty() && entry_point >= functions.len() as u32 {
-            return Err(format!("Entry point {} out of bounds for functions length {}", entry_point, functions.len()));
+            return Err(format!(
+                "Entry point {} out of bounds for functions length {}",
+                entry_point,
+                functions.len()
+            ));
         }
 
         Ok(Program {

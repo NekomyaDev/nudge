@@ -343,19 +343,23 @@ mod tests {
         );
         let errs = validate(&text);
         assert!(
-            errs.iter().any(|e| e.contains("line 1") && e.contains("missing `tool`")),
+            errs.iter()
+                .any(|e| e.contains("line 1") && e.contains("missing `tool`")),
             "{errs:?}"
         );
         assert!(
-            errs.iter().any(|e| e.contains("line 2") && e.contains("missing `fn`")),
+            errs.iter()
+                .any(|e| e.contains("line 2") && e.contains("missing `fn`")),
             "{errs:?}"
         );
         assert!(
-            errs.iter().any(|e| e.contains("line 3") && e.contains("missing `latency_ms`")),
+            errs.iter()
+                .any(|e| e.contains("line 3") && e.contains("missing `latency_ms`")),
             "{errs:?}"
         );
         assert!(
-            errs.iter().any(|e| e.contains("line 4") && e.contains("`element_count` must be Num")),
+            errs.iter()
+                .any(|e| e.contains("line 4") && e.contains("`element_count` must be Num")),
             "{errs:?}"
         );
     }

@@ -276,7 +276,10 @@ pub fn lex(src: &str) -> Result<Vec<Spanned>, LexError> {
                         Some(&ch) if ch < 0x80 => {
                             if (ch as char).is_control() {
                                 return Err(LexError {
-                                    msg: format!("unescaped control character '\\x{:02x}' in string", ch),
+                                    msg: format!(
+                                        "unescaped control character '\\x{:02x}' in string",
+                                        ch
+                                    ),
                                     at: i,
                                 });
                             }

@@ -171,7 +171,10 @@ impl VM {
             }
 
             let frame = self.call_stack.last().unwrap();
-            let func = self.program.functions.get(frame.function_index as usize)
+            let func = self
+                .program
+                .functions
+                .get(frame.function_index as usize)
                 .ok_or_else(|| format!("function index {} out of bounds", frame.function_index))?;
 
             if frame.ip >= func.instructions.len() as u32 {
@@ -193,7 +196,10 @@ impl VM {
         match &inst.op {
             OpCode::Push => {
                 let idx = inst.arg.ok_or("Push requires argument")?;
-                let constant = self.program.constants.get(idx as usize)
+                let constant = self
+                    .program
+                    .constants
+                    .get(idx as usize)
                     .ok_or_else(|| format!("constant index {} out of bounds", idx))?;
                 let value = match constant {
                     Constant::Int(v) => Value::Int(*v),
@@ -458,7 +464,10 @@ impl VM {
 
             OpCode::LoadGlobal => {
                 let idx = inst.arg.ok_or("LoadGlobal requires argument")?;
-                let constant = self.program.constants.get(idx as usize)
+                let constant = self
+                    .program
+                    .constants
+                    .get(idx as usize)
                     .ok_or_else(|| format!("constant index {} out of bounds", idx))?;
                 let name = match constant {
                     Constant::String(s) => s.clone(),
@@ -475,7 +484,10 @@ impl VM {
 
             OpCode::StoreGlobal => {
                 let idx = inst.arg.ok_or("StoreGlobal requires argument")?;
-                let constant = self.program.constants.get(idx as usize)
+                let constant = self
+                    .program
+                    .constants
+                    .get(idx as usize)
                     .ok_or_else(|| format!("constant index {} out of bounds", idx))?;
                 let name = match constant {
                     Constant::String(s) => s.clone(),
@@ -542,7 +554,10 @@ impl VM {
                 };
 
                 if let Some(idx) = resolved_idx {
-                    let func = self.program.functions.get(idx as usize)
+                    let func = self
+                        .program
+                        .functions
+                        .get(idx as usize)
                         .ok_or_else(|| format!("function index {} out of bounds", idx))?;
                     let arity = func.arity;
 
@@ -726,7 +741,10 @@ impl VM {
 
             OpCode::Field => {
                 let field_idx = inst.arg.ok_or("Field requires argument")?;
-                let constant = self.program.constants.get(field_idx as usize)
+                let constant = self
+                    .program
+                    .constants
+                    .get(field_idx as usize)
                     .ok_or_else(|| format!("constant index {} out of bounds", field_idx))?;
                 let field_name = match constant {
                     Constant::String(s) => s.clone(),
@@ -1218,19 +1236,19 @@ mod tests {
     #[test]
     fn test_invalid_constant_index() {
         let program = make_program(
-            vec![
-                Instruction {
-                    op: OpCode::Push,
-                    arg: Some(999),
-                    line: 1,
-                },
-            ],
+            vec![Instruction {
+                op: OpCode::Push,
+                arg: Some(999),
+                line: 1,
+            }],
             vec![],
         );
         let mut vm = VM::new(program);
         let result = vm.run();
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("constant index 999 out of bounds"));
+        assert!(result
+            .unwrap_err()
+            .contains("constant index 999 out of bounds"));
     }
 
     #[test]
@@ -1253,7 +1271,9 @@ mod tests {
         let mut vm = VM::new(program);
         let result = vm.run();
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("constant index 999 out of bounds"));
+        assert!(result
+            .unwrap_err()
+            .contains("constant index 999 out of bounds"));
     }
 
     #[test]

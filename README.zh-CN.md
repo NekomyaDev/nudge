@@ -16,6 +16,7 @@
   <img alt="平台" src="https://img.shields.io/badge/平台-Linux%20%7C%20macOS%20%7C%20Windows-green">
   <img alt="目标" src="https://img.shields.io/badge/目标-Python%20%7C%20TypeScript-yellow">
   <a href="https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang"><img alt="VS Code" src="https://img.shields.io/badge/VS%20Code-Nudge%20语言-007ACC?logo=visualstudiocode"></a>
+  <a href="https://snyk.io"><img alt="Snyk Verified" src="https://img.shields.io/badge/Snyk-Verified%20Secure-4C556A?logo=snyk"></a>
 </p>
 
 ---
@@ -237,6 +238,16 @@ cd examples/chatbot
 nudgec check chatbot.ndg && nudgec build chatbot.ndg
 python3 out/chatbot.py
 ```
+
+## 🛡️ 安全与企业级稳定性
+
+Nudge 采用“默认安全”（Secure-by-Design）的原则从头构建，确保自主智能代理的执行永远不会破坏您的系统或耗尽预算。
+
+* **Snyk 官方认证:** Nudge 已入选 **Snyk 安全开发者计划 (Snyk Secure Developer Program)**。在企业安全试点支持下，我们的整个生态系统均受到全天候持续安全监控。
+* **编译期安全防护:** 防止松散的提示词模式将恶意输入或格式错误的类型注入到下游工具中。
+* **硬性硬编码预算边界:** 原生防止耗尽 API 额度与钱包资源的无限工具循环调用。
+
+---
 
 ## 原生独立执行引擎与去 Python 依赖路线图
 
