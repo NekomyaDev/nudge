@@ -26,6 +26,7 @@ pub mod policysweep;
 pub mod recipes;
 pub mod runs;
 pub mod serve;
+pub mod standalone;
 pub mod tracecheck;
 pub mod tracediff;
 pub mod traceexplain;
@@ -33,3 +34,4 @@ pub mod traceview;
 pub mod watch;
 
 pub use compile::compile;
+pub use nudge_runtime;

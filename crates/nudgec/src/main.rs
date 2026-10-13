@@ -15,15 +15,15 @@
 
 use nudgec::{
     a2a, ast, check, codegen, codegen_ts, compile, cost, dap, eval, evalcmd, fmt, hints, init,
-    json, learn, lexer, lint, lsp, mcpserver, policysweep, runs, serve, tracecheck, tracediff,
-    traceexplain, traceview, watch,
+    json, learn, lexer, lint, lsp, mcpserver, policysweep, runs, serve, standalone, tracecheck,
+    tracediff, traceexplain, traceview, watch,
 };
 
 use std::{env, fs, process};
 
 fn print_usage_to(to_stderr: bool) {
     let msg = format!(
-        "nudgec {} — the Nudge compiler\nusage:\n  nudgec fmt   <file.ndg> [--check]   normalize indentation, trim trailing ws, collapse blanks\n  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)\n  nudgec learn [lesson]     the language in six terminal lessons (run bare for the index)\n  nudgec lex   <file.ndg>   dump token stream\n  nudgec parse <file.ndg>   dump AST\n  nudgec check <file.ndg>   type-check (E0101–E0302)\n  nudgec build <file.ndg>   check, then emit Python to out/<name>.py\n  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts\n  nudgec check <file.ndg> --watch   re-check on every file change (Ctrl-C to stop)\n  nudgec cost  <file.ndg>   static cost report per fn\n  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn\n  nudgec resume <run_id>    continue a crashed run from its last checkpoint\n  nudgec trace-check <t.jsonl> validate a trace against the frozen v1 schema\n  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json\n  nudgec lsp                serve the Language Server Protocol over stdio\n  nudgec trace-html <t.jsonl> [--out file.html]  static single-file viewer (no server, works offline)\n  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace\n  nudgec explain <t.jsonl>    human report over a trace: totals, failures, low-confidence answers\n  nudgec trace-diff <a.jsonl> <b.jsonl> [--fail-on-regression]  compare traces; gate CI on regression\n  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8]\n  nudgec compare <results_a.jsonl> <results_b.jsonl>  two eval runs: which rows flipped\n  nudgec runs  [--run <run_id>]   list recorded agent runs / show one run's state and trace\n  nudgec mcp   <file.ndg> [--fns a,b]   expose program fns as MCP tools over stdio\n  nudgec serve <file.ndg> [--fn <name>] [--port N]   run a program fn as a local HTTP API (POST /run, GET /health)\n  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8]  score a program over a dataset\n  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)",
+        "nudgec {} — the Nudge compiler\nusage:\n  nudgec fmt   <file.ndg> [--check]   normalize indentation, trim trailing ws, collapse blanks\n  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)\n  nudgec learn [lesson]     the language in six terminal lessons (run bare for the index)\n  nudgec lex   <file.ndg>   dump token stream\n  nudgec parse <file.ndg>   dump AST\n  nudgec check <file.ndg>   type-check (E0101–E0302)\n  nudgec build <file.ndg> [--standalone] [-o <output>] [--fn <entry>]  check, emit Python (or native binary with --standalone)\n  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts\n  nudgec check <file.ndg> --watch   re-check on every file change (Ctrl-C to stop)\n  nudgec cost  <file.ndg>   static cost report per fn\n  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn\n  nudgec resume <run_id>    continue a crashed run from its last checkpoint\n  nudgec trace-check <t.jsonl> validate a trace against the frozen v1 schema\n  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json\n  nudgec lsp                serve the Language Server Protocol over stdio\n  nudgec trace-html <t.jsonl> [--out file.html]  static single-file viewer (no server, works offline)\n  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace\n  nudgec explain <t.jsonl>    human report over a trace: totals, failures, low-confidence answers\n  nudgec trace-diff <a.jsonl> <b.jsonl> [--fail-on-regression]  compare traces; gate CI on regression\n  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8]\n  nudgec compare <results_a.jsonl> <results_b.jsonl>  two eval runs: which rows flipped\n  nudgec runs  [--run <run_id>]   list recorded agent runs / show one run's state and trace\n  nudgec mcp   <file.ndg> [--fns a,b]   expose program fns as MCP tools over stdio\n  nudgec serve <file.ndg> [--fn <name>] [--port N]   run a program fn as a local HTTP API (POST /run, GET /health)\n  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8]  score a program over a dataset\n  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)",
         env!("CARGO_PKG_VERSION")
     );
     if to_stderr {
@@ -238,12 +238,40 @@ fn main() {
         && args[1] != "runs"
         && args[1] != "lint"
         && args[1] != "run"
+        && args[1] != "build"
     {
         usage();
     }
+    let build_file = if args[1] == "build" {
+        let mut file = None;
+        let mut i = 2;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--standalone" => {}
+                "--fn" | "-f" | "-o" | "--out" => {
+                    i += 1;
+                }
+                arg if arg.starts_with('-') => {}
+                pos => {
+                    if file.is_none() {
+                        file = Some(pos.to_string());
+                    }
+                }
+            }
+            i += 1;
+        }
+        file
+    } else {
+        None
+    };
     // `resume` takes a run_id, not a source file
     let src = if args[1] == "resume" || args[1] == "runs" {
         String::new()
+    } else if args[1] == "build" {
+        match &build_file {
+            Some(f) => read_src(f),
+            None => usage(),
+        }
     } else {
         read_src(&args[2])
     };
@@ -398,30 +426,91 @@ fn main() {
                 process::exit(1);
             }
         },
-        "build" => match compile(&src) {
-            Ok(items) => {
-                let errs = check::check(&items);
-                if !errs.is_empty() {
-                    for e in &errs {
-                        match e.span {
-                            Some(sp) => {
-                                let (l, c) = line_col(&src, sp.start);
-                                {
-                                    eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
-                                    print_hint(e.code);
-                                }
-                            }
-                            None => {
-                                eprintln!("error[{}]: {}", e.code, e.msg);
-                                print_hint(e.code);
-                            }
+        "build" => {
+            let mut standalone = false;
+            let mut entry = "main".to_string();
+            let mut out = None;
+            let input_file = build_file.unwrap_or_else(|| usage());
+            let mut i = 2;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--standalone" => {
+                        standalone = true;
+                    }
+                    "--fn" | "-f" => {
+                        i += 1;
+                        if let Some(f) = args.get(i) {
+                            entry = f.clone();
+                        } else {
+                            eprintln!("error: --fn requires a function name");
+                            process::exit(64);
                         }
                     }
+                    "-o" | "--out" => {
+                        i += 1;
+                        if let Some(o) = args.get(i) {
+                            out = Some(o.clone());
+                        } else {
+                            eprintln!("error: -o requires an output path");
+                            process::exit(64);
+                        }
+                    }
+                    arg if arg.starts_with('-') => {
+                        eprintln!("error: unknown build option '{arg}'");
+                        process::exit(64);
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+
+            let items = match compile(&src) {
+                Ok(items) => items,
+                Err((msg, at)) => {
+                    eprintln!("error[E0002]: {msg} at byte {at}");
+                    print_hint("E0002");
                     process::exit(1);
                 }
-                print_lints(&items);
+            };
+            let errs = check::check(&items);
+            if !errs.is_empty() {
+                for e in &errs {
+                    match e.span {
+                        Some(sp) => {
+                            let (l, c) = line_col(&src, sp.start);
+                            eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
+                            print_hint(e.code);
+                        }
+                        None => {
+                            eprintln!("error[{}]: {}", e.code, e.msg);
+                            print_hint(e.code);
+                        }
+                    }
+                }
+                process::exit(1);
+            }
+            print_lints(&items);
+
+            if standalone {
+                let out_path = out.unwrap_or_else(|| {
+                    std::path::Path::new(&input_file)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("app")
+                        .to_string()
+                });
+                match standalone::build_standalone(&input_file, &entry, &out_path) {
+                    Ok(()) => {
+                        println!("wrote {}", std::path::Path::new(&out_path).display());
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        process::exit(1);
+                    }
+                }
+            } else {
                 let py = codegen::emit(&items);
-                let stem = std::path::Path::new(&args[2])
+                let stem = std::path::Path::new(&input_file)
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("out");
@@ -438,12 +527,7 @@ fn main() {
                     }
                 }
             }
-            Err((msg, at)) => {
-                eprintln!("error[E0002]: {msg} at byte {at}");
-                print_hint("E0002");
-                process::exit(1);
-            }
-        },
+        }
         "test" => match compile(&src) {
             Ok(items) => {
                 let errs = check::check(&items);
