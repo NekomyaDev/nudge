@@ -6,6 +6,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[lib]
+name = "nudgec"
+path = "src/lib.rs"
+
 [[bin]]
 name = "nudgec"
 path = "src/main.rs"

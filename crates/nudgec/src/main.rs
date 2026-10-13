@@ -13,35 +13,11 @@
 //!   nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace (v1.2)
 //!   nudgec trace-diff <a.jsonl> <b.jsonl> [--fail-on-regression]  compare two traces; with the flag, exit 1 on regression (v1.2)
 
-mod a2a;
-mod ast;
-mod check;
-mod codegen;
-mod codegen_ts;
-mod cost;
-mod dap;
-mod eval;
-mod evalcmd;
-mod fmt;
-mod fuzz;
-mod hints;
-mod init;
-mod json;
-mod learn;
-mod lexer;
-mod lint;
-mod lsp;
-mod mcpserver;
-mod parser;
-mod policysweep;
-mod recipes;
-mod runs;
-mod serve;
-mod tracecheck;
-mod tracediff;
-mod traceexplain;
-mod traceview;
-mod watch;
+use nudgec::{
+    a2a, ast, check, codegen, codegen_ts, compile, cost, dap, eval, evalcmd, fmt, hints, init,
+    json, learn, lexer, lint, lsp, mcpserver, policysweep, runs, serve, tracecheck, tracediff,
+    traceexplain, traceview, watch,
+};
 
 use std::{env, fs, process};
 
@@ -155,9 +131,9 @@ fn main() {
         let src = read_src(&file);
         let action = || -> Result<bool, String> {
             if check {
-                crate::fmt::needs_formatting(&src)
+                fmt::needs_formatting(&src)
             } else {
-                crate::fmt::fmt(&src).map(|out| {
+                fmt::fmt(&src).map(|out| {
                     let changed = out != src;
                     if changed {
                         fs::write(&file, &out).map_err(|e| format!("cannot write {file}: {e}"))?;
@@ -292,11 +268,6 @@ fn main() {
             eprintln!("warning[{}]: {}", l.code, l.msg);
         }
     }
-    let compile = |src: &str| -> Result<Vec<ast::Item>, (String, usize)> {
-        lexer::lex(src)
-            .map_err(|e| (e.msg, e.at))
-            .and_then(|t| parser::parse(t).map_err(|e| (e.msg, e.at)))
-    };
 
     match args[1].as_str() {
         "lex" => match lexer::lex(&src) {
