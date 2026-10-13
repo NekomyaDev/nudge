@@ -2,7 +2,7 @@
 //!
 //! Provides env.get, env.set, and env.has for interacting with environment variables.
 
-use crate::vm::Value;
+use crate::value::Value;
 use std::collections::HashMap;
 use std::env;
 

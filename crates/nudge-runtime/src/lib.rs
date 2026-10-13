@@ -1,11 +1,8 @@
-pub mod bytecode;
-pub mod codegen;
 pub mod json;
 pub mod mcp;
-pub mod parser;
 pub mod provider;
 pub mod stdlib;
 pub mod trace;
-pub mod vm;
+pub mod value;
 
 pub use provider::*;

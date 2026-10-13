@@ -176,7 +176,7 @@ fn test_provider_list_models() {
 #[test]
 fn test_stdlib_llm_builtins() {
     use crate::stdlib::llm::execute;
-    use crate::vm::Value;
+    use crate::value::Value;
 
     // Test llm.tokens
     let tok_val = execute(

@@ -2,7 +2,7 @@
 #[allow(clippy::module_inception)] // conventional inner test module
 mod tests {
     use crate::stdlib;
-    use crate::vm::Value;
+    use crate::value::Value;
 
     #[test]
     fn test_io_read_write() {
@@ -338,7 +338,7 @@ mod tests {
 #[cfg(test)]
 mod computer_tests {
     use crate::stdlib::computer;
-    use crate::vm::Value;
+    use crate::value::Value;
     use std::sync::Mutex;
 
     // these tests share process-global state (env vars + the VM's

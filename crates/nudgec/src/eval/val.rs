@@ -163,8 +163,8 @@ pub fn nudgeval_to_json(v: &NudgeVal) -> serde_json::Value {
 
 /// Convert a nudge_runtime VM value back to NudgeVal recursively (the
 /// bridge for `computer.*` results — crates/nudge-runtime/src/stdlib).
-pub fn value_to_nudgeval(v: &nudge_runtime::vm::Value) -> Result<NudgeVal, String> {
-    use nudge_runtime::vm::Value;
+pub fn value_to_nudgeval(v: &nudge_runtime::value::Value) -> Result<NudgeVal, String> {
+    use nudge_runtime::value::Value;
     Ok(match v {
         Value::None => NudgeVal::Unit,
         Value::Bool(b) => NudgeVal::Bool(*b),
@@ -198,8 +198,8 @@ pub fn value_to_nudgeval(v: &nudge_runtime::vm::Value) -> Result<NudgeVal, Strin
 
 /// Convert NudgeVal to a nudge_runtime VM value recursively — the argument
 /// bridge for `computer.*` calls (String/Int/Float/Bool/List/Map/Unit).
-pub fn nudgeval_to_value(v: &NudgeVal) -> Result<nudge_runtime::vm::Value, String> {
-    use nudge_runtime::vm::Value;
+pub fn nudgeval_to_value(v: &NudgeVal) -> Result<nudge_runtime::value::Value, String> {
+    use nudge_runtime::value::Value;
     Ok(match v {
         NudgeVal::Unit => Value::None,
         NudgeVal::Bool(b) => Value::Bool(*b),
@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn test_runtime_value_roundtrip() {
-        use nudge_runtime::vm::Value;
+        use nudge_runtime::value::Value;
         let mut inner = HashMap::new();
         inner.insert("k".to_string(), NudgeVal::Int(1));
         let cases = vec![
@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn test_runtime_value_conversion_rejects_unconvertible() {
-        use nudge_runtime::vm::Value;
+        use nudge_runtime::value::Value;
         // agent state has no runtime-value representation — fail loudly
         let agent = NudgeVal::AgentState {
             name: "Counter".into(),
@@ -349,7 +349,7 @@ mod tests {
 
     #[test]
     fn test_runtime_value_conversion_nested() {
-        use nudge_runtime::vm::Value;
+        use nudge_runtime::value::Value;
         let mut m = HashMap::new();
         m.insert(
             "list".to_string(),

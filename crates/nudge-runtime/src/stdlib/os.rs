@@ -2,7 +2,7 @@
 //!
 //! Provides process-related functions such as command line arguments, current working directory, and process ID.
 
-use crate::vm::Value;
+use crate::value::Value;
 use std::collections::HashMap;
 
 /// Register all os functions

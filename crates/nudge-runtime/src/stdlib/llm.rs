@@ -3,7 +3,7 @@
 //! Provides llm.call, llm.models, llm.cost, and llm.tokens.
 
 use crate::provider;
-use crate::vm::Value;
+use crate::value::Value;
 use std::collections::HashMap;
 
 /// Register all LLM functions

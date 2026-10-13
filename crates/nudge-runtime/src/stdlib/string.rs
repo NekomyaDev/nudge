@@ -2,7 +2,7 @@
 //!
 //! Provides string manipulation, formatting, and conversion functions.
 
-use crate::vm::Value;
+use crate::value::Value;
 use std::collections::HashMap;
 
 /// Register all string functions

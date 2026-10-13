@@ -2,7 +2,7 @@
 //!
 //! Provides file I/O, console I/O, and filesystem operations.
 
-use crate::vm::Value;
+use crate::value::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};

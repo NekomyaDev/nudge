@@ -2,7 +2,7 @@
 //!
 //! Provides time.now, time.sleep, and time.format.
 
-use crate::vm::Value;
+use crate::value::Value;
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::thread;

@@ -14,7 +14,7 @@ pub mod time;
 #[cfg(test)]
 mod tests;
 
-use crate::vm::Value;
+use crate::value::Value;
 use std::collections::HashMap;
 
 /// Register all standard library functions

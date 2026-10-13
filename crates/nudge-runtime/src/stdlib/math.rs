@@ -2,7 +2,7 @@
 //!
 //! Provides basic math, trigonometry, statistics, and random numbers.
 
-use crate::vm::Value;
+use crate::value::Value;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
