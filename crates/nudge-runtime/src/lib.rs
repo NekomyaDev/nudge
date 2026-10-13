@@ -1,6 +1,7 @@
 pub mod bytecode;
 pub mod codegen;
 pub mod json;
+pub mod mcp;
 pub mod parser;
 pub mod provider;
 pub mod stdlib;

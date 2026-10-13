@@ -1,4 +1,6 @@
-use crate::ast::{BinOp, DecisionQ, Expr, ExprKind, Item, StateOp, Stmt, StmtKind, TypeExpr};
+use crate::ast::{
+    BinOp, DecisionQ, Expr, ExprKind, Item, Param, StateOp, Stmt, StmtKind, TypeExpr,
+};
 use crate::eval::env::{AgentStore, Env};
 use crate::eval::val::{
     json_to_nudgeval, nudgeval_to_json, nudgeval_to_value, value_to_nudgeval, NudgeVal,
@@ -596,9 +598,7 @@ impl Interpreter {
                 if provider_name == "fake" {
                     return self.eval_fake_tool(&tool_item, args, kwargs, env);
                 } else {
-                    return Err(format!(
-                        "error[E-native-0201]: tool '{name}' execution is not yet supported in Phase 1 native runtime"
-                    ));
+                    return self.eval_mcp_tool(&tool_item, args, kwargs, env);
                 }
             }
 
@@ -715,6 +715,70 @@ impl Interpreter {
             crate::ast::TypeExpr::Named(n) if n == "bool" => Ok(NudgeVal::Bool(true)),
             _ => Ok(NudgeVal::Unit),
         }
+    }
+
+    fn eval_mcp_tool(
+        &mut self,
+        tool_item: &Item,
+        args: &[Expr],
+        kwargs: &[(String, Expr)],
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<NudgeVal, String> {
+        let (name, params, ret, fields) = match tool_item {
+            Item::Tool {
+                name,
+                params,
+                ret,
+                fields,
+            } => (name.as_str(), params, ret, fields),
+            _ => return Err("called item is not a tool".into()),
+        };
+
+        let server = impl_server(fields).ok_or_else(|| {
+            format!("error[E-native-0201]: tool '{name}' has no MCP server configured in 'impl'")
+        })?;
+
+        let mut evaluated_args = Vec::with_capacity(args.len());
+        for a in args {
+            evaluated_args.push(self.eval_expr(a, env)?);
+        }
+
+        let mut evaluated_kwargs = Vec::with_capacity(kwargs.len());
+        for (k, v) in kwargs {
+            evaluated_kwargs.push((k.clone(), self.eval_expr(v, env)?));
+        }
+
+        let args_json = build_tool_args(params, &evaluated_args, &evaluated_kwargs)?;
+
+        let result_text = nudge_runtime::mcp::call_tool(&server, name, args_json.clone())
+            .map_err(|e| format!("error[E-native-0201]: {e}"))?;
+
+        let ret_val = convert_tool_output(ret, &self.aliases, &result_text);
+
+        let output_json = match serde_json::from_str::<serde_json::Value>(&result_text) {
+            Ok(v) => v,
+            Err(_) => serde_json::Value::String(result_text),
+        };
+
+        let req_hash = nudge_runtime::trace::request_hash(&serde_json::json!({
+            "op": "tool",
+            "tool": name,
+            "server": server,
+            "input": args_json,
+        }));
+
+        let record = serde_json::json!({
+            "kind": "tool.call",
+            "tool": name,
+            "server": server,
+            "input": args_json,
+            "output": output_json,
+            "request_hash": req_hash,
+        });
+
+        nudge_runtime::trace::emit(record)?;
+
+        Ok(ret_val)
     }
 
     fn call_stdlib(&mut self, name: &str, args: &[NudgeVal]) -> Result<NudgeVal, String> {
@@ -1689,5 +1753,463 @@ fn const_json(e: &Expr) -> Option<serde_json::Value> {
         ExprKind::Str(s) => Some(serde_json::json!(s)),
         ExprKind::Bool(b) => Some(serde_json::json!(b)),
         _ => None,
+    }
+}
+
+/// Find the MCP server in a tool's `impl: mcp("server").tool(...)` field
+/// (design §8) — walks the expression for an `mcp("...")` call.
+pub fn impl_server(fields: &[(String, Expr)]) -> Option<String> {
+    fn find(e: &Expr) -> Option<String> {
+        match &e.kind {
+            ExprKind::Call { func, args, .. } => {
+                if let ExprKind::Ident(n) = &func.as_ref().kind {
+                    if n == "mcp" {
+                        if let Some(ExprKind::Str(s)) = args.first().map(|a| &a.kind) {
+                            return Some(s.clone());
+                        }
+                    }
+                }
+                find(func).or_else(|| args.iter().find_map(find))
+            }
+            ExprKind::Field { obj, .. } => find(obj),
+            _ => None,
+        }
+    }
+    fields
+        .iter()
+        .find(|(k, _)| k == "impl")
+        .and_then(|(_, v)| find(v))
+}
+
+/// Build named arguments JSON object from declared parameters and evaluated arguments.
+pub fn build_tool_args(
+    params: &[Param],
+    positional: &[NudgeVal],
+    named: &[(String, NudgeVal)],
+) -> Result<serde_json::Value, String> {
+    if positional.len() > params.len() {
+        return Err(format!(
+            "tool takes at most {} arguments, got {}",
+            params.len(),
+            positional.len()
+        ));
+    }
+    let mut bound = HashMap::new();
+    for (i, val) in positional.iter().enumerate() {
+        bound.insert(params[i].name.clone(), val.clone());
+    }
+    for (k, val) in named {
+        bound.insert(k.clone(), val.clone());
+    }
+    let mut map = serde_json::Map::new();
+    for p in params {
+        let val = bound
+            .get(&p.name)
+            .ok_or_else(|| format!("missing argument for parameter '{}'", p.name))?;
+        map.insert(p.name.clone(), nudgeval_to_json(val));
+    }
+    Ok(serde_json::Value::Object(map))
+}
+
+/// Convert returned MCP text into a NudgeVal based on the declared return type.
+pub fn convert_tool_output(
+    ret: &TypeExpr,
+    aliases: &HashMap<String, TypeExpr>,
+    text: &str,
+) -> NudgeVal {
+    let mut resolved = ret;
+    while let TypeExpr::Named(name) = resolved {
+        if let Some(aliased) = aliases.get(name) {
+            resolved = aliased;
+        } else {
+            break;
+        }
+    }
+
+    match resolved {
+        TypeExpr::Named(n) if n == "string" => NudgeVal::Str(text.to_string()),
+        TypeExpr::Named(n) if n == "int" => {
+            if let Ok(i) = text.trim().parse::<i64>() {
+                NudgeVal::Int(i)
+            } else {
+                NudgeVal::Str(text.to_string())
+            }
+        }
+        TypeExpr::Named(n) if n == "float" => {
+            if let Ok(f) = text.trim().parse::<f64>() {
+                NudgeVal::Float(f)
+            } else {
+                NudgeVal::Str(text.to_string())
+            }
+        }
+        TypeExpr::Named(n) if n == "bool" => {
+            if let Ok(b) = text.trim().parse::<bool>() {
+                NudgeVal::Bool(b)
+            } else {
+                NudgeVal::Str(text.to_string())
+            }
+        }
+        TypeExpr::List(_) | TypeExpr::Record(_) => {
+            if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(text) {
+                json_to_nudgeval(json_val)
+            } else {
+                NudgeVal::Str(text.to_string())
+            }
+        }
+        TypeExpr::Refine(inner, ..) => convert_tool_output(inner, aliases, text),
+        _ => NudgeVal::Str(text.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::{Expr, ExprKind, Param, Span, TypeExpr};
+    use crate::eval::run_program;
+    use crate::lexer::lex;
+    use crate::parser::parse;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvReset(&'static str, Option<String>);
+    impl EnvReset {
+        fn set(key: &'static str, val: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            unsafe {
+                std::env::set_var(key, val);
+            }
+            Self(key, prev)
+        }
+    }
+    impl Drop for EnvReset {
+        fn drop(&mut self) {
+            if let Some(prev) = &self.1 {
+                unsafe {
+                    std::env::set_var(self.0, prev);
+                }
+            } else {
+                unsafe {
+                    std::env::remove_var(self.0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_extract_server_from_impl_expr() {
+        // 1. Via AST parsing of a tool declaration:
+        let src = r#"tool search(q: string) -> string {
+            impl: mcp("search_service").query(q)
+            side_effects: none
+        }"#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+        let fields = match &items[0] {
+            Item::Tool { fields, .. } => fields,
+            _ => panic!("expected Item::Tool"),
+        };
+        assert_eq!(impl_server(fields), Some("search_service".to_string()));
+
+        // 2. Direct AST expression matching `impl: mcp("s").t(q)`:
+        let mcp_call = Expr {
+            kind: ExprKind::Call {
+                func: Box::new(Expr {
+                    kind: ExprKind::Ident("mcp".into()),
+                    span: Span { start: 0, end: 0 },
+                }),
+                args: vec![Expr {
+                    kind: ExprKind::Str("s".into()),
+                    span: Span { start: 0, end: 0 },
+                }],
+                kwargs: vec![],
+            },
+            span: Span { start: 0, end: 0 },
+        };
+        let field_access = Expr {
+            kind: ExprKind::Field {
+                obj: Box::new(mcp_call),
+                name: "t".into(),
+            },
+            span: Span { start: 0, end: 0 },
+        };
+        let method_call = Expr {
+            kind: ExprKind::Call {
+                func: Box::new(field_access),
+                args: vec![Expr {
+                    kind: ExprKind::Ident("q".into()),
+                    span: Span { start: 0, end: 0 },
+                }],
+                kwargs: vec![],
+            },
+            span: Span { start: 0, end: 0 },
+        };
+        let manual_fields = vec![("impl".to_string(), method_call)];
+        assert_eq!(impl_server(&manual_fields), Some("s".to_string()));
+
+        // 3. No impl field:
+        let empty_fields: Vec<(String, Expr)> = vec![];
+        assert_eq!(impl_server(&empty_fields), None);
+    }
+
+    #[test]
+    fn test_build_tool_args_object() {
+        let params = vec![
+            Param {
+                name: "q".to_string(),
+                ty: TypeExpr::Named("string".to_string()),
+            },
+            Param {
+                name: "limit".to_string(),
+                ty: TypeExpr::Named("int".to_string()),
+            },
+        ];
+
+        // Positional args
+        let args = vec![NudgeVal::Str("rust lang".to_string()), NudgeVal::Int(5)];
+        let res = build_tool_args(&params, &args, &[]).expect("build args");
+        assert_eq!(
+            res,
+            serde_json::json!({
+                "q": "rust lang",
+                "limit": 5
+            })
+        );
+
+        // Positional + named kwargs
+        let pos = vec![NudgeVal::Str("rust lang".to_string())];
+        let kwargs = vec![("limit".to_string(), NudgeVal::Int(10))];
+        let res2 = build_tool_args(&params, &pos, &kwargs).expect("build args with kwargs");
+        assert_eq!(
+            res2,
+            serde_json::json!({
+                "q": "rust lang",
+                "limit": 10
+            })
+        );
+
+        // Missing argument
+        let missing = build_tool_args(&params, &[NudgeVal::Str("missing".to_string())], &[]);
+        assert!(missing.is_err());
+        assert!(missing
+            .unwrap_err()
+            .contains("missing argument for parameter 'limit'"));
+
+        // Excess positional argument
+        let excess = build_tool_args(
+            &params,
+            &[
+                NudgeVal::Str("a".to_string()),
+                NudgeVal::Int(1),
+                NudgeVal::Bool(true),
+            ],
+            &[],
+        );
+        assert!(excess.is_err());
+        assert!(excess
+            .unwrap_err()
+            .contains("tool takes at most 2 arguments, got 3"));
+    }
+
+    #[test]
+    fn test_convert_tool_output() {
+        let mut aliases = HashMap::new();
+        aliases.insert(
+            "SearchResult".to_string(),
+            TypeExpr::Record(vec![
+                ("doc".to_string(), TypeExpr::Named("string".to_string())),
+                ("score".to_string(), TypeExpr::Named("float".to_string())),
+            ]),
+        );
+
+        // string
+        let s = convert_tool_output(
+            &TypeExpr::Named("string".to_string()),
+            &aliases,
+            "sample text",
+        );
+        assert_eq!(s, NudgeVal::Str("sample text".to_string()));
+
+        // int
+        let i = convert_tool_output(&TypeExpr::Named("int".to_string()), &aliases, "42");
+        assert_eq!(i, NudgeVal::Int(42));
+
+        // float
+        let f = convert_tool_output(&TypeExpr::Named("float".to_string()), &aliases, "2.75");
+        assert_eq!(f, NudgeVal::Float(2.75));
+
+        // bool
+        let b = convert_tool_output(&TypeExpr::Named("bool".to_string()), &aliases, "true");
+        assert_eq!(b, NudgeVal::Bool(true));
+
+        // JSON list
+        let l = convert_tool_output(
+            &TypeExpr::List(Box::new(TypeExpr::Named("string".to_string()))),
+            &aliases,
+            r#"["alpha", "beta"]"#,
+        );
+        assert_eq!(
+            l,
+            NudgeVal::List(vec![
+                NudgeVal::Str("alpha".to_string()),
+                NudgeVal::Str("beta".to_string())
+            ])
+        );
+
+        // Type alias to record
+        let r = convert_tool_output(
+            &TypeExpr::Named("SearchResult".to_string()),
+            &aliases,
+            r#"{"doc": "readme.md", "score": 0.9}"#,
+        );
+        let mut expected_map = HashMap::new();
+        expected_map.insert("doc".to_string(), NudgeVal::Str("readme.md".to_string()));
+        expected_map.insert("score".to_string(), NudgeVal::Float(0.9));
+        assert_eq!(r, NudgeVal::Map(expected_map));
+
+        // Fallback for invalid JSON
+        let fallback = convert_tool_output(
+            &TypeExpr::List(Box::new(TypeExpr::Named("string".to_string()))),
+            &aliases,
+            "not valid json",
+        );
+        assert_eq!(fallback, NudgeVal::Str("not valid json".to_string()));
+    }
+
+    #[test]
+    fn test_mcp_tool_dispatch_e2e() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let mock_bin = option_env!("CARGO_BIN_EXE_mock_mcp_nudgec")
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                std::env::var("CARGO_BIN_EXE_mock_mcp_nudgec")
+                    .ok()
+                    .map(std::path::PathBuf::from)
+            })
+            .or_else(|| {
+                let me = std::env::current_exe().ok()?;
+                let dir = me.parent()?.parent()?;
+                let p = dir.join("mock_mcp_nudgec");
+                if p.exists() {
+                    Some(p)
+                } else {
+                    let p2 = dir.join("mock_mcp");
+                    if p2.exists() {
+                        Some(p2)
+                    } else {
+                        None
+                    }
+                }
+            })
+            .expect("could not locate mock_mcp binary");
+        let registry_json = format!(r#"{{"search": {{"command": "{}"}}}}"#, mock_bin.display());
+
+        let _env_provider = EnvReset::set("NUDGE_PROVIDER", "native");
+        let _env_servers = EnvReset::set("NUDGE_MCP_SERVERS", &registry_json);
+
+        let trace_path = std::env::temp_dir().join(format!(
+            "nudge_test_mcp_trace_{}.jsonl",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _env_trace = EnvReset::set("NUDGE_TRACE", trace_path.to_str().unwrap());
+
+        let src = r#"
+            tool web(q: string) -> string {
+                impl: mcp("search").web(q)
+                side_effects: none
+            }
+            fn main() -> string uses Tool {
+                web("hello native mcp")
+            }
+        "#;
+
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let res = run_program(&items, "main", &[]).expect("run_program should succeed");
+        assert_eq!(res, NudgeVal::Str("searched: hello native mcp".to_string()));
+
+        // Verify trace was written and validates against frozen v1 schema
+        let trace_content = std::fs::read_to_string(&trace_path).expect("read trace");
+        let _ = std::fs::remove_file(&trace_path);
+
+        assert_eq!(
+            crate::tracecheck::validate(&trace_content),
+            Vec::<String>::new(),
+            "trace should validate against schema"
+        );
+
+        let trace_records: Vec<serde_json::Value> = trace_content
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+
+        let tool_call_rec = trace_records
+            .iter()
+            .find(|r| r.get("kind").and_then(|k| k.as_str()) == Some("tool.call"))
+            .expect("should have tool.call record");
+
+        assert_eq!(tool_call_rec["tool"], "web");
+        assert_eq!(tool_call_rec["server"], "search");
+        assert_eq!(
+            tool_call_rec["input"],
+            serde_json::json!({ "q": "hello native mcp" })
+        );
+        assert_eq!(tool_call_rec["output"], "searched: hello native mcp");
+        assert!(tool_call_rec.get("request_hash").is_some());
+    }
+
+    #[test]
+    fn test_mcp_tool_dispatch_unknown_server_fails() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let _env_provider = EnvReset::set("NUDGE_PROVIDER", "native");
+        let _env_servers = EnvReset::set("NUDGE_MCP_SERVERS", r#"{"other": {}}"#);
+
+        let src = r#"
+            tool web(q: string) -> string {
+                impl: mcp("unregistered").web(q)
+                side_effects: none
+            }
+            fn main() -> string uses Tool {
+                web("test")
+            }
+        "#;
+
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let err = run_program(&items, "main", &[]).unwrap_err();
+        assert!(
+            err.contains("unknown MCP server 'unregistered'"),
+            "expected unknown MCP server error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_fake_provider_still_uses_fake_tool() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env_provider = EnvReset::set("NUDGE_PROVIDER", "fake");
+
+        let src = r#"
+            tool web(q: string) -> string {
+                impl: mcp("search").web(q)
+                side_effects: none
+            }
+            fn main() -> string uses Tool {
+                web("test")
+            }
+        "#;
+
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let res = run_program(&items, "main", &[]).expect("run_program should succeed with fake");
+        assert_eq!(res, NudgeVal::Str("fake_tool_web".to_string()));
     }
 }

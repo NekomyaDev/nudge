@@ -1,0 +1,8 @@
+tool web(q: string) -> string {
+    impl: mcp("search").web(q)
+    side_effects: none
+}
+
+fn main() -> string uses Tool {
+    web("nudge lang")
+}
