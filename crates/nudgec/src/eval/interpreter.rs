@@ -1736,10 +1736,20 @@ pub fn run_program(items: &[Item], entry: &str, args: &[NudgeVal]) -> Result<Nud
         if let Ok(program) = bytecode::compile_with_entry(items, entry) {
             let mut interp = Interpreter::new();
             interp.load_items(items)?;
-            let mut delegate =
-                |callee: &str, callee_args: Vec<NudgeVal>| -> Result<NudgeVal, String> {
-                    interp.invoke_fn(callee, &callee_args)
-                };
+            let mut delegate = |req: vm::DelegateRequest<'_>| -> Result<NudgeVal, String> {
+                match req {
+                    vm::DelegateRequest::Call(callee, callee_args) => {
+                        interp.invoke_fn(callee, &callee_args)
+                    }
+                    vm::DelegateRequest::Expr(expr, locals) => {
+                        let child_env = Rc::new(RefCell::new(Env::new()));
+                        for (k, v) in locals {
+                            child_env.borrow_mut().define(k.clone(), v.clone());
+                        }
+                        interp.eval_expr(expr, &child_env)
+                    }
+                }
+            };
             let res = vm::run_with_delegate(&program, entry, args, &mut delegate);
             if let Ok(val) = &res {
                 emit_fn_return(entry, val)?;

@@ -6,11 +6,20 @@
 
 use std::collections::HashMap;
 
+use crate::ast::Expr;
 use crate::bytecode::{Op, Program};
 use crate::eval::NudgeVal;
 
-/// Hook signature for delegating effectful function calls to the interpreter.
-pub type DelegateHook<'a> = dyn FnMut(&str, Vec<NudgeVal>) -> Result<NudgeVal, String> + 'a;
+/// A request to delegate execution to the interpreter.
+pub enum DelegateRequest<'a> {
+    /// Delegate an effectful named function call: `(callee_name, args)`.
+    Call(&'a str, Vec<NudgeVal>),
+    /// Delegate an effectful expression evaluation: `(expr, locals)`.
+    Expr(&'a Expr, &'a [(String, NudgeVal)]),
+}
+
+/// Hook signature for delegating effectful operations to the interpreter.
+pub type DelegateHook<'a> = dyn FnMut(DelegateRequest<'_>) -> Result<NudgeVal, String> + 'a;
 
 /// Maximum call frame depth before halting with a stack overflow error.
 ///
@@ -560,7 +569,26 @@ impl<'a> VM<'a> {
                         .checked_sub(argc)
                         .ok_or_else(|| "stack underflow in DelegateCall".to_string())?;
                     let args: Vec<NudgeVal> = self.stack.drain(start..).collect();
-                    let res = delegate(name, args)?;
+                    let res = delegate(DelegateRequest::Call(name, args))?;
+                    self.stack.push(res);
+                }
+                Op::DelegateExpr(idx) => {
+                    let delegated = self
+                        .program
+                        .delegated_exprs
+                        .get(*idx as usize)
+                        .ok_or_else(|| format!("invalid delegated expr index {idx}"))?;
+                    let base = self.frames[frame_idx].stack_base;
+                    let mut locals = Vec::with_capacity(delegated.scope.len());
+                    for (name, slot) in &delegated.scope {
+                        let val = self
+                            .stack
+                            .get(base + *slot as usize)
+                            .cloned()
+                            .unwrap_or(NudgeVal::Unit);
+                        locals.push((name.clone(), val));
+                    }
+                    let res = delegate(DelegateRequest::Expr(&delegated.expr, &locals))?;
                     self.stack.push(res);
                 }
                 Op::Return => {
@@ -580,10 +608,15 @@ impl<'a> VM<'a> {
 
 /// Executes a compiled `Program` starting at `entry` with `args`.
 pub fn run(program: &Program, entry: &str, args: &[NudgeVal]) -> Result<NudgeVal, String> {
-    let mut noop = |name: &str, _args: Vec<NudgeVal>| -> Result<NudgeVal, String> {
-        Err(format!(
-            "no delegate configured to execute effectful function '{name}'"
-        ))
+    let mut noop = |req: DelegateRequest<'_>| -> Result<NudgeVal, String> {
+        match req {
+            DelegateRequest::Call(name, _) => Err(format!(
+                "no delegate configured to execute effectful function '{name}'"
+            )),
+            DelegateRequest::Expr(_, _) => {
+                Err("no delegate configured to execute effectful expression".to_string())
+            }
+        }
     };
     let mut vm = VM::new(program);
     vm.execute(entry, args, &mut noop)
@@ -1346,11 +1379,9 @@ mod tests {
             }
         "#;
         let items = parse_src(src);
-        let err = compile(&items).expect_err("llm call must be rejected");
-        assert!(
-            err.contains("not in bytecode subset: llm call"),
-            "Expected 'not in bytecode subset: llm call', got: {err}"
-        );
+        let prog = compile(&items).expect("inline llm call should compile via DelegateExpr");
+        assert_eq!(prog.delegated_exprs.len(), 1);
+        assert!(prog.functions[0].chunk.code.contains(&Op::DelegateExpr(0)));
     }
 
     #[test]
@@ -1364,11 +1395,9 @@ mod tests {
             }
         "#;
         let items = parse_src(src);
-        let err = compile(&items).expect_err("tool call must be rejected");
-        assert!(
-            err.contains("not in bytecode subset: call to tool 'search'"),
-            "Expected 'not in bytecode subset: call to tool', got: {err}"
-        );
+        let prog = compile(&items).expect("inline tool call should compile via DelegateExpr");
+        assert_eq!(prog.delegated_exprs.len(), 1);
+        assert!(prog.functions[0].chunk.code.contains(&Op::DelegateExpr(0)));
     }
 
     #[test]
@@ -1462,11 +1491,10 @@ mod tests {
             }
         "#;
         let items = parse_src(src);
-        let err = compile(&items).expect_err("route with effectful arm must be rejected");
-        assert!(
-            err.contains("not in bytecode subset: llm call"),
-            "Expected 'not in bytecode subset: llm call', got: {err}"
-        );
+        let prog =
+            compile(&items).expect("route with effectful arm should compile via DelegateExpr");
+        assert_eq!(prog.delegated_exprs.len(), 1);
+        assert!(prog.functions[0].chunk.code.contains(&Op::DelegateExpr(0)));
     }
 
     #[test]
@@ -1483,11 +1511,10 @@ mod tests {
             }
         "#;
         let items = parse_src(src);
-        let err = compile(&items).expect_err("route with effectful condition must be rejected");
-        assert!(
-            err.contains("not in bytecode subset: call to tool 'web_search'"),
-            "Expected tool call rejection, got: {err}"
-        );
+        let prog =
+            compile(&items).expect("route with effectful cond should compile via DelegateExpr");
+        assert_eq!(prog.delegated_exprs.len(), 1);
+        assert!(prog.functions[0].chunk.code.contains(&Op::DelegateExpr(0)));
     }
 
     #[test]
@@ -1575,6 +1602,7 @@ mod tests {
             }
             Self { var, prev }
         }
+        #[allow(dead_code)]
         fn remove(var: &'static str) -> Self {
             let prev = std::env::var(var).ok();
             unsafe {
@@ -1603,9 +1631,9 @@ mod tests {
 
         let items = parse_src(src);
 
-        // (a) Interpreter run: NUDGE_VM unset
+        // (a) Interpreter run: NUDGE_VM=0
         let interp_res = {
-            let _guard_vm = EnvVarGuard::remove("NUDGE_VM");
+            let _guard_vm = EnvVarGuard::set("NUDGE_VM", "0");
             run_program(&items, entry, args)
         };
 
@@ -1618,6 +1646,30 @@ mod tests {
         assert_eq!(
             interp_res, vm_res,
             "Mixed parity mismatch between interpreter and VM for source:\n{src}"
+        );
+    }
+
+    fn assert_mixed_parity_error(src: &str, entry: &str, args: &[NudgeVal]) {
+        let _lock = MIXED_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard_provider = EnvVarGuard::set("NUDGE_PROVIDER", "fake");
+
+        let items = parse_src(src);
+
+        // (a) Interpreter run: NUDGE_VM=0
+        let interp_err = {
+            let _guard_vm = EnvVarGuard::set("NUDGE_VM", "0");
+            run_program(&items, entry, args).expect_err("interpreter should fail on this program")
+        };
+
+        // (b) VM run: NUDGE_VM set to 1
+        let vm_err = {
+            let _guard_vm = EnvVarGuard::set("NUDGE_VM", "1");
+            run_program(&items, entry, args).expect_err("VM should fail on this program")
+        };
+
+        assert_eq!(
+            interp_err, vm_err,
+            "Mixed error parity mismatch between interpreter and VM for source:\n{src}"
         );
     }
 
@@ -1733,6 +1785,155 @@ mod tests {
             src,
             "orchestrate",
             &[NudgeVal::Str("delegation".into()), NudgeVal::Int(100)],
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // Expression-Level Effect Delegation Parity (Inline llm/tool calls)
+    // ------------------------------------------------------------------------
+
+    // (a) pure fn with one inline llm
+    #[test]
+    fn test_parity_inline_llm_single() {
+        let src = r#"
+            fn main() -> int {
+                let s = llm"""Summarize rust""" with { model: "fake:default" }
+                len(s) * 3 + 7
+            }
+        "#;
+        assert_mixed_parity(src, "main", &[]);
+    }
+
+    // (b) two inline llm calls
+    #[test]
+    fn test_parity_inline_llm_two_calls() {
+        let src = r#"
+            fn main() -> int {
+                let s1 = llm"""Hello""" with { model: "fake:default" }
+                let s2 = llm"""World""" with { model: "fake:default" }
+                len(s1) * 10 + len(s2)
+            }
+        "#;
+        assert_mixed_parity(src, "main", &[]);
+    }
+
+    // (c) inline llm mixed with VM arithmetic using a local
+    #[test]
+    fn test_parity_inline_llm_with_locals_and_arithmetic() {
+        let src = r#"
+            fn main() -> int {
+                let x = 10
+                let topic = "rust-lang"
+                let s = llm"""Topic: {topic}""" with { model: "fake:default" }
+                x * 2 + len(s)
+            }
+        "#;
+        assert_mixed_parity(src, "main", &[]);
+    }
+
+    // (d) inline llm + a delegated effectful named fn
+    #[test]
+    fn test_parity_inline_llm_and_delegated_fn() {
+        let src = r#"
+            fn ask_named(topic: string) -> string uses LLM {
+                llm"""Topic: {topic}""" with { model: "fake:default" }
+            }
+
+            fn main() -> int {
+                let s1 = ask_named("rust")
+                let s2 = llm"""Followup {s1}""" with { model: "fake:default" }
+                len(s1) + len(s2)
+            }
+        "#;
+        assert_mixed_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_inline_tool_call() {
+        let src = r#"
+            tool web_search(q: string) -> string {
+                server: "kb"
+            }
+
+            fn main() -> string {
+                let query = "nudge language"
+                let res = web_search(query)
+                res + " verified"
+            }
+        "#;
+        assert_mixed_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_inline_llm_error_unknown_interpolation() {
+        let src = r#"
+            fn main() -> string {
+                llm"""Hello {nonexistent}""" with { model: "fake:default" }
+            }
+        "#;
+        assert_mixed_parity_error(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_inline_llm_trace_record_and_replay() {
+        let _lock = MIXED_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard_provider = EnvVarGuard::set("NUDGE_PROVIDER", "fake");
+
+        let src = r#"
+            fn main() -> string {
+                let topic = "nudge"
+                let s = llm"""Info about {topic}""" with { model: "fake:default" }
+                s + " verified"
+            }
+        "#;
+        let items = parse_src(src);
+        let path_vm =
+            std::env::temp_dir().join(format!("nudge-inline-llm-vm-{}.jsonl", std::process::id()));
+        let path_interp = std::env::temp_dir().join(format!(
+            "nudge-inline-llm-interp-{}.jsonl",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path_vm);
+        let _ = std::fs::remove_file(&path_interp);
+
+        // Record under VM
+        let recorded_val_vm = {
+            let _guard_vm = EnvVarGuard::set("NUDGE_VM", "1");
+            let _scope = nudge_runtime::trace::testing::scope(Some(path_vm.clone()), None);
+            run_program(&items, "main", &[]).expect("record run under VM")
+        };
+
+        let trace_content_vm = std::fs::read_to_string(&path_vm).expect("trace file should exist");
+        assert_eq!(
+            crate::tracecheck::validate(&trace_content_vm),
+            Vec::<String>::new()
+        );
+
+        // Replay under VM
+        let replayed_val_vm = {
+            let _guard_vm = EnvVarGuard::set("NUDGE_VM", "1");
+            let _scope = nudge_runtime::trace::testing::scope(None, Some(path_vm.clone()));
+            run_program(&items, "main", &[]).expect("replay run under VM")
+        };
+        assert_eq!(recorded_val_vm, replayed_val_vm);
+
+        // Record under Interpreter (NUDGE_VM=0)
+        let recorded_val_interp = {
+            let _guard_vm = EnvVarGuard::set("NUDGE_VM", "0");
+            let _scope = nudge_runtime::trace::testing::scope(Some(path_interp.clone()), None);
+            run_program(&items, "main", &[]).expect("record run under interpreter")
+        };
+        assert_eq!(recorded_val_vm, recorded_val_interp);
+
+        let trace_content_interp =
+            std::fs::read_to_string(&path_interp).expect("interp trace should exist");
+        let _ = std::fs::remove_file(&path_vm);
+        let _ = std::fs::remove_file(&path_interp);
+
+        // Byte-identical trace parity check
+        assert_eq!(
+            trace_content_vm, trace_content_interp,
+            "Trace from VM must be byte-identical to trace from interpreter"
         );
     }
 }

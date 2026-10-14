@@ -77,6 +77,8 @@ pub enum Op {
     Call(u32, usize),
     /// Delegate call to effectful function in the interpreter: `(fn_name, argc)`.
     DelegateCall(String, usize),
+    /// Delegate evaluation of an effectful expression to the interpreter: `expr_index`.
+    DelegateExpr(u32),
     /// Call pure built-in function: `(name, argc)`.
     CallBuiltin(String, usize),
     /// Assertion check: pop val. If not truthy, fail with exact error message.
@@ -123,11 +125,19 @@ pub struct Function {
     pub local_count: usize,
 }
 
+/// An effectful expression delegated to the interpreter along with the local variable bindings in scope.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DelegatedExpr {
+    pub expr: Expr,
+    pub scope: Vec<(String, u32)>,
+}
+
 /// A compiled NBC program containing function chunks and an entry index table.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Program {
     pub functions: Vec<Function>,
     pub entry_indices: HashMap<String, usize>,
+    pub delegated_exprs: Vec<DelegatedExpr>,
 }
 
 impl Program {
@@ -160,6 +170,7 @@ struct Compiler<'a> {
     fn_metas: &'a [FnMeta],
     effectful_fn_metas: &'a HashMap<String, FnMeta>,
     tool_names: &'a [String],
+    delegated_exprs: &'a mut Vec<DelegatedExpr>,
 }
 
 impl<'a> Compiler<'a> {
@@ -169,6 +180,7 @@ impl<'a> Compiler<'a> {
         fn_metas: &'a [FnMeta],
         effectful_fn_metas: &'a HashMap<String, FnMeta>,
         tool_names: &'a [String],
+        delegated_exprs: &'a mut Vec<DelegatedExpr>,
     ) -> Self {
         let mut locals = HashMap::new();
         for (i, p) in fn_meta.params.iter().enumerate() {
@@ -184,7 +196,20 @@ impl<'a> Compiler<'a> {
             fn_metas,
             effectful_fn_metas,
             tool_names,
+            delegated_exprs,
         }
+    }
+
+    fn emit_delegated_expr(&mut self, expr: &Expr) -> usize {
+        let mut scope: Vec<(String, u32)> =
+            self.locals.iter().map(|(k, &v)| (k.clone(), v)).collect();
+        scope.sort_by_key(|(_, s)| *s);
+        let idx = self.delegated_exprs.len() as u32;
+        self.delegated_exprs.push(DelegatedExpr {
+            expr: expr.clone(),
+            scope,
+        });
+        self.chunk.emit(Op::DelegateExpr(idx))
     }
 
     fn compile_body(mut self, body: &[Stmt]) -> Result<Function, String> {
@@ -578,15 +603,22 @@ impl<'a> Compiler<'a> {
                     self.chunk.emit(Op::DelegateCall(name, total_params));
                     Ok(())
                 } else if self.tool_names.iter().any(|t| t == &name) {
-                    Err(format!("not in bytecode subset: call to tool '{name}'"))
+                    self.emit_delegated_expr(expr);
+                    Ok(())
                 } else {
                     Err(format!(
                         "not in bytecode subset: unknown function or effect '{name}'"
                     ))
                 }
             }
-            ExprKind::Prompt { .. } => Err("not in bytecode subset: prompt literal".to_string()),
-            ExprKind::LlmCall { .. } => Err("not in bytecode subset: llm call".to_string()),
+            ExprKind::Prompt { .. } => {
+                self.emit_delegated_expr(expr);
+                Ok(())
+            }
+            ExprKind::LlmCall { .. } => {
+                self.emit_delegated_expr(expr);
+                Ok(())
+            }
             ExprKind::ComputerCall { .. } => {
                 Err("not in bytecode subset: computer call".to_string())
             }
@@ -712,7 +744,8 @@ fn check_expr_effects(expr: &Expr, tool_names: &[String]) -> Result<(), String> 
             };
             if let Some(name) = callee_name {
                 if tool_names.iter().any(|t| t == name) {
-                    return Err(format!("not in bytecode subset: call to tool '{name}'"));
+                    // Tool call expressions are delegated to the interpreter via DelegateExpr.
+                    return Ok(());
                 }
             }
             check_expr_effects(func, tool_names)?;
@@ -724,8 +757,14 @@ fn check_expr_effects(expr: &Expr, tool_names: &[String]) -> Result<(), String> 
             }
             Ok(())
         }
-        ExprKind::Prompt { .. } => Err("not in bytecode subset: prompt literal".to_string()),
-        ExprKind::LlmCall { .. } => Err("not in bytecode subset: llm call".to_string()),
+        ExprKind::Prompt { .. } => {
+            // Prompt literal expressions are delegated to the interpreter via DelegateExpr.
+            Ok(())
+        }
+        ExprKind::LlmCall { .. } => {
+            // Inline LLM call expressions are delegated to the interpreter via DelegateExpr.
+            Ok(())
+        }
         ExprKind::ComputerCall { .. } => Err("not in bytecode subset: computer call".to_string()),
         ExprKind::ParMap { .. } => Err("not in bytecode subset: par map".to_string()),
         ExprKind::ParAll(_) => Err("not in bytecode subset: par all".to_string()),
@@ -846,6 +885,7 @@ fn compile_internal(items: &[ast::Item], expected_entry: Option<&str>) -> Result
     // Second pass: compile pure function bodies
     let mut functions = Vec::with_capacity(pure_fn_metas.len());
     let mut entry_indices = HashMap::new();
+    let mut delegated_exprs = Vec::new();
 
     for (idx, meta) in pure_fn_metas.iter().enumerate() {
         let compiler = Compiler::new(
@@ -854,6 +894,7 @@ fn compile_internal(items: &[ast::Item], expected_entry: Option<&str>) -> Result
             &pure_fn_metas,
             &effectful_fn_metas,
             &tool_names,
+            &mut delegated_exprs,
         );
         let mut compiled_fn = compiler.compile_body(&meta.body)?;
         compiled_fn.name = meta.name.clone();
@@ -867,5 +908,6 @@ fn compile_internal(items: &[ast::Item], expected_entry: Option<&str>) -> Result
     Ok(Program {
         functions,
         entry_indices,
+        delegated_exprs,
     })
 }
