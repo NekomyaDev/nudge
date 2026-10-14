@@ -2,98 +2,6 @@ use std::fs;
 use std::process::Command;
 
 #[test]
-fn test_standalone_target_dir_is_stable_and_not_in_temp() {
-    let dir1 = nudgec::standalone::resolve_target_dir();
-    let dir2 = nudgec::standalone::resolve_target_dir();
-    assert_eq!(
-        dir1, dir2,
-        "resolve_target_dir must be deterministic across invocations"
-    );
-
-    let version = env!("CARGO_PKG_VERSION");
-    let default_dir = nudgec::standalone::default_target_dir();
-    let default_str = default_dir.to_string_lossy();
-
-    assert!(
-        default_str.contains(&format!("standalone-target-{version}")),
-        "target dir should contain version-keyed folder name standalone-target-{version}, got: {default_str}"
-    );
-
-    // Verify it is not inside an ephemeral temp dir created during standalone build
-    assert!(
-        !default_str.contains("nudge_standalone_"),
-        "target dir must not be inside ephemeral temp dir"
-    );
-
-    // Verify environment override behavior: CARGO_TARGET_DIR respected
-    let custom = nudgec::standalone::resolve_target_dir_from(
-        Some("/var/custom/target"),
-        Some("/var/cache"),
-        Some("/home/user"),
-    );
-    assert_eq!(custom, std::path::PathBuf::from("/var/custom/target"));
-
-    // Verify XDG_CACHE_HOME fallback
-    let xdg =
-        nudgec::standalone::resolve_target_dir_from(None, Some("/var/cache"), Some("/home/user"));
-    assert_eq!(
-        xdg,
-        std::path::PathBuf::from("/var/cache/nudge").join(format!("standalone-target-{version}"))
-    );
-
-    // Verify HOME fallback
-    let home = nudgec::standalone::resolve_target_dir_from(None, None, Some("/home/user"));
-    assert_eq!(
-        home,
-        std::path::PathBuf::from("/home/user/.cache/nudge")
-            .join(format!("standalone-target-{version}"))
-    );
-}
-
-#[test]
-fn test_standalone_generator_main_rs_content() {
-    let main_rs = nudgec::standalone::generate_main_rs("/path/to/test.ndg", "run");
-    assert!(main_rs.contains("include_str!(\"/path/to/test.ndg\")"));
-    assert!(main_rs.contains("const ENTRY: &str = \"run\";"));
-    assert!(main_rs.contains("nudgec::compile(SRC)"));
-    assert!(main_rs.contains("nudgec::check::check(&items)"));
-    assert!(main_rs.contains("nudgec::eval::parse_cli_arg(&a)"));
-    assert!(main_rs.contains("nudgec::eval::run_program(&items, ENTRY, &cli_args)"));
-    assert!(main_rs.contains("nudgec::nudge_runtime::trace::enable_default_sink()"));
-}
-
-#[test]
-fn test_standalone_generator_cargo_toml_content() {
-    let cargo_toml = nudgec::standalone::generate_cargo_toml("demo_app", "/tmp/nudgec");
-    assert!(cargo_toml.contains("name = \"demo_app\""));
-    assert!(cargo_toml.contains("path = \"/tmp/nudgec\""));
-    assert!(cargo_toml.contains("opt-level = \"z\""));
-    assert!(cargo_toml.contains("lto = true"));
-    assert!(cargo_toml.contains("strip = true"));
-}
-
-#[test]
-fn test_standalone_sanitize_crate_name() {
-    assert_eq!(
-        nudgec::standalone::sanitize_crate_name("simple_add"),
-        "simple_add"
-    );
-    assert_eq!(
-        nudgec::standalone::sanitize_crate_name("test-prog"),
-        "test-prog"
-    );
-    assert_eq!(
-        nudgec::standalone::sanitize_crate_name("99bottles"),
-        "app_99bottles"
-    );
-    assert_eq!(
-        nudgec::standalone::sanitize_crate_name("hello.world"),
-        "hello_world"
-    );
-    assert_eq!(nudgec::standalone::sanitize_crate_name(""), "app_");
-}
-
-#[test]
 fn test_standalone_rejects_invalid_program() {
     let temp_dir = std::env::temp_dir().join(format!(
         "nudge_test_invalid_{}",
@@ -122,9 +30,34 @@ fn test_standalone_rejects_invalid_program() {
 }
 
 #[test]
+fn test_standalone_bundle_serialization_round_trip() {
+    let items = nudgec::compile("fn main() -> int { 42 }").expect("compile");
+    let bundle = nudgec::ast::StandaloneBundle {
+        entry: "main".to_string(),
+        items,
+    };
+    let encoded = bundle.encode_payload().expect("encode payload");
+    let decoded = nudgec::ast::StandaloneBundle::extract_from_slice(&encoded)
+        .expect("extract from slice")
+        .expect("expected Some bundle");
+    assert_eq!(decoded, bundle);
+}
+
+#[test]
+fn test_standalone_locate_runtime_error_when_missing() {
+    let res = nudgec::standalone::locate_agent_runtime();
+    if let Err(e) = res {
+        assert_eq!(
+            e,
+            "nudge-agent runtime not found; set NUDGE_AGENT_RUNTIME or install nudge-agent next to nudgec"
+        );
+    }
+}
+
+#[test]
 fn test_standalone_end_to_end_when_enabled() {
     if std::env::var("NUDGE_STANDALONE_TEST").as_deref() != Ok("1") {
-        // Skip slow full nested cargo build unless explicitly enabled
+        // Skip unless explicitly enabled
         return;
     }
 

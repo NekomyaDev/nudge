@@ -262,6 +262,149 @@ pub enum Item {
     },
 }
 
+/// Magic footer constant identifying a standalone Nudge agent binary.
+pub const STANDALONE_MAGIC: &[u8; 8] = b"NDGAGNT1";
+
+/// Length of the footer: 8 bytes payload length (u64 LE) + 8 bytes STANDALONE_MAGIC.
+pub const STANDALONE_FOOTER_LEN: u64 = 16;
+
+/// Standalone agent payload bundle containing the entry point and compiled AST items.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct StandaloneBundle {
+    pub entry: String,
+    pub items: Vec<Item>,
+}
+
+impl StandaloneBundle {
+    /// Serializes the bundle to JSON bytes and encodes the append payload:
+    /// `[bundle bytes][bundle_len: u64 LE][STANDALONE_MAGIC]`
+    pub fn encode_payload(&self) -> Result<Vec<u8>, serde_json::Error> {
+        let json_bytes = serde_json::to_vec(self)?;
+        let len = json_bytes.len() as u64;
+        let mut payload = Vec::with_capacity(json_bytes.len() + STANDALONE_FOOTER_LEN as usize);
+        payload.extend_from_slice(&json_bytes);
+        payload.extend_from_slice(&len.to_le_bytes());
+        payload.extend_from_slice(STANDALONE_MAGIC);
+        Ok(payload)
+    }
+
+    /// Appends the encoded bundle payload to a file.
+    pub fn append_to_file(&self, path: &std::path::Path) -> Result<(), String> {
+        use std::io::Write;
+        let payload = self
+            .encode_payload()
+            .map_err(|e| format!("failed to serialize standalone bundle: {e}"))?;
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(path)
+            .map_err(|e| format!("cannot open {} for appending payload: {e}", path.display()))?;
+        file.write_all(&payload)
+            .map_err(|e| format!("failed to append payload to {}: {e}", path.display()))?;
+        Ok(())
+    }
+
+    /// Extracts an embedded `StandaloneBundle` from the end of a file.
+    ///
+    /// Returns:
+    /// - `Ok(Some(bundle))` if a valid embedded bundle with magic tag is present.
+    /// - `Ok(None)` if the file is smaller than 16 bytes or does not end with `NDGAGNT1`.
+    /// - `Err(msg)` if the footer indicates a bundle is present but reading or deserialization fails.
+    pub fn extract_from_file(path: &std::path::Path) -> Result<Option<Self>, String> {
+        use std::fs::File;
+        use std::io::{Read, Seek, SeekFrom};
+
+        let mut file =
+            File::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+        let len = file
+            .metadata()
+            .map_err(|e| format!("cannot read metadata for {}: {e}", path.display()))?
+            .len();
+
+        if len < STANDALONE_FOOTER_LEN {
+            return Ok(None);
+        }
+
+        file.seek(SeekFrom::Start(len - STANDALONE_FOOTER_LEN))
+            .map_err(|e| format!("cannot seek footer: {e}"))?;
+
+        let mut footer = [0u8; 16];
+        file.read_exact(&mut footer)
+            .map_err(|e| format!("cannot read footer: {e}"))?;
+
+        let magic = &footer[8..16];
+        if magic != STANDALONE_MAGIC {
+            return Ok(None);
+        }
+
+        let bundle_len = u64::from_le_bytes(
+            footer[0..8]
+                .try_into()
+                .map_err(|_| "failed to parse bundle length bytes".to_string())?,
+        );
+
+        if bundle_len > len - STANDALONE_FOOTER_LEN {
+            return Err(format!(
+                "invalid bundle length: {bundle_len} exceeds available payload size {}",
+                len - STANDALONE_FOOTER_LEN
+            ));
+        }
+
+        let bundle_len_usize = usize::try_from(bundle_len)
+            .map_err(|_| format!("bundle length {bundle_len} exceeds usize capacity"))?;
+
+        file.seek(SeekFrom::Start(len - STANDALONE_FOOTER_LEN - bundle_len))
+            .map_err(|e| format!("cannot seek to bundle payload: {e}"))?;
+
+        let mut payload = vec![0u8; bundle_len_usize];
+        file.read_exact(&mut payload)
+            .map_err(|e| format!("cannot read bundle payload: {e}"))?;
+
+        let bundle: StandaloneBundle = serde_json::from_slice(&payload)
+            .map_err(|e| format!("failed to deserialize embedded bundle: {e}"))?;
+
+        Ok(Some(bundle))
+    }
+
+    /// Extracts an embedded `StandaloneBundle` from a byte slice.
+    pub fn extract_from_slice(data: &[u8]) -> Result<Option<Self>, String> {
+        let len = data.len() as u64;
+        if len < STANDALONE_FOOTER_LEN {
+            return Ok(None);
+        }
+
+        let footer_start = (len - STANDALONE_FOOTER_LEN) as usize;
+        let footer = &data[footer_start..];
+        let magic = &footer[8..16];
+        if magic != STANDALONE_MAGIC {
+            return Ok(None);
+        }
+
+        let bundle_len = u64::from_le_bytes(
+            footer[0..8]
+                .try_into()
+                .map_err(|_| "failed to parse bundle length bytes".to_string())?,
+        );
+
+        if bundle_len > len - STANDALONE_FOOTER_LEN {
+            return Err(format!(
+                "invalid bundle length: {bundle_len} exceeds available payload size {}",
+                len - STANDALONE_FOOTER_LEN
+            ));
+        }
+
+        let bundle_len_usize = usize::try_from(bundle_len)
+            .map_err(|_| format!("bundle length {bundle_len} exceeds usize capacity"))?;
+
+        let payload_start = (len - STANDALONE_FOOTER_LEN - bundle_len) as usize;
+        let payload = &data[payload_start..payload_start + bundle_len_usize];
+
+        let bundle: StandaloneBundle = serde_json::from_slice(payload)
+            .map_err(|e| format!("failed to deserialize embedded bundle: {e}"))?;
+
+        Ok(Some(bundle))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,5 +592,24 @@ mod tests {
             serde_json::from_str(&serialized).expect("Deserialization failed");
 
         assert_eq!(items, deserialized);
+    }
+
+    #[test]
+    fn test_standalone_bundle_payload_round_trip() {
+        let bundle = StandaloneBundle {
+            entry: "main".to_string(),
+            items: vec![Item::TypeAlias {
+                name: "Id".to_string(),
+                ty: TypeExpr::Named("int".to_string()),
+            }],
+        };
+        let payload = bundle.encode_payload().expect("encode payload failed");
+        assert!(payload.ends_with(STANDALONE_MAGIC));
+        assert!(payload.len() > STANDALONE_FOOTER_LEN as usize);
+
+        let decoded = StandaloneBundle::extract_from_slice(&payload)
+            .expect("extraction failed")
+            .expect("expected Some bundle");
+        assert_eq!(decoded, bundle);
     }
 }

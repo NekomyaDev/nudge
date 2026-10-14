@@ -62,6 +62,7 @@ pub mod traceview;
 #[cfg(feature = "compiler")]
 pub mod watch;
 
+pub use ast::{StandaloneBundle, STANDALONE_FOOTER_LEN, STANDALONE_MAGIC};
 #[cfg(feature = "compiler")]
 pub use compile::compile;
 pub use nudge_runtime;

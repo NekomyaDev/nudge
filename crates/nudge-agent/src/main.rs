@@ -1,86 +1,27 @@
 //! Minimal runtime binary for standalone Nudge agent executables.
 //!
 //! An executable produced by `nudgec build --standalone` consists of this
-//! binary followed by an appended serialized `Bundle`, a 64-bit little-endian
+//! binary followed by an appended serialized `StandaloneBundle`, a 64-bit little-endian
 //! length, and the 8-byte magic tag `b"NDGAGNT1"`.
 
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::process;
 
-use serde::{Deserialize, Serialize};
+pub use nudgec::ast::{
+    StandaloneBundle, STANDALONE_FOOTER_LEN as FOOTER_LEN, STANDALONE_MAGIC as MAGIC,
+};
 
-/// Magic footer constant identifying a standalone Nudge agent binary.
-pub const MAGIC: &[u8; 8] = b"NDGAGNT1";
+/// Standalone agent payload bundle alias for backwards compatibility.
+pub type Bundle = StandaloneBundle;
 
-/// Length of the footer: 8 bytes payload length (u64 LE) + 8 bytes MAGIC.
-pub const FOOTER_LEN: u64 = 16;
-
-/// Standalone agent payload bundle containing the entry point and compiled AST items.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Bundle {
-    pub entry: String,
-    pub items: Vec<nudgec::ast::Item>,
-}
-
-/// Extracts an embedded `Bundle` from the end of an executable file.
+/// Extracts an embedded `StandaloneBundle` from the end of an executable file.
 ///
 /// Returns:
 /// - `Ok(Some(bundle))` if a valid embedded bundle with magic tag is present.
 /// - `Ok(None)` if the file is smaller than 16 bytes or does not end with `NDGAGNT1`.
 /// - `Err(msg)` if the footer indicates a bundle is present but reading or deserialization fails.
-pub fn extract_bundle(exe_path: &Path) -> Result<Option<Bundle>, String> {
-    let mut file =
-        File::open(exe_path).map_err(|e| format!("cannot open {}: {e}", exe_path.display()))?;
-    let len = file
-        .metadata()
-        .map_err(|e| format!("cannot read metadata for {}: {e}", exe_path.display()))?
-        .len();
-
-    if len < FOOTER_LEN {
-        return Ok(None);
-    }
-
-    file.seek(SeekFrom::Start(len - FOOTER_LEN))
-        .map_err(|e| format!("cannot seek footer: {e}"))?;
-
-    let mut footer = [0u8; 16];
-    file.read_exact(&mut footer)
-        .map_err(|e| format!("cannot read footer: {e}"))?;
-
-    let magic = &footer[8..16];
-    if magic != MAGIC {
-        return Ok(None);
-    }
-
-    let bundle_len = u64::from_le_bytes(
-        footer[0..8]
-            .try_into()
-            .map_err(|_| "failed to parse bundle length bytes".to_string())?,
-    );
-
-    if bundle_len > len - FOOTER_LEN {
-        return Err(format!(
-            "invalid bundle length: {bundle_len} exceeds available payload size {}",
-            len - FOOTER_LEN
-        ));
-    }
-
-    let bundle_len_usize = usize::try_from(bundle_len)
-        .map_err(|_| format!("bundle length {bundle_len} exceeds usize capacity"))?;
-
-    file.seek(SeekFrom::Start(len - FOOTER_LEN - bundle_len))
-        .map_err(|e| format!("cannot seek to bundle payload: {e}"))?;
-
-    let mut payload = vec![0u8; bundle_len_usize];
-    file.read_exact(&mut payload)
-        .map_err(|e| format!("cannot read bundle payload: {e}"))?;
-
-    let bundle: Bundle = serde_json::from_slice(&payload)
-        .map_err(|e| format!("failed to deserialize embedded bundle: {e}"))?;
-
-    Ok(Some(bundle))
+pub fn extract_bundle(exe_path: &Path) -> Result<Option<StandaloneBundle>, String> {
+    StandaloneBundle::extract_from_file(exe_path)
 }
 
 fn main() {
@@ -258,5 +199,31 @@ mod tests {
         // Case 3: non-existent file returns error, no panic
         let non_existent = std::path::Path::new("/tmp/this_file_surely_does_not_exist_xyz123");
         assert!(extract_bundle(non_existent).is_err());
+    }
+
+    #[test]
+    fn test_shared_helper_append_and_extract_recovers_bundle() {
+        let prefix = b"\x7fELFprebuiltbinarycontents";
+        let original_bundle = StandaloneBundle {
+            entry: "shared_entry".to_string(),
+            items: vec![nudgec::ast::Item::Fn {
+                name: "shared_entry".to_string(),
+                params: vec![],
+                ret: nudgec::ast::TypeExpr::Named("int".to_string()),
+                effects: vec![],
+                body: vec![],
+            }],
+        };
+
+        let temp_file = TempTestFile::new("shared_helper", prefix);
+        original_bundle
+            .append_to_file(&temp_file.path)
+            .expect("append_to_file should succeed");
+
+        let extracted = extract_bundle(&temp_file.path)
+            .expect("extraction should succeed")
+            .expect("embedded bundle should be found");
+
+        assert_eq!(extracted, original_bundle);
     }
 }
