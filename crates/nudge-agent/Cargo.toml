@@ -6,9 +6,16 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "nudge-agent"
 path = "src/main.rs"
+
+[[bin]]
+name = "nudge-replay-wasi"
+path = "src/bin/replay_wasi.rs"
 
 [dependencies]
 nudge-runtime = { path = "../nudge-runtime" }
