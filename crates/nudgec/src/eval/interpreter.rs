@@ -698,6 +698,69 @@ impl Interpreter {
         result
     }
 
+    /// Invokes a named function directly with evaluated arguments, maintaining
+    /// active agent context and emitting a `fn.return` NTF record.
+    pub fn invoke_fn(&mut self, name: &str, args: &[NudgeVal]) -> Result<NudgeVal, String> {
+        if let Some((fn_item, agent_name)) = self.fns.get(name).cloned() {
+            let (fn_name, params, body) = match &fn_item {
+                Item::Fn {
+                    name, params, body, ..
+                } => (name.as_str(), params, body),
+                _ => return Err("called item is not a function".into()),
+            };
+
+            if args.len() != params.len() {
+                let expected = params.len();
+                let s = if expected == 1 {
+                    "argument"
+                } else {
+                    "arguments"
+                };
+                let param_str = if params.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        " ({})",
+                        params
+                            .iter()
+                            .map(|p| format!("{}: {}", p.name, p.ty))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+                return Err(format!(
+                    "entry '{name}' expects {expected} {s}{param_str}, got {}",
+                    args.len()
+                ));
+            }
+
+            let child_env = Rc::new(RefCell::new(Env::new()));
+            for (i, p) in params.iter().enumerate() {
+                child_env
+                    .borrow_mut()
+                    .define(p.name.clone(), args[i].clone());
+            }
+
+            let prev_agent = self.active_agent.clone();
+            if agent_name.is_some() {
+                self.active_agent = agent_name;
+            }
+
+            let result = self.eval_body(body, &child_env);
+            self.active_agent = prev_agent;
+            if let Ok(val) = &result {
+                emit_fn_return(fn_name, val)?;
+            }
+            result
+        } else if name == "main" {
+            Err("no entry point: program has no `main` function. \
+                 Define `fn main()` or pass --fn <function> to choose an entry."
+                .to_string())
+        } else {
+            Err(format!("function '{name}' not found in program"))
+        }
+    }
+
     fn eval_fake_tool(
         &mut self,
         tool_item: &Item,
@@ -1669,76 +1732,24 @@ fn fake_distribution(mut seed: u64, k: usize) -> Vec<f64> {
 /// Public API: Execute a Nudge program from entry point with arguments.
 pub fn run_program(items: &[Item], entry: &str, args: &[NudgeVal]) -> Result<NudgeVal, String> {
     if std::env::var("NUDGE_VM").is_ok() {
-        if let Ok(program) = bytecode::compile(items) {
-            return vm::run(&program, entry, args);
+        if let Ok(program) = bytecode::compile_with_entry(items, entry) {
+            let mut interp = Interpreter::new();
+            interp.load_items(items)?;
+            let mut delegate =
+                |callee: &str, callee_args: Vec<NudgeVal>| -> Result<NudgeVal, String> {
+                    interp.invoke_fn(callee, &callee_args)
+                };
+            let res = vm::run_with_delegate(&program, entry, args, &mut delegate);
+            if let Ok(val) = &res {
+                emit_fn_return(entry, val)?;
+            }
+            return res;
         }
     }
 
     let mut interp = Interpreter::new();
     interp.load_items(items)?;
-
-    // Check if the entry point exists
-    if let Some((fn_item, agent_name)) = interp.fns.get(entry).cloned() {
-        let (params, body) = match &fn_item {
-            Item::Fn { params, body, .. } => (params, body),
-            _ => return Err("called item is not a function".into()),
-        };
-
-        if args.len() != params.len() {
-            let expected = params.len();
-            let s = if expected == 1 {
-                "argument"
-            } else {
-                "arguments"
-            };
-            let param_str = if params.is_empty() {
-                String::new()
-            } else {
-                format!(
-                    " ({})",
-                    params
-                        .iter()
-                        .map(|p| format!("{}: {}", p.name, p.ty))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            };
-            return Err(format!(
-                "entry '{entry}' expects {expected} {s}{param_str}, got {}",
-                args.len()
-            ));
-        }
-
-        let child_env = Rc::new(RefCell::new(Env::new()));
-        for (i, p) in params.iter().enumerate() {
-            child_env
-                .borrow_mut()
-                .define(p.name.clone(), args[i].clone());
-        }
-
-        let prev_agent = interp.active_agent.clone();
-        if agent_name.is_some() {
-            interp.active_agent = agent_name;
-        }
-
-        let result = interp.eval_body(body, &child_env);
-        interp.active_agent = prev_agent;
-        if let Ok(val) = &result {
-            // the entry fn is a traced function boundary too (the Python
-            // runtime wraps `main` with @effectful like every other fn)
-            emit_fn_return(entry, val)?;
-        }
-        result
-    } else if entry == "main" {
-        // No `main` and no explicit --fn: this is not a silently successful
-        // no-op. Report a clear, actionable entry-point diagnostic so a
-        // library-style program (helper fns only) never looks like it ran.
-        Err("no entry point: program has no `main` function. \
-             Define `fn main()` or pass --fn <function> to choose an entry."
-            .to_string())
-    } else {
-        Err(format!("function '{entry}' not found in program"))
-    }
+    interp.invoke_fn(entry, args)
 }
 
 /// Convenience alias for `run_program`.

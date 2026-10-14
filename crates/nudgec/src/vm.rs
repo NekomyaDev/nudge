@@ -9,6 +9,9 @@ use std::collections::HashMap;
 use crate::bytecode::{Op, Program};
 use crate::eval::NudgeVal;
 
+/// Hook signature for delegating effectful function calls to the interpreter.
+pub type DelegateHook<'a> = dyn FnMut(&str, Vec<NudgeVal>) -> Result<NudgeVal, String> + 'a;
+
 /// Maximum call frame depth before halting with a stack overflow error.
 const MAX_CALL_FRAMES: usize = 10_000;
 
@@ -37,7 +40,12 @@ impl<'a> VM<'a> {
     }
 
     /// Run the entry function with the provided arguments.
-    pub fn execute(&mut self, entry: &str, args: &[NudgeVal]) -> Result<NudgeVal, String> {
+    pub fn execute(
+        &mut self,
+        entry: &str,
+        args: &[NudgeVal],
+        delegate: &mut DelegateHook<'_>,
+    ) -> Result<NudgeVal, String> {
         let entry_idx = match self.program.entry_indices.get(entry) {
             Some(&idx) => idx,
             None => {
@@ -93,10 +101,10 @@ impl<'a> VM<'a> {
             stack_base: 0,
         });
 
-        self.run_loop()
+        self.run_loop(delegate)
     }
 
-    fn run_loop(&mut self) -> Result<NudgeVal, String> {
+    fn run_loop(&mut self, delegate: &mut DelegateHook<'_>) -> Result<NudgeVal, String> {
         loop {
             if self.frames.is_empty() {
                 return Ok(self.stack.pop().unwrap_or(NudgeVal::Unit));
@@ -538,6 +546,17 @@ impl<'a> VM<'a> {
                         stack_base: new_base,
                     });
                 }
+                Op::DelegateCall(name, argc) => {
+                    let argc = *argc;
+                    let start = self
+                        .stack
+                        .len()
+                        .checked_sub(argc)
+                        .ok_or_else(|| "stack underflow in DelegateCall".to_string())?;
+                    let args: Vec<NudgeVal> = self.stack.drain(start..).collect();
+                    let res = delegate(name, args)?;
+                    self.stack.push(res);
+                }
                 Op::Return => {
                     let ret_val = self.stack.pop().unwrap_or(NudgeVal::Unit);
                     let current_base = self.frames[frame_idx].stack_base;
@@ -555,8 +574,25 @@ impl<'a> VM<'a> {
 
 /// Executes a compiled `Program` starting at `entry` with `args`.
 pub fn run(program: &Program, entry: &str, args: &[NudgeVal]) -> Result<NudgeVal, String> {
+    let mut noop = |name: &str, _args: Vec<NudgeVal>| -> Result<NudgeVal, String> {
+        Err(format!(
+            "no delegate configured to execute effectful function '{name}'"
+        ))
+    };
     let mut vm = VM::new(program);
-    vm.execute(entry, args)
+    vm.execute(entry, args, &mut noop)
+}
+
+/// Executes a compiled `Program` starting at `entry` with `args`, delegating effectful
+/// function calls to `delegate`.
+pub fn run_with_delegate(
+    program: &Program,
+    entry: &str,
+    args: &[NudgeVal],
+    delegate: &mut DelegateHook<'_>,
+) -> Result<NudgeVal, String> {
+    let mut vm = VM::new(program);
+    vm.execute(entry, args, delegate)
 }
 
 #[cfg(all(test, feature = "compiler"))]
@@ -1511,6 +1547,186 @@ mod tests {
         assert!(
             err.contains("not in bytecode subset: function 'effectful_fn' declares effects"),
             "Expected 'not in bytecode subset: function declares effects', got: {err}"
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // Mixed-Program Function-Level Effect Delegation Parity
+    // ------------------------------------------------------------------------
+
+    static MIXED_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct EnvVarGuard {
+        var: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(var: &'static str, val: &str) -> Self {
+            let prev = std::env::var(var).ok();
+            unsafe {
+                std::env::set_var(var, val);
+            }
+            Self { var, prev }
+        }
+        fn remove(var: &'static str) -> Self {
+            let prev = std::env::var(var).ok();
+            unsafe {
+                std::env::remove_var(var);
+            }
+            Self { var, prev }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.prev {
+                Some(p) => unsafe {
+                    std::env::set_var(self.var, p);
+                },
+                None => unsafe {
+                    std::env::remove_var(self.var);
+                },
+            }
+        }
+    }
+
+    fn assert_mixed_parity(src: &str, entry: &str, args: &[NudgeVal]) {
+        let _lock = MIXED_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard_provider = EnvVarGuard::set("NUDGE_PROVIDER", "fake");
+
+        let items = parse_src(src);
+
+        // (a) Interpreter run: NUDGE_VM unset
+        let interp_res = {
+            let _guard_vm = EnvVarGuard::remove("NUDGE_VM");
+            run_program(&items, entry, args)
+        };
+
+        // (b) VM run: NUDGE_VM set to 1
+        let vm_res = {
+            let _guard_vm = EnvVarGuard::set("NUDGE_VM", "1");
+            run_program(&items, entry, args)
+        };
+
+        assert_eq!(
+            interp_res, vm_res,
+            "Mixed parity mismatch between interpreter and VM for source:\n{src}"
+        );
+    }
+
+    #[test]
+    fn test_parity_mixed_llm_and_arithmetic() {
+        let src = r#"
+            fn ask_summary(topic: string) -> string uses LLM {
+                llm"""Summarize {topic}""" with { model: "fake:default" }
+            }
+
+            fn main() -> int {
+                let s = ask_summary("rust")
+                len(s) * 3 + 7
+            }
+        "#;
+        assert_mixed_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_mixed_tool_fn() {
+        let src = r#"
+            tool web_search(q: string) -> string {
+                server: "kb"
+            }
+
+            fn search_topic(q: string) -> string uses Tool {
+                web_search(q)
+            }
+
+            fn main() -> string {
+                let res = search_topic("nudge-lang")
+                res + " verified"
+            }
+        "#;
+        assert_mixed_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_mixed_recursion_in_pure_part() {
+        let src = r#"
+            fn ask_base(msg: string) -> string uses LLM {
+                llm"""base: {msg}""" with { model: "fake:default" }
+            }
+
+            fn countdown_and_ask(n: int) -> string {
+                route {
+                    a: ask_base("ready") when n <= 0,
+                    b: countdown_and_ask(n - 1) otherwise
+                }
+            }
+
+            fn main() -> string {
+                countdown_and_ask(4)
+            }
+        "#;
+        assert_mixed_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_mixed_pure_program_unchanged() {
+        let src = r#"
+            fn fib(n: int) -> int {
+                route {
+                    a: n when n <= 1,
+                    b: fib(n - 1) + fib(n - 2) otherwise
+                }
+            }
+
+            fn main() -> int {
+                fib(10)
+            }
+        "#;
+        assert_mixed_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_mixed_kwargs_and_multiple_calls() {
+        let src = r#"
+            fn ask_step1(input: string, count: int) -> string uses LLM {
+                llm"""step1: {input} count: {count}""" with { model: "fake:default" }
+            }
+
+            fn ask_step2(input: string) -> string uses LLM {
+                llm"""step2: {input}""" with { model: "fake:default" }
+            }
+
+            fn format_two(a: string, b: string) -> string {
+                a + " => " + b
+            }
+
+            fn main() -> string {
+                let s1 = ask_step1(count=3, input="start")
+                let s2 = ask_step2(s1)
+                format_two(s1, s2)
+            }
+        "#;
+        assert_mixed_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_mixed_entry_with_args() {
+        let src = r#"
+            fn ask_agent(prompt: string) -> string uses LLM {
+                llm"""{prompt}""" with { model: "fake:default" }
+            }
+
+            fn orchestrate(topic: string, repeat: int) -> int {
+                let ans = ask_agent(topic)
+                len(ans) + repeat
+            }
+        "#;
+        assert_mixed_parity(
+            src,
+            "orchestrate",
+            &[NudgeVal::Str("delegation".into()), NudgeVal::Int(100)],
         );
     }
 }

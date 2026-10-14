@@ -75,6 +75,8 @@ pub enum Op {
     Field(String),
     /// Call user function: `(fn_index, argc)`.
     Call(u32, usize),
+    /// Delegate call to effectful function in the interpreter: `(fn_name, argc)`.
+    DelegateCall(String, usize),
     /// Call pure built-in function: `(name, argc)`.
     CallBuiltin(String, usize),
     /// Assertion check: pop val. If not truthy, fail with exact error message.
@@ -141,6 +143,7 @@ impl Program {
 }
 
 /// Metadata recorded for each declared function during the first pass.
+#[derive(Debug, Clone)]
 struct FnMeta {
     name: String,
     params: Vec<String>,
@@ -155,6 +158,7 @@ struct Compiler<'a> {
     next_local: u32,
     fn_map: &'a HashMap<String, usize>,
     fn_metas: &'a [FnMeta],
+    effectful_fn_metas: &'a HashMap<String, FnMeta>,
     tool_names: &'a [String],
 }
 
@@ -163,6 +167,7 @@ impl<'a> Compiler<'a> {
         fn_meta: &FnMeta,
         fn_map: &'a HashMap<String, usize>,
         fn_metas: &'a [FnMeta],
+        effectful_fn_metas: &'a HashMap<String, FnMeta>,
         tool_names: &'a [String],
     ) -> Self {
         let mut locals = HashMap::new();
@@ -177,6 +182,7 @@ impl<'a> Compiler<'a> {
             next_local,
             fn_map,
             fn_metas,
+            effectful_fn_metas,
             tool_names,
         }
     }
@@ -526,6 +532,51 @@ impl<'a> Compiler<'a> {
 
                     self.chunk.emit(Op::Call(fn_idx as u32, total_params));
                     Ok(())
+                } else if let Some(target_meta) = self.effectful_fn_metas.get(&name) {
+                    let total_params = target_meta.params.len();
+
+                    if args.len() > total_params {
+                        return Err(format!(
+                            "function takes at most {} arguments, got {}",
+                            total_params,
+                            args.len()
+                        ));
+                    }
+
+                    // Map positional args and kwargs to parameter slots
+                    let mut bound_exprs: Vec<Option<&Expr>> = vec![None; total_params];
+                    for (i, a) in args.iter().enumerate() {
+                        bound_exprs[i] = Some(a);
+                    }
+                    for (k, v) in kwargs {
+                        let pos =
+                            target_meta
+                                .params
+                                .iter()
+                                .position(|p| p == k)
+                                .ok_or_else(|| {
+                                    format!("unknown parameter '{k}' in call to '{name}'")
+                                })?;
+                        if bound_exprs[pos].is_some() {
+                            return Err(format!(
+                                "duplicate argument for parameter '{k}' in call to '{name}'"
+                            ));
+                        }
+                        bound_exprs[pos] = Some(v);
+                    }
+
+                    for (i, p) in target_meta.params.iter().enumerate() {
+                        if bound_exprs[i].is_none() {
+                            return Err(format!("missing argument for parameter '{p}'"));
+                        }
+                    }
+
+                    for bound in bound_exprs {
+                        self.compile_expr(bound.expect("all parameters checked"))?;
+                    }
+
+                    self.chunk.emit(Op::DelegateCall(name, total_params));
+                    Ok(())
                 } else if self.tool_names.iter().any(|t| t == &name) {
                     Err(format!("not in bytecode subset: call to tool '{name}'"))
                 } else {
@@ -580,41 +631,139 @@ impl<'a> Compiler<'a> {
     }
 }
 
+fn check_fn_effects(
+    name: &str,
+    effects: &[String],
+    body: &[Stmt],
+    tool_names: &[String],
+) -> Result<(), String> {
+    if !effects.is_empty() {
+        return Err(format!(
+            "not in bytecode subset: function '{name}' declares effects: {effects:?}"
+        ));
+    }
+    for stmt in body {
+        check_stmt_effects(stmt, tool_names)?;
+    }
+    Ok(())
+}
+
+fn check_stmt_effects(stmt: &Stmt, tool_names: &[String]) -> Result<(), String> {
+    match &stmt.kind {
+        StmtKind::Let { stream, value, .. } => {
+            if *stream {
+                return Err("not in bytecode subset: stream let".to_string());
+            }
+            check_expr_effects(value, tool_names)
+        }
+        StmtKind::ExprStmt(expr) | StmtKind::Assert(expr) => check_expr_effects(expr, tool_names),
+        StmtKind::StateWrite { .. } => {
+            Err("not in bytecode subset: state write (agent state)".to_string())
+        }
+        StmtKind::ForAll { .. } => Err("not in bytecode subset: for_all property loop".to_string()),
+    }
+}
+
+fn check_expr_effects(expr: &Expr, tool_names: &[String]) -> Result<(), String> {
+    match &expr.kind {
+        ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Str(_)
+        | ExprKind::Money(_, _)
+        | ExprKind::Bool(_)
+        | ExprKind::None => Ok(()),
+        ExprKind::Ident(name) => {
+            if name == "state" {
+                return Err("not in bytecode subset: agent state read".to_string());
+            }
+            Ok(())
+        }
+        ExprKind::ListLit(items) => {
+            for item in items {
+                check_expr_effects(item, tool_names)?;
+            }
+            Ok(())
+        }
+        ExprKind::Field { obj, .. } => {
+            if let ExprKind::Ident(id) = &obj.kind {
+                if id == "state" {
+                    return Err("not in bytecode subset: agent state read".to_string());
+                }
+            }
+            check_expr_effects(obj, tool_names)
+        }
+        ExprKind::Unary { x, .. } => check_expr_effects(x, tool_names),
+        ExprKind::Binary { l, r, .. } => {
+            check_expr_effects(l, tool_names)?;
+            check_expr_effects(r, tool_names)
+        }
+        ExprKind::Call { func, args, kwargs } => {
+            let callee_name = match &func.kind {
+                ExprKind::Ident(n) => Some(n.as_str()),
+                ExprKind::Field { obj, .. } => {
+                    if let ExprKind::Ident(prefix) = &obj.kind {
+                        if prefix == "computer" {
+                            return Err("not in bytecode subset: computer call".to_string());
+                        }
+                    }
+                    None
+                }
+                _ => None,
+            };
+            if let Some(name) = callee_name {
+                if tool_names.iter().any(|t| t == name) {
+                    return Err(format!("not in bytecode subset: call to tool '{name}'"));
+                }
+            }
+            check_expr_effects(func, tool_names)?;
+            for a in args {
+                check_expr_effects(a, tool_names)?;
+            }
+            for (_, v) in kwargs {
+                check_expr_effects(v, tool_names)?;
+            }
+            Ok(())
+        }
+        ExprKind::Prompt { .. } => Err("not in bytecode subset: prompt literal".to_string()),
+        ExprKind::LlmCall { .. } => Err("not in bytecode subset: llm call".to_string()),
+        ExprKind::ComputerCall { .. } => Err("not in bytecode subset: computer call".to_string()),
+        ExprKind::ParMap { .. } => Err("not in bytecode subset: par map".to_string()),
+        ExprKind::ParAll(_) => Err("not in bytecode subset: par all".to_string()),
+        ExprKind::ParRace(_) => Err("not in bytecode subset: par race".to_string()),
+        ExprKind::Merge { .. } => Err("not in bytecode subset: merge".to_string()),
+        ExprKind::Route { arms } => {
+            for (_label, val_expr, cond_expr) in arms {
+                if let Some(cond) = cond_expr {
+                    check_expr_effects(cond, tool_names)?;
+                }
+                check_expr_effects(val_expr, tool_names)?;
+            }
+            Ok(())
+        }
+        ExprKind::DecideCall { .. } => Err("not in bytecode subset: decide call".to_string()),
+    }
+}
+
 /// Compiles pure Nudge AST items into a runnable `Program`.
 ///
-/// Returns an error if any non-pure or unsupported construct is encountered.
+/// Returns an error if the entry function or unsupported construct is encountered.
 pub fn compile(items: &[ast::Item]) -> Result<Program, String> {
-    let mut fn_metas = Vec::new();
-    let mut fn_map = HashMap::new();
+    compile_internal(items, None)
+}
+
+/// Compiles pure Nudge AST items into a runnable `Program` targeting a specific entry function.
+///
+/// If `entry` itself is effectful, returns an error so caller can fall back to interpreter.
+pub fn compile_with_entry(items: &[ast::Item], entry: &str) -> Result<Program, String> {
+    compile_internal(items, Some(entry))
+}
+
+fn compile_internal(items: &[ast::Item], expected_entry: Option<&str>) -> Result<Program, String> {
     let mut tool_names = Vec::new();
 
-    // First pass: validate items and gather function signatures and tools
+    // First pass: validate agent and collect tool names
     for item in items {
         match item {
-            Item::TypeAlias { .. } => {
-                // Type aliases are purely static; ignore
-            }
-            Item::Fn {
-                name,
-                params,
-                ret: _,
-                effects,
-                body,
-            } => {
-                if !effects.is_empty() {
-                    return Err(format!(
-                        "not in bytecode subset: function '{name}' declares effects: {effects:?}"
-                    ));
-                }
-                let idx = fn_metas.len();
-                fn_map.insert(name.clone(), idx);
-                fn_metas.push(FnMeta {
-                    name: name.clone(),
-                    params: params.iter().map(|p| p.name.clone()).collect(),
-                    param_types: params.iter().map(|p| p.ty.to_string()).collect(),
-                    body: body.clone(),
-                });
-            }
             Item::Tool { name, .. } => {
                 tool_names.push(name.clone());
             }
@@ -623,18 +772,89 @@ pub fn compile(items: &[ast::Item]) -> Result<Program, String> {
                     "not in bytecode subset: agent declaration '{name}'"
                 ));
             }
-            Item::Test { .. } => {
-                // Tests are skipped during compilation; only functions are compiled
+            _ => {}
+        }
+    }
+
+    let mut pure_fn_metas = Vec::new();
+    let mut fn_map = HashMap::new();
+    let mut effectful_fn_metas = HashMap::new();
+    let mut effectful_fn_reasons = HashMap::new();
+    let mut first_effectful_reason = None;
+
+    for item in items {
+        if let Item::Fn {
+            name,
+            params,
+            ret: _,
+            effects,
+            body,
+        } = item
+        {
+            let meta = FnMeta {
+                name: name.clone(),
+                params: params.iter().map(|p| p.name.clone()).collect(),
+                param_types: params.iter().map(|p| p.ty.to_string()).collect(),
+                body: body.clone(),
+            };
+            match check_fn_effects(name, effects, body, &tool_names) {
+                Ok(()) => {
+                    let idx = pure_fn_metas.len();
+                    fn_map.insert(name.clone(), idx);
+                    pure_fn_metas.push(meta);
+                }
+                Err(reason) => {
+                    if first_effectful_reason.is_none() {
+                        first_effectful_reason = Some(reason.clone());
+                    }
+                    effectful_fn_reasons.insert(name.clone(), reason);
+                    effectful_fn_metas.insert(name.clone(), meta);
+                }
             }
         }
     }
 
-    // Second pass: compile function bodies
-    let mut functions = Vec::with_capacity(fn_metas.len());
+    let target_entry = match expected_entry {
+        Some(e) => Some(e),
+        None => {
+            if fn_map.contains_key("main") || effectful_fn_reasons.contains_key("main") {
+                Some("main")
+            } else if pure_fn_metas.len() + effectful_fn_metas.len() == 1 {
+                if let Some(m) = pure_fn_metas.first() {
+                    Some(m.name.as_str())
+                } else {
+                    effectful_fn_metas.keys().next().map(|s| s.as_str())
+                }
+            } else {
+                None
+            }
+        }
+    };
+
+    if let Some(entry) = target_entry {
+        if let Some(err) = effectful_fn_reasons.get(entry) {
+            return Err(err.clone());
+        }
+    }
+
+    if pure_fn_metas.is_empty() {
+        if let Some(err) = first_effectful_reason {
+            return Err(err);
+        }
+    }
+
+    // Second pass: compile pure function bodies
+    let mut functions = Vec::with_capacity(pure_fn_metas.len());
     let mut entry_indices = HashMap::new();
 
-    for (idx, meta) in fn_metas.iter().enumerate() {
-        let compiler = Compiler::new(meta, &fn_map, &fn_metas, &tool_names);
+    for (idx, meta) in pure_fn_metas.iter().enumerate() {
+        let compiler = Compiler::new(
+            meta,
+            &fn_map,
+            &pure_fn_metas,
+            &effectful_fn_metas,
+            &tool_names,
+        );
         let mut compiled_fn = compiler.compile_body(&meta.body)?;
         compiled_fn.name = meta.name.clone();
         compiled_fn.params = meta.params.clone();
