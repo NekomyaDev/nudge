@@ -404,22 +404,13 @@ impl McpSession {
         Err("MCP process not available on wasm32; use NUDGE_REPLAY".to_string())
     }
 
-    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    #[cfg(target_arch = "wasm32")]
     pub fn call_tool(
         &mut self,
         tool: &str,
         arguments: serde_json::Value,
     ) -> Result<String, String> {
         call_tool(&self._server_name, tool, arguments)
-    }
-
-    #[cfg(all(target_arch = "wasm32", not(target_os = "unknown")))]
-    pub fn call_tool(
-        &mut self,
-        _tool: &str,
-        _arguments: serde_json::Value,
-    ) -> Result<String, String> {
-        Err("MCP process not available on wasm32; use NUDGE_REPLAY".to_string())
     }
 
     pub fn close(&mut self) -> Result<(), String> {
@@ -499,8 +490,8 @@ impl McpClient {
         session.call_tool(tool, arguments)
     }
 
-    /// Call a tool on a named server (routes to host bridge on wasm32-unknown-unknown).
-    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    /// Call a tool on a named server (routes to host bridge on wasm32).
+    #[cfg(target_arch = "wasm32")]
     pub fn call_tool(
         &mut self,
         server: &str,
@@ -508,17 +499,6 @@ impl McpClient {
         arguments: serde_json::Value,
     ) -> Result<String, String> {
         call_tool(server, tool, arguments)
-    }
-
-    /// Call a tool on a named server (stubbed on wasip1).
-    #[cfg(all(target_arch = "wasm32", not(target_os = "unknown")))]
-    pub fn call_tool(
-        &mut self,
-        _server: &str,
-        _tool: &str,
-        _arguments: serde_json::Value,
-    ) -> Result<String, String> {
-        Err("MCP process not available on wasm32; use NUDGE_REPLAY".to_string())
     }
 
     /// List tools on a named server.
@@ -581,9 +561,8 @@ pub fn call_tool(server: &str, tool: &str, arguments: serde_json::Value) -> Resu
 
 /// Call a tool on a named MCP server.
 ///
-/// On `wasm32-unknown-unknown` (browser / edge runtime), this routes to the
-/// host bridge via `host_tool::host_tool_call`.
-#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+/// On wasm32 targets, this routes to the host bridge via `host_tool::host_tool_call`.
+#[cfg(target_arch = "wasm32")]
 pub fn call_tool(server: &str, tool: &str, arguments: serde_json::Value) -> Result<String, String> {
     let args = if arguments.is_object() {
         arguments
@@ -595,16 +574,6 @@ pub fn call_tool(server: &str, tool: &str, arguments: serde_json::Value) -> Resu
     let args_json = serde_json::to_string(&args)
         .map_err(|e| format!("failed to serialize MCP arguments: {e}"))?;
     crate::host_tool::host_tool_call(server, tool, &args_json)
-}
-
-/// Call a tool on a named MCP server (stubbed on wasip1).
-#[cfg(all(target_arch = "wasm32", not(target_os = "unknown")))]
-pub fn call_tool(
-    _server: &str,
-    _tool: &str,
-    _arguments: serde_json::Value,
-) -> Result<String, String> {
-    Err("MCP process not available on wasm32; use NUDGE_REPLAY".to_string())
 }
 
 /// List tools available on a named MCP server using configuration from `NUDGE_MCP_SERVERS`.

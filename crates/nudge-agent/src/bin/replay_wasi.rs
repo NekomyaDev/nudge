@@ -29,7 +29,12 @@ fn main() {
         }
     };
 
-    std::env::set_var("NUDGE_REPLAY", &replay_args.trace_path);
+    if replay_args.trace_path != "--live"
+        && replay_args.trace_path != "none"
+        && !replay_args.trace_path.is_empty()
+    {
+        std::env::set_var("NUDGE_REPLAY", &replay_args.trace_path);
+    }
 
     let cli_args: Vec<nudgec::eval::NudgeVal> = replay_args
         .program_args

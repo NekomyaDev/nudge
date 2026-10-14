@@ -1,0 +1,13 @@
+type AddResult = {
+    result: int,
+}
+
+tool add(a: int, b: int) -> AddResult {
+    impl: mcp("calculator").add(a, b)
+    side_effects: none
+}
+
+fn main() -> int uses Tool {
+    let res = add(17, 25)
+    res.result
+}
