@@ -1731,7 +1731,8 @@ fn fake_distribution(mut seed: u64, k: usize) -> Vec<f64> {
 
 /// Public API: Execute a Nudge program from entry point with arguments.
 pub fn run_program(items: &[Item], entry: &str, args: &[NudgeVal]) -> Result<NudgeVal, String> {
-    if std::env::var("NUDGE_VM").is_ok() {
+    let vm_enabled = std::env::var("NUDGE_VM").as_deref() != Ok("0");
+    if vm_enabled {
         if let Ok(program) = bytecode::compile_with_entry(items, entry) {
             let mut interp = Interpreter::new();
             interp.load_items(items)?;
@@ -2126,6 +2127,14 @@ mod tests {
             let prev = std::env::var(key).ok();
             unsafe {
                 std::env::set_var(key, val);
+            }
+            Self(key, prev)
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let prev = std::env::var(key).ok();
+            unsafe {
+                std::env::remove_var(key);
             }
             Self(key, prev)
         }
@@ -2768,20 +2777,23 @@ data: [DONE]\n\n";
         let tokens = lex(src).expect("lex");
         let items = parse(tokens).expect("parse");
 
-        // Without NUDGE_VM: interpreter runs
-        unsafe {
-            std::env::remove_var("NUDGE_VM");
-        }
-        let interp_res = run_program(&items, "main", &[]).expect("interpreter run");
+        // 1. Default (NUDGE_VM unset): VM execution
+        let _env_unset = EnvReset::remove("NUDGE_VM");
+        let default_res = run_program(&items, "main", &[]).expect("default vm run");
 
-        // With NUDGE_VM set: VM fast path runs
+        // 2. Escape hatch: NUDGE_VM=0 explicitly falls back to interpreter
+        let _env_zero = EnvReset::set("NUDGE_VM", "0");
+        let interp_res = run_program(&items, "main", &[]).expect("interpreter escape hatch run");
+
+        // 3. Explicit VM flag: NUDGE_VM=1 runs VM
         let _env_vm = EnvReset::set("NUDGE_VM", "1");
-        let vm_res = run_program(&items, "main", &[]).expect("vm run");
+        let vm_res = run_program(&items, "main", &[]).expect("explicit vm run");
 
-        assert_eq!(interp_res, vm_res);
-        assert_eq!(vm_res, NudgeVal::Int(42));
+        assert_eq!(default_res, interp_res);
+        assert_eq!(default_res, vm_res);
+        assert_eq!(default_res, NudgeVal::Int(42));
 
-        // Test with entry point arguments under NUDGE_VM
+        // Test with entry point arguments under default, escape hatch (0), and explicit VM (1/true)
         let src_args = r#"
             fn add(a: int, b: int) -> int {
                 a + b
@@ -2790,23 +2802,65 @@ data: [DONE]\n\n";
         let tokens_args = lex(src_args).expect("lex");
         let items_args = parse(tokens_args).expect("parse");
         let args = vec![NudgeVal::Int(17), NudgeVal::Int(25)];
-        unsafe {
-            std::env::remove_var("NUDGE_VM");
-        }
-        let interp_args = run_program(&items_args, "add", &args).expect("interp add");
+
+        let _env_unset = EnvReset::remove("NUDGE_VM");
+        let default_args = run_program(&items_args, "add", &args).expect("default args run");
+
+        let _env_zero = EnvReset::set("NUDGE_VM", "0");
+        let interp_args = run_program(&items_args, "add", &args).expect("interp args run");
+
         let _env_vm2 = EnvReset::set("NUDGE_VM", "true");
-        let vm_args = run_program(&items_args, "add", &args).expect("vm add");
-        assert_eq!(interp_args, vm_args);
-        assert_eq!(vm_args, NudgeVal::Int(42));
+        let vm_args = run_program(&items_args, "add", &args).expect("vm args run");
+
+        assert_eq!(default_args, interp_args);
+        assert_eq!(default_args, vm_args);
+        assert_eq!(default_args, NudgeVal::Int(42));
+    }
+
+    #[test]
+    fn test_nudge_vm_mixed_program_default_and_escape_hatch() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _scope = nudge_runtime::trace::testing::scope(None, None);
+        let _env_provider = EnvReset::set("NUDGE_PROVIDER", "fake");
+
+        let src = r#"
+            fn ask_summary(topic: string) -> string uses LLM {
+                llm"""Summarize {topic}""" with { model: "fake:default" }
+            }
+
+            fn main() -> int {
+                let s = ask_summary("rust")
+                len(s) * 3 + 7
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        // Default path: NUDGE_VM unset runs VM with effect delegation
+        let _env_unset = EnvReset::remove("NUDGE_VM");
+        let default_res = run_program(&items, "main", &[]).expect("default mixed run via VM");
+
+        // Escape hatch: NUDGE_VM=0 runs pure interpreter
+        let _env_zero = EnvReset::set("NUDGE_VM", "0");
+        let interp_res =
+            run_program(&items, "main", &[]).expect("interpreter escape hatch mixed run");
+
+        // Explicit VM: NUDGE_VM=1 runs VM
+        let _env_vm = EnvReset::set("NUDGE_VM", "1");
+        let vm_res = run_program(&items, "main", &[]).expect("explicit VM mixed run");
+
+        assert_eq!(default_res, interp_res);
+        assert_eq!(default_res, vm_res);
     }
 
     #[test]
     fn test_nudge_vm_deep_recursion() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _env_vm = EnvReset::set("NUDGE_VM", "1");
+        // By default (NUDGE_VM unset), VM executes
+        let _env_vm = EnvReset::remove("NUDGE_VM");
 
         // 5000 frames is ~4x the interpreter's ~1250 OS-stack limit.
-        // It succeeds via the VM fast path without stack overflow.
+        // It succeeds via the VM fast path without stack overflow by default.
         let src = r#"
             fn countdown(n: int) -> bool {
                 (n <= 0) or countdown(n - 1)
@@ -2820,6 +2874,11 @@ data: [DONE]\n\n";
 
         let res = run_program(&items, "main", &[]).expect("deep recursion should succeed via VM");
         assert_eq!(res, NudgeVal::Bool(true));
+
+        // Also succeeds with explicit NUDGE_VM=1
+        let _env_vm1 = EnvReset::set("NUDGE_VM", "1");
+        let res1 = run_program(&items, "main", &[]).expect("deep recursion with NUDGE_VM=1");
+        assert_eq!(res1, NudgeVal::Bool(true));
     }
 
     #[test]
@@ -2827,9 +2886,8 @@ data: [DONE]\n\n";
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _scope = nudge_runtime::trace::testing::scope(None, None);
         let _env_provider = EnvReset::set("NUDGE_PROVIDER", "fake");
-        let _env_vm = EnvReset::set("NUDGE_VM", "1");
 
-        // 1. LLM effectful function
+        // 1. LLM effectful entry function
         let src = r#"
             fn main() -> string uses LLM {
                 let x = llm"""Say hi"""
@@ -2839,11 +2897,11 @@ data: [DONE]\n\n";
         let tokens = lex(src).expect("lex");
         let items = parse(tokens).expect("parse");
 
-        // Verify bytecode compilation fails because the program has effects
-        let compile_res = bytecode::compile(&items);
+        // Verify bytecode compilation fails for effectful entry
+        let compile_res = bytecode::compile_with_entry(&items, "main");
         assert!(
             compile_res.is_err(),
-            "expected bytecode compilation to fail for effectful program"
+            "expected bytecode compilation to fail for effectful entry function"
         );
         let err_msg = compile_res.unwrap_err();
         assert!(
@@ -2851,17 +2909,21 @@ data: [DONE]\n\n";
             "got error: {err_msg}"
         );
 
-        // Run with NUDGE_VM set: since compile fails, it falls back to interpreter
-        let res_with_vm = run_program(&items, "main", &[]).expect("fallback run with NUDGE_VM");
+        // Run with NUDGE_VM unset: falls back to interpreter by default
+        let _env_unset = EnvReset::remove("NUDGE_VM");
+        let res_default =
+            run_program(&items, "main", &[]).expect("fallback run with NUDGE_VM unset");
 
-        // Run with NUDGE_VM unset: direct interpreter run
-        unsafe {
-            std::env::remove_var("NUDGE_VM");
-        }
-        let res_without_vm =
-            run_program(&items, "main", &[]).expect("interpreter run without NUDGE_VM");
+        // Run with NUDGE_VM=0: interpreter runs directly
+        let _env_zero = EnvReset::set("NUDGE_VM", "0");
+        let res_zero = run_program(&items, "main", &[]).expect("interpreter run with NUDGE_VM=0");
 
-        assert_eq!(res_with_vm, res_without_vm);
+        // Run with NUDGE_VM=1: since compile fails, it falls back to interpreter
+        let _env_vm = EnvReset::set("NUDGE_VM", "1");
+        let res_with_vm = run_program(&items, "main", &[]).expect("fallback run with NUDGE_VM=1");
+
+        assert_eq!(res_default, res_zero);
+        assert_eq!(res_default, res_with_vm);
 
         // 2. Agent state fallback
         let src_agent = r#"
@@ -2881,10 +2943,25 @@ data: [DONE]\n\n";
         "#;
         let tokens_agent = lex(src_agent).expect("lex");
         let items_agent = parse(tokens_agent).expect("parse");
-        let _env_vm2 = EnvReset::set("NUDGE_VM", "1");
         assert!(bytecode::compile(&items_agent).is_err());
-        let agent_res =
-            run_program(&items_agent, "main", &[]).expect("agent fallback to interpreter");
-        assert_eq!(agent_res, NudgeVal::Int(2));
+
+        // Default unset falls back to interpreter
+        let _env_agent_unset = EnvReset::remove("NUDGE_VM");
+        let agent_res_default =
+            run_program(&items_agent, "main", &[]).expect("agent fallback with NUDGE_VM unset");
+
+        // Escape hatch NUDGE_VM=0
+        let _env_agent_zero = EnvReset::set("NUDGE_VM", "0");
+        let agent_res_zero =
+            run_program(&items_agent, "main", &[]).expect("agent interpreter run with NUDGE_VM=0");
+
+        // Explicit NUDGE_VM=1
+        let _env_agent_vm = EnvReset::set("NUDGE_VM", "1");
+        let agent_res_vm =
+            run_program(&items_agent, "main", &[]).expect("agent fallback with NUDGE_VM=1");
+
+        assert_eq!(agent_res_default, agent_res_zero);
+        assert_eq!(agent_res_default, agent_res_vm);
+        assert_eq!(agent_res_default, NudgeVal::Int(2));
     }
 }
