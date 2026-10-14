@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Nudge WASM Host Tool Bridge Example</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 800px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      line-height: 1.5;
+      color: #1a1a1a;
+    }
+    pre {
+      background: #f4f4f5;
+      padding: 1rem;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    .card {
+      border: 1px solid #e4e4e7;
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    button {
+      background: #2563eb;
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #1d4ed8;
+    }
+    .log {
+      background: #18181b;
+      color: #fafafa;
+      padding: 1rem;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 0.875rem;
+      min-height: 120px;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <h1>Nudge WASM Host Tool Bridge</h1>
+  <p>
+    Demonstration of the host-side implementation of <code>nudge_host_tool_call</code>.
+    When a Nudge agent compiled to WebAssembly needs to call an MCP tool, it calls
+    this imported function on the JavaScript host.
+  </p>
+
+  <div class="card">
+    <h3>Host Bridge Status</h3>
+    <p>Select an action to simulate a tool call dispatched from WebAssembly to the JS host:</p>
+    <button id="btn-weather">Simulate Weather Tool</button>
+    <button id="btn-calc">Simulate Calculator Tool</button>
+    <button id="btn-unknown">Simulate Unknown Server</button>
+  </div>
+
+  <div class="card">
+    <h3>Bridge Logs</h3>
+    <div id="log-output" class="log">// Host bridge events will appear here...</div>
+  </div>
+
+  <script type="module">
+    import { createHostToolImports, HOST_ERROR } from "./host.js";
+
+    const logEl = document.getElementById("log-output");
+    function log(msg) {
+      const ts = new Date().toISOString().split("T")[1].slice(0, 8);
+      logEl.textContent += `\n[${ts}] ${msg}`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    // Mock WebAssembly memory for standalone browser demo
+    const memory = new WebAssembly.Memory({ initial: 4, maximum: 16 });
+    const bridge = createHostToolImports(() => memory);
+    const hostToolCall = bridge.env.nudge_host_tool_call;
+
+    // Helper to simulate calling from the WASM side
+    function simulateWasmCall(server, tool, argsObj) {
+      log(`Calling tool from WASM: ${server}::${tool} with args ${JSON.stringify(argsObj)}`);
+
+      const encoder = new TextEncoder();
+      const serverBytes = encoder.encode(server);
+      const toolBytes = encoder.encode(tool);
+      const argsBytes = encoder.encode(JSON.stringify(argsObj));
+
+      // Lay out inputs in memory:
+      // Offset 0: server
+      // Offset 1024: tool
+      // Offset 2048: args
+      // Offset 4096: out buffer (capacity 64 KiB)
+      const u8 = new Uint8Array(memory.buffer);
+      u8.set(serverBytes, 0);
+      u8.set(toolBytes, 1024);
+      u8.set(argsBytes, 2048);
+
+      const outPtr = 4096;
+      const outCap = 65536;
+
+      const ret = hostToolCall(
+        0, serverBytes.length,
+        1024, toolBytes.length,
+        2048, argsBytes.length,
+        outPtr, outCap
+      );
+
+      if (ret < 0) {
+        log(`Host returned error code: ${ret}`);
+      } else {
+        const resultBytes = new Uint8Array(memory.buffer, outPtr, ret);
+        const resultText = new TextDecoder().decode(resultBytes);
+        log(`Host returned ${ret} bytes: ${resultText}`);
+      }
+    }
+
+    document.getElementById("btn-weather").addEventListener("click", () => {
+      simulateWasmCall("weather", "get_current", { city: "Tokyo" });
+    });
+
+    document.getElementById("btn-calc").addEventListener("click", () => {
+      simulateWasmCall("calculator", "add", { a: 17, b: 25 });
+    });
+
+    document.getElementById("btn-unknown").addEventListener("click", () => {
+      simulateWasmCall("missing_service", "ping", {});
+    });
+
+    log("Host bridge initialized and ready.");
+  </script>
+</body>
+</html>

@@ -1,4 +1,5 @@
 pub mod grants;
+pub mod host_tool;
 pub mod json;
 pub mod mcp;
 pub mod provider;
