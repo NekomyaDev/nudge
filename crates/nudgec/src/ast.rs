@@ -5,14 +5,16 @@
 
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 /// Half-open byte span `[start, end)` into the source file.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TypeExpr {
     Named(String),                   // string, Url, Plan
     List(Box<TypeExpr>),             // [T]
@@ -41,7 +43,7 @@ impl fmt::Display for TypeExpr {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum BinOp {
     Add,
     Sub,
@@ -62,7 +64,7 @@ pub enum BinOp {
 /// One question inside a `decide { ... }` block (v1.4 "Decision"):
 /// a choice over named options, a yes/no probability (noul), or an
 /// ordinal rubric score — the JEV-family question kinds.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum DecisionQ {
     Choice {
         prompt: String,
@@ -77,7 +79,7 @@ pub enum DecisionQ {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ExprKind {
     Int(i64),
     Float(f64),
@@ -171,26 +173,26 @@ pub enum ExprKind {
 /// An expression with its source span attached (spanned AST, stage 2).
 /// Composite nodes derive their span from their children; leaves use their
 /// token's span.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Expr {
     pub kind: ExprKind,
     pub span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Param {
     pub name: String,
     pub ty: TypeExpr,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum StateOp {
     Set, // state.x = v
     Add, // state.x += v
     Sub, // state.x -= v
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[allow(clippy::enum_variant_names)] // `ExprStmt` reads better than `Expr` here
 pub enum StmtKind {
     /// `stream` is true for `stream let` (design §4.5): the bound LLM call
@@ -221,13 +223,13 @@ pub enum StmtKind {
 }
 
 /// A statement with its source span attached (spanned AST, stage 1).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Stmt {
     pub kind: StmtKind,
     pub span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Item {
     TypeAlias {
         name: String,
@@ -258,4 +260,194 @@ pub enum Item {
         state: Vec<(String, TypeExpr, Expr)>,
         fns: Vec<Item>,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ast_serde_round_trip() {
+        let dummy_span = Span { start: 0, end: 10 };
+        let items: Vec<Item> = vec![
+            Item::TypeAlias {
+                name: "Url".to_string(),
+                ty: TypeExpr::Named("string".to_string()),
+            },
+            Item::Tool {
+                name: "search".to_string(),
+                params: vec![Param {
+                    name: "query".to_string(),
+                    ty: TypeExpr::Named("string".to_string()),
+                }],
+                ret: TypeExpr::Named("string".to_string()),
+                fields: vec![(
+                    "impl".to_string(),
+                    Expr {
+                        kind: ExprKind::Call {
+                            func: Box::new(Expr {
+                                kind: ExprKind::Ident("mcp".to_string()),
+                                span: dummy_span,
+                            }),
+                            args: vec![Expr {
+                                kind: ExprKind::Str("brave_search".to_string()),
+                                span: dummy_span,
+                            }],
+                            kwargs: vec![(
+                                "tool".to_string(),
+                                Expr {
+                                    kind: ExprKind::Str("search".to_string()),
+                                    span: dummy_span,
+                                },
+                            )],
+                        },
+                        span: dummy_span,
+                    },
+                )],
+            },
+            Item::Fn {
+                name: "run_agent".to_string(),
+                params: vec![Param {
+                    name: "prompt_text".to_string(),
+                    ty: TypeExpr::Named("string".to_string()),
+                }],
+                ret: TypeExpr::Named("string".to_string()),
+                effects: vec![
+                    "IO".to_string(),
+                    "Decision".to_string(),
+                    "Computer".to_string(),
+                ],
+                body: vec![
+                    Stmt {
+                        kind: StmtKind::Let {
+                            name: "streamed_chunk".to_string(),
+                            ty: Some(TypeExpr::Named("string".to_string())),
+                            value: Expr {
+                                kind: ExprKind::LlmCall {
+                                    prompt: Box::new(Expr {
+                                        kind: ExprKind::Prompt {
+                                            body: "Hello {prompt_text}".to_string(),
+                                            interpolations: vec!["prompt_text".to_string()],
+                                        },
+                                        span: dummy_span,
+                                    }),
+                                    options: vec![(
+                                        "model".to_string(),
+                                        Expr {
+                                            kind: ExprKind::Str("fast".to_string()),
+                                            span: dummy_span,
+                                        },
+                                    )],
+                                    repair: true,
+                                },
+                                span: dummy_span,
+                            },
+                            stream: true,
+                        },
+                        span: dummy_span,
+                    },
+                    Stmt {
+                        kind: StmtKind::ExprStmt(Expr {
+                            kind: ExprKind::DecideCall {
+                                questions: vec![
+                                    (
+                                        "q1".to_string(),
+                                        DecisionQ::Choice {
+                                            prompt: "choose one".to_string(),
+                                            options: vec!["a".to_string(), "b".to_string()],
+                                        },
+                                    ),
+                                    (
+                                        "q2".to_string(),
+                                        DecisionQ::Noul {
+                                            prompt: "yes or no?".to_string(),
+                                        },
+                                    ),
+                                    (
+                                        "q3".to_string(),
+                                        DecisionQ::Score {
+                                            prompt: "rate quality".to_string(),
+                                            levels: vec![
+                                                "low".to_string(),
+                                                "med".to_string(),
+                                                "high".to_string(),
+                                            ],
+                                        },
+                                    ),
+                                ],
+                                state: Box::new(Expr {
+                                    kind: ExprKind::Ident("curr_state".to_string()),
+                                    span: dummy_span,
+                                }),
+                                options: vec![],
+                            },
+                            span: dummy_span,
+                        }),
+                        span: dummy_span,
+                    },
+                    Stmt {
+                        kind: StmtKind::ExprStmt(Expr {
+                            kind: ExprKind::ComputerCall {
+                                method: "click".to_string(),
+                                args: vec![Expr {
+                                    kind: ExprKind::Str("submit_button".to_string()),
+                                    span: dummy_span,
+                                }],
+                                kwargs: vec![],
+                            },
+                            span: dummy_span,
+                        }),
+                        span: dummy_span,
+                    },
+                    Stmt {
+                        kind: StmtKind::ExprStmt(Expr {
+                            kind: ExprKind::Route {
+                                arms: vec![
+                                    (
+                                        "cheap".to_string(),
+                                        Expr {
+                                            kind: ExprKind::Str("gpt-4o-mini".to_string()),
+                                            span: dummy_span,
+                                        },
+                                        Some(Expr {
+                                            kind: ExprKind::Bool(true),
+                                            span: dummy_span,
+                                        }),
+                                    ),
+                                    (
+                                        "fallback".to_string(),
+                                        Expr {
+                                            kind: ExprKind::Str("gpt-4o".to_string()),
+                                            span: dummy_span,
+                                        },
+                                        None,
+                                    ),
+                                ],
+                            },
+                            span: dummy_span,
+                        }),
+                        span: dummy_span,
+                    },
+                ],
+            },
+            Item::Agent {
+                name: "Worker".to_string(),
+                state: vec![(
+                    "count".to_string(),
+                    TypeExpr::Named("int".to_string()),
+                    Expr {
+                        kind: ExprKind::Int(0),
+                        span: dummy_span,
+                    },
+                )],
+                fns: vec![],
+            },
+        ];
+
+        let serialized = serde_json::to_string_pretty(&items).expect("Serialization failed");
+        let deserialized: Vec<Item> =
+            serde_json::from_str(&serialized).expect("Deserialization failed");
+
+        assert_eq!(items, deserialized);
+    }
 }
