@@ -1,10 +1,12 @@
 use crate::ast::{
     BinOp, DecisionQ, Expr, ExprKind, Item, Param, StateOp, Stmt, StmtKind, TypeExpr,
 };
+use crate::bytecode;
 use crate::eval::env::{AgentStore, Env};
 use crate::eval::val::{
     json_to_nudgeval, nudgeval_to_json, nudgeval_to_value, value_to_nudgeval, NudgeVal,
 };
+use crate::vm;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -1666,6 +1668,12 @@ fn fake_distribution(mut seed: u64, k: usize) -> Vec<f64> {
 
 /// Public API: Execute a Nudge program from entry point with arguments.
 pub fn run_program(items: &[Item], entry: &str, args: &[NudgeVal]) -> Result<NudgeVal, String> {
+    if std::env::var("NUDGE_VM").is_ok() {
+        if let Ok(program) = bytecode::compile(items) {
+            return vm::run(&program, entry, args);
+        }
+    }
+
     let mut interp = Interpreter::new();
     interp.load_items(items)?;
 
@@ -2727,5 +2735,145 @@ data: [DONE]\n\n";
         let items = parse(tokens).expect("parse");
         let err = run_program(&items, "main", &[]).unwrap_err();
         assert!(err.contains("E-native-0100"), "got {err}");
+    }
+
+    #[test]
+    fn test_nudge_vm_opt_in_parity() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let src = r#"
+            fn countdown(n: int) -> bool {
+                (n <= 0) or countdown(n - 1)
+            }
+            fn compute(a: int, b: int) -> int {
+                a * 2 + b
+            }
+            fn main() -> int {
+                let ok = countdown(10)
+                assert ok
+                compute(10, 22)
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        // Without NUDGE_VM: interpreter runs
+        unsafe {
+            std::env::remove_var("NUDGE_VM");
+        }
+        let interp_res = run_program(&items, "main", &[]).expect("interpreter run");
+
+        // With NUDGE_VM set: VM fast path runs
+        let _env_vm = EnvReset::set("NUDGE_VM", "1");
+        let vm_res = run_program(&items, "main", &[]).expect("vm run");
+
+        assert_eq!(interp_res, vm_res);
+        assert_eq!(vm_res, NudgeVal::Int(42));
+
+        // Test with entry point arguments under NUDGE_VM
+        let src_args = r#"
+            fn add(a: int, b: int) -> int {
+                a + b
+            }
+        "#;
+        let tokens_args = lex(src_args).expect("lex");
+        let items_args = parse(tokens_args).expect("parse");
+        let args = vec![NudgeVal::Int(17), NudgeVal::Int(25)];
+        unsafe {
+            std::env::remove_var("NUDGE_VM");
+        }
+        let interp_args = run_program(&items_args, "add", &args).expect("interp add");
+        let _env_vm2 = EnvReset::set("NUDGE_VM", "true");
+        let vm_args = run_program(&items_args, "add", &args).expect("vm add");
+        assert_eq!(interp_args, vm_args);
+        assert_eq!(vm_args, NudgeVal::Int(42));
+    }
+
+    #[test]
+    fn test_nudge_vm_deep_recursion() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env_vm = EnvReset::set("NUDGE_VM", "1");
+
+        // 5000 frames is ~4x the interpreter's ~1250 OS-stack limit.
+        // It succeeds via the VM fast path without stack overflow.
+        let src = r#"
+            fn countdown(n: int) -> bool {
+                (n <= 0) or countdown(n - 1)
+            }
+            fn main() -> bool {
+                countdown(5000)
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let res = run_program(&items, "main", &[]).expect("deep recursion should succeed via VM");
+        assert_eq!(res, NudgeVal::Bool(true));
+    }
+
+    #[test]
+    fn test_nudge_vm_fallback_on_effectful_program() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _scope = nudge_runtime::trace::testing::scope(None, None);
+        let _env_provider = EnvReset::set("NUDGE_PROVIDER", "fake");
+        let _env_vm = EnvReset::set("NUDGE_VM", "1");
+
+        // 1. LLM effectful function
+        let src = r#"
+            fn main() -> string uses LLM {
+                let x = llm"""Say hi"""
+                x
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        // Verify bytecode compilation fails because the program has effects
+        let compile_res = bytecode::compile(&items);
+        assert!(
+            compile_res.is_err(),
+            "expected bytecode compilation to fail for effectful program"
+        );
+        let err_msg = compile_res.unwrap_err();
+        assert!(
+            err_msg.contains("not in bytecode subset"),
+            "got error: {err_msg}"
+        );
+
+        // Run with NUDGE_VM set: since compile fails, it falls back to interpreter
+        let res_with_vm = run_program(&items, "main", &[]).expect("fallback run with NUDGE_VM");
+
+        // Run with NUDGE_VM unset: direct interpreter run
+        unsafe {
+            std::env::remove_var("NUDGE_VM");
+        }
+        let res_without_vm =
+            run_program(&items, "main", &[]).expect("interpreter run without NUDGE_VM");
+
+        assert_eq!(res_with_vm, res_without_vm);
+
+        // 2. Agent state fallback
+        let src_agent = r#"
+            agent Counter {
+                state {
+                    count: int = 0
+                }
+                fn inc() -> int {
+                    state.count += 1
+                    state.count
+                }
+                fn main() -> int {
+                    inc()
+                    inc()
+                }
+            }
+        "#;
+        let tokens_agent = lex(src_agent).expect("lex");
+        let items_agent = parse(tokens_agent).expect("parse");
+        let _env_vm2 = EnvReset::set("NUDGE_VM", "1");
+        assert!(bytecode::compile(&items_agent).is_err());
+        let agent_res =
+            run_program(&items_agent, "main", &[]).expect("agent fallback to interpreter");
+        assert_eq!(agent_res, NudgeVal::Int(2));
     }
 }
