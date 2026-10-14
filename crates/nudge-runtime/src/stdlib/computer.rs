@@ -13,8 +13,11 @@
 use super::Value;
 use crate::json::{parse, Json};
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::BufReader;
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::{BufRead, Write};
+#[cfg(not(target_arch = "wasm32"))]
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
 
@@ -44,6 +47,7 @@ pub fn register() -> HashMap<String, Value> {
     functions
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct Bridge {
     child: Child,
     stdin: ChildStdin,
@@ -51,6 +55,7 @@ struct Bridge {
     next_id: u64,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 static BRIDGE: Mutex<Option<Bridge>> = Mutex::new(None);
 /// the (app, state_id) of the last successful observation — actions act
 /// on what you saw and carry the state_id fail-closed, exactly like the
@@ -347,6 +352,7 @@ fn fake_call(op: &str, req: &Json) -> Result<Json, String> {
     ]))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn bridge_call(command: &str, request: &str) -> Result<Json, String> {
     let mut guard = BRIDGE.lock().map_err(|_| "computer bridge lock poisoned")?;
     let dead = match guard.as_mut() {
@@ -1055,9 +1061,16 @@ fn live_call(op: &str, app: &str, payload_args: &[Value]) -> Result<Json, String
     if provider == "fake" {
         return fake_call(op, &request);
     }
-    let registry = std::env::var("NUDGE_COMPUTER_SERVERS").unwrap_or_default();
-    let command = bridge_command(&registry, &provider)?;
-    bridge_call(&command, &json_to_string(&request))
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let registry = std::env::var("NUDGE_COMPUTER_SERVERS").unwrap_or_default();
+        let command = bridge_command(&registry, &provider)?;
+        bridge_call(&command, &json_to_string(&request))
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err("computer subprocess not available on wasm32; use NUDGE_REPLAY".into())
+    }
 }
 
 fn commit_authority(app: &str, v: &Value) {
@@ -1210,6 +1223,7 @@ fn json_to_string(j: &Json) -> String {
 
 /// shlex-style split (double/single quotes) — parity with the Python
 /// runtime's shlex.split for quoted provider commands
+#[cfg(not(target_arch = "wasm32"))]
 fn split_command(command: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
@@ -1235,6 +1249,7 @@ fn split_command(command: &str) -> Vec<String> {
 
 /// Extract the provider entry's `command` from the NUDGE_COMPUTER_SERVERS
 /// registry JSON.
+#[cfg(not(target_arch = "wasm32"))]
 fn bridge_command(registry: &str, provider: &str) -> Result<String, String> {
     let reg = parse(registry).map_err(|e| format!("bad NUDGE_COMPUTER_SERVERS: {e}"))?;
     let entry = reg.get(provider).ok_or_else(|| {

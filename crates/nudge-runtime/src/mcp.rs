@@ -3,9 +3,12 @@
 //! Provides a synchronous client for spawning and communicating with MCP servers
 //! over standard input/output using JSON-RPC 2.0.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::{BufRead, BufReader, BufWriter, Write};
+#[cfg(not(target_arch = "wasm32"))]
 use std::process::{Child, Command, Stdio};
 
 /// Configuration for an individual MCP server.
@@ -96,6 +99,7 @@ impl McpRegistry {
 }
 
 /// An active stdio session with a spawned MCP server process.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct McpSession {
     server_name: String,
     child: Child,
@@ -105,6 +109,7 @@ pub struct McpSession {
     closed: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl std::fmt::Debug for McpSession {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("McpSession")
@@ -115,6 +120,7 @@ impl std::fmt::Debug for McpSession {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl McpSession {
     /// Spawn and initialize a new MCP server session.
     pub fn connect(server_name: &str, config: &ServerConfig) -> Result<Self, String> {
@@ -357,9 +363,57 @@ impl McpSession {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for McpSession {
     fn drop(&mut self) {
         let _ = self.close();
+    }
+}
+
+/// A stub MCP server session on wasm32.
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug)]
+pub struct McpSession {
+    _server_name: String,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl McpSession {
+    pub fn connect(server_name: &str, _config: &ServerConfig) -> Result<Self, String> {
+        let _ = server_name;
+        Err("MCP process not available on wasm32; use NUDGE_REPLAY".to_string())
+    }
+
+    pub fn send_notification(
+        &mut self,
+        _method: &str,
+        _params: serde_json::Value,
+    ) -> Result<(), String> {
+        Err("MCP process not available on wasm32; use NUDGE_REPLAY".to_string())
+    }
+
+    pub fn send_request(
+        &mut self,
+        _method: &str,
+        _params: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        Err("MCP process not available on wasm32; use NUDGE_REPLAY".to_string())
+    }
+
+    pub fn list_tools(&mut self) -> Result<serde_json::Value, String> {
+        Err("MCP process not available on wasm32; use NUDGE_REPLAY".to_string())
+    }
+
+    pub fn call_tool(
+        &mut self,
+        _tool: &str,
+        _arguments: serde_json::Value,
+    ) -> Result<String, String> {
+        Err("MCP process not available on wasm32; use NUDGE_REPLAY".to_string())
+    }
+
+    pub fn close(&mut self) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -402,6 +456,7 @@ impl McpClient {
     }
 
     /// Connect to a named server or return the cached session.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn connect(&mut self, server: &str) -> Result<&mut McpSession, String> {
         match self.sessions.entry(server.to_string()) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
@@ -416,7 +471,14 @@ impl McpClient {
         }
     }
 
+    /// Connect to a named server (stubbed on wasm32).
+    #[cfg(target_arch = "wasm32")]
+    pub fn connect(&mut self, _server: &str) -> Result<&mut McpSession, String> {
+        Err("MCP process not available on wasm32; use NUDGE_REPLAY".to_string())
+    }
+
     /// Call a tool on a named server.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn call_tool(
         &mut self,
         server: &str,
@@ -427,18 +489,43 @@ impl McpClient {
         session.call_tool(tool, arguments)
     }
 
+    /// Call a tool on a named server (stubbed on wasm32).
+    #[cfg(target_arch = "wasm32")]
+    pub fn call_tool(
+        &mut self,
+        _server: &str,
+        _tool: &str,
+        _arguments: serde_json::Value,
+    ) -> Result<String, String> {
+        Err("MCP process not available on wasm32; use NUDGE_REPLAY".to_string())
+    }
+
     /// List tools on a named server.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn list_tools(&mut self, server: &str) -> Result<serde_json::Value, String> {
         let session = self.connect(server)?;
         session.list_tools()
     }
 
+    /// List tools on a named server (stubbed on wasm32).
+    #[cfg(target_arch = "wasm32")]
+    pub fn list_tools(&mut self, _server: &str) -> Result<serde_json::Value, String> {
+        Err("MCP process not available on wasm32; use NUDGE_REPLAY".to_string())
+    }
+
     /// Cleanly close all active server sessions.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn close(&mut self) -> Result<(), String> {
         for session in self.sessions.values_mut() {
             let _ = session.close();
         }
         self.sessions.clear();
+        Ok(())
+    }
+
+    /// Cleanly close all active server sessions.
+    #[cfg(target_arch = "wasm32")]
+    pub fn close(&mut self) -> Result<(), String> {
         Ok(())
     }
 }
@@ -449,6 +536,7 @@ pub fn load_registry() -> Result<McpRegistry, String> {
 }
 
 /// Connect to a named MCP server using configuration from `NUDGE_MCP_SERVERS`.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn connect_server(server: &str) -> Result<McpSession, String> {
     let registry = McpRegistry::from_env()?;
     let config = registry
@@ -457,16 +545,40 @@ pub fn connect_server(server: &str) -> Result<McpSession, String> {
     McpSession::connect(server, config)
 }
 
+/// Connect to a named MCP server using configuration from `NUDGE_MCP_SERVERS`.
+#[cfg(target_arch = "wasm32")]
+pub fn connect_server(_server: &str) -> Result<McpSession, String> {
+    Err("MCP process not available on wasm32; use NUDGE_REPLAY".to_string())
+}
+
 /// Call a tool on a named MCP server using configuration from `NUDGE_MCP_SERVERS`.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn call_tool(server: &str, tool: &str, arguments: serde_json::Value) -> Result<String, String> {
     let mut session = connect_server(server)?;
     session.call_tool(tool, arguments)
 }
 
+/// Call a tool on a named MCP server using configuration from `NUDGE_MCP_SERVERS`.
+#[cfg(target_arch = "wasm32")]
+pub fn call_tool(
+    _server: &str,
+    _tool: &str,
+    _arguments: serde_json::Value,
+) -> Result<String, String> {
+    Err("MCP process not available on wasm32; use NUDGE_REPLAY".to_string())
+}
+
 /// List tools available on a named MCP server using configuration from `NUDGE_MCP_SERVERS`.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn list_tools(server: &str) -> Result<serde_json::Value, String> {
     let mut session = connect_server(server)?;
     session.list_tools()
+}
+
+/// List tools available on a named MCP server using configuration from `NUDGE_MCP_SERVERS`.
+#[cfg(target_arch = "wasm32")]
+pub fn list_tools(_server: &str) -> Result<serde_json::Value, String> {
+    Err("MCP process not available on wasm32; use NUDGE_REPLAY".to_string())
 }
 
 #[cfg(test)]
@@ -489,6 +601,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn test_unknown_server_error_message() {
         let mut client = McpClient::with_registry(McpRegistry::empty());
         let err = client
@@ -501,6 +614,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn test_server_without_command_error() {
         let json = r#"{"search": {"tools": ["web"]}}"#;
         let reg = McpRegistry::from_json_str(json).unwrap();

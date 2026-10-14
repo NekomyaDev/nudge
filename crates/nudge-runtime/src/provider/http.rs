@@ -4,6 +4,7 @@ use std::time::Duration;
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Create a configured ureq Agent with the specified timeout.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn build_agent(timeout: Duration) -> ureq::Agent {
     ureq::AgentBuilder::new().timeout(timeout).build()
 }
@@ -25,6 +26,7 @@ pub fn merge_request_headers(headers: &[(String, String)]) -> Vec<(&str, &str)> 
     result
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn apply_headers(mut req: ureq::Request, headers: &[(String, String)]) -> ureq::Request {
     for (key, val) in merge_request_headers(headers) {
         req = req.set(key, val);
@@ -35,6 +37,7 @@ fn apply_headers(mut req: ureq::Request, headers: &[(String, String)]) -> ureq::
 /// Send an HTTP POST request with a JSON body and custom headers using the default timeout (120s).
 ///
 /// Returns `Ok((status_code, response_body))` or `Err(error_message)` on transport/network error.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn post_json(
     url: &str,
     headers: &[(String, String)],
@@ -44,6 +47,7 @@ pub fn post_json(
 }
 
 /// Send an HTTP POST request with a JSON body, custom headers, and a specified timeout.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn post_json_with_timeout(
     url: &str,
     headers: &[(String, String)],
@@ -72,6 +76,27 @@ pub fn post_json_with_timeout(
     }
 }
 
+/// Send an HTTP POST request with a JSON body and custom headers using the default timeout (120s).
+#[cfg(target_arch = "wasm32")]
+pub fn post_json(
+    _url: &str,
+    _headers: &[(String, String)],
+    _body: &str,
+) -> Result<(u16, String), String> {
+    Err("network not available on wasm32; use NUDGE_REPLAY".to_string())
+}
+
+/// Send an HTTP POST request with a JSON body, custom headers, and a specified timeout.
+#[cfg(target_arch = "wasm32")]
+pub fn post_json_with_timeout(
+    _url: &str,
+    _headers: &[(String, String)],
+    _body: &str,
+    _timeout: Duration,
+) -> Result<(u16, String), String> {
+    Err("network not available on wasm32; use NUDGE_REPLAY".to_string())
+}
+
 /// Prepare the JSON request body for streaming chat completion,
 /// ensuring `"stream": true` is set on the object.
 pub fn prepare_streaming_body(body: &serde_json::Value) -> Result<serde_json::Value, String> {
@@ -95,6 +120,7 @@ pub fn prepare_streaming_payload(body: &serde_json::Value) -> Result<String, Str
 ///
 /// Ensures `"stream": true` is included in the request body, and returns the response body
 /// as a buffered reader ([`BufRead`]) for incremental SSE consumption.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn post_chat_stream(
     url: &str,
     headers: &[(String, String)],
@@ -107,6 +133,7 @@ pub fn post_chat_stream(
 ///
 /// Ensures `"stream": true` is included in the request body, and returns the response body
 /// as a buffered reader ([`BufRead`]) for incremental SSE consumption.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn post_chat_stream_with_timeout(
     url: &str,
     headers: &[(String, String)],
@@ -145,14 +172,37 @@ pub fn post_chat_stream_with_timeout(
     }
 }
 
+/// Send an HTTP POST request for streaming chat completion using default timeout (120s).
+#[cfg(target_arch = "wasm32")]
+pub fn post_chat_stream(
+    _url: &str,
+    _headers: &[(String, String)],
+    _body: &serde_json::Value,
+) -> Result<Box<dyn BufRead>, String> {
+    Err("network not available on wasm32; use NUDGE_REPLAY".to_string())
+}
+
+/// Send an HTTP POST request for streaming chat completion with a specified timeout.
+#[cfg(target_arch = "wasm32")]
+pub fn post_chat_stream_with_timeout(
+    _url: &str,
+    _headers: &[(String, String)],
+    _body: &serde_json::Value,
+    _timeout: Duration,
+) -> Result<Box<dyn BufRead>, String> {
+    Err("network not available on wasm32; use NUDGE_REPLAY".to_string())
+}
+
 /// Send an HTTP GET request with custom headers using the default timeout (120s).
 ///
 /// Returns `Ok((status_code, response_body))` or `Err(error_message)` on transport/network error.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn get(url: &str, headers: &[(String, String)]) -> Result<(u16, String), String> {
     get_with_timeout(url, headers, DEFAULT_TIMEOUT)
 }
 
 /// Send an HTTP GET request with custom headers and a specified timeout.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn get_with_timeout(
     url: &str,
     headers: &[(String, String)],
@@ -183,7 +233,23 @@ pub fn get_with_timeout(
     }
 }
 
-#[cfg(test)]
+/// Send an HTTP GET request with custom headers using the default timeout (120s).
+#[cfg(target_arch = "wasm32")]
+pub fn get(_url: &str, _headers: &[(String, String)]) -> Result<(u16, String), String> {
+    Err("network not available on wasm32; use NUDGE_REPLAY".to_string())
+}
+
+/// Send an HTTP GET request with custom headers and a specified timeout.
+#[cfg(target_arch = "wasm32")]
+pub fn get_with_timeout(
+    _url: &str,
+    _headers: &[(String, String)],
+    _timeout: Duration,
+) -> Result<(u16, String), String> {
+    Err("network not available on wasm32; use NUDGE_REPLAY".to_string())
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use std::io::{Read, Write};
