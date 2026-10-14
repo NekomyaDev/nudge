@@ -1,8 +1,8 @@
 {
   "name": "nudge-lang",
   "displayName": "Nudge Language",
-  "description": "Nudge language support — typed, replayable, budget-aware LLM agents (.ndg): syntax highlighting, diagnostics via nudgec lsp, snippets",
-  "version": "1.2.0",
+  "description": "Nudge language support — typed, replayable, budget-aware LLM agents (.ndg): syntax highlighting, diagnostics via nudgec lsp, formatting via nudgec fmt, commands, snippets, and DAP trace debugging",
+  "version": "1.2.1",
   "publisher": "Nekomya",
   "license": "Apache-2.0",
   "icon": "icon.png",
@@ -12,6 +12,8 @@
   "categories": [
     "Programming Languages",
     "Linters",
+    "Formatters",
+    "Debuggers",
     "Snippets"
   ],
   "keywords": [
@@ -19,16 +21,23 @@
     "llm",
     "ai-agents",
     "language",
-    "dsl"
+    "dsl",
+    "lsp",
+    "dap"
   ],
   "repository": {
     "type": "git",
     "url": "https://github.com/NekomyaDev/nudge"
   },
   "activationEvents": [
-    "onLanguage:nudge"
+    "onLanguage:nudge",
+    "onCommand:nudge.traceView"
   ],
   "main": "./src/extension.js",
+  "scripts": {
+    "package": "vsce package",
+    "test": "node --check src/extension.js"
+  },
   "contributes": {
     "languages": [
       {
@@ -54,6 +63,72 @@
       {
         "language": "nudge",
         "path": "./snippets/nudge.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "nudge.check",
+        "title": "Nudge: Type-Check File (nudgec check)",
+        "category": "Nudge"
+      },
+      {
+        "command": "nudge.formatDocument",
+        "title": "Nudge: Format Document (nudgec fmt)",
+        "category": "Nudge"
+      },
+      {
+        "command": "nudge.build",
+        "title": "Nudge: Build / Compile (nudgec build)",
+        "category": "Nudge"
+      },
+      {
+        "command": "nudge.buildTs",
+        "title": "Nudge: Build TypeScript (nudgec build-ts)",
+        "category": "Nudge"
+      },
+      {
+        "command": "nudge.test",
+        "title": "Nudge: Run Tests (nudgec test)",
+        "category": "Nudge"
+      },
+      {
+        "command": "nudge.cost",
+        "title": "Nudge: Static Cost Analysis (nudgec cost)",
+        "category": "Nudge"
+      },
+      {
+        "command": "nudge.traceView",
+        "title": "Nudge: View Trace (nudgec trace-view)",
+        "category": "Nudge"
+      },
+      {
+        "command": "nudge.restartServer",
+        "title": "Nudge: Restart Language Server",
+        "category": "Nudge"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "nudge",
+        "label": "Nudge Trace Debugger",
+        "languages": [
+          "jsonl",
+          "nudge"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "trace"
+            ],
+            "properties": {
+              "trace": {
+                "type": "string",
+                "description": "Path to the Nudge .jsonl trace file to debug",
+                "default": "${file}"
+              }
+            }
+          }
+        }
       }
     ],
     "configuration": {

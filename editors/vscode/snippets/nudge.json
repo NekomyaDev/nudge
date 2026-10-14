@@ -42,5 +42,59 @@
       "}"
     ],
     "description": "Replayable test with assertions"
+  },
+  "Agent with state": {
+    "prefix": "agent",
+    "body": [
+      "agent ${1:Name} {",
+      "\tstate {",
+      "\t\t${2:count}: int = 0,",
+      "\t}",
+      "",
+      "\tfn step(${3:input}: string) -> ${4:string} uses LLM {",
+      "\t\t${0}",
+      "\t}",
+      "}"
+    ],
+    "description": "Checkpointed agent definition with state"
+  },
+  "Tool declaration": {
+    "prefix": "tool",
+    "body": [
+      "tool ${1:name}(${2:param}: string) -> ${3:string} {",
+      "\timpl: mcp(\"${4:server}\").${1:name}(${2:param})",
+      "\tside_effects: none",
+      "}"
+    ],
+    "description": "Tool declaration backed by MCP or native implementation"
+  },
+  "Decide block": {
+    "prefix": "decide",
+    "body": [
+      "let ${1:verdict} = decide {",
+      "\t${2:passed}: \"${3:did it succeed?}\" yes/no",
+      "} on ${4:target}",
+      "with { deadline: ${5:100} }"
+    ],
+    "description": "Structured calibrated decision block"
+  },
+  "Route block": {
+    "prefix": "route",
+    "body": [
+      "let ${1:action} = route {",
+      "\t${2:first}: ${3:handler()} when ${4:condition},",
+      "\tdefault: ${5:fallback()}",
+      "}"
+    ],
+    "description": "Pattern matching route construct"
+  },
+  "For-all loop": {
+    "prefix": "forall",
+    "body": [
+      "forall ${1:item} in ${2:items} {",
+      "\t${0}",
+      "}"
+    ],
+    "description": "For-all iteration loop"
   }
 }

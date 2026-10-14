@@ -85,7 +85,7 @@
       "patterns": [
         {
           "name": "keyword.control.nudge",
-          "match": "\\b(if|else|for|in|return|test|assert)\\b"
+          "match": "\\b(if|else|for|forall|in|return|test|assert)\\b"
         },
         {
           "name": "keyword.declaration.nudge",
@@ -97,13 +97,13 @@
         },
         {
           "name": "keyword.other.parallel.nudge",
-          "match": "\\b(par|map|all|race|uses|with)\\b"
+          "match": "\\b(par|map|all|race|uses|with|merge|route|decide)\\b"
         }
       ]
     },
     "contextual": {
       "name": "variable.parameter.nudge",
-      "match": "\\b(schema|model|budget|retry|concurrency|replay|impl|zip)\\b"
+      "match": "\\b(schema|model|budget|retry|concurrency|replay|impl|zip|repair|computer|stream)\\b"
     }
   }
 }
