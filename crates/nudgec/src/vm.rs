@@ -13,6 +13,12 @@ use crate::eval::NudgeVal;
 pub type DelegateHook<'a> = dyn FnMut(&str, Vec<NudgeVal>) -> Result<NudgeVal, String> + 'a;
 
 /// Maximum call frame depth before halting with a stack overflow error.
+///
+/// The VM uses an explicit heap-allocated frame stack, so it recurses ~8x
+/// deeper than the AST interpreter (which recurses on the OS stack and caps
+/// at ~1,250 frames before a hard SIGABRT crash). Exceeding this limit fails
+/// CLEANLY — a catchable `call stack overflow` error (exit 1) rather than
+/// crashing the process.
 const MAX_CALL_FRAMES: usize = 10_000;
 
 /// An activation frame on the call stack.
