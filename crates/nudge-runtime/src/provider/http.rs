@@ -4,7 +4,7 @@ use std::time::Duration;
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Create a configured ureq Agent with the specified timeout.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "live-provider"))]
 pub fn build_agent(timeout: Duration) -> ureq::Agent {
     ureq::AgentBuilder::new().timeout(timeout).build()
 }
@@ -26,7 +26,7 @@ pub fn merge_request_headers(headers: &[(String, String)]) -> Vec<(&str, &str)> 
     result
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "live-provider"))]
 fn apply_headers(mut req: ureq::Request, headers: &[(String, String)]) -> ureq::Request {
     for (key, val) in merge_request_headers(headers) {
         req = req.set(key, val);
@@ -37,7 +37,7 @@ fn apply_headers(mut req: ureq::Request, headers: &[(String, String)]) -> ureq::
 /// Send an HTTP POST request with a JSON body and custom headers using the default timeout (120s).
 ///
 /// Returns `Ok((status_code, response_body))` or `Err(error_message)` on transport/network error.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "live-provider"))]
 pub fn post_json(
     url: &str,
     headers: &[(String, String)],
@@ -47,7 +47,7 @@ pub fn post_json(
 }
 
 /// Send an HTTP POST request with a JSON body, custom headers, and a specified timeout.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "live-provider"))]
 pub fn post_json_with_timeout(
     url: &str,
     headers: &[(String, String)],
@@ -77,7 +77,7 @@ pub fn post_json_with_timeout(
 }
 
 /// Send an HTTP POST request with a JSON body and custom headers using the default timeout (120s).
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", not(feature = "live-provider")))]
 pub fn post_json(
     _url: &str,
     _headers: &[(String, String)],
@@ -87,7 +87,7 @@ pub fn post_json(
 }
 
 /// Send an HTTP POST request with a JSON body, custom headers, and a specified timeout.
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", not(feature = "live-provider")))]
 pub fn post_json_with_timeout(
     _url: &str,
     _headers: &[(String, String)],
@@ -120,7 +120,7 @@ pub fn prepare_streaming_payload(body: &serde_json::Value) -> Result<String, Str
 ///
 /// Ensures `"stream": true` is included in the request body, and returns the response body
 /// as a buffered reader ([`BufRead`]) for incremental SSE consumption.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "live-provider"))]
 pub fn post_chat_stream(
     url: &str,
     headers: &[(String, String)],
@@ -133,7 +133,7 @@ pub fn post_chat_stream(
 ///
 /// Ensures `"stream": true` is included in the request body, and returns the response body
 /// as a buffered reader ([`BufRead`]) for incremental SSE consumption.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "live-provider"))]
 pub fn post_chat_stream_with_timeout(
     url: &str,
     headers: &[(String, String)],
@@ -173,7 +173,7 @@ pub fn post_chat_stream_with_timeout(
 }
 
 /// Send an HTTP POST request for streaming chat completion using default timeout (120s).
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", not(feature = "live-provider")))]
 pub fn post_chat_stream(
     _url: &str,
     _headers: &[(String, String)],
@@ -183,7 +183,7 @@ pub fn post_chat_stream(
 }
 
 /// Send an HTTP POST request for streaming chat completion with a specified timeout.
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", not(feature = "live-provider")))]
 pub fn post_chat_stream_with_timeout(
     _url: &str,
     _headers: &[(String, String)],
@@ -196,13 +196,13 @@ pub fn post_chat_stream_with_timeout(
 /// Send an HTTP GET request with custom headers using the default timeout (120s).
 ///
 /// Returns `Ok((status_code, response_body))` or `Err(error_message)` on transport/network error.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "live-provider"))]
 pub fn get(url: &str, headers: &[(String, String)]) -> Result<(u16, String), String> {
     get_with_timeout(url, headers, DEFAULT_TIMEOUT)
 }
 
 /// Send an HTTP GET request with custom headers and a specified timeout.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "live-provider"))]
 pub fn get_with_timeout(
     url: &str,
     headers: &[(String, String)],
@@ -234,13 +234,13 @@ pub fn get_with_timeout(
 }
 
 /// Send an HTTP GET request with custom headers using the default timeout (120s).
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", not(feature = "live-provider")))]
 pub fn get(_url: &str, _headers: &[(String, String)]) -> Result<(u16, String), String> {
     Err("network not available on wasm32; use NUDGE_REPLAY".to_string())
 }
 
 /// Send an HTTP GET request with custom headers and a specified timeout.
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", not(feature = "live-provider")))]
 pub fn get_with_timeout(
     _url: &str,
     _headers: &[(String, String)],
@@ -252,10 +252,13 @@ pub fn get_with_timeout(
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    #[cfg(feature = "live-provider")]
     use std::io::{Read, Write};
+    #[cfg(feature = "live-provider")]
     use std::net::TcpListener;
 
     #[test]
+    #[cfg(feature = "live-provider")]
     fn test_http_post_json_mock_server() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
         let port = listener.local_addr().unwrap().port();
@@ -339,6 +342,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "live-provider")]
     fn test_http_get_mock_server() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
         let port = listener.local_addr().unwrap().port();
@@ -376,6 +380,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "live-provider")]
     fn test_http_post_error_status_handling() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
         let port = listener.local_addr().unwrap().port();
@@ -404,6 +409,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "live-provider")]
     fn test_http_transport_error_on_unreachable_host() {
         // Port 1 is reserved and typically nothing listens on it, or connection refused immediately
         let url = "http://127.0.0.1:1/nonexistent";

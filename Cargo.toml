@@ -8,7 +8,7 @@ license = "Apache-2.0"
 repository = "https://github.com/NekomyaDev/nudge"
 
 [profile.release]
-opt-level = 3
+opt-level = "z"
 lto = true
 codegen-units = 1
 panic = "abort"
