@@ -250,6 +250,17 @@ pub fn llm_request_hash(
     }))
 }
 
+/// Tool call identity — parity with Python's `_tool_request_hash` and the
+/// Rust interpreter's recording: `{"op": "tool", "tool", "server", "input"}`.
+pub fn tool_request_hash(tool: &str, server: Option<&str>, input: &Value) -> String {
+    request_hash(&json!({
+        "op": "tool",
+        "tool": tool,
+        "server": server,
+        "input": input,
+    }))
+}
+
 // ── sink: NTF v1 trace writing ─────────────────────────────────────
 
 static DEFAULT_SINK: AtomicBool = AtomicBool::new(false);
@@ -398,6 +409,9 @@ struct ReplayState {
     records: Vec<Value>,
     consumed: Vec<bool>,
     order_idx: usize,
+    tool_records: Vec<Value>,
+    tool_consumed: Vec<bool>,
+    tool_order_idx: usize,
 }
 
 static REPLAY: Mutex<Option<ReplayState>> = Mutex::new(None);
@@ -426,6 +440,49 @@ fn llm_records(path: &str) -> Result<Vec<Value>, String> {
     Ok(recs)
 }
 
+fn tool_records(path: &str) -> Result<Vec<Value>, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|_| format!("ReplayMismatch: trace not found: {path}"))?;
+    let mut recs = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let rec: Value = serde_json::from_str(line)
+            .map_err(|e| format!("ReplayMismatch: bad trace record: {e}"))?;
+        if rec.get("v").and_then(Value::as_i64) != Some(1) {
+            return Err(format!(
+                "ReplayMismatch: unsupported trace record version {} (this runtime speaks v1)",
+                rec.get("v").cloned().unwrap_or(Value::Null)
+            ));
+        }
+        if rec.get("kind").and_then(Value::as_str) == Some("tool.call") {
+            recs.push(rec);
+        }
+    }
+    Ok(recs)
+}
+
+fn ensure_replay_loaded(path: &str, guard: &mut Option<ReplayState>) -> Result<(), String> {
+    if guard.as_ref().map(|s| s.path.as_str()) != Some(path) {
+        let records = llm_records(path)?;
+        let consumed = vec![false; records.len()];
+        let tool_records = tool_records(path)?;
+        let tool_consumed = vec![false; tool_records.len()];
+        *guard = Some(ReplayState {
+            path: path.to_string(),
+            records,
+            consumed,
+            order_idx: 0,
+            tool_records,
+            tool_consumed,
+            tool_order_idx: 0,
+        });
+    }
+    Ok(())
+}
+
 /// Identity-first consumption (parity with Python's `_replay_take_llm`):
 /// serve the first unconsumed `llm.call` whose `request_hash` matches —
 /// a changed program can never consume an old answer. Traces where every
@@ -441,16 +498,7 @@ pub fn replay_take_llm(hash: &str) -> Result<Option<Value>, String> {
         return Err("ReplayMismatch: no NUDGE_REPLAY trace configured".into());
     }
     let mut guard = REPLAY.lock().map_err(|_| "llm replay lock poisoned")?;
-    if guard.as_ref().map(|s| s.path.as_str()) != Some(path.as_str()) {
-        let records = llm_records(&path)?;
-        let consumed = vec![false; records.len()];
-        *guard = Some(ReplayState {
-            path: path.clone(),
-            records,
-            consumed,
-            order_idx: 0,
-        });
-    }
+    ensure_replay_loaded(&path, &mut guard)?;
     let st = guard.as_mut().unwrap();
     if !st.records.is_empty() && st.records.iter().all(|r| r.get("request_hash").is_some()) {
         let match_idx = st
@@ -486,6 +534,89 @@ pub fn replay_take_llm(hash: &str) -> Result<Option<Value>, String> {
         Ok(Some(rec))
     } else {
         Ok(None)
+    }
+}
+
+/// Deterministic tool replay: serve the recorded `output` for a matching
+/// `tool.call` record from `NUDGE_REPLAY`.
+///
+/// Returns:
+/// * `Ok(Some(output))` when a matching record was found and consumed.
+/// * `Ok(None)` when replay mode is not active (`NUDGE_REPLAY` is unset or empty),
+///   signaling the caller to run the tool live.
+/// * `Err(ReplayMismatch)` when the trace has no matching record (mismatch)
+///   or has exhausted its records.
+pub fn tool_call_replay(
+    tool: &str,
+    server: Option<&str>,
+    input: &Value,
+) -> Result<Option<Value>, String> {
+    let Some(path_buf) = replay_path() else {
+        return Ok(None);
+    };
+    let path = path_buf.to_string_lossy().to_string();
+    if path.is_empty() {
+        return Ok(None);
+    }
+
+    let mut guard = REPLAY.lock().map_err(|_| "tool replay lock poisoned")?;
+    ensure_replay_loaded(&path, &mut guard)?;
+    let st = guard.as_mut().unwrap();
+
+    let hash = tool_request_hash(tool, server, input);
+
+    if !st.tool_records.is_empty()
+        && st
+            .tool_records
+            .iter()
+            .all(|r| r.get("request_hash").is_some())
+    {
+        let match_idx = st
+            .tool_records
+            .iter()
+            .enumerate()
+            .find(|(i, r)| {
+                !st.tool_consumed[*i]
+                    && r.get("request_hash").and_then(Value::as_str) == Some(&hash)
+            })
+            .map(|(i, _)| i);
+        return match match_idx {
+            Some(i) => {
+                st.tool_consumed[i] = true;
+                let output = st.tool_records[i]
+                    .get("output")
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                Ok(Some(output))
+            }
+            None => {
+                if st.tool_consumed.iter().any(|c| !c) {
+                    Err(format!(
+                        "ReplayMismatch: replay signature mismatch: no recorded tool.call for \
+                         '{tool}' matches this server/arguments (request_hash {hash}) — the \
+                         program changed its tool calls"
+                    ))
+                } else {
+                    let n = st.tool_records.len();
+                    Err(format!(
+                        "ReplayMismatch: program made more tool calls than the trace holds ({n} records)"
+                    ))
+                }
+            }
+        };
+    }
+
+    // legacy trace (records without request_hash): global record order
+    if st.tool_order_idx < st.tool_records.len() {
+        let rec = &st.tool_records[st.tool_order_idx];
+        st.tool_order_idx += 1;
+        let output = rec.get("output").cloned().unwrap_or(Value::Null);
+        Ok(Some(output))
+    } else {
+        let n = st.tool_records.len();
+        Err(format!(
+            "ReplayMismatch: program made more tool calls than the trace holds ({n} records)"
+        ))
     }
 }
 
@@ -961,6 +1092,281 @@ mod tests {
             !sink.exists(),
             "replayed calls must not write new trace records"
         );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn tool_request_hash_matches_python_reference_fixtures() {
+        let input = json!({"query": "test"});
+        assert_eq!(
+            tool_request_hash("search", Some("kb"), &input),
+            "sha256:0bcac4400201e96e98eb51b28337092d64d6d427ded350d2c1bf9f176a460216"
+        );
+        assert_eq!(
+            tool_request_hash("search", None, &input),
+            "sha256:8142cde6c03f57cced578e09cd7a778add8fe088577c7672d73cba7bd48390c1"
+        );
+    }
+
+    #[test]
+    fn tool_replay_serves_correct_recorded_output() {
+        let _g = guard();
+        let path = tmp("tool-match");
+        let input = json!({"query": "rust replay"});
+        let hash = tool_request_hash("search", Some("kb"), &input);
+        std::fs::write(
+            &path,
+            format!(
+                "{}\n",
+                json!({
+                    "v": 1,
+                    "seq": 1,
+                    "kind": "tool.call",
+                    "tool": "search",
+                    "server": "kb",
+                    "input": input,
+                    "output": ["doc1", "doc2"],
+                    "request_hash": hash
+                })
+            ),
+        )
+        .unwrap();
+
+        let _scope = testing::scope(None, Some(path.clone()));
+        let res = tool_call_replay("search", Some("kb"), &input).unwrap();
+        assert_eq!(res, Some(json!(["doc1", "doc2"])));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn tool_replay_two_identical_calls_replay_distinct_outputs_in_order() {
+        let _g = guard();
+        let path = tmp("tool-in-order");
+        let input = json!({"tick": 1});
+        let hash = tool_request_hash("clock", None, &input);
+        std::fs::write(
+            &path,
+            format!(
+                "{}\n{}\n",
+                json!({
+                    "v": 1,
+                    "seq": 1,
+                    "kind": "tool.call",
+                    "tool": "clock",
+                    "server": null,
+                    "input": input,
+                    "output": 100,
+                    "request_hash": hash
+                }),
+                json!({
+                    "v": 1,
+                    "seq": 2,
+                    "kind": "tool.call",
+                    "tool": "clock",
+                    "server": null,
+                    "input": input,
+                    "output": 200,
+                    "request_hash": hash
+                })
+            ),
+        )
+        .unwrap();
+
+        let _scope = testing::scope(None, Some(path.clone()));
+        let first = tool_call_replay("clock", None, &input).unwrap();
+        assert_eq!(first, Some(json!(100)));
+        let second = tool_call_replay("clock", None, &input).unwrap();
+        assert_eq!(second, Some(json!(200)));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn tool_replay_exhaustion_yields_replay_mismatch() {
+        let _g = guard();
+        let path = tmp("tool-exhaust");
+        let input = json!({"action": "ping"});
+        let hash = tool_request_hash("network", None, &input);
+        std::fs::write(
+            &path,
+            format!(
+                "{}\n",
+                json!({
+                    "v": 1,
+                    "seq": 1,
+                    "kind": "tool.call",
+                    "tool": "network",
+                    "server": null,
+                    "input": input,
+                    "output": "pong",
+                    "request_hash": hash
+                })
+            ),
+        )
+        .unwrap();
+
+        let _scope = testing::scope(None, Some(path.clone()));
+        let first = tool_call_replay("network", None, &input).unwrap();
+        assert_eq!(first, Some(json!("pong")));
+
+        let err = tool_call_replay("network", None, &input).unwrap_err();
+        assert!(
+            err.contains("ReplayMismatch: program made more tool calls than the trace holds"),
+            "unexpected error message: {err}"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn tool_replay_no_replay_env_signals_go_live() {
+        let _g = guard();
+        let _scope = testing::scope(None, None);
+        let res = tool_call_replay("search", Some("kb"), &json!({"q": "live"})).unwrap();
+        assert_eq!(res, None, "unset replay env must signal go-live (None)");
+    }
+
+    #[test]
+    fn tool_replay_request_hash_mismatch_yields_mismatch_error() {
+        let _g = guard();
+        let path = tmp("tool-mismatch");
+        let recorded_input = json!({"query": "expected"});
+        let hash = tool_request_hash("search", Some("kb"), &recorded_input);
+        std::fs::write(
+            &path,
+            format!(
+                "{}\n",
+                json!({
+                    "v": 1,
+                    "seq": 1,
+                    "kind": "tool.call",
+                    "tool": "search",
+                    "server": "kb",
+                    "input": recorded_input,
+                    "output": "result",
+                    "request_hash": hash
+                })
+            ),
+        )
+        .unwrap();
+
+        let _scope = testing::scope(None, Some(path.clone()));
+        let actual_input = json!({"query": "different"});
+        let err = tool_call_replay("search", Some("kb"), &actual_input).unwrap_err();
+        assert!(
+            err.contains(
+                "ReplayMismatch: replay signature mismatch: no recorded tool.call for 'search' matches"
+            ),
+            "unexpected error message: {err}"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn tool_and_llm_replay_do_not_interfere() {
+        let _g = guard();
+        let path = tmp("tool-llm-no-interference");
+        let prompt = "What is 2 + 2?";
+        let llm_hash = llm_request_hash(None, prompt, None, &[]);
+        let tool_input = json!({"expr": "2+2"});
+        let tool_hash = tool_request_hash("calc", None, &tool_input);
+        std::fs::write(
+            &path,
+            format!(
+                "{}\n{}\n",
+                json!({
+                    "v": 1,
+                    "seq": 1,
+                    "kind": "llm.call",
+                    "model": "default",
+                    "params": {"temperature": 0},
+                    "input": prompt,
+                    "output": "4",
+                    "tokens": {"in": 5, "out": 1},
+                    "cost_usd": 0.001,
+                    "repair_round": 0,
+                    "outcome": "ok",
+                    "provider": "fake",
+                    "request_hash": llm_hash
+                }),
+                json!({
+                    "v": 1,
+                    "seq": 2,
+                    "kind": "tool.call",
+                    "tool": "calc",
+                    "server": null,
+                    "input": tool_input,
+                    "output": 4,
+                    "request_hash": tool_hash
+                })
+            ),
+        )
+        .unwrap();
+
+        let _scope = testing::scope(None, Some(path.clone()));
+        // Call tool first
+        let tool_out = tool_call_replay("calc", None, &tool_input).unwrap();
+        assert_eq!(tool_out, Some(json!(4)));
+
+        // Call LLM second
+        let llm_out = llm_call(&LlmBridgeRequest {
+            prompt,
+            model: None,
+            default_model: "fake:default",
+            schema_text: None,
+            schema_json: None,
+            temperature: 0.7,
+            budget_usd: None,
+        })
+        .unwrap();
+        assert_eq!(llm_out.output, Value::String("4".to_string()));
+
+        // Tool exhaustion
+        let tool_err = tool_call_replay("calc", None, &tool_input).unwrap_err();
+        assert!(
+            tool_err.contains("ReplayMismatch: program made more tool calls than the trace holds")
+        );
+
+        // LLM exhaustion
+        let llm_err = llm_call(&LlmBridgeRequest {
+            prompt,
+            model: None,
+            default_model: "fake:default",
+            schema_text: None,
+            schema_json: None,
+            temperature: 0.7,
+            budget_usd: None,
+        })
+        .unwrap_err();
+        assert!(llm_err
+            .to_string()
+            .contains("more llm calls than the trace holds"));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn legacy_tool_records_without_request_hash_replay_in_order() {
+        let _g = guard();
+        let path = tmp("legacy-tool");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"v\": 1, \"seq\": 1, \"kind\": \"tool.call\", \"tool\": \"search\", \"input\": \"one\", \"output\": \"res1\"}\n",
+                "{\"v\": 1, \"seq\": 2, \"kind\": \"tool.call\", \"tool\": \"search\", \"input\": \"two\", \"output\": \"res2\"}\n",
+            ),
+        )
+        .unwrap();
+
+        let _scope = testing::scope(None, Some(path.clone()));
+        assert_eq!(
+            tool_call_replay("search", None, &json!("different")).unwrap(),
+            Some(json!("res1"))
+        );
+        assert_eq!(
+            tool_call_replay("search", None, &json!("anything")).unwrap(),
+            Some(json!("res2"))
+        );
+        let err = tool_call_replay("search", None, &json!("three")).unwrap_err();
+        assert!(err.contains("more tool calls than the trace holds (2 records)"));
         let _ = std::fs::remove_file(&path);
     }
 }

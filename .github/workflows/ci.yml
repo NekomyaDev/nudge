@@ -47,3 +47,15 @@ jobs:
         run: cargo fmt --all -- --check
       - name: clippy gate (warnings are errors)
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+  offline-replay-gate:
+    name: offline replay gate ($0 CI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build nudgec
+        run: cargo build -p nudgec
+      - name: Run offline replay regression gate
+        run: bash scripts/offline_replay_gate.sh
+

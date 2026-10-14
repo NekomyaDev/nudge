@@ -106,6 +106,87 @@ fn main() {{
     )
 }
 
+/// Helper that resolves the target directory given optional environment overrides.
+pub fn resolve_target_dir_from(
+    cargo_target_dir: Option<&str>,
+    xdg_cache_home: Option<&str>,
+    home_or_userprofile: Option<&str>,
+) -> PathBuf {
+    let version = env!("CARGO_PKG_VERSION");
+    let dirname = format!("standalone-target-{version}");
+
+    if let Some(val) = cargo_target_dir {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            let p = PathBuf::from(trimmed);
+            if p.is_absolute() {
+                return p;
+            } else if let Ok(cwd) = std::env::current_dir() {
+                return cwd.join(p);
+            } else {
+                return p;
+            }
+        }
+    }
+
+    if let Some(xdg) = xdg_cache_home {
+        let trimmed = xdg.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed).join("nudge").join(&dirname);
+        }
+    }
+
+    #[cfg(windows)]
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        let trimmed = local_app_data.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed)
+                .join("nudge")
+                .join("cache")
+                .join(&dirname);
+        }
+    }
+
+    if let Some(home) = home_or_userprofile {
+        let trimmed = home.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed)
+                .join(".cache")
+                .join("nudge")
+                .join(&dirname);
+        }
+    }
+
+    std::env::temp_dir().join("nudge_cache").join(&dirname)
+}
+
+/// Returns the default persistent target directory for standalone builds.
+///
+/// Path structure:
+/// - Unix/Linux/macOS: `$XDG_CACHE_HOME/nudge/standalone-target-<version>` or `$HOME/.cache/nudge/standalone-target-<version>`
+/// - Windows: `%LOCALAPPDATA%\nudge\cache\standalone-target-<version>` or `%USERPROFILE%\.cache\nudge\standalone-target-<version>`
+/// - Fallback: `<temp_dir>/nudge_cache/standalone-target-<version>`
+pub fn default_target_dir() -> PathBuf {
+    let xdg = std::env::var("XDG_CACHE_HOME").ok();
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok();
+    resolve_target_dir_from(None, xdg.as_deref(), home.as_deref())
+}
+
+/// Resolves the CARGO_TARGET_DIR to use for standalone builds.
+///
+/// If `CARGO_TARGET_DIR` is set in the environment, it is respected and used directly.
+/// Otherwise, a persistent, version-keyed cache directory under the user's cache dir is returned.
+pub fn resolve_target_dir() -> PathBuf {
+    let env_target = std::env::var("CARGO_TARGET_DIR").ok();
+    let xdg = std::env::var("XDG_CACHE_HOME").ok();
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok();
+    resolve_target_dir_from(env_target.as_deref(), xdg.as_deref(), home.as_deref())
+}
+
 /// Builds a self-contained native binary for a Nudge program.
 pub fn build_standalone(
     src_path: impl AsRef<Path>,
@@ -170,12 +251,27 @@ pub fn build_standalone(
         return Err(format!("cannot write main.rs: {e}"));
     }
 
+    let target_dir = resolve_target_dir();
+    if let Err(e) = fs::create_dir_all(&target_dir) {
+        let _ = fs::remove_dir_all(&temp_dir);
+        return Err(format!(
+            "cannot create target directory {}: {e}",
+            target_dir.display()
+        ));
+    }
+
+    let lockfile_cache = target_dir.join("standalone.lock");
+    if lockfile_cache.exists() {
+        let _ = fs::copy(&lockfile_cache, temp_dir.join("Cargo.lock"));
+    }
+
     // Run cargo build --release
     let status = Command::new("cargo")
         .arg("build")
         .arg("--release")
         .arg("--manifest-path")
         .arg(temp_dir.join("Cargo.toml"))
+        .env("CARGO_TARGET_DIR", &target_dir)
         .status()
         .map_err(|e| {
             let _ = fs::remove_dir_all(&temp_dir);
@@ -187,12 +283,17 @@ pub fn build_standalone(
         return Err(format!("cargo build failed with status {status}"));
     }
 
+    let temp_lockfile = temp_dir.join("Cargo.lock");
+    if temp_lockfile.exists() {
+        let _ = fs::copy(&temp_lockfile, &lockfile_cache);
+    }
+
     let bin_filename = if cfg!(windows) {
         format!("{pkg_name}.exe")
     } else {
         pkg_name.clone()
     };
-    let built_bin = temp_dir.join("target").join("release").join(&bin_filename);
+    let built_bin = target_dir.join("release").join(&bin_filename);
     if !built_bin.exists() {
         let _ = fs::remove_dir_all(&temp_dir);
         return Err(format!("built binary not found at {}", built_bin.display()));
@@ -262,5 +363,18 @@ mod tests {
         assert!(main.contains("nudgec::check::check(&items)"));
         assert!(main.contains("nudgec::eval::parse_cli_arg(&a)"));
         assert!(main.contains("nudgec::eval::run_program(&items, ENTRY, &cli_args)"));
+    }
+
+    #[test]
+    fn test_resolve_target_dir_deterministic_and_versioned() {
+        let version = env!("CARGO_PKG_VERSION");
+        let default_dir = default_target_dir();
+        assert!(default_dir
+            .to_string_lossy()
+            .contains(&format!("standalone-target-{version}")));
+        assert!(!default_dir.to_string_lossy().contains("nudge_standalone_"));
+
+        let custom = resolve_target_dir_from(Some("/custom/target"), None, None);
+        assert_eq!(custom, PathBuf::from("/custom/target"));
     }
 }

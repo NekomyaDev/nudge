@@ -108,10 +108,35 @@ impl Interpreter {
                 ..
             } => {
                 if *stream {
-                    return Err(
-                        "error[E-native-0100]: 'stream let' is not yet supported in Phase 1 native runtime"
-                            .into(),
-                    );
+                    let (prompt, options): (&Expr, &[(String, Expr)]) = match &value.kind {
+                        ExprKind::LlmCall {
+                            prompt, options, ..
+                        } => (prompt.as_ref(), options.as_slice()),
+                        ExprKind::Prompt { .. } => (value, &[]),
+                        _ => {
+                            return Err(
+                                "error[E-native-0100]: 'stream let' is not yet supported for non-LLM bindings"
+                                    .into(),
+                            );
+                        }
+                    };
+
+                    let provider_name =
+                        std::env::var("NUDGE_PROVIDER").unwrap_or_else(|_| "fake".to_string());
+                    let replay = nudge_runtime::trace::replay_active();
+
+                    // When NUDGE_PROVIDER=fake OR replay is active, stream let must behave
+                    // IDENTICALLY to a normal let x = llm"""...""" (deterministic, no network).
+                    if replay || provider_name == "fake" {
+                        let val = self.eval_expr(value, env)?;
+                        env.borrow_mut().define(name.clone(), val);
+                        return Ok(());
+                    }
+
+                    // Otherwise, streaming-capable OpenAI-compatible provider
+                    let val = self.eval_stream_llm(prompt, options, env)?;
+                    env.borrow_mut().define(name.clone(), val);
+                    return Ok(());
                 }
                 let val = self.eval_expr(value, env)?;
                 env.borrow_mut().define(name.clone(), val);
@@ -595,7 +620,7 @@ impl Interpreter {
             if let Some(tool_item) = self.tools.get(name).cloned() {
                 let provider_name =
                     std::env::var("NUDGE_PROVIDER").unwrap_or_else(|_| "fake".to_string());
-                if provider_name == "fake" {
+                if provider_name == "fake" && !nudge_runtime::trace::replay_active() {
                     return self.eval_fake_tool(&tool_item, args, kwargs, env);
                 } else {
                     return self.eval_mcp_tool(&tool_item, args, kwargs, env);
@@ -738,6 +763,9 @@ impl Interpreter {
             format!("error[E-native-0201]: tool '{name}' has no MCP server configured in 'impl'")
         })?;
 
+        // Enforce NUDGE_TOOL_GRANTS policy before live execution/replay
+        nudge_runtime::grants::check(name, Some(&server))?;
+
         let mut evaluated_args = Vec::with_capacity(args.len());
         for a in args {
             evaluated_args.push(self.eval_expr(a, env)?);
@@ -749,6 +777,20 @@ impl Interpreter {
         }
 
         let args_json = build_tool_args(params, &evaluated_args, &evaluated_kwargs)?;
+
+        // Offline tool replay ($0)
+        if nudge_runtime::trace::replay_active() {
+            if let Some(v) =
+                nudge_runtime::trace::tool_call_replay(name, Some(&server), &args_json)?
+            {
+                let text = match &v {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                let ret_val = convert_tool_output(ret, &self.aliases, &text);
+                return Ok(ret_val);
+            }
+        }
 
         let result_text = nudge_runtime::mcp::call_tool(&server, name, args_json.clone())
             .map_err(|e| format!("error[E-native-0201]: {e}"))?;
@@ -1364,6 +1406,143 @@ impl Interpreter {
 
         Ok(NudgeVal::Map(answers))
     }
+
+    fn eval_stream_llm(
+        &mut self,
+        prompt: &Expr,
+        options: &[(String, Expr)],
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<NudgeVal, String> {
+        let prompt_val = self.eval_expr(prompt, env)?;
+        let prompt_str = prompt_val.to_string();
+        let mut model_str = None;
+        let mut schema_name = None;
+        let mut schema_json = None;
+        let mut temperature = 0.7;
+
+        for (k, v_expr) in options {
+            match k.as_str() {
+                "model" => {
+                    let m_val = self.eval_expr(v_expr, env)?;
+                    model_str = Some(match m_val {
+                        NudgeVal::Str(s) => s,
+                        other => other.to_string(),
+                    });
+                }
+                "schema" => {
+                    let s_str = if let Some(s) = schema_expr_to_string(v_expr) {
+                        s
+                    } else {
+                        match self.eval_expr(v_expr, env) {
+                            Ok(val) => match val {
+                                NudgeVal::Str(s) => s,
+                                other => other.to_string(),
+                            },
+                            Err(_) => fallback_expr_string(v_expr),
+                        }
+                    };
+                    schema_name = Some(s_str);
+                    schema_json = Some(schema_option_json(v_expr, &self.aliases));
+                }
+                "temperature" => {
+                    let t_val = self.eval_expr(v_expr, env)?;
+                    temperature = match t_val {
+                        NudgeVal::Float(f) => f,
+                        NudgeVal::Int(i) => i as f64,
+                        _ => 0.7,
+                    };
+                }
+                _ => {}
+            }
+        }
+
+        let model = model_str.clone().unwrap_or_else(|| "gpt-4o".to_string());
+        let mut body_map = serde_json::Map::new();
+        body_map.insert("model".to_string(), serde_json::Value::String(model));
+        body_map.insert(
+            "messages".to_string(),
+            serde_json::json!([
+                {
+                    "role": "user",
+                    "content": prompt_str,
+                }
+            ]),
+        );
+        body_map.insert(
+            "temperature".to_string(),
+            serde_json::Value::from(temperature),
+        );
+        body_map.insert("stream".to_string(), serde_json::Value::Bool(true));
+        if let Some(schema) = &schema_json {
+            body_map.insert(
+                "response_format".to_string(),
+                serde_json::json!({
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "nudge_schema",
+                        "schema": schema,
+                    }
+                }),
+            );
+        }
+
+        let base_url = std::env::var("OPENAI_BASE_URL")
+            .unwrap_or_else(|_| "https://api.openai.com/v1/chat/completions".to_string());
+        let mut headers = vec![
+            ("Content-Type".to_string(), "application/json".to_string()),
+            ("Accept".to_string(), "text/event-stream".to_string()),
+        ];
+        if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+            if !key.is_empty() {
+                headers.push(("Authorization".to_string(), format!("Bearer {key}")));
+            }
+        } else if std::env::var("OPENAI_BASE_URL").is_err() {
+            return Err("OPENAI_API_KEY environment variable not set".to_string());
+        }
+
+        let reader = nudge_runtime::provider::http::post_chat_stream(
+            &base_url,
+            &headers,
+            &serde_json::Value::Object(body_map),
+        )?;
+
+        let assembled = consume_sse_stream(reader)?;
+
+        if nudge_runtime::trace::sink_active() {
+            let req_hash = nudge_runtime::trace::llm_request_hash(
+                model_str.as_deref(),
+                &prompt_str,
+                schema_json.as_ref(),
+                &[],
+            );
+            let output_val = if schema_name.is_some() {
+                parse_fenced_json(&assembled)
+                    .unwrap_or_else(|_| serde_json::Value::String(assembled.clone()))
+            } else {
+                serde_json::Value::String(assembled.clone())
+            };
+            let record = serde_json::json!({
+                "kind": "llm.call",
+                "model": model_str.unwrap_or_else(|| "default".to_string()),
+                "prompt": prompt_str,
+                "output": output_val,
+                "streamed": true,
+                "request_hash": req_hash,
+            });
+            let _ = nudge_runtime::trace::emit(record);
+        }
+
+        if schema_name.is_some() {
+            let parsed = parse_fenced_json(&assembled).map_err(|e| {
+                format!(
+                    "error[E-native-0301]: failed to parse LLM structured response as JSON: {e}"
+                )
+            })?;
+            Ok(json_to_nudgeval(parsed))
+        } else {
+            Ok(NudgeVal::Str(assembled))
+        }
+    }
 }
 
 /// Merge two values using CRDT join semantics (design §7).
@@ -1861,6 +2040,56 @@ pub fn convert_tool_output(
     }
 }
 
+/// Helper to strip markdown JSON fences and parse as Value
+fn parse_fenced_json(text: &str) -> Result<serde_json::Value, String> {
+    let trimmed = text.trim();
+    let body = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .map(|s| s.strip_suffix("```").unwrap_or(s).trim())
+        .unwrap_or(trimmed);
+    serde_json::from_str(body).map_err(|e| e.to_string())
+}
+
+/// Consume an SSE [`std::io::BufRead`] stream incrementally, printing each delta
+/// to stdout and returning the accumulated text.
+pub fn consume_sse_stream<R: std::io::BufRead>(reader: R) -> Result<String, String> {
+    consume_sse_stream_with(reader, |delta| {
+        use std::io::Write;
+        print!("{delta}");
+        let _ = std::io::stdout().flush();
+    })
+}
+
+/// Consume an SSE [`std::io::BufRead`] stream incrementally, dispatching each parsed
+/// delta to `on_delta` and returning the accumulated text.
+pub fn consume_sse_stream_with<R: std::io::BufRead, F: FnMut(&str)>(
+    reader: R,
+    mut on_delta: F,
+) -> Result<String, String> {
+    let mut sse_reader = nudge_runtime::provider::stream::SseReader::new(reader);
+    let mut accumulated = String::new();
+
+    while let Some(event) = sse_reader.read_event()? {
+        match nudge_runtime::provider::stream::parse_openai_chunk(&event.data) {
+            nudge_runtime::provider::stream::ChunkOutcome::Delta(delta) => {
+                on_delta(&delta);
+                accumulated.push_str(&delta);
+            }
+            nudge_runtime::provider::stream::ChunkOutcome::Done => {
+                break;
+            }
+            nudge_runtime::provider::stream::ChunkOutcome::Other => {
+                if event.is_done() {
+                    break;
+                }
+            }
+        }
+    }
+
+    Ok(accumulated)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2211,5 +2440,292 @@ mod tests {
 
         let res = run_program(&items, "main", &[]).expect("run_program should succeed with fake");
         assert_eq!(res, NudgeVal::Str("fake_tool_web".to_string()));
+    }
+
+    #[test]
+    fn test_mcp_tool_replay_serves_recorded_output() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let trace_path = std::env::temp_dir().join(format!(
+            "nudge_test_tool_replay_{}.jsonl",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        let input_json = serde_json::json!({ "q": "rust replay query" });
+        let req_hash = nudge_runtime::trace::tool_request_hash("web", Some("search"), &input_json);
+        let record = serde_json::json!({
+            "v": 1,
+            "seq": 1,
+            "kind": "tool.call",
+            "tool": "web",
+            "server": "search",
+            "input": input_json,
+            "output": "offline answer from trace",
+            "request_hash": req_hash,
+        });
+
+        std::fs::write(
+            &trace_path,
+            format!("{}\n", serde_json::to_string(&record).unwrap()),
+        )
+        .expect("write mock trace");
+
+        let _scope = nudge_runtime::trace::testing::scope(None, Some(trace_path.clone()));
+
+        let src = r#"
+            tool web(q: string) -> string {
+                impl: mcp("search").web(q)
+                side_effects: none
+            }
+            fn main() -> string uses Tool {
+                web("rust replay query")
+            }
+        "#;
+
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let res = run_program(&items, "main", &[]).expect("replay should serve recorded output");
+        assert_eq!(res, NudgeVal::Str("offline answer from trace".to_string()));
+
+        // Also assert unexpected tool call surfaces ReplayMismatch
+        let src_mismatch = r#"
+            tool web(q: string) -> string {
+                impl: mcp("search").web(q)
+                side_effects: none
+            }
+            fn main() -> string uses Tool {
+                web("unexpected query")
+            }
+        "#;
+        let tokens_mismatch = lex(src_mismatch).expect("lex");
+        let items_mismatch = parse(tokens_mismatch).expect("parse");
+        let err = run_program(&items_mismatch, "main", &[]).unwrap_err();
+        assert!(
+            err.contains("ReplayMismatch"),
+            "expected ReplayMismatch, got: {err}"
+        );
+
+        drop(_scope);
+        let _ = std::fs::remove_file(&trace_path);
+    }
+
+    #[test]
+    fn test_tool_grants_enforcement() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let src = r#"
+            tool web(q: string) -> string {
+                impl: mcp("search").web(q)
+                side_effects: none
+            }
+            fn main() -> string uses Tool {
+                web("test grants")
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        // 1. Set policy denying search/web on real path
+        {
+            let _env_provider = EnvReset::set("NUDGE_PROVIDER", "native");
+            let _env_grants = EnvReset::set("NUDGE_TOOL_GRANTS", r#"{"other/*": ["*"]}"#);
+
+            let err = run_program(&items, "main", &[]).unwrap_err();
+            assert!(
+                err.contains("tool 'web' on server 'search' is not granted by NUDGE_TOOL_GRANTS"),
+                "expected grants deny message, got: {err}"
+            );
+        }
+
+        // 2. Denying policy does NOT affect fake provider
+        {
+            let _env_provider_fake = EnvReset::set("NUDGE_PROVIDER", "fake");
+            let _env_grants = EnvReset::set("NUDGE_TOOL_GRANTS", r#"{"other/*": ["*"]}"#);
+            let res_fake =
+                run_program(&items, "main", &[]).expect("fake provider should ignore grants");
+            assert_eq!(res_fake, NudgeVal::Str("fake_tool_web".to_string()));
+        }
+    }
+
+    #[test]
+    fn test_tool_grants_allowed_with_replay() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let trace_path = std::env::temp_dir().join(format!(
+            "nudge_test_tool_grant_ok_{}.jsonl",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        let input_json = serde_json::json!({ "q": "allowed query" });
+        let req_hash = nudge_runtime::trace::tool_request_hash("web", Some("search"), &input_json);
+        let record = serde_json::json!({
+            "v": 1,
+            "seq": 1,
+            "kind": "tool.call",
+            "tool": "web",
+            "server": "search",
+            "input": input_json,
+            "output": "granted output",
+            "request_hash": req_hash,
+        });
+
+        std::fs::write(
+            &trace_path,
+            format!("{}\n", serde_json::to_string(&record).unwrap()),
+        )
+        .expect("write mock trace");
+
+        let _scope = nudge_runtime::trace::testing::scope(None, Some(trace_path.clone()));
+        let _env_grants = EnvReset::set("NUDGE_TOOL_GRANTS", r#"{"search/*": ["*"]}"#);
+
+        let src = r#"
+            tool web(q: string) -> string {
+                impl: mcp("search").web(q)
+                side_effects: none
+            }
+            fn main() -> string uses Tool {
+                web("allowed query")
+            }
+        "#;
+
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let res = run_program(&items, "main", &[]).expect("granted tool call should succeed");
+        assert_eq!(res, NudgeVal::Str("granted output".to_string()));
+
+        drop(_env_grants);
+        drop(_scope);
+        let _ = std::fs::remove_file(&trace_path);
+    }
+
+    #[test]
+    fn test_synthetic_sse_delta_assembly() {
+        let sse_data = b": comment line\n\
+data: {\"choices\": [{\"delta\": {\"content\": \"Hello, \"}}]}\n\n\
+: another comment\n\
+data: {\"choices\": [{\"delta\": {\"content\": \"streaming \"}}]}\n\n\
+data: {\"choices\": [{\"delta\": {\"content\": \"world!\"}}]}\n\n\
+data: [DONE]\n\n";
+
+        let mut deltas = Vec::new();
+        let reader = std::io::BufReader::new(&sse_data[..]);
+        let assembled = consume_sse_stream_with(reader, |delta| {
+            deltas.push(delta.to_string());
+        })
+        .expect("consume sse stream");
+
+        assert_eq!(deltas, vec!["Hello, ", "streaming ", "world!"]);
+        assert_eq!(assembled, "Hello, streaming world!");
+
+        // Also test consume_sse_stream directly
+        let reader2 = std::io::BufReader::new(&sse_data[..]);
+        let assembled2 = consume_sse_stream(reader2).expect("consume sse stream directly");
+        assert_eq!(assembled2, "Hello, streaming world!");
+    }
+
+    #[test]
+    fn test_stream_let_fake_provider_parity() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _scope = nudge_runtime::trace::testing::scope(None, None);
+        let _env_provider = EnvReset::set("NUDGE_PROVIDER", "fake");
+
+        let src_stream = r#"
+            fn main() -> string uses LLM {
+                stream let x: string = llm"""answer 42""" with { model: "fake" }
+                x
+            }
+        "#;
+        let tokens_stream = lex(src_stream).expect("lex");
+        let items_stream = parse(tokens_stream).expect("parse");
+        let res_stream = run_program(&items_stream, "main", &[]).expect("stream let");
+
+        let src_let = r#"
+            fn main() -> string uses LLM {
+                let x: string = llm"""answer 42""" with { model: "fake" }
+                x
+            }
+        "#;
+        let tokens_let = lex(src_let).expect("lex");
+        let items_let = parse(tokens_let).expect("parse");
+        let res_let = run_program(&items_let, "main", &[]).expect("plain let");
+
+        assert_eq!(res_stream, res_let);
+
+        // Structured output parity with schema
+        let src_schema_stream = r#"
+            type T = { count: int }
+            fn main() -> T uses LLM {
+                stream let t: T = llm"""answer count""" with { model: "fake", schema: T }
+                t
+            }
+        "#;
+        let tokens_ss = lex(src_schema_stream).expect("lex");
+        let items_ss = parse(tokens_ss).expect("parse");
+        let res_ss = run_program(&items_ss, "main", &[]).expect("stream let with schema");
+
+        let src_schema_let = r#"
+            type T = { count: int }
+            fn main() -> T uses LLM {
+                let t: T = llm"""answer count""" with { model: "fake", schema: T }
+                t
+            }
+        "#;
+        let tokens_sl = lex(src_schema_let).expect("lex");
+        let items_sl = parse(tokens_sl).expect("parse");
+        let res_sl = run_program(&items_sl, "main", &[]).expect("let with schema");
+
+        assert_eq!(res_ss, res_sl);
+    }
+
+    #[test]
+    fn test_stream_let_bare_prompt_fake_provider_parity() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _scope = nudge_runtime::trace::testing::scope(None, None);
+        let _env_provider = EnvReset::set("NUDGE_PROVIDER", "fake");
+
+        let src_stream = r#"
+            fn main() -> string uses LLM {
+                stream let x = llm"""Say hi"""
+                x
+            }
+        "#;
+        let tokens_stream = lex(src_stream).expect("lex");
+        let items_stream = parse(tokens_stream).expect("parse");
+        let res_stream = run_program(&items_stream, "main", &[]).expect("stream let bare prompt");
+
+        let src_let = r#"
+            fn main() -> string uses LLM {
+                let x = llm"""Say hi"""
+                x
+            }
+        "#;
+        let tokens_let = lex(src_let).expect("lex");
+        let items_let = parse(tokens_let).expect("parse");
+        let res_let = run_program(&items_let, "main", &[]).expect("plain let bare prompt");
+
+        assert_eq!(res_stream, res_let);
+    }
+
+    #[test]
+    fn test_stream_let_non_llm_error() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let src = r#"
+            fn main() -> int {
+                stream let x = 42
+                x
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+        let err = run_program(&items, "main", &[]).unwrap_err();
+        assert!(err.contains("E-native-0100"), "got {err}");
     }
 }

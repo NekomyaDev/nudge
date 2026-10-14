@@ -1,3 +1,4 @@
+pub mod grants;
 pub mod json;
 pub mod mcp;
 pub mod provider;

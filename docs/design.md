@@ -178,9 +178,16 @@ stream let report: Report = llm""" ... """ with { schema: Report }
 for chunk in report.chunks() { ui.render(chunk) }   // chunk: Partial[Report]
 ```
 
-Schema validation runs **incrementally** over partial JSON; a prefix that can no longer satisfy the schema aborts the stream early and triggers repair.
+#### Semantic Contract (`stream let`)
+A standard `let` binding over an LLM call buffers the full model response before parsing or schema validation. In contrast, `stream let` establishes an incremental binding:
+- **Incremental consumption**: The bound LLM call is consumed incrementally (token-by-token or chunk-by-chunk) as provider response deltas arrive, rather than waiting for completion buffering.
+- **Runtime mapping**: The compiler lowers `stream let` bindings directly to the runtime streaming path (`rt.llm_stream` in Python, TypeScript, and native runtimes).
+- **Incremental schema validation**: When a `schema` is declared, the stream is validated progressively over partial JSON prefixes. If an in-progress token prefix diverges such that the schema can no longer be satisfied (type mismatches, out-of-range numbers, invalid formats, or malformed syntax), the runtime terminates the stream immediately (`early_abort: true`).
+- **Repair loop integration**: An early abort counts as a schema violation and immediately feeds into the schema repair loop (§4.2). The repair round receives the partial output and diagnostic error, capping unnecessary token spend.
+- **Budget enforcement**: Streaming calls share the cumulative call-site budget wall (§4.3) across all repair rounds. Crossing the limit raises `BudgetExceeded`.
+- **Tracing and replay**: Streaming calls emit `llm.call` trace records with additive metadata (`streamed: true`, `chunks: <count>`, and `early_abort: true` on aborts). Under replay (`NUDGE_REPLAY`), the streaming site deterministically consumes the recorded final validated output from the trace ($0, offline) without re-opening live streaming connections.
 
-MVP mechanism (v1.8): `stream let` lowers to `rt.llm_stream`. The fake provider streams its answer in deterministic 14-character chunks; each prefix is checked by `_PrefixValidator` (wrong-type literal start, number out of range, invalid `uri`, object closing without a `required` key, malformed JSON ⇒ `_PrefixImpossible`). An abort counts as a schema violation — the §4.2 repair loop applies unchanged — and is traced with `early_abort: true` plus the consumed `chunks` count. `stream` is a contextual keyword (§12): only special directly before `let`, and `stream let` on a non-LLM binding degrades to a plain `let` with a codegen warning. `for chunk in report.chunks()` lands with `for` loops post-MVP.
+MVP mechanism (v1.8): `stream let` lowers to `rt.llm_stream`. The fake provider streams its answer in deterministic 14-character chunks, and each prefix is checked by `_PrefixValidator` (wrong-type literal start, number out of range, invalid `uri`, object closing without a `required` key, malformed JSON => `_PrefixImpossible`). An abort counts as a schema violation (the §4.2 repair loop applies unchanged) and is traced with `early_abort: true` plus the consumed `chunks` count. `stream` is a contextual keyword (§12): only special directly before `let`, and `stream let` on a non-LLM binding degrades to a plain `let` with a codegen warning. `for chunk in report.chunks()` lands with `for` loops post-MVP. Real SSE streaming connects directly to streaming providers.
 
 ---
 
@@ -226,7 +233,7 @@ Every run emits an append-only trace (JSON Lines). Payloads live in a content-ad
 
 **Payloads at MVP (v1.5):** `llm.call` records carry `input`/`output` inline; the content-addressed payload store above is deferred post-MVP. Every effectful fn also emits a `fn.return` record — `Trace.output` (§6.3) reads the last one.
 
-**Tool records (v1.7):** `tool.call` records (`tool`, `input`, `output`) are emitted in live and hybrid runs (never in full replay — tools are mocked there, §6.2). Trace emission is serialized under a lock, so `par` branches cannot interleave records or duplicate `seq` numbers.
+**Tool records (v1.7, frozen v1):** `tool.call` records carry `{v, seq, kind: "tool.call", tool, server, input, output, request_hash}`. They are emitted in live and hybrid runs (never in full replay, where matching calls are replayed deterministically from the trace). Trace emission is serialized under a lock, so `par` branches cannot interleave records or duplicate `seq` numbers.
 
 **Additive fields (v1.8):** streamed `llm.call` records carry `streamed: true`, `chunks` (consumed chunk count), and `early_abort: true` on attempts aborted by incremental validation (§4.5).
 
@@ -248,9 +255,11 @@ nudge run main.ndg --replay=llm       // hybrid: LLM from trace, Tools live
 
 Full replay sends **zero** requests to any model API → free regression tests in CI. Hybrid mode answers "did tool behavior drift?"
 
-MVP mechanism (v1.5): `NUDGE_REPLAY=<trace.jsonl>` puts the runtime in full-replay mode — `llm_call` consumes recorded outputs in order (each repair round consumes its own record), no provider is called, and no new `llm.call` records are written. Running out of records raises `ReplayMismatch`.
+MVP mechanism (v1.5): `NUDGE_REPLAY=<trace.jsonl>` puts the runtime in full-replay mode - `llm_call` consumes recorded outputs in order (each repair round consumes its own record), no provider is called, and no new `llm.call` records are written. Running out of records raises `ReplayMismatch`.
 
-Hybrid mode (v1.7): `NUDGE_REPLAY_MODE=all` (default) additionally mocks tool calls from the trace — per-tool recorded outputs in call order, `[]` when the trace holds none — and writes no `tool.call` records. `NUDGE_REPLAY_MODE=llm` is the hybrid: LLM calls replay as above while tools execute live and emit fresh `tool.call` records, so tool drift shows up as a trace diff. Live runs (no `NUDGE_REPLAY`) record both `llm.call` and `tool.call`.
+Replay contract (v1.23): Under `NUDGE_REPLAY=<trace>`, recorded LLM and tool calls are served deterministically ($0, offline). Tool replay is identity-first via `request_hash` (tool + server + canonical arguments). If the program issues an LLM or tool call that differs from recorded history or exhausts the recorded prefix without `NUDGE_RESUME`, the runtime raises `ReplayMismatch` instead of silently falling back to live execution or empty mocks. A recorded tool+LLM trace is guaranteed to replay fully offline without external network or API access.
+
+Hybrid mode (v1.7): `NUDGE_REPLAY_MODE=all` (default) replays both LLM and tool calls from the trace. `NUDGE_REPLAY_MODE=llm` is the hybrid mode: LLM calls replay from the trace while tools execute live and emit fresh `tool.call` records, allowing tool drift to be detected via trace diffs. Live runs (no `NUDGE_REPLAY`) record both `llm.call` and `tool.call`.
 
 ### 6.3 Traces as Tests
 
@@ -357,6 +366,46 @@ Tools are typed; when exposed to a model, their JSON schema is generated automat
 use mcp "filesystem" as fs
 let files = fs.list("/data")        // typed tool call
 ```
+
+### 8.1 Tool Permissions and Capability Grants (`NUDGE_TOOL_GRANTS`)
+
+Tool execution is gated at the runtime boundary by the `NUDGE_TOOL_GRANTS` environment variable.
+
+#### Purpose: Least-Privilege Execution
+Prompt instructions and model alignment alone cannot enforce safe tool boundaries against adversarial or untrusted LLM output. Nudge enforces capabilities at the execution layer: even if a prompt injection or hallucinated model plan directs the agent to invoke an unauthorized tool, the runtime denies execution before any underlying tool process or network request runs.
+
+#### Fail-Closed Contract
+The capability system operates under a strict **fail-closed** policy:
+- **Unset variable**: If `NUDGE_TOOL_GRANTS` is unset, tool execution remains unrestricted (fail-open for standard local development).
+- **Configured policy**: When `NUDGE_TOOL_GRANTS` is set, the configured policy is authoritative:
+  - An empty JSON object (`{}`) denies every tool call.
+  - Any tool call not granted by an explicit or wildcard pattern is denied immediately with a descriptive error:
+    `tool '<name>' [on server '<server>'] is not granted by NUDGE_TOOL_GRANTS` (raising a `ToolDenied` permission error).
+  - Denials are recorded in the trace as a `tool.call` record with `outcome: "denied"`, maintaining a complete audit trail.
+  - Malformed JSON, non-object payloads (such as lists or strings), or rule values that are not lists of strings are treated as **hard configuration errors** that abort execution immediately, preventing any accidental fail-open bypass.
+
+#### Policy Schema and Precedence (Reference: `runtime/nudge_runtime/__init__.py`)
+The environment variable contains a JSON object mapping capability keys to lists of glob (`fnmatch`) patterns:
+
+```json
+{
+  "server/tool": ["tool_name"],
+  "server/*": ["allowed_tool_pattern_*"],
+  "tool_name": ["*"],
+  "*": ["safe_*"]
+}
+```
+
+When evaluating a call to tool `name` on optional server `server`, keys are matched in **least-privilege order (most specific match wins)**:
+1. `"{server}/{name}"` (exact server and tool match)
+2. `"{server}/*"` (server-wide wildcard)
+3. `"{name}"` (unqualified tool name)
+4. `"*"` (global fallback)
+
+The first candidate key present in the policy is authoritative:
+- If `name` matches any glob rule in that key's list (for example, `["*"]` or `["retrieve", "query_*"]`), the call proceeds.
+- If no glob matches or the list is empty (`[]`), the call is denied.
+- A less specific key (such as `*`) cannot override or broaden a more specific restriction. If none of the candidate keys exist in the policy, access is denied.
 
 ---
 

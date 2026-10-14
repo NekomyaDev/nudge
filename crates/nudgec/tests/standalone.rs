@@ -2,6 +2,55 @@ use std::fs;
 use std::process::Command;
 
 #[test]
+fn test_standalone_target_dir_is_stable_and_not_in_temp() {
+    let dir1 = nudgec::standalone::resolve_target_dir();
+    let dir2 = nudgec::standalone::resolve_target_dir();
+    assert_eq!(
+        dir1, dir2,
+        "resolve_target_dir must be deterministic across invocations"
+    );
+
+    let version = env!("CARGO_PKG_VERSION");
+    let default_dir = nudgec::standalone::default_target_dir();
+    let default_str = default_dir.to_string_lossy();
+
+    assert!(
+        default_str.contains(&format!("standalone-target-{version}")),
+        "target dir should contain version-keyed folder name standalone-target-{version}, got: {default_str}"
+    );
+
+    // Verify it is not inside an ephemeral temp dir created during standalone build
+    assert!(
+        !default_str.contains("nudge_standalone_"),
+        "target dir must not be inside ephemeral temp dir"
+    );
+
+    // Verify environment override behavior: CARGO_TARGET_DIR respected
+    let custom = nudgec::standalone::resolve_target_dir_from(
+        Some("/var/custom/target"),
+        Some("/var/cache"),
+        Some("/home/user"),
+    );
+    assert_eq!(custom, std::path::PathBuf::from("/var/custom/target"));
+
+    // Verify XDG_CACHE_HOME fallback
+    let xdg =
+        nudgec::standalone::resolve_target_dir_from(None, Some("/var/cache"), Some("/home/user"));
+    assert_eq!(
+        xdg,
+        std::path::PathBuf::from("/var/cache/nudge").join(format!("standalone-target-{version}"))
+    );
+
+    // Verify HOME fallback
+    let home = nudgec::standalone::resolve_target_dir_from(None, None, Some("/home/user"));
+    assert_eq!(
+        home,
+        std::path::PathBuf::from("/home/user/.cache/nudge")
+            .join(format!("standalone-target-{version}"))
+    );
+}
+
+#[test]
 fn test_standalone_generator_main_rs_content() {
     let main_rs = nudgec::standalone::generate_main_rs("/path/to/test.ndg", "run");
     assert!(main_rs.contains("include_str!(\"/path/to/test.ndg\")"));

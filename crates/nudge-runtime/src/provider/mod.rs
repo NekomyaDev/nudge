@@ -4,6 +4,7 @@ pub mod fake;
 pub mod http;
 pub mod openai;
 pub mod pricing;
+pub mod stream;
 pub mod tokenizer;
 
 pub use antigravity::AntigravityProvider;
@@ -11,6 +12,10 @@ pub use claude::ClaudeProvider;
 pub use fake::FakeProvider;
 pub use openai::OpenAIProvider;
 pub use pricing::{calculate_cost, get_model_pricing, ModelPricing};
+pub use stream::{
+    extract_openai_delta, is_done, is_done_sentinel, parse_openai_chunk, ChunkOutcome, SseEvent,
+    SseReader,
+};
 pub use tokenizer::count_tokens;
 
 #[derive(Debug, Clone)]

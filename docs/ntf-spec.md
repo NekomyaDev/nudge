@@ -43,13 +43,30 @@ for LLM calls (prompts, schemas, token counts, USD).
 | `outcome` | string | `"ok"` or an error tag; consumers treat non-`"ok"` as failed |
 | `provider` | string | Provider/backend id, e.g. `fake`, `openai`, `anthropic` |
 
-### `tool.call` — one external tool invocation
+### `tool.call` - one external tool invocation
+
+Record shape:
+```json
+{"v": 1, "seq": 3, "kind": "tool.call", "tool": "search", "server": "web", "input": {"query": "weather"}, "output": ["sunny"], "request_hash": "sha256:..."}
+```
 
 | Field | Type | Meaning |
 |:---|:---|:---|
 | `tool` | string | Tool name as declared |
-| `input` | string | Invocation input (rendered) |
-| `output` | string \| object | Tool result |
+| `input` | string \| object \| array | Invocation input / arguments in canonical structure |
+| `output` | string \| object \| array | Tool result |
+
+Additive fields:
+- `server` (string): MCP server the tool resolved to, when scoped to a server.
+- `request_hash` (string): sha256 over canonical JSON of the tool identity (`{"op": "tool", "tool": ..., "server": ..., "input": ...}`), serving as the additive replay identity (tool + server + canonical arguments).
+- `outcome` (string): `"ok"`, or an error tag such as `"denied"` when refused by execution-layer grants (`NUDGE_TOOL_GRANTS`).
+- `branch` (string): `par` lane label the record was produced in.
+
+#### Replay and determinism contract
+- **Replay identity (`request_hash`)**: `request_hash` is computed as a sha256 over canonical JSON of the tool identity containing sorted keys and compact separators: `{"input": ..., "op": "tool", "server": ..., "tool": ...}`. This serves as the additive replay identity binding the tool name, target server, and canonical arguments.
+- **Deterministic replay under `NUDGE_REPLAY`**: Under `NUDGE_REPLAY=<trace>`, a matching recorded `tool.call` is served deterministically (offline, $0) instead of executing the tool live. Replay is identity-first: each tool call consumes the next unconsumed record matching its `request_hash`.
+- **ReplayMismatch on divergence or exhaustion**: If no recorded record matches the program's tool identity (for example, if arguments, tool name, or server changed), or if the program executes more tool calls than the trace holds (exhaustion), the runtime raises a `ReplayMismatch` error. The runtime never performs silent empty-result mocking.
+- **Offline guarantee**: A recorded trace containing tool and LLM calls replays fully offline with zero network requests, zero live provider calls, and zero external tool side effects.
 
 ### `decision.call` — one batched decision (v1.4, design §11)
 

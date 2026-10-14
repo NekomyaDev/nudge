@@ -54,14 +54,20 @@ fn field_type(kind: &str, field: &str) -> Option<Ty> {
         ("llm.call", "model")
         | ("llm.call", "input")
         | ("llm.call", "outcome")
-        | ("llm.call", "provider") => Some(Ty::Str),
+        | ("llm.call", "provider")
+        | ("llm.call", "request_hash") => Some(Ty::Str),
         ("llm.call", "cost_usd") | ("llm.call", "repair_round") => Some(Ty::Num),
         ("llm.call", "params") | ("llm.call", "tokens") => Some(Ty::Obj),
         // `output` is a string OR a structured object (typed answers)
-        ("tool.call", "tool") | ("fn.return", "fn") => Some(Ty::Str),
+        ("tool.call", "tool")
+        | ("tool.call", "server")
+        | ("tool.call", "request_hash")
+        | ("tool.call", "outcome")
+        | ("fn.return", "fn") => Some(Ty::Str),
         ("decision.call", "model")
         | ("decision.call", "provider")
-        | ("decision.call", "outcome") => Some(Ty::Str),
+        | ("decision.call", "outcome")
+        | ("decision.call", "request_hash") => Some(Ty::Str),
         ("decision.call", "latency_ms") => Some(Ty::Num),
         ("decision.call", "questions") | ("decision.call", "answers") => Some(Ty::Obj),
         ("computer.observe", "app")
@@ -87,6 +93,16 @@ fn type_check(kind: &str, rec: &Json) -> Vec<String> {
             paths.push((f, ty));
         }
     }
+    // additive/optional fields checked when present in the record
+    if let Json::Obj(entries) = rec {
+        for (k, _) in entries {
+            if let Some(ty) = field_type(kind, k) {
+                if !paths.iter().any(|(p, _)| p == k) {
+                    paths.push((k.as_str(), ty));
+                }
+            }
+        }
+    }
     // nested dotted paths beyond the required list
     for (f, ty) in [("tokens.in", Ty::Num), ("tokens.out", Ty::Num)] {
         if field_type(kind, f).is_some() && !paths.iter().any(|(p, _)| *p == f) {
@@ -110,6 +126,10 @@ fn type_check(kind: &str, rec: &Json) -> Vec<String> {
             continue;
         }
         let v = cur;
+        // `server` is optional/nullable ("string-or-absent")
+        if f == "server" && matches!(v, Json::Null) {
+            continue;
+        }
         let ok = match ty {
             Ty::Str => v.as_str().is_some(),
             Ty::Num => v.as_num().is_some(),
@@ -360,6 +380,99 @@ mod tests {
         assert!(
             errs.iter()
                 .any(|e| e.contains("line 4") && e.contains("`element_count` must be Num")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn tool_call_valid_records_validate() {
+        let text = format!(
+            "{}\n{}\n{}\n",
+            r#"{"v": 1, "seq": 1, "kind": "tool.call", "tool": "search", "server": "web", "input": {"query": "weather"}, "output": ["sunny"], "request_hash": "sha256:abc123"}"#,
+            r#"{"v": 1, "seq": 2, "kind": "tool.call", "tool": "clock", "server": null, "input": {"tick": 1}, "output": 100, "request_hash": "sha256:def456"}"#,
+            r#"{"v": 1, "seq": 3, "kind": "tool.call", "tool": "calc", "input": "2+2", "output": "4"}"#,
+        );
+        let errs = validate(&text);
+        assert!(errs.is_empty(), "expected valid trace, got: {errs:?}");
+    }
+
+    #[test]
+    fn tool_call_missing_required_fields_reported() {
+        let text = format!(
+            "{}\n{}\n{}\n",
+            r#"{"v": 1, "seq": 1, "kind": "tool.call", "server": "web", "input": {}, "output": []}"#,
+            r#"{"v": 1, "seq": 2, "kind": "tool.call", "tool": "search", "output": []}"#,
+            r#"{"v": 1, "seq": 3, "kind": "tool.call", "tool": "search", "input": {}}"#,
+        );
+        let errs = validate(&text);
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("line 1") && e.contains("missing `tool`")),
+            "{errs:?}"
+        );
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("line 2") && e.contains("missing `input`")),
+            "{errs:?}"
+        );
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("line 3") && e.contains("missing `output`")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn tool_call_field_types_enforced() {
+        let text = format!(
+            "{}\n{}\n{}\n",
+            r#"{"v": 1, "seq": 1, "kind": "tool.call", "tool": 123, "input": {}, "output": []}"#,
+            r#"{"v": 1, "seq": 2, "kind": "tool.call", "tool": "search", "server": 456, "input": {}, "output": []}"#,
+            r#"{"v": 1, "seq": 3, "kind": "tool.call", "tool": "search", "input": {}, "output": [], "request_hash": 789}"#,
+        );
+        let errs = validate(&text);
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("line 1") && e.contains("`tool` must be Str, got number")),
+            "{errs:?}"
+        );
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("line 2") && e.contains("`server` must be Str, got number")),
+            "{errs:?}"
+        );
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("line 3")
+                    && e.contains("`request_hash` must be Str, got number")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn mixed_trace_llm_and_tool_call_validates_and_catches_seq_gaps() {
+        let valid_text = format!(
+            "{}\n{}\n{}\n",
+            llm_line(1),
+            r#"{"v": 1, "seq": 2, "kind": "tool.call", "tool": "search", "server": "kb", "input": {"q": "test"}, "output": ["res"], "request_hash": "sha256:111"}"#,
+            llm_line(3),
+        );
+        let errs = validate(&valid_text);
+        assert!(
+            errs.is_empty(),
+            "expected mixed trace to validate, got: {errs:?}"
+        );
+
+        // Sequence gap across different record kinds
+        let gapped_text = format!(
+            "{}\n{}\n",
+            llm_line(1),
+            r#"{"v": 1, "seq": 3, "kind": "tool.call", "tool": "search", "input": "q", "output": "o"}"#,
+        );
+        let errs = validate(&gapped_text);
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("line 2") && e.contains("seq 3 out of order (expected 2)")),
             "{errs:?}"
         );
     }

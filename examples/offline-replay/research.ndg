@@ -1,0 +1,10 @@
+tool web(q: string) -> string {
+    impl: mcp("search").web(q)
+    side_effects: none
+}
+
+fn main() -> string uses LLM, Tool {
+    let result = web("nudge lang")
+    llm"""Summarize this search result: {result}"""
+    with { model: "anthropic:sonnet-4.6", budget: 0.01 USD }
+}
