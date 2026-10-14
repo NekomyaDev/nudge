@@ -276,13 +276,13 @@ pub struct StandaloneBundle {
 }
 
 impl StandaloneBundle {
-    /// Serializes the bundle to JSON bytes and encodes the append payload:
+    /// Serializes the bundle to binary bytes with bincode and encodes the append payload:
     /// `[bundle bytes][bundle_len: u64 LE][STANDALONE_MAGIC]`
-    pub fn encode_payload(&self) -> Result<Vec<u8>, serde_json::Error> {
-        let json_bytes = serde_json::to_vec(self)?;
-        let len = json_bytes.len() as u64;
-        let mut payload = Vec::with_capacity(json_bytes.len() + STANDALONE_FOOTER_LEN as usize);
-        payload.extend_from_slice(&json_bytes);
+    pub fn encode_payload(&self) -> Result<Vec<u8>, bincode::Error> {
+        let bytes = bincode::serialize(self)?;
+        let len = bytes.len() as u64;
+        let mut payload = Vec::with_capacity(bytes.len() + STANDALONE_FOOTER_LEN as usize);
+        payload.extend_from_slice(&bytes);
         payload.extend_from_slice(&len.to_le_bytes());
         payload.extend_from_slice(STANDALONE_MAGIC);
         Ok(payload)
@@ -359,7 +359,7 @@ impl StandaloneBundle {
         file.read_exact(&mut payload)
             .map_err(|e| format!("cannot read bundle payload: {e}"))?;
 
-        let bundle: StandaloneBundle = serde_json::from_slice(&payload)
+        let bundle: StandaloneBundle = bincode::deserialize(&payload)
             .map_err(|e| format!("failed to deserialize embedded bundle: {e}"))?;
 
         Ok(Some(bundle))
@@ -398,7 +398,7 @@ impl StandaloneBundle {
         let payload_start = (len - STANDALONE_FOOTER_LEN - bundle_len) as usize;
         let payload = &data[payload_start..payload_start + bundle_len_usize];
 
-        let bundle: StandaloneBundle = serde_json::from_slice(payload)
+        let bundle: StandaloneBundle = bincode::deserialize(payload)
             .map_err(|e| format!("failed to deserialize embedded bundle: {e}"))?;
 
         Ok(Some(bundle))

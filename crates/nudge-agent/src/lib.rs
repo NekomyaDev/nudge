@@ -41,16 +41,17 @@ pub fn extract_bundle(exe_path: &Path) -> Result<Option<StandaloneBundle>, Strin
     StandaloneBundle::extract_from_file(exe_path)
 }
 
-/// Loads a serialized `StandaloneBundle` from a JSON file.
+/// Loads a serialized `StandaloneBundle` from a file.
+///
+/// Supports embedded standalone binaries and bincode-serialized bundles.
 pub fn load_bundle(path: &Path) -> Result<StandaloneBundle, String> {
-    let content = std::fs::read_to_string(path)
+    let bytes = std::fs::read(path)
         .map_err(|e| format!("cannot read bundle file '{}': {e}", path.display()))?;
-    serde_json::from_str(&content).map_err(|e| {
-        format!(
-            "cannot deserialize bundle JSON from '{}': {e}",
-            path.display()
-        )
-    })
+    if let Ok(Some(bundle)) = StandaloneBundle::extract_from_slice(&bytes) {
+        return Ok(bundle);
+    }
+    bincode::deserialize::<StandaloneBundle>(&bytes)
+        .map_err(|e| format!("cannot deserialize bundle from '{}': {e}", path.display()))
 }
 
 #[cfg(test)]
@@ -149,27 +150,26 @@ mod tests {
             }],
         };
 
-        let json_bytes =
-            serde_json::to_vec(&original_bundle).expect("failed to serialize bundle to JSON");
-        let temp_file = TempTestFile::new("bundle_round_trip.json", &json_bytes);
-
-        let loaded = load_bundle(&temp_file.path).expect("failed to load valid bundle");
-        assert_eq!(loaded, original_bundle);
+        let bincode_bytes =
+            bincode::serialize(&original_bundle).expect("failed to serialize bundle to bincode");
+        let temp_bin = TempTestFile::new("bundle_round_trip.bin", &bincode_bytes);
+        let loaded_bin = load_bundle(&temp_bin.path).expect("failed to load valid bincode bundle");
+        assert_eq!(loaded_bin, original_bundle);
     }
 
     #[test]
     fn test_load_bundle_missing_file() {
-        let missing_path = Path::new("/tmp/nonexistent_bundle_file_12345.json");
+        let missing_path = Path::new("/tmp/nonexistent_bundle_file_12345.bin");
         let err = load_bundle(missing_path).unwrap_err();
         assert!(err.contains("cannot read bundle file"));
     }
 
     #[test]
-    fn test_load_bundle_invalid_json() {
-        let corrupt_data = b"{ this is definitely not valid json }";
-        let temp_file = TempTestFile::new("corrupt_bundle.json", corrupt_data);
+    fn test_load_bundle_invalid_data() {
+        let corrupt_data = b"not a valid bundle data";
+        let temp_file = TempTestFile::new("corrupt_bundle.bin", corrupt_data);
 
         let err = load_bundle(&temp_file.path).unwrap_err();
-        assert!(err.contains("cannot deserialize bundle JSON"));
+        assert!(err.contains("cannot deserialize bundle"));
     }
 }

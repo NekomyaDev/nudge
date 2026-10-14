@@ -103,7 +103,7 @@ mod tests {
     }
 
     fn build_test_executable(prefix: &[u8], bundle: &Bundle) -> Vec<u8> {
-        let bundle_bytes = serde_json::to_vec(bundle).expect("failed to serialize bundle");
+        let bundle_bytes = bincode::serialize(bundle).expect("failed to serialize bundle");
         let bundle_len = bundle_bytes.len() as u64;
         let mut data = Vec::with_capacity(prefix.len() + bundle_bytes.len() + 16);
         data.extend_from_slice(prefix);
@@ -185,15 +185,15 @@ mod tests {
         );
         assert!(res.unwrap_err().contains("exceeds"));
 
-        // Case 2: footer has MAGIC, bundle_len fits within file, but payload is corrupted JSON
-        let mut corrupt_json = b"corrupted payload that is not json!!".to_vec();
-        let payload_len = corrupt_json.len() as u64;
-        corrupt_json.extend_from_slice(&payload_len.to_le_bytes());
-        corrupt_json.extend_from_slice(MAGIC);
-        let temp_corrupt = TempTestFile::new("corrupt_json", &corrupt_json);
+        // Case 2: footer has MAGIC, bundle_len fits within file, but payload is corrupted data
+        let mut corrupt_payload = b"corrupted payload that is not valid bincode or json!!".to_vec();
+        let payload_len = corrupt_payload.len() as u64;
+        corrupt_payload.extend_from_slice(&payload_len.to_le_bytes());
+        corrupt_payload.extend_from_slice(MAGIC);
+        let temp_corrupt = TempTestFile::new("corrupt_payload", &corrupt_payload);
 
         let res = extract_bundle(&temp_corrupt.path);
-        assert!(res.is_err(), "expected error when payload is invalid json");
+        assert!(res.is_err(), "expected error when payload is invalid");
         assert!(res.unwrap_err().contains("deserialize"));
 
         // Case 3: non-existent file returns error, no panic
