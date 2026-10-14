@@ -4,6 +4,7 @@
 #[cfg(feature = "compiler")]
 pub mod a2a;
 pub mod ast;
+pub mod bytecode;
 #[cfg(feature = "compiler")]
 pub mod check;
 #[cfg(feature = "compiler")]
@@ -59,6 +60,7 @@ pub mod tracediff;
 pub mod traceexplain;
 #[cfg(feature = "compiler")]
 pub mod traceview;
+pub mod vm;
 #[cfg(feature = "compiler")]
 pub mod watch;
 

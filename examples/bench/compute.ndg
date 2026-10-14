@@ -1,0 +1,63 @@
+// Pure compute benchmark for Nudge AST interpreter.
+// Exercises recursive user functions, route branching, integer arithmetic,
+// predicates, list literals, par map transforms, and assertion checks.
+// Completely deterministic without any LLM, tool, or effectful operations.
+
+fn fib(n: int) -> int {
+    route {
+        base: n when n <= 1,
+        rec: fib(n - 1) + fib(n - 2) otherwise
+    }
+}
+
+fn tak(x: int, y: int, z: int) -> int {
+    route {
+        base: y when x <= y,
+        rec: tak(tak(x - 1, y, z), tak(y - 1, z, x), tak(z - 1, x, y)) otherwise
+    }
+}
+
+fn has_factor(n: int, d: int) -> bool {
+    route {
+        no: false when d * d > n,
+        yes: true when n % d == 0,
+        rec: has_factor(n, d + 1) otherwise
+    }
+}
+
+fn is_prime(n: int) -> bool {
+    route {
+        small: false when n < 2,
+        check: !has_factor(n, 2) otherwise
+    }
+}
+
+fn count_primes(cur: int, max_val: int, acc: int) -> int {
+    route {
+        done: acc when cur > max_val,
+        prime: count_primes(cur + 1, max_val, acc + 1) when is_prime(cur),
+        composite: count_primes(cur + 1, max_val, acc) otherwise
+    }
+}
+
+fn main() -> int {
+    // 1. Binary tree recursion: fib(22) = 17711 (57,313 calls)
+    let f = fib(22)
+    assert f == 17711
+
+    // 2. Ternary nested recursion: tak(12, 8, 4) = 12 (3,097 calls)
+    let t = tak(12, 8, 4)
+    assert t == 12
+
+    // 3. Trial division and prime counting: 95 primes under 500 (~2,500 calls)
+    let p = count_primes(2, 500, 0)
+    assert p == 95
+
+    // 4. Par map over list literal: pure transform
+    let nums = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    let mapped = par map nums |x| -> fib(x)
+    assert len(mapped) == 16
+
+    // Deterministic checksum combining all four compute results
+    f + t + p + len(mapped)
+}
