@@ -782,6 +782,11 @@ fn js_str(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serialize tests that spawn `node` — parallel node spawns contend on OS
+    /// resources and caused rare flakes under a loaded test harness.
+    static NODE_LOCK: Mutex<()> = Mutex::new(());
     use crate::lexer::lex;
     use crate::parser::parse;
 
@@ -889,6 +894,7 @@ mod tests {
     // take one element and destructure the {first, second} zip pair.
     #[test]
     fn ts_par_map_two_params_destructures_the_element() {
+        let _nl = NODE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let src = "fn f(xs: [string], ys: [string]) -> [string] uses LLM { par map(xs zip ys) |(a, b)| -> a }";
         let out = gen_ts(src);
         assert!(
@@ -948,6 +954,7 @@ mod tests {
     // ── v1.6 e2e: TS agent state checkpoints + resume under node ─────
     #[test]
     fn ts_agent_state_checkpoints_and_resumes_under_node() {
+        let _nl = NODE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         use std::process::Command;
         if Command::new("node").arg("--version").output().is_err() {
             return;
@@ -1021,6 +1028,7 @@ mod tests {
 
     #[test]
     fn ts_hello_runs_under_node() {
+        let _nl = NODE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         use std::process::Command;
         if Command::new("node").arg("--version").output().is_err() {
             return;
