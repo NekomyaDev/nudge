@@ -2090,7 +2090,7 @@ pub fn consume_sse_stream_with<R: std::io::BufRead, F: FnMut(&str)>(
     Ok(accumulated)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "compiler"))]
 mod tests {
     use super::*;
     use crate::ast::{Expr, ExprKind, Param, Span, TypeExpr};

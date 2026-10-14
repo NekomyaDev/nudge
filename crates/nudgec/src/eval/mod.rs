@@ -7,7 +7,7 @@ pub use interpreter::run_program;
 pub use interpreter::run_program_with_args;
 pub use val::{parse_cli_arg, NudgeVal};
 
-#[cfg(test)]
+#[cfg(all(test, feature = "compiler"))]
 mod tests {
     use super::*;
     use crate::lexer;
