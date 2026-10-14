@@ -2,7 +2,7 @@
 //!
 //! Compiles the pure-compute subset of Nudge AST items into bytecode. Any effectful
 //! or unsupported construct (e.g. LLM calls, tool calls, computer calls, par map,
-//! route, decide, merge, agent state writes, stream let) is rejected with a clear
+//! decide, merge, agent state writes, stream let) is rejected with a clear
 //! "not in bytecode subset" error so callers can fall back to the interpreter.
 
 use std::collections::HashMap;
@@ -63,6 +63,10 @@ pub enum Op {
     /// If falsey, push `NudgeVal::Bool(false)` and jump to target.
     /// If truthy, do not jump (and push nothing, leaving stack clean).
     JumpIfFalse(usize),
+    /// Pure conditional branch for control flow: pop val.
+    /// If not truthy (`!val.is_truthy()`), jump to target instruction index.
+    /// Leaves stack clean (pushes nothing back).
+    BranchIfFalse(usize),
     /// Construct list: pop `n` values (reverse order) and push `NudgeVal::List`.
     MakeList(usize),
     /// Construct record/map: pop values for each key (reverse order) and push `NudgeVal::Map`.
@@ -75,6 +79,8 @@ pub enum Op {
     CallBuiltin(String, usize),
     /// Assertion check: pop val. If not truthy, fail with exact error message.
     Assert(String),
+    /// Immediately abort execution with a runtime error message.
+    Fail(String),
     /// Pop top of stack and discard.
     Pop,
     /// Return from current function frame.
@@ -537,7 +543,38 @@ impl<'a> Compiler<'a> {
             ExprKind::ParAll(_) => Err("not in bytecode subset: par all".to_string()),
             ExprKind::ParRace(_) => Err("not in bytecode subset: par race".to_string()),
             ExprKind::Merge { .. } => Err("not in bytecode subset: merge".to_string()),
-            ExprKind::Route { .. } => Err("not in bytecode subset: route".to_string()),
+            ExprKind::Route { arms } => {
+                let mut end_jumps = Vec::new();
+                let mut has_otherwise = false;
+
+                for (_label, val_expr, cond_expr) in arms {
+                    if let Some(cond) = cond_expr {
+                        self.compile_expr(cond)?;
+                        let jump_next = self.chunk.emit(Op::BranchIfFalse(0));
+                        self.compile_expr(val_expr)?;
+                        end_jumps.push(self.chunk.emit(Op::Jump(0)));
+                        let next_target = self.chunk.code.len();
+                        self.chunk.code[jump_next] = Op::BranchIfFalse(next_target);
+                    } else {
+                        self.compile_expr(val_expr)?;
+                        end_jumps.push(self.chunk.emit(Op::Jump(0)));
+                        has_otherwise = true;
+                    }
+                }
+
+                if !has_otherwise {
+                    self.chunk.emit(Op::Fail(
+                        "route block matched no arm and has no otherwise fallback".to_string(),
+                    ));
+                }
+
+                let end_target = self.chunk.code.len();
+                for j in end_jumps {
+                    self.chunk.code[j] = Op::Jump(end_target);
+                }
+
+                Ok(())
+            }
             ExprKind::DecideCall { .. } => Err("not in bytecode subset: decide call".to_string()),
         }
     }

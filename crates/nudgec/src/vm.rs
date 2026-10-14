@@ -170,6 +170,12 @@ impl<'a> VM<'a> {
                         self.frames[frame_idx].ip = *target;
                     }
                 }
+                Op::BranchIfFalse(target) => {
+                    let val = self.stack.pop().ok_or("stack underflow")?;
+                    if !val.is_truthy() {
+                        self.frames[frame_idx].ip = *target;
+                    }
+                }
                 Op::Neg => {
                     let val = self.stack.pop().ok_or("stack underflow")?;
                     match val {
@@ -472,6 +478,9 @@ impl<'a> VM<'a> {
                     if !val.is_truthy() {
                         return Err(format!("assertion failed: {expr_str} evaluated to {val}"));
                     }
+                }
+                Op::Fail(msg) => {
+                    return Err(msg.clone());
                 }
                 Op::CallBuiltin(name, argc) => {
                     if name == "len" {
@@ -1002,6 +1011,203 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
+    // Route Expression Parity
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn test_parity_route_single_arm_matched() {
+        let src = r#"
+            fn check(x: int) -> string {
+                route {
+                    only: "matched" when x == 42
+                }
+            }
+            fn main() -> string {
+                check(42)
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_route_single_arm_otherwise() {
+        let src = r#"
+            fn fallback_only(x: int) -> int {
+                route {
+                    def: x * 2 otherwise
+                }
+            }
+            fn main() -> int {
+                fallback_only(21)
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_route_multi_arm_first_match_wins() {
+        let src = r#"
+            fn classify(x: int) -> string {
+                route {
+                    first: "first" when x > 0,
+                    second: "second" when x > 5,
+                    third: "third" when x > 10,
+                    fallback: "other" otherwise
+                }
+            }
+            fn main() -> [string] {
+                [classify(15), classify(7), classify(2), classify(-1)]
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_route_multi_arm_ordered() {
+        let src = r#"
+            fn tier(score: int) -> string {
+                route {
+                    gold: "gold" when score >= 90,
+                    silver: "silver" when score >= 75,
+                    bronze: "bronze" when score >= 50,
+                    fail: "fail" otherwise
+                }
+            }
+            fn main() -> [string] {
+                [tier(95), tier(80), tier(60), tier(40)]
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_route_otherwise_fallback() {
+        let src = r#"
+            fn default_when_no_match(x: int) -> int {
+                route {
+                    neg: -1 when x < 0,
+                    pos: 1 when x > 0,
+                    zero: 0 otherwise
+                }
+            }
+            fn main() -> [int] {
+                [default_when_no_match(10), default_when_no_match(-5), default_when_no_match(0)]
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_route_recursive_fib() {
+        let src = r#"
+            fn fib(n: int) -> int {
+                route {
+                    base: n when n <= 1,
+                    rec: fib(n - 1) + fib(n - 2) otherwise
+                }
+            }
+            fn main() -> int {
+                fib(10)
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_route_compute_ndg_suite() {
+        let src = r#"
+            fn fib(n: int) -> int {
+                route {
+                    base: n when n <= 1,
+                    rec: fib(n - 1) + fib(n - 2) otherwise
+                }
+            }
+
+            fn tak(x: int, y: int, z: int) -> int {
+                route {
+                    base: y when x <= y,
+                    rec: tak(tak(x - 1, y, z), tak(y - 1, z, x), tak(z - 1, x, y)) otherwise
+                }
+            }
+
+            fn has_factor(n: int, d: int) -> bool {
+                route {
+                    no: false when d * d > n,
+                    yes: true when n % d == 0,
+                    rec: has_factor(n, d + 1) otherwise
+                }
+            }
+
+            fn is_prime(n: int) -> bool {
+                route {
+                    small: false when n < 2,
+                    check: !has_factor(n, 2) otherwise
+                }
+            }
+
+            fn count_primes(cur: int, max_val: int, acc: int) -> int {
+                route {
+                    done: acc when cur > max_val,
+                    prime: count_primes(cur + 1, max_val, acc + 1) when is_prime(cur),
+                    composite: count_primes(cur + 1, max_val, acc) otherwise
+                }
+            }
+
+            fn main() -> [int] {
+                let f = fib(12)
+                let t = tak(8, 4, 2)
+                let p = count_primes(2, 30, 0)
+                [f, t, p]
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_route_nested_expression() {
+        let src = r#"
+            fn compute(x: int) -> int {
+                10 + (route {
+                    a: 5 when x > 0,
+                    b: 0 otherwise
+                }) * 2
+            }
+            fn main() -> [int] {
+                [compute(5), compute(-1)]
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_route_truthiness_conditions() {
+        let src = r#"
+            fn check_vals(n: int, s: string, xs: [int]) -> [string] {
+                let r1 = route {
+                    yes: "truthy_int" when n,
+                    no: "falsy_int" otherwise
+                }
+                let r2 = route {
+                    yes: "truthy_str" when s,
+                    no: "falsy_str" otherwise
+                }
+                let r3 = route {
+                    yes: "truthy_list" when xs,
+                    no: "falsy_list" otherwise
+                }
+                [r1, r2, r3]
+            }
+            fn main() -> [[string]] {
+                [
+                    check_vals(1, "hello", [1, 2]),
+                    check_vals(0, "", [])
+                ]
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+    }
+
+    // ------------------------------------------------------------------------
     // Errors & Edge Cases Parity
     // ------------------------------------------------------------------------
 
@@ -1055,6 +1261,35 @@ mod tests {
             }
         "#;
         assert_parity_error(src, "nonexistent", &[]);
+    }
+
+    #[test]
+    fn test_parity_route_no_match_no_fallback_error() {
+        let src = r#"
+            fn choose(x: int) -> string {
+                route {
+                    one: "one" when x == 1,
+                    two: "two" when x == 2
+                }
+            }
+            fn main() -> string {
+                choose(99)
+            }
+        "#;
+        assert_parity_error(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_route_empty_block_error() {
+        let src = r#"
+            fn empty_route() -> int {
+                route {}
+            }
+            fn main() -> int {
+                empty_route()
+            }
+        "#;
+        assert_parity_error(src, "main", &[]);
     }
 
     // ------------------------------------------------------------------------
@@ -1175,20 +1410,41 @@ mod tests {
     }
 
     #[test]
-    fn test_rejection_route() {
+    fn test_rejection_route_with_effectful_arm() {
         let src = r#"
             fn choose(x: int) -> string {
                 route {
-                    a: "small" when x < 5,
+                    a: llm"""prompt""" with { model: "fake" } when x < 5,
                     b: "large" otherwise
                 }
             }
         "#;
         let items = parse_src(src);
-        let err = compile(&items).expect_err("route must be rejected");
+        let err = compile(&items).expect_err("route with effectful arm must be rejected");
         assert!(
-            err.contains("not in bytecode subset: route"),
-            "Expected 'not in bytecode subset: route', got: {err}"
+            err.contains("not in bytecode subset: llm call"),
+            "Expected 'not in bytecode subset: llm call', got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_rejection_route_with_effectful_cond() {
+        let src = r#"
+            tool web_search(query: string) -> string {
+                server: "kb"
+            }
+            fn choose(x: int) -> string {
+                route {
+                    a: "found" when web_search("hello") == "yes",
+                    b: "fallback" otherwise
+                }
+            }
+        "#;
+        let items = parse_src(src);
+        let err = compile(&items).expect_err("route with effectful condition must be rejected");
+        assert!(
+            err.contains("not in bytecode subset: call to tool 'web_search'"),
+            "Expected tool call rejection, got: {err}"
         );
     }
 
