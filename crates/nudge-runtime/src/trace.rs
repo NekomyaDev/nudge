@@ -264,7 +264,141 @@ pub fn tool_request_hash(tool: &str, server: Option<&str>, input: &Value) -> Str
 // ── sink: NTF v1 trace writing ─────────────────────────────────────
 
 static DEFAULT_SINK: AtomicBool = AtomicBool::new(false);
-static SINK: Mutex<Option<(String, u64)>> = Mutex::new(None);
+static SINK: Mutex<Option<TraceWriter>> = Mutex::new(None);
+
+struct ThreadSinkFlusher;
+
+impl Drop for ThreadSinkFlusher {
+    fn drop(&mut self) {
+        let _ = flush_sink();
+    }
+}
+
+std::thread_local! {
+    static SINK_FLUSHER: std::cell::RefCell<Option<ThreadSinkFlusher>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Explicitly flush the global trace sink if one is currently active.
+pub fn flush_sink() -> Result<(), String> {
+    let mut guard = SINK.lock().map_err(|_| "trace sink lock poisoned")?;
+    if let Some(w) = guard.as_mut() {
+        w.flush()?;
+    }
+    Ok(())
+}
+
+/// Reset the global trace sink, flushing and closing any active writer.
+pub fn reset_sink() -> Result<(), String> {
+    let mut guard = SINK.lock().map_err(|_| "trace sink lock poisoned")?;
+    *guard = None;
+    Ok(())
+}
+
+/// Buffered writer for NTF v1 trace files.
+///
+/// Wraps an open appending `File` in `std::io::BufWriter` to batch JSONL line writes,
+/// reducing filesystem syscall overhead during execution.
+/// Flushes automatically on drop and exposes explicit `flush()` and `into_inner()` methods.
+pub struct TraceWriter {
+    path: PathBuf,
+    writer: Option<std::io::BufWriter<std::fs::File>>,
+    seq: u64,
+}
+
+pub type TraceSink = TraceWriter;
+
+impl TraceWriter {
+    /// Opens or creates the trace file at `path` for appending, seeded with the
+    /// sequence counter from any existing records already on disk.
+    pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, String> {
+        let path = path.as_ref().to_path_buf();
+        let seq = count_records(&path);
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|e| format!("cannot open trace '{}': {e}", path.display()))?;
+        Ok(Self {
+            path,
+            writer: Some(std::io::BufWriter::with_capacity(64 * 1024, file)),
+            seq,
+        })
+    }
+
+    /// Alias for `open`.
+    pub fn for_file(path: impl AsRef<std::path::Path>) -> Result<Self, String> {
+        Self::open(path)
+    }
+
+    /// Path to the underlying trace file.
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    /// Highest sequence number written or seeded so far.
+    pub fn current_seq(&self) -> u64 {
+        self.seq
+    }
+
+    /// Append one NTF v1 record: `{"v": 1, "seq": n, ...record}` with a gapless
+    /// 1-based `seq`. The record is buffered in memory.
+    pub fn emit(&mut self, record: Value) -> Result<u64, String> {
+        let Value::Object(mut fields) = record else {
+            return Err("trace record must be a JSON object".into());
+        };
+        self.seq += 1;
+        let seq = self.seq;
+        let mut line = serde_json::Map::new();
+        line.insert("v".into(), json!(1));
+        line.insert("seq".into(), json!(seq));
+        line.append(&mut fields);
+
+        let writer = self
+            .writer
+            .as_mut()
+            .ok_or_else(|| "trace writer already closed".to_string())?;
+
+        use std::io::Write;
+        writer
+            .write_all(line_bytes(&Value::Object(line)).as_bytes())
+            .and_then(|_| writer.write_all(b"\n"))
+            .map_err(|e| format!("cannot write trace '{}': {e}", self.path.display()))?;
+        Ok(seq)
+    }
+
+    /// Explicitly flush any buffered trace records to disk.
+    pub fn flush(&mut self) -> Result<(), String> {
+        if let Some(w) = self.writer.as_mut() {
+            use std::io::Write;
+            w.flush()
+                .map_err(|e| format!("cannot flush trace '{}': {e}", self.path.display()))?;
+        }
+        Ok(())
+    }
+
+    /// Flush all buffered records and unwrap the underlying `File`.
+    pub fn into_inner(mut self) -> Result<std::fs::File, String> {
+        let mut w = self
+            .writer
+            .take()
+            .ok_or_else(|| "trace writer already closed".to_string())?;
+        use std::io::Write;
+        w.flush()
+            .map_err(|e| format!("cannot flush trace '{}': {e}", self.path.display()))?;
+        w.into_inner().map_err(|e| {
+            format!(
+                "cannot unwrap buffered trace writer '{}': {e}",
+                self.path.display()
+            )
+        })
+    }
+}
+
+impl Drop for TraceWriter {
+    fn drop(&mut self) {
+        let _ = self.flush();
+    }
+}
 
 /// `nudgec run` enables the default sink: traces land in `NUDGE_TRACE`
 /// (default `trace.jsonl`) even when the env var is unset — the Python
@@ -300,6 +434,7 @@ pub mod testing {
     impl Drop for Scope {
         fn drop(&mut self) {
             OVERRIDE.with(|o| *o.borrow_mut() = self.prev.take());
+            let _ = super::reset_sink();
         }
     }
 
@@ -348,39 +483,31 @@ pub fn emit(record: Value) -> Result<(), String> {
     let Some(path) = sink_path() else {
         return Ok(());
     };
-    let key = path.to_string_lossy().to_string();
-    let mut guard = SINK.lock().map_err(|_| "trace sink lock poisoned")?;
-    let seq = {
-        let state = guard.as_mut();
-        match state {
-            Some((k, n)) if *k == key => {
-                *n += 1;
-                *n
-            }
-            _ => {
-                let n = count_records(&path) + 1;
-                *guard = Some((key, n));
-                n
-            }
+    SINK_FLUSHER.with(|f| {
+        if f.borrow().is_none() {
+            *f.borrow_mut() = Some(ThreadSinkFlusher);
         }
+    });
+    let mut guard = SINK.lock().map_err(|_| "trace sink lock poisoned")?;
+    let needs_new = match guard.as_ref() {
+        Some(w) => w.path() != path.as_path(),
+        None => true,
     };
-    let Value::Object(mut fields) = record else {
-        return Err("trace record must be a JSON object".into());
+    if needs_new {
+        let writer = TraceWriter::open(&path)?;
+        *guard = Some(writer);
+    }
+    let writer = guard.as_mut().unwrap();
+    let is_main_return = if let Value::Object(fields) = &record {
+        fields.get("kind").and_then(Value::as_str) == Some("fn.return")
+            && fields.get("fn").and_then(Value::as_str) == Some("main")
+    } else {
+        false
     };
-    // Python emits {"v": 1, "seq": n, **record} — v and seq first
-    let mut line = serde_json::Map::new();
-    line.insert("v".into(), json!(1));
-    line.insert("seq".into(), json!(seq));
-    line.append(&mut fields);
-    use std::io::Write;
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|e| format!("cannot open trace '{}': {e}", path.display()))?;
-    f.write_all(line_bytes(&Value::Object(line)).as_bytes())
-        .and_then(|_| f.write_all(b"\n"))
-        .map_err(|e| format!("cannot write trace '{}': {e}", path.display()))?;
+    writer.emit(record)?;
+    if is_main_return {
+        let _ = writer.flush();
+    }
     Ok(())
 }
 
@@ -465,6 +592,7 @@ fn tool_records(path: &str) -> Result<Vec<Value>, String> {
 }
 
 fn ensure_replay_loaded(path: &str, guard: &mut Option<ReplayState>) -> Result<(), String> {
+    let _ = flush_sink();
     if guard.as_ref().map(|s| s.path.as_str()) != Some(path) {
         let records = llm_records(path)?;
         let consumed = vec![false; records.len()];
@@ -772,6 +900,7 @@ pub fn llm_call(req: &LlmBridgeRequest<'_>) -> Result<LlmBridgeResponse, LlmBrid
         record.insert("schema".into(), json!(s));
     }
     emit(Value::Object(record)).map_err(LlmBridgeError::Trace)?;
+    let _ = flush_sink();
 
     if let Some(e) = parse_err {
         return Err(LlmBridgeError::SchemaParse(e));
@@ -1367,6 +1496,163 @@ mod tests {
         );
         let err = tool_call_replay("search", None, &json!("three")).unwrap_err();
         assert!(err.contains("more tool calls than the trace holds (2 records)"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn trace_writer_buffered_writes_flush_on_drop_without_loss() {
+        let _g = guard();
+        let path = tmp("buffered-drop");
+        let _ = std::fs::remove_file(&path);
+
+        // Write 50 events through buffered TraceWriter without calling flush()
+        {
+            let mut writer = TraceWriter::open(&path).expect("open writer");
+            for i in 1..=50 {
+                writer
+                    .emit(json!({
+                        "kind": "custom.event",
+                        "index": i,
+                        "data": format!("payload-{i}")
+                    }))
+                    .expect("emit record");
+            }
+            // Explicitly do not call flush(): verify Drop flushes all buffered records
+        }
+
+        // Now that writer has dropped, assert all 50 lines are present on disk
+        let text = std::fs::read_to_string(&path).expect("read trace file");
+        let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(
+            lines.len(),
+            50,
+            "expected all 50 records to be flushed on drop"
+        );
+
+        for (i, line) in lines.iter().enumerate() {
+            let rec: Value = serde_json::from_str(line).expect("valid json");
+            assert_eq!(rec.get("v").and_then(Value::as_i64), Some(1));
+            assert_eq!(rec.get("seq").and_then(Value::as_i64), Some(i as i64 + 1));
+            assert_eq!(rec.get("index").and_then(Value::as_i64), Some(i as i64 + 1));
+            assert_eq!(
+                rec.get("data").and_then(Value::as_str),
+                Some(format!("payload-{}", i + 1).as_str())
+            );
+        }
+
+        // Re-open existing trace with another TraceWriter: seq continues from 50 without gap
+        {
+            let mut writer = TraceWriter::open(&path).expect("reopen writer");
+            assert_eq!(writer.current_seq(), 50);
+            writer
+                .emit(json!({"kind": "custom.event", "index": 51, "data": "payload-51"}))
+                .expect("emit 51");
+            let _file = writer
+                .into_inner()
+                .expect("into_inner succeeds and flushes");
+        }
+
+        let text2 = std::fs::read_to_string(&path).expect("read trace file 2");
+        let lines2: Vec<&str> = text2.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(lines2.len(), 51);
+        let last: Value = serde_json::from_str(lines2.last().unwrap()).unwrap();
+        assert_eq!(last.get("seq").and_then(Value::as_i64), Some(51));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn trace_writer_buffered_round_trip_replay_byte_identical() {
+        let _g = guard();
+        let path = tmp("buffered-roundtrip");
+        let _ = std::fs::remove_file(&path);
+
+        let hash_a = llm_request_hash(Some("fake:default"), "prompt A", None, &[]);
+        let hash_b = llm_request_hash(Some("fake:default"), "prompt B", None, &[]);
+        let tool_input = json!({"cmd": "status"});
+        let tool_hash = tool_request_hash("sys", None, &tool_input);
+
+        // Record trace through buffered TraceWriter
+        {
+            let mut writer = TraceWriter::open(&path).expect("open writer");
+            writer
+                .emit(json!({
+                    "kind": "llm.call",
+                    "model": "fake:default",
+                    "params": {"temperature": 0},
+                    "input": "prompt A",
+                    "output": "answer A",
+                    "tokens": {"in": 10, "out": 20},
+                    "cost_usd": 0.0005,
+                    "repair_round": 0,
+                    "outcome": "ok",
+                    "provider": "fake",
+                    "request_hash": hash_a
+                }))
+                .unwrap();
+            writer
+                .emit(json!({
+                    "kind": "tool.call",
+                    "tool": "sys",
+                    "server": null,
+                    "input": tool_input,
+                    "output": {"healthy": true},
+                    "request_hash": tool_hash
+                }))
+                .unwrap();
+            writer
+                .emit(json!({
+                    "kind": "llm.call",
+                    "model": "fake:default",
+                    "params": {"temperature": 0},
+                    "input": "prompt B",
+                    "output": "answer B",
+                    "tokens": {"in": 5, "out": 15},
+                    "cost_usd": 0.0003,
+                    "repair_round": 0,
+                    "outcome": "ok",
+                    "provider": "fake",
+                    "request_hash": hash_b
+                }))
+                .unwrap();
+            // Drop flushes writer
+        }
+
+        // Replay against recorded trace
+        let _scope = testing::scope(None, Some(path.clone()));
+        assert!(replay_active());
+
+        // Replay tool call
+        let tool_res = tool_call_replay("sys", None, &tool_input).unwrap();
+        assert_eq!(tool_res, Some(json!({"healthy": true})));
+
+        // Replay LLM calls
+        let resp_b = llm_call(&LlmBridgeRequest {
+            prompt: "prompt B",
+            model: Some("fake:default"),
+            default_model: "fake:default",
+            schema_text: None,
+            schema_json: None,
+            temperature: 0.0,
+            budget_usd: None,
+        })
+        .unwrap();
+        assert_eq!(resp_b.output, Value::String("answer B".to_string()));
+        assert_eq!(resp_b.cost_usd, 0.0003);
+
+        let resp_a = llm_call(&LlmBridgeRequest {
+            prompt: "prompt A",
+            model: Some("fake:default"),
+            default_model: "fake:default",
+            schema_text: None,
+            schema_json: None,
+            temperature: 0.0,
+            budget_usd: None,
+        })
+        .unwrap();
+        assert_eq!(resp_a.output, Value::String("answer A".to_string()));
+        assert_eq!(resp_a.cost_usd, 0.0005);
+
         let _ = std::fs::remove_file(&path);
     }
 }
