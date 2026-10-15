@@ -24,3 +24,8 @@ bincode = "1.3"
 default = ["compiler"]
 compiler = []
 native-gui = ["nudge-runtime/native-gui"]
+# Enables the native HTTP stack (ureq/rustls) so `nudgec` can make LIVE provider
+# calls — including exchanging an OAuth authorization code for a token during
+# `nudgec auth login`. Without it, live token exchange is compiled out
+# (error[E-auth-0404]).
+live-provider = ["nudge-runtime/live-provider"]

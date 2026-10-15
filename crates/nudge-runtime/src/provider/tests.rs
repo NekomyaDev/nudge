@@ -3,6 +3,10 @@ use std::sync::Mutex;
 
 pub(crate) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+pub(crate) fn get_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 struct EnvGuard {
     saved: Vec<(&'static str, Option<String>)>,
 }
@@ -143,9 +147,11 @@ fn test_fake_provider_canned_responses_for_research_agent() {
 
 #[test]
 fn test_get_active_provider_default() {
-    let _lock = ENV_LOCK.lock().unwrap();
-    let _guard = EnvGuard::set(&[("NUDGE_PROVIDER", Some("fake"))]);
-    let provider = get_active_provider();
+    let _lock = get_test_lock();
+    let provider = {
+        let _guard = EnvGuard::set(&[("NUDGE_PROVIDER", None), ("NUDGE_ENABLE_ANTIGRAVITY", None)]);
+        get_active_provider()
+    };
     let req = LlmRequest {
         prompt: "test".to_string(),
         model: "default".to_string(),
@@ -194,6 +200,7 @@ fn test_pricing_and_token_counter() {
 
 #[test]
 fn test_provider_list_models() {
+    let _lock = get_test_lock();
     let fake = FakeProvider::new();
     let models = fake.list_models().unwrap();
     assert!(!models.is_empty());
@@ -208,8 +215,11 @@ fn test_provider_list_models() {
 
 #[test]
 fn test_stdlib_llm_builtins() {
-    let _lock = ENV_LOCK.lock().unwrap();
-    let _guard = EnvGuard::set(&[("NUDGE_PROVIDER", Some("fake"))]);
+    let _lock = get_test_lock();
+    let _guard = EnvGuard::set(&[
+        ("NUDGE_PROVIDER", Some("fake")),
+        ("NUDGE_ENABLE_ANTIGRAVITY", None),
+    ]);
     use crate::stdlib::llm::execute;
     use crate::value::Value;
 
@@ -253,11 +263,25 @@ fn test_stdlib_llm_builtins() {
 
 #[test]
 fn test_live_provider_missing_credentials_fails_loudly_no_mock() {
-    let _lock = ENV_LOCK.lock().unwrap();
-    let _guard = EnvGuard::set(&[("NUDGE_PROVIDER", Some("openai")), ("OPENAI_API_KEY", None)]);
+    let _lock = get_test_lock();
+
+    let req = LlmRequest {
+        prompt: "test prompt".to_string(),
+        model: "gpt-4o".to_string(),
+        schema: None,
+        temperature: 0.0,
+        budget_usd: None,
+    };
 
     // 1. try_get_active_provider fails closed
-    let res = try_get_active_provider();
+    let res = {
+        let _guard = EnvGuard::set(&[
+            ("NUDGE_PROVIDER", Some("openai")),
+            ("OPENAI_API_KEY", None),
+            ("NUDGE_ENABLE_ANTIGRAVITY", None),
+        ]);
+        try_get_active_provider()
+    };
     assert!(res.is_err(), "expected error for missing credentials");
     let err = res.err().unwrap();
     assert!(
@@ -266,13 +290,13 @@ fn test_live_provider_missing_credentials_fails_loudly_no_mock() {
     );
 
     // 2. get_active_provider returns FailClosedProvider; .call() fails loudly (no mock)
-    let provider = get_active_provider();
-    let req = LlmRequest {
-        prompt: "test prompt".to_string(),
-        model: "gpt-4o".to_string(),
-        schema: None,
-        temperature: 0.0,
-        budget_usd: None,
+    let provider = {
+        let _guard = EnvGuard::set(&[
+            ("NUDGE_PROVIDER", Some("openai")),
+            ("OPENAI_API_KEY", None),
+            ("NUDGE_ENABLE_ANTIGRAVITY", None),
+        ]);
+        get_active_provider()
     };
     let call_res = provider.call(&req);
     assert!(call_res.is_err(), "must not silently fall back to mock");
@@ -283,34 +307,41 @@ fn test_live_provider_missing_credentials_fails_loudly_no_mock() {
     );
 
     // 3. Test empty key
-    let _guard_empty = EnvGuard::set(&[
-        ("NUDGE_PROVIDER", Some("openai")),
-        ("OPENAI_API_KEY", Some("   ")),
-    ]);
-    let empty_res = try_get_active_provider();
+    let empty_res = {
+        let _guard_empty = EnvGuard::set(&[
+            ("NUDGE_PROVIDER", Some("openai")),
+            ("OPENAI_API_KEY", Some("   ")),
+            ("NUDGE_ENABLE_ANTIGRAVITY", None),
+        ]);
+        try_get_active_provider()
+    };
     assert!(empty_res.is_err());
     assert!(empty_res.err().unwrap().contains("error[E-auth-0401]"));
 
     // 4. Test claude with missing key
-    let _guard_claude = EnvGuard::set(&[
-        ("NUDGE_PROVIDER", Some("claude")),
-        ("ANTHROPIC_API_KEY", None),
-    ]);
-    let claude_res = try_get_active_provider();
+    let (claude_res, claude_provider) = {
+        let _guard_claude = EnvGuard::set(&[
+            ("NUDGE_PROVIDER", Some("claude")),
+            ("ANTHROPIC_API_KEY", None),
+            ("NUDGE_ENABLE_ANTIGRAVITY", None),
+        ]);
+        (try_get_active_provider(), get_active_provider())
+    };
     assert!(claude_res.is_err());
     let claude_err = claude_res.err().unwrap();
     assert!(
         claude_err.contains("error[E-auth-0401]"),
         "expected E-auth-0401 for claude, got: {claude_err}"
     );
-    let claude_call = get_active_provider().call(&req);
+    let claude_call = claude_provider.call(&req);
     assert!(claude_call.is_err());
     assert!(claude_call.err().unwrap().contains("error[E-auth-0401]"));
 }
 
 #[test]
 fn test_nudge_provider_fake_and_replay_still_work() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = get_test_lock();
+    let _guard_ag = EnvGuard::set(&[("NUDGE_ENABLE_ANTIGRAVITY", None)]);
 
     // 1. Explicit NUDGE_PROVIDER=fake
     let _guard = EnvGuard::set(&[("NUDGE_PROVIDER", Some("fake"))]);
@@ -339,7 +370,7 @@ fn test_nudge_provider_fake_and_replay_still_work() {
 
 #[test]
 fn test_antigravity_no_longer_reads_foreign_tokens_and_fails_closed() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = get_test_lock();
 
     // Create a temporary directory mimicking foreign app credential directories
     let temp_dir = std::env::temp_dir().join(format!(
@@ -368,33 +399,6 @@ fn test_antigravity_no_longer_reads_foreign_tokens_and_fails_closed() {
     )
     .unwrap();
 
-    let temp_home = temp_dir.to_str().unwrap();
-    let _guard = EnvGuard::set(&[
-        ("HOME", Some(temp_home)),
-        ("USERPROFILE", Some(temp_home)),
-        ("NUDGE_PROVIDER", Some("antigravity")),
-        ("NUDGE_CREDENTIALS_PATH", None),
-        ("NUDGE_AUTH_ANTIGRAVITY", None),
-        ("ANTIGRAVITY_TOKEN", None),
-        ("NUDGE_NON_INTERACTIVE", Some("1")),
-        ("NUDGE_FORCE_TTY", None),
-        ("NUDGE_API_KEY", None),
-        ("ANTIGRAVITY_API_KEY", None),
-    ]);
-
-    // 1. try_get_active_provider fails closed with E-auth-0401
-    let res = try_get_active_provider();
-    assert!(
-        res.is_err(),
-        "antigravity must fail closed when foreign tokens exist"
-    );
-    let err = res.err().unwrap();
-    assert!(
-        err.contains("error[E-auth-0401]"),
-        "expected E-auth-0401, got: {err}"
-    );
-
-    // 2. get_active_provider().call(&req) fails closed
     let req = LlmRequest {
         prompt: "test antigravity".to_string(),
         model: "default".to_string(),
@@ -402,17 +406,99 @@ fn test_antigravity_no_longer_reads_foreign_tokens_and_fails_closed() {
         temperature: 0.0,
         budget_usd: None,
     };
-    let call_res = get_active_provider().call(&req);
+
+    let temp_home = temp_dir.to_str().unwrap();
+
+    // 1. Without opt-in, try_get_active_provider fails closed with E-auth-0404 (gate Disabled)
+    let (res, call_res) = {
+        let _guard = EnvGuard::set(&[
+            ("HOME", Some(temp_home)),
+            ("USERPROFILE", Some(temp_home)),
+            ("NUDGE_PROVIDER", Some("antigravity")),
+            ("NUDGE_CREDENTIALS_PATH", None),
+            ("NUDGE_AUTH_ANTIGRAVITY", None),
+            ("ANTIGRAVITY_TOKEN", None),
+            ("NUDGE_NON_INTERACTIVE", Some("1")),
+            ("NUDGE_FORCE_TTY", None),
+            ("NUDGE_API_KEY", None),
+            ("ANTIGRAVITY_API_KEY", None),
+            ("NUDGE_ENABLE_ANTIGRAVITY", None),
+        ]);
+        let r = try_get_active_provider();
+        let p = get_active_provider();
+        (r, p.call(&req))
+    };
+    assert!(
+        res.is_err(),
+        "antigravity must fail closed when unproven without opt-in"
+    );
+    let err = res.err().unwrap();
+    assert!(
+        err.contains("error[E-auth-0404]")
+            && (err.contains("fail-closed") || err.contains("not been proven")),
+        "expected E-auth-0404 fail-closed, got: {err}"
+    );
+
+    // 2. get_active_provider().call(&req) fails closed with E-auth-0404
     assert!(call_res.is_err());
     let call_err = call_res.err().unwrap();
     assert!(
-        call_err.contains("error[E-auth-0401]"),
-        "expected E-auth-0401 on call, got: {call_err}"
+        call_err.contains("error[E-auth-0404]"),
+        "expected E-auth-0404 on call, got: {call_err}"
     );
 
-    // 3. Direct AntigravityProvider::new().call(&req) also fails closed
-    let direct_provider = AntigravityProvider::new();
-    let direct_res = direct_provider.call(&req);
+    // 3. With explicit opt-in, antigravity passes the gate but STILL fails closed with E-auth-0401
+    // because foreign tokens in ~/.jcode and ~/.openhands are ignored and no valid Nudge credentials exist
+    let (opt_in_res, opt_in_call) = {
+        let _guard = EnvGuard::set(&[
+            ("HOME", Some(temp_home)),
+            ("USERPROFILE", Some(temp_home)),
+            ("NUDGE_PROVIDER", Some("antigravity")),
+            ("NUDGE_CREDENTIALS_PATH", None),
+            ("NUDGE_AUTH_ANTIGRAVITY", None),
+            ("ANTIGRAVITY_TOKEN", None),
+            ("NUDGE_NON_INTERACTIVE", Some("1")),
+            ("NUDGE_FORCE_TTY", None),
+            ("NUDGE_API_KEY", None),
+            ("ANTIGRAVITY_API_KEY", None),
+            ("NUDGE_ENABLE_ANTIGRAVITY", Some("1")),
+        ]);
+        let r = try_get_active_provider();
+        let p = get_active_provider();
+        (r, p.call(&req))
+    };
+    assert!(
+        opt_in_res.is_err(),
+        "antigravity must fail closed when foreign tokens exist even with opt-in"
+    );
+    let opt_in_err = opt_in_res.err().unwrap();
+    assert!(
+        opt_in_err.contains("error[E-auth-0401]"),
+        "expected E-auth-0401, got: {opt_in_err}"
+    );
+
+    assert!(opt_in_call.is_err());
+    let opt_in_call_err = opt_in_call.err().unwrap();
+    assert!(
+        opt_in_call_err.contains("error[E-auth-0401]"),
+        "expected E-auth-0401 on call with opt-in, got: {opt_in_call_err}"
+    );
+
+    // 4. Direct AntigravityProvider::new().call(&req) also fails closed with E-auth-0401 (foreign tokens ignored)
+    let direct_res = {
+        let _guard = EnvGuard::set(&[
+            ("HOME", Some(temp_home)),
+            ("USERPROFILE", Some(temp_home)),
+            ("NUDGE_CREDENTIALS_PATH", None),
+            ("NUDGE_AUTH_ANTIGRAVITY", None),
+            ("ANTIGRAVITY_TOKEN", None),
+            ("NUDGE_API_KEY", None),
+            ("ANTIGRAVITY_API_KEY", None),
+            ("NUDGE_ENABLE_ANTIGRAVITY", None),
+        ]);
+        let direct_provider = AntigravityProvider::new();
+        direct_provider.call(&req)
+    };
     assert!(direct_res.is_err());
     let direct_err = direct_res.err().unwrap();
     assert!(
@@ -426,15 +512,8 @@ fn test_antigravity_no_longer_reads_foreign_tokens_and_fails_closed() {
 
 #[test]
 fn test_provider_marked_disabled_refuses_live_call() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = get_test_lock();
 
-    // 1. antigravity when explicitly disabled in the gate
-    let _guard_ag = EnvGuard::set(&[
-        ("NUDGE_PROVIDER", Some("antigravity")),
-        ("NUDGE_DISABLE_PROVIDER_ANTIGRAVITY", Some("1")),
-        ("NUDGE_API_KEY", None),
-        ("ANTIGRAVITY_API_KEY", None),
-    ]);
     let req = LlmRequest {
         prompt: "disabled test".to_string(),
         model: "default".to_string(),
@@ -442,18 +521,32 @@ fn test_provider_marked_disabled_refuses_live_call() {
         temperature: 0.0,
         budget_usd: None,
     };
-    let res = get_active_provider().call(&req);
+
+    // 1. antigravity when explicitly disabled in the gate
+    let res = {
+        let _guard_ag = EnvGuard::set(&[
+            ("NUDGE_PROVIDER", Some("antigravity")),
+            ("NUDGE_DISABLE_PROVIDER_ANTIGRAVITY", Some("1")),
+            ("NUDGE_API_KEY", None),
+            ("ANTIGRAVITY_API_KEY", None),
+            ("NUDGE_ENABLE_ANTIGRAVITY", None),
+        ]);
+        get_active_provider().call(&req)
+    };
     assert!(res.is_err());
     let err = res.err().unwrap();
     assert!(err.contains("error[E-auth-0404]"), "got: {err}");
 
     // 2. Explicitly disabling a provider via NUDGE_DISABLE_PROVIDER_<NAME>=1
-    let _guard_disabled = EnvGuard::set(&[
-        ("NUDGE_PROVIDER", Some("openai")),
-        ("OPENAI_API_KEY", Some("valid-dummy-key")),
-        ("NUDGE_DISABLE_PROVIDER_OPENAI", Some("1")),
-    ]);
-    let res_disabled = get_active_provider().call(&req);
+    let res_disabled = {
+        let _guard_disabled = EnvGuard::set(&[
+            ("NUDGE_PROVIDER", Some("openai")),
+            ("OPENAI_API_KEY", Some("valid-dummy-key")),
+            ("NUDGE_DISABLE_PROVIDER_OPENAI", Some("1")),
+            ("NUDGE_ENABLE_ANTIGRAVITY", None),
+        ]);
+        get_active_provider().call(&req)
+    };
     assert!(res_disabled.is_err());
     let err_disabled = res_disabled.err().unwrap();
     assert!(
@@ -462,8 +555,13 @@ fn test_provider_marked_disabled_refuses_live_call() {
     );
 
     // 3. Unknown provider name refuses live call with E-auth-0404
-    let _guard_unknown = EnvGuard::set(&[("NUDGE_PROVIDER", Some("completely_unknown_xyz"))]);
-    let res_unknown = get_active_provider().call(&req);
+    let res_unknown = {
+        let _guard_unknown = EnvGuard::set(&[
+            ("NUDGE_PROVIDER", Some("completely_unknown_xyz")),
+            ("NUDGE_ENABLE_ANTIGRAVITY", None),
+        ]);
+        get_active_provider().call(&req)
+    };
     assert!(res_unknown.is_err());
     let err_unknown = res_unknown.err().unwrap();
     assert!(
@@ -474,7 +572,7 @@ fn test_provider_marked_disabled_refuses_live_call() {
 
 #[test]
 fn test_provider_gate_table_and_policy() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = get_test_lock();
 
     // Check table entries
     assert!(PROVIDER_GATE_TABLE
@@ -490,8 +588,12 @@ fn test_provider_gate_table_and_policy() {
         .iter()
         .any(|e| e.name == "antigravity" && e.oauth_enabled));
 
-    // Test get_provider_gate_policy
-    let _guard = EnvGuard::set(&[("NUDGE_API_KEY", None), ("ANTIGRAVITY_API_KEY", None)]);
+    // Test get_provider_gate_policy under explicit opt-in
+    let _guard = EnvGuard::set(&[
+        ("NUDGE_API_KEY", None),
+        ("ANTIGRAVITY_API_KEY", None),
+        ("NUDGE_ENABLE_ANTIGRAVITY", Some("1")),
+    ]);
     match get_provider_gate_policy("antigravity") {
         ProviderGatePolicy::LoopbackOAuth { auth_url, .. } => {
             assert!(auth_url.contains("accounts.google.com"));
@@ -510,12 +612,80 @@ fn test_provider_gate_table_and_policy() {
         }
     }
 
-    // When first-party key is set, antigravity switches to ApiKey policy
+    // When first-party key is set (with opt-in), antigravity switches to ApiKey policy
     let _guard_key = EnvGuard::set(&[("NUDGE_API_KEY", Some("my-first-party-key"))]);
     match get_provider_gate_policy("antigravity") {
         ProviderGatePolicy::ApiKey { primary_env, .. } => {
             assert_eq!(primary_env, "NUDGE_API_KEY");
         }
         other => panic!("expected ApiKey, got: {other:?}"),
+    }
+}
+
+#[test]
+fn test_antigravity_default_is_fail_closed_without_opt_in_regression() {
+    let _lock = get_test_lock();
+
+    // 1. With NO NUDGE_ENABLE_ANTIGRAVITY -> policy is Disabled (fail-closed)
+    let _guard = EnvGuard::set(&[
+        ("NUDGE_ENABLE_ANTIGRAVITY", None),
+        ("NUDGE_API_KEY", None),
+        ("ANTIGRAVITY_API_KEY", None),
+        ("NUDGE_DISABLE_PROVIDER_ANTIGRAVITY", None),
+    ]);
+    match get_provider_gate_policy("antigravity") {
+        ProviderGatePolicy::Disabled { reason } => {
+            assert!(
+                reason.contains("fail-closed"),
+                "reason must mention 'fail-closed': {reason}"
+            );
+            assert!(
+                reason.contains("not been proven"),
+                "reason must mention 'not been proven': {reason}"
+            );
+        }
+        other => panic!("expected Disabled fail-closed policy, got: {other:?}"),
+    }
+
+    // Even if an API key is set, policy remains Disabled if NUDGE_ENABLE_ANTIGRAVITY is unset
+    {
+        let _guard_key = EnvGuard::set(&[("NUDGE_API_KEY", Some("test-key-without-opt-in"))]);
+        match get_provider_gate_policy("antigravity") {
+            ProviderGatePolicy::Disabled { reason } => {
+                assert!(reason.contains("fail-closed") && reason.contains("not been proven"));
+            }
+            other => {
+                panic!("expected Disabled even with API key when opt-in is unset, got: {other:?}")
+            }
+        }
+    }
+
+    // 2. With NUDGE_ENABLE_ANTIGRAVITY=1 -> policy is NOT Disabled
+    {
+        let _guard_opt_in = EnvGuard::set(&[
+            ("NUDGE_ENABLE_ANTIGRAVITY", Some("1")),
+            ("NUDGE_API_KEY", None),
+            ("ANTIGRAVITY_API_KEY", None),
+        ]);
+        match get_provider_gate_policy("antigravity") {
+            ProviderGatePolicy::LoopbackOAuth { auth_url, .. } => {
+                assert!(auth_url.contains("accounts.google.com"));
+            }
+            other => panic!("expected LoopbackOAuth with opt-in, got: {other:?}"),
+        }
+    }
+
+    // With NUDGE_ENABLE_ANTIGRAVITY=1 and API key -> ApiKey (NOT Disabled)
+    {
+        let _guard_api = EnvGuard::set(&[
+            ("NUDGE_ENABLE_ANTIGRAVITY", Some("1")),
+            ("NUDGE_API_KEY", Some("valid-key")),
+        ]);
+        match get_provider_gate_policy("antigravity") {
+            ProviderGatePolicy::ApiKey { primary_env, .. } => {
+                assert_eq!(primary_env, "NUDGE_API_KEY");
+            }
+            other => panic!("expected ApiKey with opt-in and key, got: {other:?}"),
+        }
     }
 }

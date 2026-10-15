@@ -100,6 +100,20 @@ pub fn get_provider_gate_policy(name: &str) -> ProviderGatePolicy {
     }
 
     if name == "antigravity" {
+        // PACK 5 Public Verification Gate — keep antigravity FAIL-CLOSED by default.
+        // We found NO official proof that this OAuth client and its model endpoint may
+        // be used from an independent third-party client. A mock OAuth test and green CI
+        // do NOT prove live-account access or usage permission, so the connection stays
+        // disabled until permission is verified. Consumers (e.g. Nudge Studio) must not
+        // rely on this provider until then. Explicit, user-asserted opt-in only:
+        let opted_in = std::env::var("NUDGE_ENABLE_ANTIGRAVITY")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        if !opted_in {
+            return ProviderGatePolicy::Disabled {
+                reason: "provider 'antigravity' is fail-closed: official third-party usage permission for this OAuth client/model endpoint has not been proven (a mock OAuth test or green CI does not prove live access). Set NUDGE_ENABLE_ANTIGRAVITY=1 to explicitly opt in at your own risk once permission is verified.",
+            };
+        }
         let has_first_party_key = std::env::var("NUDGE_API_KEY")
             .or_else(|_| std::env::var("ANTIGRAVITY_API_KEY"))
             .map(|k| !k.trim().is_empty())

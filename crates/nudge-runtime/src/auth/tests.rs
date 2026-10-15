@@ -528,6 +528,8 @@ fn read_full_http_request(stream: &mut std::net::TcpStream) -> String {
 #[cfg(feature = "live-provider")]
 fn test_loopback_oauth_flow_with_mock_token_server() {
     let _lock = get_test_lock();
+    let _guard_opt_in = EnvGuard::set("NUDGE_ENABLE_ANTIGRAVITY", "1");
+    let _guard_port = EnvGuard::set("NUDGE_ANTIGRAVITY_REDIRECT_PORT", "0");
 
     let token_listener = TcpListener::bind("127.0.0.1:0").expect("bind mock token port");
     let token_port = token_listener.local_addr().unwrap().port();
@@ -630,6 +632,8 @@ fn test_loopback_oauth_flow_with_mock_token_server() {
 #[cfg(feature = "live-provider")]
 fn test_loopback_oauth_denial_emits_e_auth_0402() {
     let _lock = get_test_lock();
+    let _guard_opt_in = EnvGuard::set("NUDGE_ENABLE_ANTIGRAVITY", "1");
+    let _guard_port = EnvGuard::set("NUDGE_ANTIGRAVITY_REDIRECT_PORT", "0");
 
     let config = LoopbackOAuthConfig {
         provider: "antigravity".to_string(),
@@ -671,6 +675,8 @@ fn test_loopback_oauth_denial_emits_e_auth_0402() {
 #[cfg(feature = "live-provider")]
 fn test_loopback_oauth_state_mismatch_emits_e_auth_0401() {
     let _lock = get_test_lock();
+    let _guard_opt_in = EnvGuard::set("NUDGE_ENABLE_ANTIGRAVITY", "1");
+    let _guard_port = EnvGuard::set("NUDGE_ANTIGRAVITY_REDIRECT_PORT", "0");
 
     let config = LoopbackOAuthConfig {
         provider: "antigravity".to_string(),
@@ -712,6 +718,7 @@ fn test_loopback_oauth_state_mismatch_emits_e_auth_0401() {
 #[cfg(feature = "live-provider")]
 fn test_loopback_oauth_refresh_flow() {
     let _lock = get_test_lock();
+    let _guard_opt_in = EnvGuard::set("NUDGE_ENABLE_ANTIGRAVITY", "1");
 
     let token_listener = TcpListener::bind("127.0.0.1:0").expect("bind refresh token port");
     let token_port = token_listener.local_addr().unwrap().port();
@@ -824,6 +831,7 @@ fn test_antigravity_provider_reads_only_nudge_store_not_jcode() {
     let _guard_api_key = EnvGuard::unset("NUDGE_API_KEY");
     let _guard_antigravity_key = EnvGuard::unset("ANTIGRAVITY_API_KEY");
     let _guard_auth_antigravity = EnvGuard::unset("NUDGE_AUTH_ANTIGRAVITY");
+    let _guard_enable_antigravity = EnvGuard::unset("NUDGE_ENABLE_ANTIGRAVITY");
 
     let provider = AntigravityProvider::new();
     assert!(

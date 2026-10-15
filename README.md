@@ -313,6 +313,7 @@ Secure credential management built directly into the language and runtime:
 - **No Foreign Token Harvesting:** Nudge never reads private token caches or credential stores belonging to third-party tools.
 - **Native RFC 8628 Device Flow:** interactive terminal authorization via OAuth 2.0 Device Authorization Grant with secure credential storage in `~/.nudge/credentials.json` (file mode 0600).
 - **Provider Gates:** providers must satisfy verifiable security contracts (`E-auth-0401` for missing credentials, `E-auth-0403` for scope deficits, `E-auth-0404` for disabled providers).
+- **Unproven Providers Stay Closed (Permission Gate):** a provider whose official third-party usage permission has not been proven is **fail-closed by default**. This currently applies to `antigravity`: its OAuth login flow and provider code exist, but because no official proof was found that its OAuth client and model endpoint may be used from an independent third-party client, the gate stays **disabled** (`E-auth-0404`) until permission is verified. **A mock OAuth test or a green CI run does NOT prove live-account access or usage permission.** Consumers (including any app built on Nudge) must not rely on this connection until the permission is documented. An explicit, user-asserted opt-in (`NUDGE_ENABLE_ANTIGRAVITY=1`) enables it at the user's own risk once permission is verified.
 
 ### Typed Decisions
 

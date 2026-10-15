@@ -365,8 +365,19 @@ impl LoopbackOAuthClient {
             return Err(format!("error[E-auth-0404]: {reason}"));
         }
 
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| {
-            format!("error[E-auth-0401]: failed to bind local loopback listener: {e}")
+        // Google rejects a redirect_uri that does not match the OAuth client's
+        // registered redirect with `Error 400: invalid_request`. This client's
+        // registered loopback redirect uses a FIXED port (proven working at 51121),
+        // so we must bind that exact port instead of an ephemeral one. Override with
+        // NUDGE_ANTIGRAVITY_REDIRECT_PORT if a deployment registered another port.
+        let redirect_port: u16 = std::env::var("NUDGE_ANTIGRAVITY_REDIRECT_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(51121);
+        let listener = std::net::TcpListener::bind(format!("127.0.0.1:{redirect_port}")).map_err(|e| {
+            format!(
+                "error[E-auth-0401]: failed to bind loopback listener on 127.0.0.1:{redirect_port}: {e} (if the port is in use — e.g. another OAuth client holds it — set NUDGE_ANTIGRAVITY_REDIRECT_PORT to the port registered for this OAuth client)"
+            )
         })?;
         let port = listener
             .local_addr()
@@ -423,12 +434,12 @@ impl LoopbackOAuthClient {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn authenticate(&self, account_name: &str) -> Result<Credential, String> {
-        if !is_tty() {
-            return Err(format!(
-                "error[E-auth-0401]: credential missing or uninitialized for provider '{}': cannot run interactive OAuth loopback in non-interactive session (no TTY)",
-                self.config.provider
-            ));
-        }
+        // The loopback listener + printed URL do not require a local TTY. In a
+        // non-interactive session we simply cannot auto-open a browser, so we run in
+        // MANUAL mode: print the URL and wait for the callback (bounded by
+        // NUDGE_AUTH_TIMEOUT_SECS -> E-auth-0402), letting the user authorize in
+        // their own browser. This is the same "manual-safe" pattern jcode uses.
+        let interactive = is_tty();
 
         let flow = self.start_flow(account_name)?;
 
@@ -436,13 +447,20 @@ impl LoopbackOAuthClient {
             "[nudge auth] Action requires authentication for account '{account_name}' (provider: {}).",
             self.config.provider
         );
+        if !interactive {
+            eprintln!(
+                "[nudge auth] Non-interactive session: open the URL manually in your browser."
+            );
+        }
         eprintln!("[nudge auth] To complete login, visit: {}", flow.auth_url());
         eprintln!(
             "[nudge auth] Waiting for authorization callback on http://127.0.0.1:{}/oauth-callback...",
             flow.port()
         );
 
-        open_browser(flow.auth_url());
+        if interactive {
+            open_browser(flow.auth_url());
+        }
 
         flow.wait_for_callback_and_exchange()
     }
