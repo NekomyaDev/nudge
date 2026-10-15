@@ -65,8 +65,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-wasip1
+      - name: Install the wasm32-wasip1 target
+        run: rustup target add wasm32-wasip1
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
