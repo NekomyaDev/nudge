@@ -4,6 +4,7 @@ pub mod json;
 pub mod mcp;
 pub mod provider;
 pub mod stdlib;
+pub mod store;
 pub mod trace;
 pub mod value;
 pub mod workspace;

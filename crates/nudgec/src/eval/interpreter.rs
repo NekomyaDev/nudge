@@ -713,14 +713,18 @@ impl Interpreter {
             // Check standard library dispatch
             if name.starts_with("io.")
                 || name.starts_with("workspace.")
+                || name.starts_with("store.")
                 || name.starts_with("math.")
                 || name.starts_with("str.")
                 || name == "print"
                 || name == "println"
             {
-                let mut evaluated_args = Vec::with_capacity(args.len());
+                let mut evaluated_args = Vec::with_capacity(args.len() + kwargs.len());
                 for a in args {
                     evaluated_args.push(self.eval_expr(a, env)?);
+                }
+                for (_k, v) in kwargs {
+                    evaluated_args.push(self.eval_expr(v, env)?);
                 }
                 return self.call_stdlib(name, &evaluated_args);
             }
@@ -1018,6 +1022,17 @@ impl Interpreter {
                     call_args.push(converted);
                 }
                 let result = nudge_runtime::workspace::execute(name, call_args)
+                    .map_err(|e| format!("error[E-native-0202]: {name} failed: {e}"))?;
+                value_to_nudgeval(&result).map_err(|e| format!("error[E-native-0203]: {name}: {e}"))
+            }
+            "store.get" | "store.set" | "store.has" | "store.delete" | "store.keys" => {
+                let mut call_args = Vec::with_capacity(args.len());
+                for a in args {
+                    let converted = nudgeval_to_value(a)
+                        .map_err(|e| format!("error[E-native-0203]: {name}: {e}"))?;
+                    call_args.push(converted);
+                }
+                let result = nudge_runtime::store::execute(name, call_args)
                     .map_err(|e| format!("error[E-native-0202]: {name} failed: {e}"))?;
                 value_to_nudgeval(&result).map_err(|e| format!("error[E-native-0203]: {name}: {e}"))
             }
@@ -2992,6 +3007,88 @@ data: [DONE]\n\n";
 
         assert_eq!(res_vm, NudgeVal::Bool(true));
         assert_eq!(res_vm, res_interp);
+    }
+
+    #[test]
+    fn test_nudge_vm_store_round_trip_and_parity() {
+        let _guard_ws = nudge_runtime::workspace::WS_TEST_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "nudge_vm_store_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let _env_ws = EnvReset::set("NUDGE_WORKSPACE_DIR", temp_dir.to_str().unwrap());
+        let _env_sp = EnvReset::remove("NUDGE_STORE_PATH");
+        nudge_runtime::store::reset();
+
+        let src = r#"
+            fn test_store() -> bool uses Store {
+                store.set("app_state", 100)
+                let exists_before = store.has("app_state")
+                let v1 = store.get("app_state", 0)
+                let missing_def = store.get("missing_key", 42)
+                let del_ok = store.delete("app_state")
+                let exists_after = store.has("app_state")
+                exists_before and v1 == 100 and missing_def == 42 and del_ok and !exists_after
+            }
+            fn main() -> bool {
+                test_store()
+            }
+        "#;
+
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        // 1. NUDGE_VM=1 (delegated VM execution)
+        nudge_runtime::store::reset();
+        let _env_vm = EnvReset::set("NUDGE_VM", "1");
+        let res_vm = run_program(&items, "main", &[]).expect("VM store run");
+
+        // 2. NUDGE_VM=0 (interpreter execution)
+        nudge_runtime::store::reset();
+        let _env_zero = EnvReset::set("NUDGE_VM", "0");
+        let res_interp = run_program(&items, "main", &[]).expect("interpreter store run");
+
+        assert_eq!(res_vm, NudgeVal::Bool(true));
+        assert_eq!(res_vm, res_interp);
+
+        // 3. Test persistence across simulated process boundary (reset cache)
+        let src_persist = r#"
+            fn write_item() -> () uses Store {
+                store.set("session_count", 777)
+            }
+            fn read_item() -> int uses Store {
+                store.get("session_count", 0)
+            }
+        "#;
+        let p_tokens = lex(src_persist).expect("lex");
+        let p_items = parse(p_tokens).expect("parse");
+
+        // Process 1 writes with VM
+        let _env_vm_p = EnvReset::set("NUDGE_VM", "1");
+        let _ = run_program(&p_items, "write_item", &[]).expect("write_item VM");
+
+        // Simulate new process by dropping in-memory cache
+        nudge_runtime::store::reset();
+
+        // Process 2 reads with VM
+        let res_p_vm = run_program(&p_items, "read_item", &[]).expect("read_item VM");
+        assert_eq!(res_p_vm, NudgeVal::Int(777));
+
+        // Repeat with interpreter (NUDGE_VM=0)
+        let _env_zero_p = EnvReset::set("NUDGE_VM", "0");
+        nudge_runtime::store::reset();
+        let res_p_interp = run_program(&p_items, "read_item", &[]).expect("read_item interp");
+        assert_eq!(res_p_interp, NudgeVal::Int(777));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     #[test]

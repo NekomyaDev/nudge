@@ -211,7 +211,7 @@ fn elem_of(t: &Ty) -> Ty {
 
 // ── effect inference (design §3.2, v1.4) ──────────────────────────
 
-const KNOWN_EFFECTS: [&str; 7] = [
+const KNOWN_EFFECTS: [&str; 8] = [
     "LLM",
     "Tool",
     "IO",
@@ -219,6 +219,7 @@ const KNOWN_EFFECTS: [&str; 7] = [
     "Computer",
     "Workspace",
     "WorkspaceDelete",
+    "Store",
 ];
 
 /// Builtin record types of the computer-use surface (v1.5): these names
@@ -353,6 +354,8 @@ fn direct_effects(
                             if name == "workspace.delete" {
                                 effects.insert("WorkspaceDelete".into());
                             }
+                        } else if name.starts_with("store.") {
+                            effects.insert("Store".into());
                         } else if g.tools.contains_key(name) {
                             effects.insert("Tool".into());
                         } else if g.fns.contains_key(name) {
@@ -490,11 +493,23 @@ fn expr_has_effect_call(
         ExprKind::Call { func, args, kwargs } => {
             let callee = match &func.kind {
                 ExprKind::Ident(n) => Some(n.clone()),
+                ExprKind::Field { obj, name } => {
+                    if let ExprKind::Ident(prefix) = &obj.kind {
+                        Some(format!("{prefix}.{name}"))
+                    } else {
+                        None
+                    }
+                }
                 _ => None,
             };
             let tool = callee
                 .as_deref()
-                .map(|n| g.tools.contains_key(n))
+                .map(|n| {
+                    g.tools.contains_key(n)
+                        || n.starts_with("io.")
+                        || n.starts_with("workspace.")
+                        || n.starts_with("store.")
+                })
                 .unwrap_or(false);
             // a call to a fn whose INFERRED effects are non-empty (directly
             // or transitively) is an effect call even if it declares none
@@ -1288,6 +1303,37 @@ fn check_expr_pos(
                     code: "E0101",
                     msg: format!("unknown identifier '{name}' (called but never declared){did}"),
                 });
+            }
+            if let ExprKind::Field { obj, name } = &func.as_ref().kind {
+                if let ExprKind::Ident(prefix) = &obj.kind {
+                    if prefix == "store" {
+                        match name.as_str() {
+                            "get" => {
+                                if let Some((_, dt)) =
+                                    kwarg_tys.iter().find(|(k, _)| *k == "default")
+                                {
+                                    return dt.clone();
+                                }
+                                if let Some(dt) = arg_tys.get(1) {
+                                    return dt.clone();
+                                }
+                                return Ty::Unknown;
+                            }
+                            "set" => return Ty::None_,
+                            "has" | "delete" => return Ty::Bool,
+                            "keys" => return Ty::List(Box::new(Ty::Str)),
+                            _ => {}
+                        }
+                    } else if prefix == "workspace" {
+                        match name.as_str() {
+                            "read" => return Ty::Str,
+                            "write" | "append" | "delete" => return Ty::None_,
+                            "exists" => return Ty::Bool,
+                            "list" => return Ty::List(Box::new(Ty::Str)),
+                            _ => {}
+                        }
+                    }
+                }
             }
             Ty::Unknown
         }
@@ -2154,7 +2200,7 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                     errs.push(CheckError {
                         span: None,
                         code: "E0101",
-                        msg: format!("unknown effect '{d}' in fn '{name}' (known: LLM, Tool, IO, Decision, Computer, Workspace, WorkspaceDelete)"),
+                        msg: format!("unknown effect '{d}' in fn '{name}' (known: LLM, Tool, IO, Decision, Computer, Workspace, WorkspaceDelete, Store)"),
                     });
                 }
             }
@@ -2744,6 +2790,39 @@ fn f(c: bool) -> string uses IO {
         assert!(
             !errs.iter().any(|e| e.code == "E0101"),
             "Workspace/WorkspaceDelete should be known effects, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn store_requires_store_effect() {
+        // store.get without Store effect trips E0301
+        let errs1 = check_src("fn f() -> int { store.get(\"k\", 0) }");
+        assert!(
+            errs1
+                .iter()
+                .any(|e| e.code == "E0301" && e.msg.contains("Store")),
+            "expected E0301 for store.get, got {errs1:?}"
+        );
+
+        // store.set without Store effect trips E0301
+        let errs2 = check_src("fn f() -> () { store.set(\"k\", 42) }");
+        assert!(
+            errs2
+                .iter()
+                .any(|e| e.code == "E0301" && e.msg.contains("Store")),
+            "expected E0301 for store.set, got {errs2:?}"
+        );
+
+        // store with uses Store is clean
+        let clean =
+            check_src("fn f() -> int uses Store {\nstore.set(\"k\", 42)\nstore.get(\"k\", 0)\n}");
+        assert_eq!(clean, vec![], "unexpected errors: {clean:?}");
+
+        // Store is a known effect (not E0101)
+        let errs3 = check_src("fn f() -> int uses Store { 1 }");
+        assert!(
+            !errs3.iter().any(|e| e.code == "E0101"),
+            "Store should be a known effect, got {errs3:?}"
         );
     }
 

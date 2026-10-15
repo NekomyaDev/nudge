@@ -722,6 +722,7 @@ impl<'a> Compiler<'a> {
                 } else if self.tool_names.iter().any(|t| t == &name)
                     || name.starts_with("io.")
                     || name.starts_with("workspace.")
+                    || name.starts_with("store.")
                 {
                     self.emit_delegated_expr(expr);
                     Ok(())
@@ -905,8 +906,9 @@ fn check_expr_effects(expr: &Expr, tool_names: &[String]) -> Result<(), String> 
                 if tool_names.iter().any(|t| t == name)
                     || name.starts_with("io.")
                     || name.starts_with("workspace.")
+                    || name.starts_with("store.")
                 {
-                    // Tool call / IO / workspace expressions are delegated to the interpreter via DelegateExpr.
+                    // Tool call / IO / workspace / store expressions are delegated to the interpreter via DelegateExpr.
                     return Ok(());
                 }
             }

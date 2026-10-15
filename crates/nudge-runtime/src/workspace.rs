@@ -445,17 +445,16 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
     }
 }
 
+/// Serialize tests that share process-global environment variables like
+/// `NUDGE_WORKSPACE_DIR` and `NUDGE_STORE_PATH`.
+pub static WS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// Set up a fresh temp directory and set NUDGE_WORKSPACE_DIR to it.
     /// Returns the temp directory path. Caller is responsible for cleanup.
-    /// Serialize workspace tests: they share the process-global
-    /// `NUDGE_WORKSPACE_DIR` env var, so parallel execution would race on the
-    /// resolved root (one test's setup overwrites another's root).
-    static WS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     fn setup_temp_workspace(suffix: &str) -> PathBuf {
         let temp_dir =
             std::env::temp_dir().join(format!("nudge_ws_{}_{}", suffix, std::process::id()));

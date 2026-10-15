@@ -8,6 +8,7 @@ pub mod io;
 pub mod llm;
 pub mod math;
 pub mod os;
+pub mod store;
 pub mod string;
 pub mod time;
 pub mod workspace;
@@ -27,6 +28,9 @@ pub fn register_all() -> HashMap<String, Value> {
 
     // Register workspace functions (safe, sandboxed filesystem)
     functions.extend(workspace::register());
+
+    // Register store functions (crash-safe persistent app data store)
+    functions.extend(store::register());
 
     // Register math functions
     functions.extend(math::register());
