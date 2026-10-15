@@ -1,6 +1,4 @@
 use super::{http, pricing, tokenizer, LlmRequest, LlmResponse, ModelInfo, Provider};
-use std::fs;
-use std::path::PathBuf;
 use std::time::Duration;
 
 #[derive(Debug, Clone)]
@@ -8,7 +6,6 @@ pub struct AntigravityProvider {
     base_url: String,
     model: Option<String>,
     api_key: Option<String>,
-    oauth_token: Option<String>,
 }
 
 impl Default for AntigravityProvider {
@@ -19,85 +16,38 @@ impl Default for AntigravityProvider {
 
 impl AntigravityProvider {
     pub fn new() -> Self {
-        // 1. Check environment variables
         let base_url = std::env::var("NUDGE_ANTIGRAVITY_BASE_URL")
             .or_else(|_| std::env::var("NUDGE_BASE_URL"))
             .unwrap_or_else(|_| "http://127.0.0.1:8642".to_string());
 
-        let mut model = std::env::var("NUDGE_MODEL").ok();
-        let mut api_key = std::env::var("NUDGE_API_KEY")
+        let model = std::env::var("NUDGE_MODEL")
+            .ok()
+            .filter(|m| !m.trim().is_empty());
+        let api_key = std::env::var("NUDGE_API_KEY")
             .or_else(|_| std::env::var("ANTIGRAVITY_API_KEY"))
-            .ok();
-
-        // 2. Check ~/.openhands/profiles/antigravity-proxy.json
-        let (profile_base_url, profile_model, profile_api_key) = Self::read_openhands_profile();
-        let oauth_token = Self::read_oauth_token();
-
-        let final_base_url = if base_url != "http://127.0.0.1:8642" {
-            base_url
-        } else {
-            profile_base_url.unwrap_or(base_url)
-        };
-
-        if model.is_none() {
-            model = profile_model;
-        }
-
-        if api_key.is_none() {
-            api_key = profile_api_key;
-        }
+            .ok()
+            .filter(|k| !k.trim().is_empty());
 
         Self {
-            base_url: final_base_url,
+            base_url,
             model,
             api_key,
-            oauth_token,
         }
     }
 
-    fn read_openhands_profile() -> (Option<String>, Option<String>, Option<String>) {
-        if let Some(home) = dirs_next_home() {
-            let profile_path =
-                PathBuf::from(home).join(".openhands/profiles/antigravity-proxy.json");
-            if let Ok(content) = fs::read_to_string(profile_path) {
-                if let Ok(val) = crate::json::parse(&content) {
-                    let base_url = val
-                        .get("base_url")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    let model = val
-                        .get("model")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    let api_key = val
-                        .get("api_key")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    return (base_url, model, api_key);
-                }
-            }
+    pub fn try_new() -> Result<Self, String> {
+        let p = Self::new();
+        if p.api_key.is_none() {
+            Err(
+                "error[E-auth-0404]: provider adapter 'antigravity' is disabled because no official public OAuth contract exists"
+                    .to_string(),
+            )
+        } else {
+            Ok(p)
         }
-        (None, None, None)
     }
 
-    fn read_oauth_token() -> Option<String> {
-        if let Some(home) = dirs_next_home() {
-            let oauth_path = PathBuf::from(home).join(".jcode/antigravity_oauth.json");
-            if let Ok(content) = fs::read_to_string(oauth_path) {
-                if let Ok(val) = crate::json::parse(&content) {
-                    if let Some(token) = val.get("access_token").and_then(|v| v.as_str()) {
-                        return Some(token.to_string());
-                    }
-                    if let Some(token) = val.get("token").and_then(|v| v.as_str()) {
-                        return Some(token.to_string());
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    /// Try calling local HTTP proxy, or fall back to native Jcode CLI runner
+    /// Try calling local HTTP proxy with first-party API key credentials
     fn call_via_proxy(&self, req: &LlmRequest, model: &str) -> Result<LlmResponse, String> {
         let endpoint = format!(
             "{}/v1/chat/completions",
@@ -125,8 +75,6 @@ impl AntigravityProvider {
         let mut headers = vec![("Content-Type".to_string(), "application/json".to_string())];
         if let Some(key) = &self.api_key {
             headers.push(("Authorization".to_string(), format!("Bearer {}", key)));
-        } else if let Some(token) = &self.oauth_token {
-            headers.push(("Authorization".to_string(), format!("Bearer {}", token)));
         }
 
         let (status, response_body) = http::post_json(&endpoint, &headers, &json_payload)?;
@@ -199,19 +147,14 @@ impl AntigravityProvider {
     }
 }
 
-// NOTE on CLI fallback: Previously, AntigravityProvider fell back to `call_via_jcode`
-// which spawned the jcode CLI binary. This external process execution has been
-// removed in favor of pure in-process native HTTP transport (`ureq` + `rustls`) to ensure
-// zero shell dependencies.
-
-fn dirs_next_home() -> Option<String> {
-    std::env::var("HOME")
-        .ok()
-        .or_else(|| std::env::var("USERPROFILE").ok())
-}
-
 impl Provider for AntigravityProvider {
     fn call(&self, req: &LlmRequest) -> Result<LlmResponse, String> {
+        if self.api_key.is_none() {
+            return Err(
+                "error[E-auth-0404]: provider adapter 'antigravity' is disabled because no official public OAuth contract exists"
+                    .to_string(),
+            );
+        }
         let raw_model = if !req.model.is_empty() && req.model != "default" && req.model != "auto" {
             req.model.as_str()
         } else {
@@ -228,8 +171,6 @@ impl Provider for AntigravityProvider {
         let mut headers = Vec::new();
         if let Some(key) = &self.api_key {
             headers.push(("Authorization".to_string(), format!("Bearer {}", key)));
-        } else if let Some(token) = &self.oauth_token {
-            headers.push(("Authorization".to_string(), format!("Bearer {}", token)));
         }
 
         let mut models = Vec::new();

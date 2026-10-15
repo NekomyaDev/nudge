@@ -33,6 +33,11 @@ pub fn hint(code: &str) -> Option<&'static str> {
         "E0910" => "workspace path escape denied — the path escapes the workspace root via `../` traversal, an absolute path, or a symlink pointing outside; use a relative path inside the workspace",
         "E0912" => "workspace.delete requires the WorkspaceDelete effect: add `WorkspaceDelete` to the `uses` clause alongside `Workspace` to allow deletion",
         "E0913" => "store schema mismatch: data loaded from store does not match the requested type",
+        "E-auth-0401" | "E0401" => "credential missing or uninitialized for the provider - set the required environment variable or authenticate",
+        "E-auth-0402" | "E0402" => "device code flow expired, timed out, or was rejected by user",
+        "E-auth-0403" | "E0403" => "account does not have the required scope or permissions",
+        "E-auth-0404" | "E0404" => "provider adapter is disabled because no official public OAuth contract exists",
+        "E-auth-0405" | "E0405" => "credential store is corrupted, insecure, or unreadable",
         _ => return None,
     })
 }
@@ -103,6 +108,29 @@ mod tests {
             );
         }
         assert!(hint("E9999").is_none());
+    }
+
+    #[test]
+    fn auth_codes_have_hints() {
+        for code in [
+            "E-auth-0401",
+            "E-auth-0402",
+            "E-auth-0403",
+            "E-auth-0404",
+            "E-auth-0405",
+            "E0401",
+            "E0402",
+            "E0403",
+            "E0404",
+            "E0405",
+        ] {
+            assert!(hint(code).is_some(), "{code} has no hint");
+            assert!(
+                !hint(code).unwrap().contains('\n'),
+                "{code} hint is multi-line"
+            );
+            assert!(hint(code).unwrap().len() <= 180, "{code} hint is too long");
+        }
     }
 
     #[test]

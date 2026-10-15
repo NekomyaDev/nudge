@@ -10,8 +10,15 @@ impl ClaudeProvider {
     pub fn new() -> Result<Self, String> {
         let base_url = std::env::var("ANTHROPIC_BASE_URL")
             .unwrap_or_else(|_| "https://api.anthropic.com/v1/messages".to_string());
-        let api_key = std::env::var("ANTHROPIC_API_KEY")
-            .map_err(|_| "ANTHROPIC_API_KEY environment variable not set".to_string())?;
+        let api_key = match std::env::var("ANTHROPIC_API_KEY") {
+            Ok(k) if !k.trim().is_empty() => k,
+            _ => {
+                return Err(
+                    "error[E-auth-0401]: credential missing or uninitialized for provider 'claude': ANTHROPIC_API_KEY environment variable not set"
+                        .to_string(),
+                );
+            }
+        };
 
         Ok(Self { base_url, api_key })
     }
