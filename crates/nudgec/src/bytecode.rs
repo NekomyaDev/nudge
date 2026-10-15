@@ -724,6 +724,17 @@ impl<'a> Compiler<'a> {
                     || name.starts_with("workspace.")
                     || name.starts_with("store.")
                     || name.starts_with("task.")
+                    || name.starts_with("ui.")
+                    || name.ends_with(".open")
+                    || name.ends_with(".mount_headless")
+                    || name.ends_with(".dispatch_click")
+                    || name.ends_with(".find")
+                    || name.ends_with(".find_text")
+                    || name.ends_with(".exists")
+                    || matches!(
+                        name.as_str(),
+                        "column" | "row" | "text" | "button" | "input"
+                    )
                 {
                     self.emit_delegated_expr(expr);
                     Ok(())
@@ -909,8 +920,16 @@ fn check_expr_effects(expr: &Expr, tool_names: &[String]) -> Result<(), String> 
                     || name.starts_with("workspace.")
                     || name.starts_with("store.")
                     || name.starts_with("task.")
+                    || name.starts_with("ui.")
+                    || name.ends_with(".open")
+                    || name.ends_with(".mount_headless")
+                    || name.ends_with(".dispatch_click")
+                    || name.ends_with(".find")
+                    || name.ends_with(".find_text")
+                    || name.ends_with(".exists")
+                    || matches!(name, "column" | "row" | "text" | "button" | "input")
                 {
-                    // Tool call / IO / workspace / store expressions are delegated to the interpreter via DelegateExpr.
+                    // Tool call / IO / workspace / store / UI expressions are delegated to the interpreter via DelegateExpr.
                     return Ok(());
                 }
             }

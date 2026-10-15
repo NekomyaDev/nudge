@@ -13,8 +13,8 @@ pub fn hint(code: &str) -> Option<&'static str> {
         "E0201" => "two types don't fit together — trace the expression back to its source; record fields are read with dot syntax and each has exactly one type",
         "E0202" => "a constraint or schema is malformed — check @range bounds order (lo, hi) and that a `schema:` value is a record type",
         "E0203" => "duplicate field in record literal - each field name in a record must be unique",
-        "E0301" => "this call has an effect the function doesn't declare: add the effect (LLM, Tool, IO, Decision, Computer, Workspace, WorkspaceDelete, or Store) to the `uses` clause",
-        "E0302" => "unknown effect in `uses`: valid effects are LLM, Tool, IO, Decision, Computer, Workspace, WorkspaceDelete, Store",
+        "E0301" => "this call has an effect the function doesn't declare: add the effect (LLM, Tool, IO, Decision, Computer, Workspace, WorkspaceDelete, Store, or UI) to the `uses` clause",
+        "E0302" => "unknown effect in `uses`: valid effects are LLM, Tool, IO, Decision, Computer, Workspace, WorkspaceDelete, Store, UI",
         "E0501" => "money literals keep their unit (100 USD + 100 EUR won't add) — convert explicitly before comparing or combining",
         "E0601" => "trace records must be JSONL objects with `v` (1), `seq` and a known `kind` — run `nudgec trace-check` to see the first bad record",
         "E0701" => "`state.x` writes are only valid inside an `agent` block, and only for fields declared in its `state` section",
@@ -33,6 +33,10 @@ pub fn hint(code: &str) -> Option<&'static str> {
         "E0910" => "workspace path escape denied — the path escapes the workspace root via `../` traversal, an absolute path, or a symlink pointing outside; use a relative path inside the workspace",
         "E0912" => "workspace.delete requires the WorkspaceDelete effect: add `WorkspaceDelete` to the `uses` clause alongside `Workspace` to allow deletion",
         "E0913" => "store schema mismatch: data loaded from store does not match the requested type",
+        "E1001" => "missing UI effect: operations that open windows, mount UI, or handle UI events require `uses UI`",
+        "E1002" => "invalid or unknown UI component: check the element combinator name and its children or properties",
+        "E1003" => "event handler signature mismatch: expected compatible handler function",
+        "E1004" => "duplicate window or view declaration: every window and view name must be unique",
         "E-auth-0401" | "E0401" => "credential missing or uninitialized for the provider - set the required environment variable or authenticate",
         "E-auth-0402" | "E0402" => "device code flow expired, timed out, or was rejected by user",
         "E-auth-0403" | "E0403" => "account does not have the required scope or permissions",
@@ -99,7 +103,7 @@ mod tests {
             "E0001", "E0002", "E0101", "E0102", "E0103", "E0201", "E0202", "E0203", "E0301",
             "E0302", "E0501", "E0601", "E0701", "E0702", "E0703", "E0704", "E0705", "E0706",
             "E0801", "E0802", "E0804", "E0806", "E0807", "E0901", "E0902", "E0910", "E0912",
-            "E0913",
+            "E0913", "E1001", "E1002", "E1003", "E1004",
         ] {
             assert!(hint(code).is_some(), "{code} has no hint");
             assert!(

@@ -37,6 +37,7 @@ enum Ty {
     List(Box<Ty>),
     Record(Vec<(String, Ty)>),
     Refine(Box<Ty>, String),
+    View,
 }
 
 impl fmt::Display for Ty {
@@ -54,10 +55,12 @@ impl fmt::Display for Ty {
                 write!(f, "{{{}}}", inner.join(", "))
             }
             Ty::Refine(base, name) => write!(f, "{base} @{name}"),
+            Ty::View => write!(f, "View"),
         }
     }
 }
 
+#[allow(clippy::type_complexity)]
 #[derive(Default)]
 struct Globals {
     aliases: HashMap<String, TypeExpr>,
@@ -65,6 +68,10 @@ struct Globals {
     // needs the names, not just the positional types
     fns: HashMap<String, (Vec<(String, TypeExpr)>, TypeExpr)>,
     tools: HashMap<String, (Vec<(String, TypeExpr)>, TypeExpr)>,
+    views: HashMap<String, (Vec<(String, TypeExpr)>, TypeExpr)>,
+    windows: HashMap<String, Vec<(String, Expr)>>,
+    agents: HashMap<String, (Vec<(String, TypeExpr, Expr)>, Vec<Item>)>,
+    fn_effects: HashMap<String, Vec<String>>,
 }
 
 // ── type resolution ─────────────────────────────────────────────────
@@ -82,6 +89,7 @@ fn resolve(
             "bool" => Ty::Bool,
             "string" => Ty::Str,
             "none" | "()" => Ty::None_,
+            "View" | "view" => Ty::View,
             "bytes" | "timestamp" => Ty::Unknown, // post-MVP core types
             _ => {
                 if let Some(builtin) = builtin_record_ty(name) {
@@ -211,7 +219,7 @@ fn elem_of(t: &Ty) -> Ty {
 
 // ── effect inference (design §3.2, v1.4) ──────────────────────────
 
-const KNOWN_EFFECTS: [&str; 8] = [
+const KNOWN_EFFECTS: [&str; 9] = [
     "LLM",
     "Tool",
     "IO",
@@ -220,6 +228,7 @@ const KNOWN_EFFECTS: [&str; 8] = [
     "Workspace",
     "WorkspaceDelete",
     "Store",
+    "UI",
 ];
 
 /// Builtin record types of the computer-use surface (v1.5): these names
@@ -358,6 +367,12 @@ fn direct_effects(
                             effects.insert("Store".into());
                         } else if name.starts_with("task.") {
                             // Task lifecycle primitives are standard runtime primitives requiring no new effects
+                        } else if name.ends_with(".open")
+                            || name.ends_with(".mount_headless")
+                            || name.ends_with(".dispatch_click")
+                            || name.starts_with("ui.")
+                        {
+                            effects.insert("UI".into());
                         } else if g.tools.contains_key(name) {
                             effects.insert("Tool".into());
                         } else if g.fns.contains_key(name) {
@@ -366,6 +381,11 @@ fn direct_effects(
                     }
                 }
             } else {
+                if let ExprKind::Field { name, .. } = &func.as_ref().kind {
+                    if name == "open" || name == "mount_headless" || name == "dispatch_click" {
+                        effects.insert("UI".into());
+                    }
+                }
                 direct_effects(func, g, effects, calls);
             }
             for a in args {
@@ -454,7 +474,15 @@ fn fn_items(items: &[Item]) -> Vec<&Item> {
     for item in items {
         match item {
             Item::Fn { .. } => out.push(item),
-            Item::Agent { fns, .. } => out.extend(fns.iter()),
+            Item::View { .. } => out.push(item),
+            Item::Agent { fns, .. } => {
+                for f in fns {
+                    match f {
+                        Item::Fn { .. } | Item::View { .. } => out.push(f),
+                        _ => {}
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -1118,12 +1146,44 @@ fn check_expr_pos(
         ExprKind::Ident(n) => match locals.get(n) {
             Some(t) => t.clone(),
             None => {
+                if let Some((state_fields, fns)) = g.agents.get(n) {
+                    let mut rec_fields = Vec::new();
+                    let s_fields: Vec<(String, Ty)> = state_fields
+                        .iter()
+                        .map(|(fname, ty, _)| {
+                            (fname.clone(), resolve(ty, g, &mut Vec::new(), errs))
+                        })
+                        .collect();
+                    rec_fields.push(("state".into(), Ty::Record(s_fields)));
+                    for f in fns {
+                        if let Item::Window { name, .. } = f {
+                            rec_fields.push((name.clone(), Ty::Unknown));
+                        }
+                    }
+                    return Ty::Record(rec_fields);
+                }
+                if g.windows.contains_key(n) {
+                    return Ty::Unknown;
+                }
+                if g.views.contains_key(n) {
+                    return Ty::View;
+                }
                 // fn/tool/alias names may be referenced as values (dynamic
                 // interop stays permissive); anything else is E0101
-                let known =
-                    g.fns.contains_key(n) || g.tools.contains_key(n) || g.aliases.contains_key(n);
+                let known = g.fns.contains_key(n)
+                    || g.tools.contains_key(n)
+                    || g.aliases.contains_key(n)
+                    || g.agents.contains_key(n)
+                    || g.views.contains_key(n)
+                    || g.windows.contains_key(n);
                 if !known {
-                    let registry = g.fns.keys().chain(g.tools.keys()).chain(g.aliases.keys());
+                    let registry = g
+                        .fns
+                        .keys()
+                        .chain(g.tools.keys())
+                        .chain(g.aliases.keys())
+                        .chain(g.agents.keys())
+                        .chain(g.views.keys());
                     let did = crate::hints::closest(n, registry)
                         .map(|c| format!(", did you mean '{c}'?"))
                         .unwrap_or_default();
@@ -1223,7 +1283,61 @@ fn check_expr_pos(
                         ])));
                     }
                     "replay" | "mcp" | "python" => return Ty::Unknown,
+                    "column" | "row" => {
+                        for a in args {
+                            check_expr(a, locals, g, errs);
+                        }
+                        for (_, v) in kwargs {
+                            check_expr(v, locals, g, errs);
+                        }
+                        return Ty::View;
+                    }
+                    "text" | "button" | "input" => {
+                        for a in args {
+                            check_expr(a, locals, g, errs);
+                        }
+                        for (k, v) in kwargs {
+                            check_expr(v, locals, g, errs);
+                            if k == "on_click" || k == "on_change" {
+                                if let ExprKind::Ident(ref hname) = v.kind {
+                                    if let Some(effs) = g.fn_effects.get(hname) {
+                                        if !effs.iter().any(|e| e == "UI") {
+                                            errs.push(CheckError {
+                                                span: None,
+                                                code: "E1001",
+                                                msg: format!("event handler '{hname}' missing UI effect: event handlers require `uses UI`"),
+                                            });
+                                        }
+                                    }
+                                    if let Some((params, _)) = g.fns.get(hname) {
+                                        if params.len() > 1 {
+                                            errs.push(CheckError {
+                                                span: None,
+                                                code: "E1003",
+                                                msg: format!("event handler '{hname}' signature mismatch: expected at most 1 parameter"),
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        return Ty::View;
+                    }
                     _ => {}
+                }
+                if let Some((params, ret)) = g.views.get(name) {
+                    if args.len() > params.len() {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0201",
+                            msg: format!(
+                                "view '{name}' takes {} argument(s), got {}",
+                                params.len(),
+                                args.len()
+                            ),
+                        });
+                    }
+                    return resolve(ret, g, &mut Vec::new(), errs);
                 }
                 let sig = g.fns.get(name).or_else(|| g.tools.get(name));
                 if let Some((params, ret)) = sig {
@@ -1305,6 +1419,16 @@ fn check_expr_pos(
                     code: "E0101",
                     msg: format!("unknown identifier '{name}' (called but never declared){did}"),
                 });
+            }
+            if let ExprKind::Field { obj: _, name } = &func.as_ref().kind {
+                match name.as_str() {
+                    "exists" => return Ty::Bool,
+                    "mount_headless" => return Ty::Unknown,
+                    "find" | "find_text" => return Ty::Unknown,
+                    "dispatch_click" => return Ty::None_,
+                    "get_text" | "text" => return Ty::Str,
+                    _ => {}
+                }
             }
             if let ExprKind::Field { obj, name } = &func.as_ref().kind {
                 if let ExprKind::Ident(prefix) = &obj.kind {
@@ -1438,6 +1562,7 @@ fn check_expr_pos(
                     }
                     Ty::Bool
                 }
+                BinOp::Add if matches!(&lt, Ty::Str) || matches!(&rt_, Ty::Str) => Ty::Str,
                 _ => {
                     // arithmetic is numeric-only; previously a non-numeric
                     // operand silently fell through to Ty::Unknown and
@@ -2011,8 +2136,13 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                 }
             }
             Item::Fn {
-                name, params, ret, ..
+                name,
+                params,
+                ret,
+                effects,
+                ..
             } => {
+                g.fn_effects.insert(name.clone(), effects.clone());
                 if g.fns
                     .insert(
                         name.clone(),
@@ -2056,32 +2186,124 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                     });
                 }
             }
-            Item::Agent { fns, .. } => {
+            Item::Agent {
+                name: agent,
+                state,
+                fns,
+            } => {
+                if g.agents
+                    .insert(agent.clone(), (state.clone(), fns.clone()))
+                    .is_some()
+                {
+                    errs.push(CheckError {
+                        span: None,
+                        code: "E0102",
+                        msg: format!("duplicate agent '{agent}'"),
+                    });
+                }
                 for f in fns {
-                    if let Item::Fn {
-                        name, params, ret, ..
-                    } = f
-                    {
-                        if g.fns
-                            .insert(
-                                name.clone(),
-                                (
-                                    params
-                                        .iter()
-                                        .map(|p| (p.name.clone(), p.ty.clone()))
-                                        .collect(),
-                                    ret.clone(),
-                                ),
-                            )
-                            .is_some()
-                        {
-                            errs.push(CheckError {
-                                span: None,
-                                code: "E0102",
-                                msg: format!("duplicate fn '{name}' (agent fns share the top-level namespace)"),
-                            });
+                    match f {
+                        Item::Fn {
+                            name,
+                            params,
+                            ret,
+                            effects,
+                            ..
+                        } => {
+                            g.fn_effects.insert(name.clone(), effects.clone());
+                            if g.fns
+                                .insert(
+                                    name.clone(),
+                                    (
+                                        params
+                                            .iter()
+                                            .map(|p| (p.name.clone(), p.ty.clone()))
+                                            .collect(),
+                                        ret.clone(),
+                                    ),
+                                )
+                                .is_some()
+                            {
+                                errs.push(CheckError {
+                                    span: None,
+                                    code: "E0102",
+                                    msg: format!("duplicate fn '{name}' (agent fns share the top-level namespace)"),
+                                });
+                            }
                         }
+                        Item::Window { name, fields } => {
+                            if g.windows.insert(name.clone(), fields.clone()).is_some()
+                                || g.windows
+                                    .insert(format!("{agent}.{name}"), fields.clone())
+                                    .is_some()
+                            {
+                                errs.push(CheckError {
+                                    span: None,
+                                    code: "E1004",
+                                    msg: format!("duplicate window '{name}'"),
+                                });
+                            }
+                        }
+                        Item::View {
+                            name, params, ret, ..
+                        } => {
+                            let is_dup = g
+                                .views
+                                .insert(
+                                    name.clone(),
+                                    (
+                                        params
+                                            .iter()
+                                            .map(|p| (p.name.clone(), p.ty.clone()))
+                                            .collect(),
+                                        ret.clone(),
+                                    ),
+                                )
+                                .is_some()
+                                || g.fns.contains_key(name);
+                            if is_dup {
+                                errs.push(CheckError {
+                                    span: None,
+                                    code: "E1004",
+                                    msg: format!("duplicate view '{name}'"),
+                                });
+                            }
+                        }
+                        _ => {}
                     }
+                }
+            }
+            Item::View {
+                name, params, ret, ..
+            } => {
+                if g.views
+                    .insert(
+                        name.clone(),
+                        (
+                            params
+                                .iter()
+                                .map(|p| (p.name.clone(), p.ty.clone()))
+                                .collect(),
+                            ret.clone(),
+                        ),
+                    )
+                    .is_some()
+                    || g.fns.contains_key(name)
+                {
+                    errs.push(CheckError {
+                        span: None,
+                        code: "E1004",
+                        msg: format!("duplicate view '{name}'"),
+                    });
+                }
+            }
+            Item::Window { name, fields } => {
+                if g.windows.insert(name.clone(), fields.clone()).is_some() {
+                    errs.push(CheckError {
+                        span: None,
+                        code: "E1004",
+                        msg: format!("duplicate window '{name}'"),
+                    });
                 }
             }
             Item::Test { .. } => {}
@@ -2165,16 +2387,68 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                     }
                 }
                 for f in fns {
-                    if let Item::Fn {
-                        name,
-                        params,
-                        ret,
-                        body,
-                        ..
-                    } = f
-                    {
-                        check_fn_body(name, params, ret, body, Some((agent, state)), &g, &mut errs);
+                    match f {
+                        Item::Fn {
+                            name,
+                            params,
+                            ret,
+                            body,
+                            ..
+                        } => {
+                            check_fn_body(
+                                name,
+                                params,
+                                ret,
+                                body,
+                                Some((agent, state)),
+                                &g,
+                                &mut errs,
+                            );
+                        }
+                        Item::Window { fields, .. } => {
+                            let mut locals = HashMap::new();
+                            let state_fields: Vec<(String, Ty)> = state
+                                .iter()
+                                .map(|(fname, ty, _)| {
+                                    (fname.clone(), resolve(ty, &g, &mut Vec::new(), &mut errs))
+                                })
+                                .collect();
+                            locals.insert("state".into(), Ty::Record(state_fields));
+                            for (_, v) in fields {
+                                check_expr(v, &locals, &g, &mut errs);
+                            }
+                        }
+                        Item::View {
+                            name,
+                            params,
+                            ret,
+                            body,
+                        } => {
+                            check_fn_body(
+                                name,
+                                params,
+                                ret,
+                                body,
+                                Some((agent, state)),
+                                &g,
+                                &mut errs,
+                            );
+                        }
+                        _ => {}
                     }
+                }
+            }
+            Item::View {
+                name,
+                params,
+                ret,
+                body,
+            } => {
+                check_fn_body(name, params, ret, body, None, &g, &mut errs);
+            }
+            Item::Window { fields, .. } => {
+                for (_, v) in fields {
+                    check_expr(v, &HashMap::new(), &g, &mut errs);
                 }
             }
             Item::Tool {
@@ -2216,7 +2490,7 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                     errs.push(CheckError {
                         span: None,
                         code: "E0101",
-                        msg: format!("unknown effect '{d}' in fn '{name}' (known: LLM, Tool, IO, Decision, Computer, Workspace, WorkspaceDelete, Store)"),
+                        msg: format!("unknown effect '{d}' in fn '{name}' (known: LLM, Tool, IO, Decision, Computer, Workspace, WorkspaceDelete, Store, UI)"),
                     });
                 }
             }
@@ -2233,10 +2507,11 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                 .map(|e| e.as_str())
                 .collect::<Vec<_>>()
                 .join(", ");
+            let has_ui = missing.iter().any(|e| *e == "UI");
             if declared.is_empty() {
                 errs.push(CheckError {
                     span: None,
-                    code: "E0301",
+                    code: if has_ui { "E1001" } else { "E0301" },
                     msg: format!(
                         "fn '{name}' uses {list} but has no `uses` clause — add `uses {list}` to its signature"
                     ),
@@ -2244,7 +2519,7 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
             } else {
                 errs.push(CheckError {
                     span: None,
-                    code: "E0302",
+                    code: if has_ui { "E1001" } else { "E0302" },
                     msg: format!(
                         "fn '{name}' declares `uses {}` but its body also uses {list} — annotation too narrow",
                         declared.join(", ")
@@ -3483,6 +3758,126 @@ fn f(c: bool) -> string uses IO {
                 && e.msg
                     .contains("cannot assign to immutable local 'x'; declare it with `let mut`")),
             "got {errs_loop_var:?}"
+        );
+    }
+
+    #[test]
+    fn test_ui_acceptance_check_clean() {
+        let src = r#"
+            view CounterView(count: int) -> View {
+                column [
+                    text("Sayı: " + count),
+                    button("Artır", id = "btn_inc", on_click = inc)
+                ]
+            }
+
+            agent CounterApp {
+                state {
+                    val: int = 0
+                }
+
+                fn inc() uses UI {
+                    state.val = state.val + 1
+                }
+
+                window Win {
+                    title: "Test Penceresi",
+                    content: CounterView(state.val)
+                }
+            }
+
+            test "pencere acilisi, girdi tetiklemesi ve gorunum guncellemesi" {
+                let app = CounterApp.Win.mount_headless()
+                assert app.find("btn_inc").exists()
+                assert app.find_text("Sayı: 0").exists()
+
+                app.dispatch_click("btn_inc")
+
+                assert app.find_text("Sayı: 1").exists()
+                assert CounterApp.state.val == 1
+            }
+        "#;
+        let errs = check_src(src);
+        assert_eq!(errs, vec![]);
+    }
+
+    #[test]
+    fn test_ui_missing_effect_trips_e1001() {
+        // Handler without uses UI referenced in button trips E1001
+        let src = r#"
+            view CounterView(count: int) -> View {
+                column [
+                    button("Artır", id = "btn_inc", on_click = inc)
+                ]
+            }
+            agent CounterApp {
+                state {
+                    val: int = 0
+                }
+                fn inc() {
+                    state.val = state.val + 1
+                }
+            }
+        "#;
+        let errs = check_src(src);
+        assert!(
+            errs.iter()
+                .any(|e| (e.code == "E1001" || e.code == "E0301") && e.msg.contains("inc")),
+            "expected E1001/E0301, got {errs:?}"
+        );
+
+        // Calling window.open() outside test without uses UI trips E1001/E0301
+        let src2 = r#"
+            window Win {
+                title: "W",
+                content: text("hello")
+            }
+            fn main() -> bool {
+                Win.open()
+            }
+        "#;
+        let errs2 = check_src(src2);
+        assert!(
+            errs2
+                .iter()
+                .any(|e| (e.code == "E1001" || e.code == "E0301") && e.msg.contains("UI")),
+            "expected E1001/E0301, got {errs2:?}"
+        );
+    }
+
+    #[test]
+    fn test_ui_duplicate_window_or_view_trips_e1004() {
+        let src = r#"
+            window Win {
+                title: "1",
+                content: text("1")
+            }
+            window Win {
+                title: "2",
+                content: text("2")
+            }
+        "#;
+        let errs = check_src(src);
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E1004" && e.msg.contains("Win")),
+            "expected E1004 for duplicate window, got {errs:?}"
+        );
+
+        let src_view = r#"
+            view V() -> View {
+                text("a")
+            }
+            view V() -> View {
+                text("b")
+            }
+        "#;
+        let errs_view = check_src(src_view);
+        assert!(
+            errs_view
+                .iter()
+                .any(|e| e.code == "E1004" && e.msg.contains("V")),
+            "expected E1004 for duplicate view, got {errs_view:?}"
         );
     }
 }

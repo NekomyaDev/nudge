@@ -176,6 +176,7 @@ pub fn emit_ts(items: &[Item]) -> String {
                     }
                 }
             }
+            Item::View { .. } | Item::Window { .. } => {}
         }
     }
     if has_main {

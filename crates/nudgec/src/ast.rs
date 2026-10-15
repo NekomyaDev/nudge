@@ -291,6 +291,18 @@ pub enum Item {
         state: Vec<(String, TypeExpr, Expr)>,
         fns: Vec<Item>,
     },
+    /// `view Name(params...) -> View { ... }` (Pack 3 Local UI).
+    View {
+        name: String,
+        params: Vec<Param>,
+        ret: TypeExpr,
+        body: Vec<Stmt>,
+    },
+    /// `window Name { title: "...", content: ... }` (Pack 3 Local UI).
+    Window {
+        name: String,
+        fields: Vec<(String, Expr)>,
+    },
 }
 
 /// Magic footer constant identifying a standalone Nudge agent binary.

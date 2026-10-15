@@ -15,6 +15,16 @@ pub enum NudgeVal {
         name: String,
         fields: HashMap<String, NudgeVal>,
     },
+    AgentRef(String),
+    WindowRef {
+        agent: Option<String>,
+        name: String,
+    },
+    UiElement {
+        found: bool,
+        elem: Box<nudge_runtime::ui::UiElement>,
+    },
+    HeadlessApp(usize),
 }
 
 impl NudgeVal {
@@ -29,6 +39,10 @@ impl NudgeVal {
             NudgeVal::List(xs) => !xs.is_empty(),
             NudgeVal::Map(m) => !m.is_empty(),
             NudgeVal::AgentState { .. } => true,
+            NudgeVal::AgentRef(_) => true,
+            NudgeVal::WindowRef { .. } => true,
+            NudgeVal::UiElement { found, .. } => *found,
+            NudgeVal::HeadlessApp(_) => true,
         }
     }
 
@@ -43,6 +57,10 @@ impl NudgeVal {
             NudgeVal::List(_) => "list",
             NudgeVal::Map(_) => "map",
             NudgeVal::AgentState { .. } => "agent",
+            NudgeVal::AgentRef(_) => "agent",
+            NudgeVal::WindowRef { .. } => "window",
+            NudgeVal::UiElement { .. } => "element",
+            NudgeVal::HeadlessApp(_) => "app",
         }
     }
 
@@ -107,6 +125,16 @@ impl fmt::Display for NudgeVal {
                 }
                 write!(f, "}}")
             }
+            NudgeVal::AgentRef(name) => write!(f, "agent {name}"),
+            NudgeVal::WindowRef { name, .. } => write!(f, "window {name}"),
+            NudgeVal::UiElement { found, elem } => {
+                if *found {
+                    write!(f, "<{}>", elem.tag)
+                } else {
+                    write!(f, "<none>")
+                }
+            }
+            NudgeVal::HeadlessApp(id) => write!(f, "<App #{id}>"),
         }
     }
 }
@@ -158,6 +186,20 @@ pub fn nudgeval_to_json(v: &NudgeVal) -> serde_json::Value {
             // serde_json::Map is a BTreeMap: keys come out sorted
             serde_json::Value::Object(obj)
         }
+        NudgeVal::AgentRef(name) => serde_json::Value::String(format!("agent {name}")),
+        NudgeVal::WindowRef { agent, name } => serde_json::json!({
+            "agent": agent,
+            "window": name
+        }),
+        NudgeVal::UiElement { found, elem } => serde_json::json!({
+            "found": found,
+            "tag": elem.tag,
+            "id": elem.id,
+            "text": elem.text
+        }),
+        NudgeVal::HeadlessApp(id) => serde_json::json!({
+            "app_id": id
+        }),
     }
 }
 
@@ -223,6 +265,10 @@ pub fn nudgeval_to_value(v: &NudgeVal) -> Result<nudge_runtime::value::Value, St
                 "cannot convert agent state '{name}' to a runtime value"
             ))
         }
+        NudgeVal::AgentRef(name) => Value::String(format!("agent {name}")),
+        NudgeVal::WindowRef { name, .. } => Value::String(format!("window {name}")),
+        NudgeVal::UiElement { elem, .. } => Value::String(format!("<{}>", elem.tag)),
+        NudgeVal::HeadlessApp(id) => Value::Int(*id as i64),
     })
 }
 

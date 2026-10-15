@@ -54,7 +54,11 @@ pub fn report(items: &[Item]) -> String {
                     }
                 }
             }
-            Item::Test { .. } | Item::TypeAlias { .. } | Item::Tool { .. } => {}
+            Item::Test { .. }
+            | Item::TypeAlias { .. }
+            | Item::Tool { .. }
+            | Item::View { .. }
+            | Item::Window { .. } => {}
         }
     }
 

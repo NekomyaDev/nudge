@@ -11,6 +11,17 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+#[derive(Clone, Debug)]
+pub struct HeadlessAppRecord {
+    pub agent: Option<String>,
+    pub window: String,
+    pub title: String,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub content_expr: Expr,
+    pub root: Option<nudge_runtime::ui::UiElement>,
+}
+
 /// Runtime context holding global functions, tools, tests, agent store, and active agent.
 pub struct Interpreter {
     pub fns: HashMap<String, (Item, Option<String>)>, // name -> (Fn Item, agent_name)
@@ -22,6 +33,10 @@ pub struct Interpreter {
     /// the JSON-Schema dict the Python runtime records in its
     /// `request_hash` (replay identity).
     pub aliases: HashMap<String, TypeExpr>,
+    pub views: HashMap<String, Item>,
+    pub windows: HashMap<String, (Item, Option<String>)>,
+    pub agents: HashMap<String, Item>,
+    pub headless_apps: Vec<HeadlessAppRecord>,
 }
 
 impl Interpreter {
@@ -33,6 +48,10 @@ impl Interpreter {
             agent_store: AgentStore::new(),
             active_agent: None,
             aliases: HashMap::new(),
+            views: HashMap::new(),
+            windows: HashMap::new(),
+            agents: HashMap::new(),
+            headless_apps: Vec::new(),
         }
     }
 
@@ -56,11 +75,18 @@ impl Interpreter {
                 Item::Test { .. } => {
                     self.tests.push(item.clone());
                 }
+                Item::View { name, .. } => {
+                    self.views.insert(name.clone(), item.clone());
+                }
+                Item::Window { name, .. } => {
+                    self.windows.insert(name.clone(), (item.clone(), None));
+                }
                 Item::Agent {
                     name: agent_name,
                     state,
                     fns,
                 } => {
+                    self.agents.insert(agent_name.clone(), item.clone());
                     let mut initial_state = HashMap::new();
                     for (field_name, _ty, default_expr) in state {
                         let val = self.eval_expr(default_expr, &env)?;
@@ -69,9 +95,23 @@ impl Interpreter {
                     self.agent_store.init_agent(agent_name, initial_state);
 
                     for f in fns {
-                        if let Item::Fn { name, .. } = f {
-                            self.fns
-                                .insert(name.clone(), (f.clone(), Some(agent_name.clone())));
+                        match f {
+                            Item::Fn { name, .. } => {
+                                self.fns
+                                    .insert(name.clone(), (f.clone(), Some(agent_name.clone())));
+                            }
+                            Item::Window { name, .. } => {
+                                self.windows.insert(
+                                    format!("{agent_name}.{name}"),
+                                    (f.clone(), Some(agent_name.clone())),
+                                );
+                                self.windows
+                                    .insert(name.clone(), (f.clone(), Some(agent_name.clone())));
+                            }
+                            Item::View { name, .. } => {
+                                self.views.insert(name.clone(), f.clone());
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -98,6 +138,26 @@ impl Interpreter {
         }
 
         Ok(NudgeVal::Unit)
+    }
+
+    /// Evaluates a single `Item::Test` block.
+    pub fn run_test_item(&mut self, test_item: &Item) -> Result<(), String> {
+        if let Item::Test { body, .. } = test_item {
+            let env = Rc::new(RefCell::new(Env::new()));
+            self.eval_body(body, &env)?;
+            Ok(())
+        } else {
+            Err("item is not a test".into())
+        }
+    }
+
+    /// Evaluates all loaded `Item::Test` blocks.
+    pub fn run_all_tests(&mut self) -> Result<(), String> {
+        let tests = self.tests.clone();
+        for t in &tests {
+            self.run_test_item(t)?;
+        }
+        Ok(())
     }
 
     /// Evaluates a single statement.
@@ -317,6 +377,15 @@ impl Interpreter {
                 if name == "none" {
                     return Ok(NudgeVal::Unit);
                 }
+                if self.agents.contains_key(name) {
+                    return Ok(NudgeVal::AgentRef(name.clone()));
+                }
+                if let Some((_, agent_opt)) = self.windows.get(name) {
+                    return Ok(NudgeVal::WindowRef {
+                        agent: agent_opt.clone(),
+                        name: name.clone(),
+                    });
+                }
                 if let Some(val) = env.borrow().get(name) {
                     return Ok(val);
                 }
@@ -457,14 +526,48 @@ impl Interpreter {
                 }
                 let val = self.eval_expr(obj, env)?;
                 match val {
+                    NudgeVal::AgentRef(agent_name) => {
+                        if name == "state" {
+                            let fields = self.agent_store.snapshot(&agent_name)?;
+                            return Ok(NudgeVal::AgentState {
+                                name: agent_name,
+                                fields,
+                            });
+                        }
+                        let full_win = format!("{agent_name}.{name}");
+                        if self.windows.contains_key(&full_win) || self.windows.contains_key(name) {
+                            return Ok(NudgeVal::WindowRef {
+                                agent: Some(agent_name),
+                                name: name.clone(),
+                            });
+                        }
+                        Err(format!("agent '{agent_name}' has no member '{name}'"))
+                    }
+                    NudgeVal::AgentState {
+                        name: agent_name, ..
+                    } => self.agent_store.get_field(&agent_name, name),
+                    NudgeVal::UiElement {
+                        found: true,
+                        ref elem,
+                    } => match name.as_str() {
+                        "id" => Ok(elem
+                            .id
+                            .as_ref()
+                            .map(|s| NudgeVal::Str(s.clone()))
+                            .unwrap_or(NudgeVal::Unit)),
+                        "text" => Ok(NudgeVal::Str(elem.get_text())),
+                        "tag" => Ok(NudgeVal::Str(elem.tag.clone())),
+                        _ => elem
+                            .props
+                            .get(name)
+                            .map(|s| NudgeVal::Str(s.clone()))
+                            .ok_or_else(|| format!("element has no property '{name}'")),
+                    },
+                    NudgeVal::UiElement { found: false, .. } => Ok(NudgeVal::Unit),
                     NudgeVal::Map(m) => m
                         .get(name)
                         .cloned()
                         .ok_or_else(|| format!("map has no key '{name}'")),
-                    NudgeVal::AgentState { fields, .. } => fields
-                        .get(name)
-                        .cloned()
-                        .ok_or_else(|| format!("agent state has no field '{name}'")),
                     other => Err(format!(
                         "cannot access field '{name}' on type {}",
                         other.type_name()
@@ -780,9 +883,344 @@ impl Interpreter {
                 }
             }
 
+            // Check UI combinators
+            if name == "column" || name == "row" {
+                let mut elem = nudge_runtime::ui::UiElement::new(name);
+                for (k, v_expr) in kwargs {
+                    let v = self.eval_expr(v_expr, env)?;
+                    elem.props.insert(k.clone(), v.to_string());
+                }
+                for a_expr in args {
+                    let val = self.eval_expr(a_expr, env)?;
+                    match val {
+                        NudgeVal::List(items) => {
+                            for item in items {
+                                if let NudgeVal::UiElement {
+                                    found: true,
+                                    elem: child,
+                                } = item
+                                {
+                                    elem.children.push(*child);
+                                }
+                            }
+                        }
+                        NudgeVal::UiElement {
+                            found: true,
+                            elem: child,
+                        } => {
+                            elem.children.push(*child);
+                        }
+                        _ => {}
+                    }
+                }
+                return Ok(NudgeVal::UiElement {
+                    found: true,
+                    elem: Box::new(elem),
+                });
+            }
+
+            if name == "text" {
+                let mut elem = nudge_runtime::ui::UiElement::new("text");
+                if !args.is_empty() {
+                    let val = self.eval_expr(&args[0], env)?;
+                    elem.text = Some(match val {
+                        NudgeVal::Str(s) => s,
+                        other => other.to_string(),
+                    });
+                }
+                for (k, v_expr) in kwargs {
+                    let v = self.eval_expr(v_expr, env)?;
+                    elem.props.insert(k.clone(), v.to_string());
+                }
+                return Ok(NudgeVal::UiElement {
+                    found: true,
+                    elem: Box::new(elem),
+                });
+            }
+
+            if name == "button" {
+                let mut elem = nudge_runtime::ui::UiElement::new("button");
+                if !args.is_empty() {
+                    let val = self.eval_expr(&args[0], env)?;
+                    elem.text = Some(match val {
+                        NudgeVal::Str(s) => s,
+                        other => other.to_string(),
+                    });
+                }
+                for (k, v_expr) in kwargs {
+                    if k == "id" {
+                        let v = self.eval_expr(v_expr, env)?;
+                        elem.id = Some(match v {
+                            NudgeVal::Str(s) => s,
+                            other => other.to_string(),
+                        });
+                    } else if k == "on_click" {
+                        let hname = match &v_expr.kind {
+                            ExprKind::Ident(s) => s.clone(),
+                            _ => match self.eval_expr(v_expr, env)? {
+                                NudgeVal::Str(s) => s,
+                                other => other.to_string(),
+                            },
+                        };
+                        elem.on_click = Some(hname);
+                    } else {
+                        let v = self.eval_expr(v_expr, env)?;
+                        elem.props.insert(k.clone(), v.to_string());
+                    }
+                }
+                return Ok(NudgeVal::UiElement {
+                    found: true,
+                    elem: Box::new(elem),
+                });
+            }
+
+            if name == "input" {
+                let mut elem = nudge_runtime::ui::UiElement::new("input");
+                for (k, v_expr) in kwargs {
+                    if k == "id" {
+                        let v = self.eval_expr(v_expr, env)?;
+                        elem.id = Some(match v {
+                            NudgeVal::Str(s) => s,
+                            other => other.to_string(),
+                        });
+                    } else if k == "on_change" {
+                        let hname = match &v_expr.kind {
+                            ExprKind::Ident(s) => s.clone(),
+                            _ => match self.eval_expr(v_expr, env)? {
+                                NudgeVal::Str(s) => s,
+                                other => other.to_string(),
+                            },
+                        };
+                        elem.on_change = Some(hname);
+                    } else {
+                        let v = self.eval_expr(v_expr, env)?;
+                        elem.props.insert(k.clone(), v.to_string());
+                    }
+                }
+                return Ok(NudgeVal::UiElement {
+                    found: true,
+                    elem: Box::new(elem),
+                });
+            }
+
+            // Check view execution
+            if let Some(Item::View { params, body, .. }) = self.views.get(name).cloned() {
+                let child_env = Rc::new(RefCell::new(Env::new()));
+                for (i, p) in params.iter().enumerate() {
+                    if let Some(a) = args.get(i) {
+                        let v = self.eval_expr(a, env)?;
+                        child_env.borrow_mut().define(p.name.clone(), v);
+                    }
+                }
+                for (k, v_expr) in kwargs {
+                    let v = self.eval_expr(v_expr, env)?;
+                    child_env.borrow_mut().define(k.clone(), v);
+                }
+                return self.eval_body(&body, &child_env);
+            }
+
             // Check user functions
             if let Some((fn_item, agent_name)) = self.fns.get(name).cloned() {
                 return self.call_user_fn(&fn_item, agent_name.as_deref(), args, kwargs, env);
+            }
+        }
+
+        // Method calls on objects: window.mount_headless(), app.find(), app.dispatch_click(), etc.
+        if let ExprKind::Field {
+            obj,
+            name: method_name,
+        } = &func.kind
+        {
+            let target_val = self.eval_expr(obj, env)?;
+            match target_val {
+                NudgeVal::WindowRef {
+                    agent,
+                    name: win_name,
+                } => {
+                    if method_name == "mount_headless" {
+                        let win_key = agent
+                            .as_ref()
+                            .map(|a| format!("{a}.{win_name}"))
+                            .unwrap_or_else(|| win_name.clone());
+                        let (win_item, _) = self
+                            .windows
+                            .get(&win_key)
+                            .or_else(|| self.windows.get(&win_name))
+                            .cloned()
+                            .ok_or_else(|| format!("window '{win_name}' not found"))?;
+                        let fields = match &win_item {
+                            Item::Window { fields, .. } => fields,
+                            _ => return Err(format!("item '{win_name}' is not a window")),
+                        };
+                        let mut title = win_name.clone();
+                        let mut width = None;
+                        let mut height = None;
+                        let mut content_expr = None;
+                        for (k, v) in fields {
+                            if k == "title" {
+                                if let Ok(tv) = self.eval_expr(v, env) {
+                                    title = match tv {
+                                        NudgeVal::Str(s) => s,
+                                        other => other.to_string(),
+                                    };
+                                }
+                            } else if k == "width" {
+                                if let Ok(NudgeVal::Int(w)) = self.eval_expr(v, env) {
+                                    width = Some(w);
+                                }
+                            } else if k == "height" {
+                                if let Ok(NudgeVal::Int(h)) = self.eval_expr(v, env) {
+                                    height = Some(h);
+                                }
+                            } else if k == "content" {
+                                content_expr = Some(v.clone());
+                            }
+                        }
+                        let content_expr = content_expr.ok_or_else(|| {
+                            format!("window '{win_name}' has no content expression")
+                        })?;
+                        let prev_agent = self.active_agent.clone();
+                        if agent.is_some() {
+                            self.active_agent = agent.clone();
+                        }
+                        let root_val = self.eval_expr(&content_expr, env)?;
+                        self.active_agent = prev_agent;
+                        let root = match root_val {
+                            NudgeVal::UiElement { found: true, elem } => Some(*elem),
+                            _ => None,
+                        };
+                        let app_id = self.headless_apps.len();
+                        self.headless_apps.push(HeadlessAppRecord {
+                            agent,
+                            window: win_name,
+                            title,
+                            width,
+                            height,
+                            content_expr,
+                            root,
+                        });
+                        return Ok(NudgeVal::HeadlessApp(app_id));
+                    }
+                }
+                NudgeVal::HeadlessApp(app_id) => {
+                    if method_name == "find" {
+                        if args.is_empty() {
+                            return Err("'find' takes 1 argument".into());
+                        }
+                        let target_id = match self.eval_expr(&args[0], env)? {
+                            NudgeVal::Str(s) => s,
+                            other => other.to_string(),
+                        };
+                        let app = self
+                            .headless_apps
+                            .get(app_id)
+                            .ok_or_else(|| "invalid app id".to_string())?;
+                        let found = app
+                            .root
+                            .as_ref()
+                            .and_then(|r| r.find_by_id(&target_id))
+                            .cloned();
+                        return Ok(match found {
+                            Some(elem) => NudgeVal::UiElement {
+                                found: true,
+                                elem: Box::new(elem),
+                            },
+                            None => NudgeVal::UiElement {
+                                found: false,
+                                elem: Box::default(),
+                            },
+                        });
+                    }
+                    if method_name == "find_text" {
+                        if args.is_empty() {
+                            return Err("'find_text' takes 1 argument".into());
+                        }
+                        let target_txt = match self.eval_expr(&args[0], env)? {
+                            NudgeVal::Str(s) => s,
+                            other => other.to_string(),
+                        };
+                        let app = self
+                            .headless_apps
+                            .get(app_id)
+                            .ok_or_else(|| "invalid app id".to_string())?;
+                        let found = app
+                            .root
+                            .as_ref()
+                            .and_then(|r| r.find_by_text(&target_txt))
+                            .cloned();
+                        return Ok(match found {
+                            Some(elem) => NudgeVal::UiElement {
+                                found: true,
+                                elem: Box::new(elem),
+                            },
+                            None => NudgeVal::UiElement {
+                                found: false,
+                                elem: Box::default(),
+                            },
+                        });
+                    }
+                    if method_name == "dispatch_click" {
+                        if args.is_empty() {
+                            return Err("'dispatch_click' takes 1 argument".into());
+                        }
+                        let target_id = match self.eval_expr(&args[0], env)? {
+                            NudgeVal::Str(s) => s,
+                            other => other.to_string(),
+                        };
+                        let app = self
+                            .headless_apps
+                            .get(app_id)
+                            .ok_or_else(|| "invalid app id".to_string())?;
+                        let on_click = app
+                            .root
+                            .as_ref()
+                            .and_then(|r| r.find_by_id(&target_id))
+                            .and_then(|e| e.on_click.clone());
+                        if let Some(hname) = on_click {
+                            let agent = app.agent.clone();
+                            let prev_agent = self.active_agent.clone();
+                            if agent.is_some() {
+                                self.active_agent = agent.clone();
+                            }
+                            if let Some((fn_item, fn_agent)) = self.fns.get(&hname).cloned() {
+                                self.call_user_fn(
+                                    &fn_item,
+                                    fn_agent.as_deref().or(agent.as_deref()),
+                                    &[],
+                                    &[],
+                                    env,
+                                )?;
+                            }
+                            self.active_agent = prev_agent;
+
+                            // Re-render view tree from updated state
+                            let content_expr = self.headless_apps[app_id].content_expr.clone();
+                            let prev_agent2 = self.active_agent.clone();
+                            if agent.is_some() {
+                                self.active_agent = agent;
+                            }
+                            let new_root_val = self.eval_expr(&content_expr, env)?;
+                            self.active_agent = prev_agent2;
+                            if let NudgeVal::UiElement { found: true, elem } = new_root_val {
+                                self.headless_apps[app_id].root = Some(*elem);
+                            }
+                        }
+                        return Ok(NudgeVal::Unit);
+                    }
+                }
+                NudgeVal::UiElement { found, ref elem } => {
+                    if method_name == "exists" {
+                        return Ok(NudgeVal::Bool(found));
+                    }
+                    if method_name == "get_text" || method_name == "text" {
+                        return Ok(NudgeVal::Str(if found {
+                            elem.get_text()
+                        } else {
+                            String::new()
+                        }));
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -1481,6 +1919,8 @@ impl Interpreter {
                 (NudgeVal::Int(a), NudgeVal::Float(b)) => Ok(NudgeVal::Float(a as f64 + b)),
                 (NudgeVal::Float(a), NudgeVal::Int(b)) => Ok(NudgeVal::Float(a + b as f64)),
                 (NudgeVal::Str(a), NudgeVal::Str(b)) => Ok(NudgeVal::Str(format!("{a}{b}"))),
+                (NudgeVal::Str(a), b) => Ok(NudgeVal::Str(format!("{a}{b}"))),
+                (a, NudgeVal::Str(b)) => Ok(NudgeVal::Str(format!("{a}{b}"))),
                 (NudgeVal::List(mut a), NudgeVal::List(b)) => {
                     a.extend(b);
                     Ok(NudgeVal::List(a))

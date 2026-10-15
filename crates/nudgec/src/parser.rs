@@ -157,6 +157,20 @@ impl Parser {
         }
     }
 
+    fn field_ident(&mut self) -> PResult<String> {
+        match self.peek().clone() {
+            Tok::Ident(s) => {
+                self.bump();
+                Ok(s)
+            }
+            Tok::State => {
+                self.bump();
+                Ok("state".to_string())
+            }
+            other => self.err(format!("expected identifier, found {other:?}")),
+        }
+    }
+
     // ── program ─────────────────────────────────────────────────────
     pub fn parse_program(&mut self) -> PResult<Vec<Item>> {
         let mut items = Vec::new();
@@ -173,8 +187,11 @@ impl Parser {
             Tok::Tool => self.parse_tool(),
             Tok::Test => self.parse_test(),
             Tok::Agent => self.parse_agent(),
+            Tok::Ident(ref s) if s == "view" => self.parse_view(),
+            Tok::Ident(ref s) if s == "window" => self.parse_window(),
+            Tok::Ident(ref s) if s == "handle" => self.parse_handle(),
             other => self.err(format!(
-                "expected item (type/fn/tool/test), found {other:?}"
+                "expected item (type/fn/tool/test/view/window), found {other:?}"
             )),
         }
     }
@@ -219,8 +236,11 @@ impl Parser {
         self.bump(); // fn
         let name = self.ident()?;
         let params = self.parse_params()?;
-        self.expect(&Tok::Arrow, "'->' before return type")?;
-        let ret = self.parse_type()?;
+        let ret = if self.eat(&Tok::Arrow) {
+            self.parse_type()?
+        } else {
+            TypeExpr::Named("()".into())
+        };
         let effects = self.parse_effects()?;
         let body = self.parse_block()?;
         Ok(Item::Fn {
@@ -297,15 +317,73 @@ impl Parser {
                     self.expect(&Tok::RBrace, "'}' after state block")?;
                 }
                 Tok::Fn => fns.push(self.parse_fn()?),
+                Tok::Ident(ref s) if s == "fn" => fns.push(self.parse_fn()?),
+                Tok::Ident(ref s) if s == "window" => fns.push(self.parse_window()?),
+                Tok::Ident(ref s) if s == "view" => fns.push(self.parse_view()?),
+                Tok::Ident(ref s) if s == "handle" => fns.push(self.parse_handle()?),
                 other => {
                     return self.err(format!(
-                        "expected `state` or `fn` inside agent, found {other:?}"
+                        "expected `state`, `fn`, `window`, `view`, or `handle` inside agent, found {other:?}"
                     ))
                 }
             }
         }
         self.expect(&Tok::RBrace, "'}' after agent body")?;
         Ok(Item::Agent { name, state, fns })
+    }
+
+    fn parse_view(&mut self) -> PResult<Item> {
+        self.bump(); // view
+        let name = self.ident()?;
+        let params = self.parse_params()?;
+        let ret = if self.eat(&Tok::Arrow) {
+            self.parse_type()?
+        } else {
+            TypeExpr::Named("View".into())
+        };
+        let body = self.parse_block()?;
+        Ok(Item::View {
+            name,
+            params,
+            ret,
+            body,
+        })
+    }
+
+    fn parse_window(&mut self) -> PResult<Item> {
+        self.bump(); // window
+        let name = self.ident()?;
+        self.expect(&Tok::LBrace, "'{' before window body")?;
+        let mut fields = Vec::new();
+        while !self.at(&Tok::RBrace) {
+            let fname = self.ident()?;
+            self.expect(&Tok::Colon, "':' in window field")?;
+            let val = self.parse_expr()?;
+            fields.push((fname, val));
+            self.eat(&Tok::Comma);
+        }
+        self.expect(&Tok::RBrace, "'}' after window body")?;
+        Ok(Item::Window { name, fields })
+    }
+
+    fn parse_handle(&mut self) -> PResult<Item> {
+        self.bump(); // handle
+        let name = self.ident()?;
+        let params = self.parse_params()?;
+        let ret = if self.eat(&Tok::Arrow) {
+            self.parse_type()?
+        } else {
+            TypeExpr::Named("()".into())
+        };
+        let effects = self.parse_effects()?;
+        let body = self.parse_block()?;
+        Ok(Item::Fn {
+            name,
+            params,
+            ret,
+            effects,
+            body,
+        })
     }
 
     fn parse_block(&mut self) -> PResult<Vec<Stmt>> {
@@ -716,13 +794,28 @@ impl Parser {
         }
     }
 
+    fn is_ui_container_expr(e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Ident(s) => {
+                matches!(s.as_str(), "column" | "row" | "stack" | "box" | "container")
+            }
+            ExprKind::Call { func, .. } => match &func.kind {
+                ExprKind::Ident(s) => {
+                    matches!(s.as_str(), "column" | "row" | "stack" | "box" | "container")
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     fn parse_postfix(&mut self) -> PResult<Expr> {
         let mut e = self.parse_primary()?;
         loop {
             match self.peek().clone() {
                 Tok::Dot => {
                     self.bump();
-                    let name = self.ident()?;
+                    let name = self.field_ident()?;
                     let span = Span {
                         start: e.span.start,
                         end: self.t[self.i - 1].end,
@@ -757,20 +850,61 @@ impl Parser {
                         .map(|s| s.newline_before)
                         .unwrap_or(false) =>
                 {
-                    self.bump();
-                    let idx = self.parse_expr()?;
-                    self.expect(&Tok::RBracket, "']' after index expression")?;
-                    let span = Span {
-                        start: e.span.start,
-                        end: self.t[self.i - 1].end,
-                    };
-                    e = self.ex(
-                        span,
-                        ExprKind::Index {
-                            obj: Box::new(e),
-                            idx: Box::new(idx),
-                        },
-                    );
+                    if Self::is_ui_container_expr(&e) {
+                        let start = self.pos();
+                        self.bump();
+                        let mut children = Vec::new();
+                        while !self.at(&Tok::RBracket) {
+                            children.push(self.parse_expr()?);
+                            self.eat(&Tok::Comma);
+                        }
+                        self.expect(&Tok::RBracket, "']' after element children")?;
+                        let children_span = Span {
+                            start,
+                            end: self.t[self.i - 1].end,
+                        };
+                        let children_expr = self.ex(children_span, ExprKind::ListLit(children));
+                        let full_span = Span {
+                            start: e.span.start,
+                            end: self.t[self.i - 1].end,
+                        };
+                        match e.kind {
+                            ExprKind::Call {
+                                func,
+                                mut args,
+                                kwargs,
+                            } => {
+                                args.push(children_expr);
+                                e = self.ex(full_span, ExprKind::Call { func, args, kwargs });
+                            }
+                            ExprKind::Ident(_) => {
+                                e = self.ex(
+                                    full_span,
+                                    ExprKind::Call {
+                                        func: Box::new(e),
+                                        args: vec![children_expr],
+                                        kwargs: Vec::new(),
+                                    },
+                                );
+                            }
+                            _ => unreachable!(),
+                        }
+                    } else {
+                        self.bump();
+                        let idx = self.parse_expr()?;
+                        self.expect(&Tok::RBracket, "']' after index expression")?;
+                        let span = Span {
+                            start: e.span.start,
+                            end: self.t[self.i - 1].end,
+                        };
+                        e = self.ex(
+                            span,
+                            ExprKind::Index {
+                                obj: Box::new(e),
+                                idx: Box::new(idx),
+                            },
+                        );
+                    }
                 }
                 _ => break,
             }

@@ -153,6 +153,7 @@ pub fn emit(items: &[Item]) -> String {
                     }
                 }
             }
+            Item::View { .. } | Item::Window { .. } => {}
         }
     }
     if has_main {
