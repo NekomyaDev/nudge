@@ -1751,9 +1751,6 @@ pub fn run_program(items: &[Item], entry: &str, args: &[NudgeVal]) -> Result<Nud
                 }
             };
             let res = vm::run_with_delegate(&program, entry, args, &mut delegate);
-            if let Ok(val) = &res {
-                emit_fn_return(entry, val)?;
-            }
             return res;
         }
     }
@@ -1817,7 +1814,7 @@ pub(crate) fn fallback_expr_string(expr: &Expr) -> String {
 /// One `fn.return` NTF record per traced function boundary (parity with
 /// the Python runtime's `@effectful` wrapper: every fn return is one
 /// record — `Trace.output` reads the last one).
-fn emit_fn_return(name: &str, value: &NudgeVal) -> Result<(), String> {
+pub(crate) fn emit_fn_return(name: &str, value: &NudgeVal) -> Result<(), String> {
     if !nudge_runtime::trace::sink_active() {
         return Ok(());
     }

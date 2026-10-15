@@ -134,7 +134,9 @@ impl<'a> VM<'a> {
                 let ret_val = self.stack.pop().unwrap_or(NudgeVal::Unit);
                 let base = self.frames[frame_idx].stack_base;
                 self.stack.truncate(base);
-                self.frames.pop();
+                let frame = self.frames.pop().unwrap();
+                let fn_name = &self.program.functions[frame.fn_idx].name;
+                crate::eval::interpreter::emit_fn_return(fn_name, &ret_val)?;
                 if self.frames.is_empty() {
                     return Ok(ret_val);
                 }
@@ -595,7 +597,9 @@ impl<'a> VM<'a> {
                     let ret_val = self.stack.pop().unwrap_or(NudgeVal::Unit);
                     let current_base = self.frames[frame_idx].stack_base;
                     self.stack.truncate(current_base);
-                    self.frames.pop();
+                    let frame = self.frames.pop().unwrap();
+                    let fn_name = &self.program.functions[frame.fn_idx].name;
+                    crate::eval::interpreter::emit_fn_return(fn_name, &ret_val)?;
                     if self.frames.is_empty() {
                         return Ok(ret_val);
                     }
@@ -1935,5 +1939,99 @@ mod tests {
             trace_content_vm, trace_content_interp,
             "Trace from VM must be byte-identical to trace from interpreter"
         );
+    }
+
+    #[test]
+    fn test_trace_byte_identical_pure_and_inline_effect() {
+        let _lock = MIXED_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard_provider = EnvVarGuard::set("NUDGE_PROVIDER", "fake");
+
+        let src = r#"
+            fn greeting() -> string {
+                llm"""say hi""" with { model: "fake:default" }
+            }
+            fn main() -> string {
+                greeting()
+            }
+        "#;
+        let items = parse_src(src);
+        let path_vm = std::env::temp_dir().join(format!(
+            "nudge-trace-parity-vm-{}.jsonl",
+            std::process::id()
+        ));
+        let path_interp = std::env::temp_dir().join(format!(
+            "nudge-trace-parity-interp-{}.jsonl",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path_vm);
+        let _ = std::fs::remove_file(&path_interp);
+
+        // Record under VM (NUDGE_VM=1)
+        let recorded_val_vm = {
+            let _guard_vm = EnvVarGuard::set("NUDGE_VM", "1");
+            let _scope = nudge_runtime::trace::testing::scope(Some(path_vm.clone()), None);
+            run_program(&items, "main", &[]).expect("record run under VM")
+        };
+
+        let trace_content_vm =
+            std::fs::read_to_string(&path_vm).expect("VM trace file should exist");
+        assert_eq!(
+            crate::tracecheck::validate(&trace_content_vm),
+            Vec::<String>::new()
+        );
+
+        // Record under Interpreter (NUDGE_VM=0)
+        let recorded_val_interp = {
+            let _guard_vm = EnvVarGuard::set("NUDGE_VM", "0");
+            let _scope = nudge_runtime::trace::testing::scope(Some(path_interp.clone()), None);
+            run_program(&items, "main", &[]).expect("record run under interpreter")
+        };
+        assert_eq!(recorded_val_vm, recorded_val_interp);
+
+        let trace_content_interp =
+            std::fs::read_to_string(&path_interp).expect("interp trace should exist");
+
+        // Byte-identical trace parity check
+        assert_eq!(
+            trace_content_vm, trace_content_interp,
+            "Trace from VM must be byte-identical to trace from interpreter"
+        );
+
+        // Assert expected fn.return trace records exist in order
+        let lines: Vec<&str> = trace_content_vm.lines().collect();
+        assert_eq!(
+            lines.len(),
+            3,
+            "expected 3 trace records (llm.call, greeting.fn.return, main.fn.return)"
+        );
+        let r1: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        let r2: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+        let r3: serde_json::Value = serde_json::from_str(lines[2]).unwrap();
+        assert_eq!(r1["kind"], "llm.call");
+        assert_eq!(r2["kind"], "fn.return");
+        assert_eq!(r2["fn"], "greeting");
+        assert_eq!(r2["seq"], 2);
+        assert_eq!(r3["kind"], "fn.return");
+        assert_eq!(r3["fn"], "main");
+        assert_eq!(r3["seq"], 3);
+
+        // Cross-VM replay 1: record under VM, replay under Interpreter
+        let replayed_val_interp = {
+            let _guard_vm = EnvVarGuard::set("NUDGE_VM", "0");
+            let _scope = nudge_runtime::trace::testing::scope(None, Some(path_vm.clone()));
+            run_program(&items, "main", &[]).expect("replay under interpreter")
+        };
+        assert_eq!(replayed_val_interp, recorded_val_vm);
+
+        // Cross-VM replay 2: record under Interpreter, replay under VM
+        let replayed_val_vm = {
+            let _guard_vm = EnvVarGuard::set("NUDGE_VM", "1");
+            let _scope = nudge_runtime::trace::testing::scope(None, Some(path_interp.clone()));
+            run_program(&items, "main", &[]).expect("replay under VM")
+        };
+        assert_eq!(replayed_val_vm, recorded_val_interp);
+
+        let _ = std::fs::remove_file(&path_vm);
+        let _ = std::fs::remove_file(&path_interp);
     }
 }
