@@ -1423,3 +1423,77 @@ fn computer_perform_and_paste_lower_to_rt_helpers() {
         "got:\n{out}"
     );
 }
+
+#[test]
+fn ui_acceptance_runs_under_python_codegen() {
+    let Some(e) = e2e("ui_acceptance") else {
+        return;
+    };
+    let src = r#"
+        view CounterView(count: int) -> View {
+            column [
+                text("Sayı: " + count),
+                button("Artır", id = "btn_inc", on_click = inc)
+            ]
+        }
+
+        agent CounterApp {
+            state {
+                val: int = 0
+            }
+
+            fn inc() uses UI {
+                state.val = state.val + 1
+            }
+
+            window Win {
+                title: "Test Penceresi",
+                content: CounterView(state.val)
+            }
+        }
+
+        test "pencere acilisi, girdi tetiklemesi ve gorunum guncellemesi" {
+            let app = CounterApp.Win.mount_headless()
+            assert app.find("btn_inc").exists()
+            assert app.find_text("Sayı: 0").exists()
+
+            app.dispatch_click("btn_inc")
+
+            assert app.find_text("Sayı: 1").exists()
+            assert CounterApp.state.val == 1
+        }
+    "#;
+    let py = gen(src);
+    assert!(py.contains("class CounterApp:"), "got:\n{py}");
+    assert!(py.contains("class _UiElement:"), "got:\n{py}");
+    assert!(py.contains("def CounterView(count):"), "got:\n{py}");
+    assert!(py.contains("_win_CounterApp_Win = _Window("), "got:\n{py}");
+
+    let out_py = e.dir.join("ui_acceptance.py");
+    std::fs::write(&out_py, &py).unwrap();
+
+    let driver = e.dir.join("run_tests.py");
+    std::fs::write(
+        &driver,
+        TEST_DRIVER_PY.replace("__MODULE__", &out_py.to_string_lossy()),
+    )
+    .unwrap();
+    let output = std::process::Command::new("python3")
+        .arg(&driver)
+        .current_dir(&e.dir)
+        .env("PYTHONPATH", &e.runtime)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout
+            .contains("PASS nudge_test_pencere_acilisi_girdi_tetiklemesi_ve_gorunum_guncellemesi"),
+        "stdout: {stdout}"
+    );
+    assert!(stdout.contains("1/1 tests passed"), "stdout: {stdout}");
+}

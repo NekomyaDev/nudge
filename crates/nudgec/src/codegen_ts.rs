@@ -29,13 +29,19 @@ pub fn emit_ts(items: &[Item]) -> String {
         "rt.compatibilityCheck?.(\"{}\");\n",
         env!("CARGO_PKG_VERSION")
     ));
+    if crate::codegen::has_ui_items(items) {
+        out.push_str("\n\n");
+        out.push_str(UI_RUNTIME_TS);
+    }
     let mut has_main = false;
     // callee parameter order — JS has no named arguments, so kwargs are
     // reordered into positional slots at the call site
     let sigs: HashMap<String, Vec<String>> = items
         .iter()
         .flat_map(|i| match i {
-            Item::Fn { name, params, .. } | Item::Tool { name, params, .. } => {
+            Item::Fn { name, params, .. }
+            | Item::Tool { name, params, .. }
+            | Item::View { name, params, .. } => {
                 vec![(
                     name.clone(),
                     params.iter().map(|p| p.name.clone()).collect(),
@@ -46,7 +52,7 @@ pub fn emit_ts(items: &[Item]) -> String {
             Item::Agent { fns, .. } => fns
                 .iter()
                 .filter_map(|f| match f {
-                    Item::Fn { name, params, .. } => Some((
+                    Item::Fn { name, params, .. } | Item::View { name, params, .. } => Some((
                         name.clone(),
                         params.iter().map(|p| p.name.clone()).collect(),
                     )),
@@ -142,41 +148,125 @@ pub fn emit_ts(items: &[Item]) -> String {
                     .map(|(f, _, _)| f.clone())
                     .collect();
                 for f in fns {
-                    if let Item::Fn {
-                        name: fn_name,
-                        params,
-                        body,
-                        effects,
-                        ..
-                    } = f
-                    {
-                        let ps = params
-                            .iter()
-                            .map(|p| format!("{}: {}", p.name, ty_ts(&p.ty, &aliases)))
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        let fx = if effects.is_empty() {
-                            String::new()
-                        } else {
-                            format!("  // effects: {}", effects.join(", "))
-                        };
-                        out.push_str(&format!("\n\nfunction {fn_name}({ps}) {{{fx}\n"));
-                        let bound = crate::codegen::bind_state(body, name);
-                        out.push_str(&emit_body(
-                            &bound,
-                            &aliases,
-                            &sigs,
-                            Some((name.as_str(), list_fields.as_slice())),
-                            &mut 0,
-                        ));
-                        out.push('}');
-                        if fn_name == "main" {
-                            has_main = true;
+                    match f {
+                        Item::Fn {
+                            name: fn_name,
+                            params,
+                            body,
+                            effects,
+                            ..
+                        } => {
+                            let ps = params
+                                .iter()
+                                .map(|p| format!("{}: {}", p.name, ty_ts(&p.ty, &aliases)))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            let fx = if effects.is_empty() {
+                                String::new()
+                            } else {
+                                format!("  // effects: {}", effects.join(", "))
+                            };
+                            out.push_str(&format!("\n\nfunction {fn_name}({ps}) {{{fx}\n"));
+                            let bound = crate::codegen::bind_state(body, name);
+                            out.push_str(&emit_body(
+                                &bound,
+                                &aliases,
+                                &sigs,
+                                Some((name.as_str(), list_fields.as_slice())),
+                                &mut 0,
+                            ));
+                            out.push('}');
+                            if fn_name == "main" {
+                                has_main = true;
+                            }
                         }
+                        Item::View {
+                            name: view_name,
+                            params,
+                            body,
+                            ..
+                        } => {
+                            let ps = params
+                                .iter()
+                                .map(|p| format!("{}: {}", p.name, ty_ts(&p.ty, &aliases)))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            out.push_str(&format!("\n\nfunction {view_name}({ps}): any {{\n"));
+                            let bound = crate::codegen::bind_state(body, name);
+                            let mut prop_id = 0;
+                            out.push_str(&emit_body(
+                                &bound,
+                                &aliases,
+                                &sigs,
+                                Some((name.as_str(), list_fields.as_slice())),
+                                &mut prop_id,
+                            ));
+                            out.push('}');
+                        }
+                        Item::Window {
+                            name: win_name,
+                            fields,
+                        } => {
+                            let var_name = format!("_win_{name}_{win_name}");
+                            out.push('\n');
+                            out.push_str(&emit_window_def_ts(
+                                &var_name,
+                                win_name,
+                                fields,
+                                Some(name),
+                                &aliases,
+                                &sigs,
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+                let mut agent_props = vec![format!("state: _state_{name}")];
+                for f in fns {
+                    match f {
+                        Item::Fn { name: fn_name, .. } => {
+                            agent_props.push(format!("{fn_name}: {fn_name}"));
+                        }
+                        Item::View {
+                            name: view_name, ..
+                        } => {
+                            agent_props.push(format!("{view_name}: {view_name}"));
+                        }
+                        Item::Window { name: win_name, .. } => {
+                            agent_props.push(format!("{win_name}: _win_{name}_{win_name}"));
+                        }
+                        _ => {}
+                    }
+                }
+                out.push_str(&format!(
+                    "\n\nconst {name} = {{\n  {}\n}};\n",
+                    agent_props.join(",\n  ")
+                ));
+                for f in fns {
+                    if let Item::Window { name: win_name, .. } = f {
+                        out.push_str(&format!("_win_{name}_{win_name}.agent = {name};\n"));
+                        out.push_str(&format!("const {win_name} = _win_{name}_{win_name};\n"));
                     }
                 }
             }
-            Item::View { .. } | Item::Window { .. } => {}
+            Item::View {
+                name, params, body, ..
+            } => {
+                let ps = params
+                    .iter()
+                    .map(|p| format!("{}: {}", p.name, ty_ts(&p.ty, &aliases)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                out.push_str(&format!("function {name}({ps}): any {{\n"));
+                let mut prop_id = 0;
+                out.push_str(&emit_body(body, &aliases, &sigs, None, &mut prop_id));
+                out.push('}');
+            }
+            Item::Window { name, fields } => {
+                out.push_str(&emit_window_def_ts(
+                    name, name, fields, None, &aliases, &sigs,
+                ));
+            }
         }
     }
     if has_main {
@@ -292,6 +382,9 @@ fn emit_body(
                         StmtKind::For { .. } => {
                             "// pack1 codegen not yet lowered: for loop".to_string()
                         }
+                        StmtKind::If { .. } => {
+                            "// pack1 codegen not yet lowered: if statement".to_string()
+                        }
                     };
                     inner.push_str("    ");
                     inner.push_str(&line);
@@ -302,6 +395,7 @@ fn emit_body(
                 )
             }
             StmtKind::For { .. } => "// pack1 codegen not yet lowered: for loop".to_string(),
+            StmtKind::If { .. } => "// pack1 codegen not yet lowered: if statement".to_string(),
         };
         out.push_str("  ");
         out.push_str(&line);
@@ -806,6 +900,286 @@ fn js_str(s: &str) -> String {
     out
 }
 
+fn emit_window_def_ts(
+    win_var: &str,
+    win_name: &str,
+    fields: &[(String, Expr)],
+    agent: Option<&str>,
+    aliases: &HashSet<String>,
+    sigs: &HashMap<String, Vec<String>>,
+) -> String {
+    let mut title = js_str(win_name);
+    let mut width = "undefined".to_string();
+    let mut height = "undefined".to_string();
+    let mut content = "undefined".to_string();
+
+    for (k, v) in fields {
+        match k.as_str() {
+            "title" => {
+                title = ts(v, aliases, sigs);
+            }
+            "width" => {
+                width = ts(v, aliases, sigs);
+            }
+            "height" => {
+                height = ts(v, aliases, sigs);
+            }
+            "content" => {
+                let bound = if let Some(ag) = agent {
+                    crate::codegen::bind_state_expr(v, ag)
+                } else {
+                    v.clone()
+                };
+                content = format!("() => {}", ts(&bound, aliases, sigs));
+            }
+            _ => {}
+        }
+    }
+    format!("const {win_var} = new _Window({title}, {width}, {height}, {content});\n")
+}
+
+pub const UI_RUNTIME_TS: &str = r#"class _UiElement {
+  tag: string;
+  id: any;
+  text: any;
+  props: Record<string, any>;
+  children: any[];
+  on_click: any;
+  on_change: any;
+  found: boolean;
+
+  constructor(opts: any = {}) {
+    this.tag = opts.tag ?? "";
+    this.id = opts.id;
+    this.text = opts.text;
+    this.props = opts.props ?? {};
+    this.children = opts.children ?? [];
+    this.on_click = opts.on_click;
+    this.on_change = opts.on_change;
+    this.found = opts.found ?? true;
+  }
+
+  exists(): boolean {
+    return this.found;
+  }
+
+  find(targetId: string): any {
+    const el = this.findById(targetId);
+    return el ? el : new _UiElement({ found: false });
+  }
+
+  find_text(targetText: string): any {
+    const el = this.findByText(targetText);
+    return el ? el : new _UiElement({ found: false });
+  }
+
+  findById(targetId: string): any {
+    if (!this.found) return null;
+    if (this.id === targetId) return this;
+    for (const child of this.children) {
+      if (child instanceof _UiElement) {
+        const res = child.findById(targetId);
+        if (res) return res;
+      }
+    }
+    return null;
+  }
+
+  findByText(targetText: string): any {
+    if (!this.found) return null;
+    if (this.text !== undefined && (this.text === targetText || String(this.text).includes(targetText))) {
+      return this;
+    }
+    for (const child of this.children) {
+      if (child instanceof _UiElement) {
+        const res = child.findByText(targetText);
+        if (res) return res;
+      }
+    }
+    return null;
+  }
+
+  get_text(): string {
+    if (!this.found) return "";
+    const parts: string[] = [];
+    if (this.text !== undefined && this.text !== null) parts.push(String(this.text));
+    for (const child of this.children) {
+      if (child instanceof _UiElement) {
+        const t = child.get_text();
+        if (t) parts.push(t);
+      }
+    }
+    return parts.join(" ");
+  }
+}
+
+class _HeadlessApp {
+  title: string;
+  width: any;
+  height: any;
+  renderFn: any;
+  root: any;
+  agent: any;
+
+  constructor(renderFn: any, title: string = "", width: any = undefined, height: any = undefined, agent: any = undefined) {
+    this.renderFn = renderFn;
+    this.title = title;
+    this.width = width;
+    this.height = height;
+    this.agent = agent;
+    this.root = typeof renderFn === "function" ? renderFn() : null;
+  }
+
+  find(targetId: string): any {
+    if (this.root) {
+      const found = this.root.findById(targetId);
+      if (found) return found;
+    }
+    return new _UiElement({ found: false });
+  }
+
+  find_text(targetText: string): any {
+    if (this.root) {
+      const found = this.root.findByText(targetText);
+      if (found) return found;
+    }
+    return new _UiElement({ found: false });
+  }
+
+  dispatch_click(targetId: string): void {
+    const elem = this.find(targetId);
+    if (elem.found && elem.on_click) {
+      const handler = elem.on_click;
+      if (typeof handler === "function") {
+        try {
+          handler();
+        } catch {
+          handler(null);
+        }
+      } else if (typeof handler === "string") {
+        const fn = (this.agent && typeof this.agent[handler] === "function") ? this.agent[handler] : (globalThis as any)[handler];
+        if (typeof fn === "function") {
+          try {
+            fn();
+          } catch {
+            fn(null);
+          }
+        }
+      }
+      if (typeof this.renderFn === "function") {
+        this.root = this.renderFn();
+      }
+    }
+  }
+}
+
+class _Window {
+  title: string;
+  width: any;
+  height: any;
+  renderFn: any;
+  agent: any;
+
+  constructor(title: string = "", width: any = undefined, height: any = undefined, renderFn: any = undefined, agent: any = undefined) {
+    this.title = title;
+    this.width = width;
+    this.height = height;
+    this.renderFn = renderFn;
+    this.agent = agent;
+  }
+
+  mount_headless(): any {
+    return new _HeadlessApp(this.renderFn, this.title, this.width, this.height, this.agent);
+  }
+
+  open(): any {
+    return this.mount_headless();
+  }
+}
+
+function column(...args: any[]): any {
+  let children: any[] = [];
+  let props: Record<string, any> = {};
+  for (const a of args) {
+    if (Array.isArray(a)) {
+      children.push(...a);
+    } else if (a instanceof _UiElement) {
+      children.push(a);
+    } else if (typeof a === "object" && a !== null) {
+      Object.assign(props, a);
+    }
+  }
+  return new _UiElement({ tag: "column", children, props });
+}
+
+function row(...args: any[]): any {
+  let children: any[] = [];
+  let props: Record<string, any> = {};
+  for (const a of args) {
+    if (Array.isArray(a)) {
+      children.push(...a);
+    } else if (a instanceof _UiElement) {
+      children.push(a);
+    } else if (typeof a === "object" && a !== null) {
+      Object.assign(props, a);
+    }
+  }
+  return new _UiElement({ tag: "row", children, props });
+}
+
+function text(...args: any[]): any {
+  let txt = "";
+  let props: Record<string, any> = {};
+  for (const a of args) {
+    if (typeof a === "string" || typeof a === "number") {
+      txt = String(a);
+    } else if (typeof a === "object" && a !== null) {
+      Object.assign(props, a);
+    }
+  }
+  return new _UiElement({ tag: "text", text: txt, props });
+}
+
+function button(...args: any[]): any {
+  let txt = "";
+  let id: any = undefined;
+  let on_click: any = undefined;
+  let props: Record<string, any> = {};
+  for (const a of args) {
+    if (typeof a === "string" || typeof a === "number") {
+      txt = String(a);
+    } else if (typeof a === "object" && a !== null) {
+      if ("id" in a) id = a.id;
+      if ("on_click" in a) on_click = a.on_click;
+      for (const [k, v] of Object.entries(a)) {
+        if (k !== "id" && k !== "on_click") {
+          props[k] = v;
+        }
+      }
+    }
+  }
+  return new _UiElement({ tag: "button", id, text: txt, on_click, props });
+}
+
+function input(...args: any[]): any {
+  let id: any = undefined;
+  let on_change: any = undefined;
+  let props: Record<string, any> = {};
+  for (const a of args) {
+    if (typeof a === "object" && a !== null) {
+      if ("id" in a) id = a.id;
+      if ("on_change" in a) on_change = a.on_change;
+      for (const [k, v] of Object.entries(a)) {
+        if (k !== "id" && k !== "on_change") {
+          props[k] = v;
+        }
+      }
+    }
+  }
+  return new _UiElement({ tag: "input", id, on_change, props });
+}
+"#;
+
 // ── tests ────────────────────────────────────────────────────────────
 #[cfg(test)]
 mod tests {
@@ -1148,6 +1522,86 @@ mod tests {
         assert!(!out.status.success(), "run wall must fire");
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(stderr.contains("BudgetExceeded"), "stderr: {stderr}");
+    }
+
+    #[test]
+    fn ts_ui_acceptance_runs_under_node() {
+        let _nl = NODE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        use std::process::Command;
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let runtime = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
+        if !runtime.exists() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("nudge_tsui_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let src = r#"
+            view CounterView(count: int) -> View {
+                column [
+                    text("Sayı: " + count),
+                    button("Artır", id = "btn_inc", on_click = inc)
+                ]
+            }
+
+            agent CounterApp {
+                state {
+                    val: int = 0
+                }
+
+                fn inc() uses UI {
+                    state.val = state.val + 1
+                }
+
+                window Win {
+                    title: "Test Penceresi",
+                    content: CounterView(state.val)
+                }
+            }
+
+            test "pencere acilisi, girdi tetiklemesi ve gorunum guncellemesi" {
+                let app = CounterApp.Win.mount_headless()
+                assert app.find("btn_inc").exists()
+                assert app.find_text("Sayı: 0").exists()
+
+                app.dispatch_click("btn_inc")
+
+                assert app.find_text("Sayı: 1").exists()
+                assert CounterApp.state.val == 1
+            }
+        "#;
+        let emitted = gen_ts(src);
+        assert!(emitted.contains("const CounterApp = {"), "got:\n{emitted}");
+        assert!(emitted.contains("class _UiElement"), "got:\n{emitted}");
+        assert!(
+            emitted.contains("function CounterView(count: number): any {"),
+            "got:\n{emitted}"
+        );
+
+        // Append runner to call the generated test function
+        let mut script = emitted.replace("./nudge_runtime.ts", "./nudge_runtime.mjs");
+        script.push_str("\n\nnudge_test_pencere_acilisi_girdi_tetiklemesi_ve_gorunum_guncellemesi();\nconsole.log(\"UI TS TEST PASSED\");\n");
+        let ts_file = dir.join("ui_test.ts");
+        std::fs::write(&ts_file, &script).unwrap();
+
+        let rt_src = std::fs::read_to_string(runtime.join("nudge_runtime.ts")).unwrap();
+        std::fs::write(dir.join("nudge_runtime.mjs"), rt_src).unwrap();
+
+        let out = Command::new("node")
+            .arg("--experimental-strip-types")
+            .arg(&ts_file)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "node stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("UI TS TEST PASSED"), "stdout: {stdout}");
     }
 }
 

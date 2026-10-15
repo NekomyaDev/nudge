@@ -476,6 +476,17 @@ fn body_effects(
                 direct_effects(coll, g, effects, calls);
                 body_effects(body, g, effects, calls);
             }
+            StmtKind::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
+                direct_effects(cond, g, effects, calls);
+                body_effects(then_body, g, effects, calls);
+                if let Some(else_stmts) = else_body {
+                    body_effects(else_stmts, g, effects, calls);
+                }
+            }
             // for_all only survives checking inside test blocks, which
             // carry no effect signature — nothing to contribute here
             StmtKind::ForAll { .. } => {}
@@ -624,6 +635,17 @@ fn stmts_have_effect_call(
         StmtKind::Assert(e) | StmtKind::ExprStmt(e) => expr_has_effect_call(e, g, inferred),
         StmtKind::For { coll, body, .. } => {
             expr_has_effect_call(coll, g, inferred) || stmts_have_effect_call(body, g, inferred)
+        }
+        StmtKind::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            expr_has_effect_call(cond, g, inferred)
+                || stmts_have_effect_call(then_body, g, inferred)
+                || else_body
+                    .as_ref()
+                    .is_some_and(|b| stmts_have_effect_call(b, g, inferred))
         }
         StmtKind::ForAll { args, body, .. } => {
             args.iter().any(|a| expr_has_effect_call(a, g, inferred))
@@ -831,6 +853,35 @@ fn check_test_body_inner(
                 }
                 check_test_body_inner(for_body, &loop_locals, &loop_mut_locals, g, errs, inferred);
             }
+            StmtKind::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
+                let cond_ty = check_expr(cond, &locals, g, errs);
+                if !assignable(&cond_ty, &Ty::Bool) {
+                    errs.push(CheckError {
+                        span: None,
+                        code: "E0201",
+                        msg: format!("if condition must be bool, got {cond_ty}"),
+                    });
+                }
+                let then_locals = locals.clone();
+                let then_mut_locals = mut_locals.clone();
+                check_test_body_inner(then_body, &then_locals, &then_mut_locals, g, errs, inferred);
+                if let Some(else_stmts) = else_body {
+                    let else_locals = locals.clone();
+                    let else_mut_locals = mut_locals.clone();
+                    check_test_body_inner(
+                        else_stmts,
+                        &else_locals,
+                        &else_mut_locals,
+                        g,
+                        errs,
+                        inferred,
+                    );
+                }
+            }
             StmtKind::ForAll {
                 var,
                 gen,
@@ -1011,6 +1062,43 @@ fn check_fn_stmts(
                     g,
                     errs,
                 );
+                last_ty = Ty::None_;
+            }
+            StmtKind::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
+                let cond_ty = check_expr(cond, locals, g, errs);
+                if !assignable(&cond_ty, &Ty::Bool) {
+                    errs.push(CheckError {
+                        span: None,
+                        code: "E0201",
+                        msg: format!("if condition must be bool, got {cond_ty}"),
+                    });
+                }
+                let mut then_locals = locals.clone();
+                let mut then_mut_locals = mut_locals.clone();
+                check_fn_stmts(
+                    then_body,
+                    &mut then_locals,
+                    &mut then_mut_locals,
+                    agent_ctx,
+                    g,
+                    errs,
+                );
+                if let Some(else_stmts) = else_body {
+                    let mut else_locals = locals.clone();
+                    let mut else_mut_locals = mut_locals.clone();
+                    check_fn_stmts(
+                        else_stmts,
+                        &mut else_locals,
+                        &mut else_mut_locals,
+                        agent_ctx,
+                        g,
+                        errs,
+                    );
+                }
                 last_ty = Ty::None_;
             }
             StmtKind::ForAll {

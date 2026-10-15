@@ -404,6 +404,44 @@ impl<'a> Compiler<'a> {
 
                 Ok(())
             }
+            StmtKind::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
+                self.compile_expr(cond)?;
+                let jump_else = self.chunk.emit(Op::BranchIfFalse(0));
+
+                let saved_locals = self.locals.clone();
+                let saved_mut_locals = self.mut_locals.clone();
+                for stmt in then_body {
+                    self.compile_stmt(stmt)?;
+                }
+                self.locals = saved_locals;
+                self.mut_locals = saved_mut_locals;
+
+                if let Some(else_stmts) = else_body {
+                    let jump_end = self.chunk.emit(Op::Jump(0));
+                    let else_target = self.chunk.code.len();
+                    self.chunk.code[jump_else] = Op::BranchIfFalse(else_target);
+
+                    let saved_locals = self.locals.clone();
+                    let saved_mut_locals = self.mut_locals.clone();
+                    for stmt in else_stmts {
+                        self.compile_stmt(stmt)?;
+                    }
+                    self.locals = saved_locals;
+                    self.mut_locals = saved_mut_locals;
+
+                    let end_target = self.chunk.code.len();
+                    self.chunk.code[jump_end] = Op::Jump(end_target);
+                } else {
+                    let else_target = self.chunk.code.len();
+                    self.chunk.code[jump_else] = Op::BranchIfFalse(else_target);
+                }
+
+                Ok(())
+            }
         }
     }
 
@@ -866,6 +904,22 @@ fn check_stmt_effects(stmt: &Stmt, tool_names: &[String]) -> Result<(), String> 
             check_expr_effects(coll, tool_names)?;
             for stmt in body {
                 check_stmt_effects(stmt, tool_names)?;
+            }
+            Ok(())
+        }
+        StmtKind::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            check_expr_effects(cond, tool_names)?;
+            for stmt in then_body {
+                check_stmt_effects(stmt, tool_names)?;
+            }
+            if let Some(else_stmts) = else_body {
+                for stmt in else_stmts {
+                    check_stmt_effects(stmt, tool_names)?;
+                }
             }
             Ok(())
         }

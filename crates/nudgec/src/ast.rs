@@ -268,6 +268,13 @@ pub enum StmtKind {
         coll: Expr,
         body: Vec<Stmt>,
     },
+    /// `if cond { then_body } [else { else_body }]` (Pack 1 control-flow & data)
+    /// Statement-level conditional execution with statement lists in branches.
+    If {
+        cond: Expr,
+        then_body: Vec<Stmt>,
+        else_body: Option<Vec<Stmt>>,
+    },
 }
 
 /// A statement with its source span attached (spanned AST, stage 1).

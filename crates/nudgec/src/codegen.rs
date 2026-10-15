@@ -40,6 +40,10 @@ pub fn emit(items: &[Item]) -> String {
         "if hasattr(rt, \"require_runtime\"):\n    rt.require_runtime(\"{}\")\n",
         env!("CARGO_PKG_VERSION")
     ));
+    if has_ui_items(items) {
+        out.push_str("\n\n");
+        out.push_str(UI_RUNTIME_PY);
+    }
     let mut has_main = false;
     // test slugs can collide ("a b" vs "a_b") — suffix duplicates so no
     // test silently overwrites another in the emitted module
@@ -123,37 +127,108 @@ pub fn emit(items: &[Item]) -> String {
                     "_state_{name} = rt.AgentState(\"{name}\", {{{defaults}}})\n"
                 ));
                 for f in fns {
-                    if let Item::Fn {
-                        name: fn_name,
-                        params,
-                        effects,
-                        body,
-                        ..
-                    } = f
-                    {
-                        if !effects.is_empty() {
-                            let set = effects
+                    match f {
+                        Item::Fn {
+                            name: fn_name,
+                            params,
+                            effects,
+                            body,
+                            ..
+                        } => {
+                            if !effects.is_empty() {
+                                let set = effects
+                                    .iter()
+                                    .map(|e| format!("\"{e}\""))
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                                out.push_str(&format!("@rt.effectful(effects={{{set}}})\n"));
+                            }
+                            let ps = params
                                 .iter()
-                                .map(|e| format!("\"{e}\""))
+                                .map(|p| p.name.clone())
                                 .collect::<Vec<_>>()
                                 .join(", ");
-                            out.push_str(&format!("@rt.effectful(effects={{{set}}})\n"));
+                            out.push_str(&format!("def {fn_name}({ps}):\n"));
+                            let bound = bind_state(body, name);
+                            out.push_str(&emit_body(&bound, &aliases, Some(name)));
+                            if fn_name == "main" {
+                                has_main = true;
+                            }
                         }
-                        let ps = params
-                            .iter()
-                            .map(|p| p.name.clone())
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        out.push_str(&format!("def {fn_name}({ps}):\n"));
-                        let bound = bind_state(body, name);
-                        out.push_str(&emit_body(&bound, &aliases, Some(name)));
-                        if fn_name == "main" {
-                            has_main = true;
+                        Item::View {
+                            name: view_name,
+                            params,
+                            body,
+                            ..
+                        } => {
+                            let ps = params
+                                .iter()
+                                .map(|p| p.name.clone())
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            out.push_str(&format!("def {view_name}({ps}):\n"));
+                            let bound = bind_state(body, name);
+                            out.push_str(&emit_body(&bound, &aliases, Some(name)));
                         }
+                        Item::Window {
+                            name: win_name,
+                            fields,
+                        } => {
+                            let win_var = format!("_win_{name}_{win_name}");
+                            out.push_str(&emit_window_def(
+                                &win_var,
+                                win_name,
+                                fields,
+                                Some(name),
+                                &aliases,
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+                let mut agent_class = format!("\nclass {name}:\n    state = _state_{name}\n");
+                for f in fns {
+                    match f {
+                        Item::Fn { name: fn_name, .. } => {
+                            agent_class
+                                .push_str(&format!("    {fn_name} = staticmethod({fn_name})\n"));
+                        }
+                        Item::View {
+                            name: view_name, ..
+                        } => {
+                            agent_class.push_str(&format!(
+                                "    {view_name} = staticmethod({view_name})\n"
+                            ));
+                        }
+                        Item::Window { name: win_name, .. } => {
+                            agent_class
+                                .push_str(&format!("    {win_name} = _win_{name}_{win_name}\n"));
+                        }
+                        _ => {}
+                    }
+                }
+                out.push_str(&agent_class);
+                for f in fns {
+                    if let Item::Window { name: win_name, .. } = f {
+                        out.push_str(&format!("_win_{name}_{win_name}.agent = {name}\n"));
+                        out.push_str(&format!("{win_name} = _win_{name}_{win_name}\n"));
                     }
                 }
             }
-            Item::View { .. } | Item::Window { .. } => {}
+            Item::View {
+                name, params, body, ..
+            } => {
+                let ps = params
+                    .iter()
+                    .map(|p| p.name.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                out.push_str(&format!("def {name}({ps}):\n"));
+                out.push_str(&emit_body(body, &aliases, None));
+            }
+            Item::Window { name, fields } => {
+                out.push_str(&emit_window_def(name, name, fields, None, &aliases));
+            }
         }
     }
     if has_main {
@@ -230,6 +305,9 @@ fn emit_body(body: &[Stmt], aliases: &HashSet<String>, agent: Option<&str>) -> S
                 "# error: for_all outside a test block (E0801)\n    pass".to_string()
             }
             StmtKind::For { .. } => "# error: for loop not in codegen subset\n    pass".to_string(),
+            StmtKind::If { .. } => {
+                "# error: statement if not in codegen subset\n    pass".to_string()
+            }
         };
         out.push_str("    ");
         out.push_str(&line);
@@ -317,6 +395,9 @@ fn emit_stmts(
             StmtKind::For { .. } => {
                 format!("{indent}# pack1 codegen not yet lowered: for loop\n{indent}pass")
             }
+            StmtKind::If { .. } => {
+                format!("{indent}# pack1 codegen not yet lowered: if statement\n{indent}pass")
+            }
         };
         // for_all lines arrive pre-indented (inner body at the nested
         // level, the rt.for_all call at `indent`) — push verbatim
@@ -380,6 +461,15 @@ pub fn bind_state(body: &[Stmt], agent: &str) -> Vec<Stmt> {
                     coll: bind_state_expr(coll, agent),
                     body: bind_state(body, agent),
                 },
+                StmtKind::If {
+                    cond,
+                    then_body,
+                    else_body,
+                } => StmtKind::If {
+                    cond: bind_state_expr(cond, agent),
+                    then_body: bind_state(then_body, agent),
+                    else_body: else_body.as_ref().map(|b| bind_state(b, agent)),
+                },
             };
             Stmt {
                 kind,
@@ -389,7 +479,7 @@ pub fn bind_state(body: &[Stmt], agent: &str) -> Vec<Stmt> {
         .collect()
 }
 
-fn bind_state_expr(e: &Expr, agent: &str) -> Expr {
+pub fn bind_state_expr(e: &Expr, agent: &str) -> Expr {
     let kind = match &e.kind {
         ExprKind::Ident(n) if n == "state" => ExprKind::Ident(format!("_state_{agent}")),
         ExprKind::ListLit(xs) => {
@@ -740,9 +830,15 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
         ExprKind::Field { obj, name } => format!("{}.{name}", py(obj, aliases)),
         // always parenthesized: precedence is decided by the Nudge parser,
         // never re-decided by Python
-        ExprKind::Binary { op, l, r } => {
-            format!("({} {} {})", py(l, aliases), op_str(op), py(r, aliases))
-        }
+        ExprKind::Binary { op, l, r } => match op {
+            BinOp::Add if is_str_expr(l) && !is_str_expr(r) => {
+                format!("({} + str({}))", py(l, aliases), py(r, aliases))
+            }
+            BinOp::Add if is_str_expr(r) && !is_str_expr(l) => {
+                format!("(str({}) + {})", py(l, aliases), py(r, aliases))
+            }
+            _ => format!("({} {} {})", py(l, aliases), op_str(op), py(r, aliases)),
+        },
         ExprKind::Unary { op, x } => match op {
             BinOp::Sub => format!("(-{})", py(x, aliases)),
             _ => format!("(not {})", py(x, aliases)),
@@ -964,6 +1060,238 @@ fn py_str(s: &str) -> String {
     out.push('"');
     out
 }
+
+fn is_str_expr(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Str(_) => true,
+        ExprKind::Binary {
+            op: BinOp::Add,
+            l,
+            r,
+        } => is_str_expr(l) || is_str_expr(r),
+        _ => false,
+    }
+}
+
+pub fn has_ui_items(items: &[Item]) -> bool {
+    items.iter().any(|i| match i {
+        Item::View { .. } | Item::Window { .. } => true,
+        Item::Agent { fns, .. } => fns
+            .iter()
+            .any(|f| matches!(f, Item::Window { .. } | Item::View { .. })),
+        _ => false,
+    })
+}
+
+fn emit_window_def(
+    win_var: &str,
+    win_name: &str,
+    fields: &[(String, Expr)],
+    agent: Option<&str>,
+    aliases: &HashSet<String>,
+) -> String {
+    let mut title = py_str(win_name);
+    let mut width = "None".to_string();
+    let mut height = "None".to_string();
+    let mut content = "None".to_string();
+
+    for (k, v) in fields {
+        match k.as_str() {
+            "title" => {
+                title = py(v, aliases);
+            }
+            "width" => {
+                width = py(v, aliases);
+            }
+            "height" => {
+                height = py(v, aliases);
+            }
+            "content" => {
+                let bound = if let Some(ag) = agent {
+                    bind_state_expr(v, ag)
+                } else {
+                    v.clone()
+                };
+                content = format!("lambda: {}", py(&bound, aliases));
+            }
+            _ => {}
+        }
+    }
+    format!(
+        "{win_var} = _Window(title={title}, width={width}, height={height}, render_fn={content})\n"
+    )
+}
+
+pub const UI_RUNTIME_PY: &str = r#"class _TextStr(str):
+    def __call__(self):
+        return str(self)
+
+
+class _UiElement:
+    def __init__(self, tag="", id=None, text=None, props=None, children=None, on_click=None, on_change=None, found=True):
+        self.tag = tag
+        self.id = id
+        self._raw_text = text
+        self.props = props or {}
+        self.children = children or []
+        self.on_click = on_click
+        self.on_change = on_change
+        self.found = found
+
+    @property
+    def text(self):
+        return _TextStr(self._raw_text) if self._raw_text is not None else None
+
+    def exists(self):
+        return self.found
+
+    def find_by_id(self, target_id):
+        if not self.found:
+            return None
+        if self.id == target_id:
+            return self
+        for ch in self.children:
+            if isinstance(ch, _UiElement):
+                found = ch.find_by_id(target_id)
+                if found is not None:
+                    return found
+        return None
+
+    def find_by_text(self, target_text):
+        if not self.found:
+            return None
+        raw = str(self._raw_text) if self._raw_text is not None else None
+        if raw is not None and (raw == target_text or target_text in raw):
+            return self
+        for ch in self.children:
+            if isinstance(ch, _UiElement):
+                found = ch.find_by_text(target_text)
+                if found is not None:
+                    return found
+        return None
+
+    def find(self, target_id):
+        found = self.find_by_id(target_id)
+        return found if found is not None else _UiElement(found=False)
+
+    def find_text(self, target_text):
+        found = self.find_by_text(target_text)
+        return found if found is not None else _UiElement(found=False)
+
+    def get_text(self):
+        if not self.found:
+            return _TextStr("")
+        parts = []
+        if self._raw_text is not None:
+            parts.append(str(self._raw_text))
+        for ch in self.children:
+            if isinstance(ch, _UiElement):
+                t = ch.get_text()
+                if t:
+                    parts.append(str(t))
+        return _TextStr(" ".join(parts))
+
+
+class _HeadlessApp:
+    def __init__(self, render_fn, title="", width=None, height=None, agent=None):
+        self._render_fn = render_fn
+        self.title = title
+        self.width = width
+        self.height = height
+        self.agent = agent
+        self.root = render_fn() if callable(render_fn) else None
+
+    def find(self, target_id):
+        if self.root:
+            res = self.root.find_by_id(target_id)
+            if res:
+                return res
+        return _UiElement(found=False)
+
+    def find_text(self, target_text):
+        if self.root:
+            res = self.root.find_by_text(target_text)
+            if res:
+                return res
+        return _UiElement(found=False)
+
+    def dispatch_click(self, target_id):
+        elem = self.find(target_id)
+        if elem.found and elem.on_click:
+            handler = elem.on_click
+            if callable(handler):
+                try:
+                    handler()
+                except TypeError:
+                    handler(None)
+            elif isinstance(handler, str):
+                fn = getattr(self.agent, handler, None) or globals().get(handler)
+                if callable(fn):
+                    try:
+                        fn()
+                    except TypeError:
+                        fn(None)
+            if callable(self._render_fn):
+                self.root = self._render_fn()
+
+
+class _Window:
+    def __init__(self, title="", width=None, height=None, render_fn=None, agent=None):
+        self.title = title
+        self.width = width
+        self.height = height
+        self.render_fn = render_fn
+        self.agent = agent
+
+    def mount_headless(self):
+        return _HeadlessApp(self.render_fn, title=self.title, width=self.width, height=self.height, agent=self.agent)
+
+    def open(self):
+        return self.mount_headless()
+
+
+def column(*args, **kwargs):
+    children = []
+    for a in args:
+        if isinstance(a, list):
+            children.extend(a)
+        elif isinstance(a, _UiElement):
+            children.append(a)
+    props = {k: str(v) for k, v in kwargs.items()}
+    return _UiElement(tag="column", props=props, children=children)
+
+
+def row(*args, **kwargs):
+    children = []
+    for a in args:
+        if isinstance(a, list):
+            children.extend(a)
+        elif isinstance(a, _UiElement):
+            children.append(a)
+    props = {k: str(v) for k, v in kwargs.items()}
+    return _UiElement(tag="row", props=props, children=children)
+
+
+def text(*args, **kwargs):
+    txt = str(args[0]) if args else ""
+    props = {k: str(v) for k, v in kwargs.items()}
+    return _UiElement(tag="text", text=txt, props=props)
+
+
+def button(*args, **kwargs):
+    txt = str(args[0]) if args else ""
+    btn_id = kwargs.get("id")
+    on_click = kwargs.get("on_click")
+    props = {k: str(v) for k, v in kwargs.items() if k not in ("id", "on_click")}
+    return _UiElement(tag="button", id=btn_id, text=txt, on_click=on_click, props=props)
+
+
+def input(*args, **kwargs):
+    inp_id = kwargs.get("id")
+    on_change = kwargs.get("on_change")
+    props = {k: str(v) for k, v in kwargs.items() if k not in ("id", "on_change")}
+    return _UiElement(tag="input", id=inp_id, on_change=on_change, props=props)
+"#;
 
 /// Shared `nudgec test` driver: load a generated module by path and run
 /// every `nudge_test_*` function, reporting PASS/FAIL per test. Used by both

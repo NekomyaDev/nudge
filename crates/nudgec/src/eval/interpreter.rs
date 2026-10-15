@@ -464,6 +464,25 @@ impl Interpreter {
                 }
                 Ok(())
             }
+            StmtKind::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
+                let cond_val = self.eval_expr(cond, env)?;
+                if cond_val.is_truthy() {
+                    let child_env = Rc::new(RefCell::new(Env::new_child(Rc::clone(env))));
+                    for st in then_body {
+                        self.eval_stmt(st, &child_env)?;
+                    }
+                } else if let Some(else_stmts) = else_body {
+                    let child_env = Rc::new(RefCell::new(Env::new_child(Rc::clone(env))));
+                    for st in else_stmts {
+                        self.eval_stmt(st, &child_env)?;
+                    }
+                }
+                Ok(())
+            }
         }
     }
 

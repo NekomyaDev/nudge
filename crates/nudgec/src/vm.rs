@@ -2522,4 +2522,164 @@ mod tests {
         let items = parse_src(src);
         assert_eq!(run_program(&items, "main", &[]).unwrap(), NudgeVal::Int(50));
     }
+
+    // ------------------------------------------------------------------------
+    // Statement-if with statement lists in branches tests (Pack 1)
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn test_parity_stmt_if_conditional_accumulation_in_for() {
+        let src = r#"
+            type Item = {
+                id: string,
+                ok: bool,
+                val: int
+            }
+
+            fn main() -> int {
+                let items = [
+                    { id: "a", ok: true, val: 10 },
+                    { id: "b", ok: false, val: 5 },
+                    { id: "c", ok: true, val: 25 },
+                    { id: "d", ok: false, val: 100 },
+                    { id: "e", ok: true, val: 7 }
+                ]
+                let mut n = 0
+                for item in items {
+                    if item.ok {
+                        n = n + item.val
+                    }
+                }
+                n
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+        let items = parse_src(src);
+        assert_eq!(run_program(&items, "main", &[]).unwrap(), NudgeVal::Int(42));
+    }
+
+    #[test]
+    fn test_parity_stmt_if_else_both_mutating() {
+        let src = r#"
+            fn run_both(c: bool) -> int {
+                let mut a = 10
+                let mut b = 20
+                if c {
+                    a = a + 5
+                } else {
+                    b = b + 7
+                }
+                a * 100 + b
+            }
+
+            fn main() -> int {
+                let r1 = run_both(true)
+                let r2 = run_both(false)
+                assert r1 == 1520
+                assert r2 == 1027
+                r1 + r2
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+        let items = parse_src(src);
+        assert_eq!(
+            run_program(&items, "main", &[]).unwrap(),
+            NudgeVal::Int(2547)
+        );
+    }
+
+    #[test]
+    fn test_parity_stmt_if_else_if_chain() {
+        let src = r#"
+            fn score_category(score: int) -> int {
+                let mut category = 0
+                if score >= 90 {
+                    category = 1
+                } else if score >= 75 {
+                    category = 2
+                } else if score >= 50 {
+                    category = 3
+                } else {
+                    category = 4
+                }
+                category
+            }
+
+            fn main() -> int {
+                assert score_category(95) == 1
+                assert score_category(80) == 2
+                assert score_category(60) == 3
+                assert score_category(30) == 4
+                score_category(95) * 1000 + score_category(80) * 100 + score_category(60) * 10 + score_category(30)
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+        let items = parse_src(src);
+        assert_eq!(
+            run_program(&items, "main", &[]).unwrap(),
+            NudgeVal::Int(1234)
+        );
+    }
+
+    #[test]
+    fn test_parity_stmt_if_nested_inside_for() {
+        let src = r#"
+            fn main() -> int {
+                let records = [
+                    { active: true, val: 10, flag: true },
+                    { active: true, val: 20, flag: false },
+                    { active: false, val: 30, flag: true },
+                    { active: true, val: 40, flag: true }
+                ]
+                let mut count = 0
+                let mut sum = 0
+                for r in records {
+                    if r.active {
+                        if r.flag {
+                            count = count + 1
+                            sum = sum + r.val
+                        }
+                    }
+                }
+                assert count == 2
+                assert sum == 50
+                sum
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+        let items = parse_src(src);
+        assert_eq!(run_program(&items, "main", &[]).unwrap(), NudgeVal::Int(50));
+    }
+
+    #[test]
+    fn test_parity_expr_if_value_form_still_works() {
+        let src = r#"
+            fn classify(score: int) -> string {
+                if score >= 90 {
+                    "gold"
+                } else if score >= 75 {
+                    "silver"
+                } else {
+                    "bronze"
+                }
+            }
+
+            fn main() -> string {
+                let y = if true { "a" } else { "b" }
+                assert y == "a"
+                assert classify(95) == "gold"
+                assert classify(80) == "silver"
+                assert classify(50) == "bronze"
+                let z = if false { "x" } else { "y" }
+                assert z == "y"
+                classify(80)
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+        let items = parse_src(src);
+        assert_eq!(
+            run_program(&items, "main", &[]).unwrap(),
+            NudgeVal::Str("silver".into())
+        );
+    }
 }

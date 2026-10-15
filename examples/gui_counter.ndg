@@ -21,3 +21,12 @@ agent CounterApp {
 fn main() uses UI {
     CounterApp.MainWindow.open()
 }
+
+test "pencere acilisi, girdi tetiklemesi ve gorunum guncellemesi" {
+    let app = CounterApp.MainWindow.mount_headless()
+    assert app.find("btn_inc").exists()
+    assert app.find_text("Counter: 0").exists()
+    app.dispatch_click("btn_inc")
+    assert app.find_text("Counter: 1").exists()
+    assert CounterApp.state.val == 1
+}

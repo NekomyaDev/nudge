@@ -403,6 +403,33 @@ impl Parser {
         Ok(stmts)
     }
 
+    fn parse_stmt_if(&mut self) -> PResult<Stmt> {
+        let start = self.pos();
+        self.bump(); // 'if'
+        let g = self.enter()?;
+        let cond = self.parse_expr()?;
+        let then_body = self.parse_block()?;
+        let else_body = if self.eat(&Tok::Else) {
+            if self.at(&Tok::If) {
+                let inner = self.parse_stmt_if()?;
+                Some(vec![inner])
+            } else {
+                Some(self.parse_block()?)
+            }
+        } else {
+            None
+        };
+        self.leave(g);
+        Ok(self.spanned(
+            start,
+            StmtKind::If {
+                cond,
+                then_body,
+                else_body,
+            },
+        ))
+    }
+
     fn parse_stmt(&mut self) -> PResult<Stmt> {
         let start = self.pos();
         match self.peek().clone() {
@@ -559,6 +586,17 @@ impl Parser {
                 };
                 let value = self.parse_expr()?;
                 Ok(self.spanned(start, StmtKind::StateWrite { field, op, value }))
+            }
+            Tok::If => {
+                let saved_i = self.i;
+                let saved_depth = self.depth;
+                if let Ok(expr) = self.parse_if() {
+                    Ok(self.spanned(start, StmtKind::ExprStmt(expr)))
+                } else {
+                    self.i = saved_i;
+                    self.depth = saved_depth;
+                    self.parse_stmt_if()
+                }
             }
             _ => {
                 let e = self.parse_expr()?;
@@ -2106,6 +2144,40 @@ test "budget" {
                     other => panic!("expected Index, got {other:?}"),
                 }
             }
+            _ => panic!("expected fn"),
+        }
+    }
+
+    #[test]
+    fn test_stmt_if_parsing_with_statements() {
+        let src = r#"
+            fn f(c: bool) {
+                if c {
+                    x = x + 1
+                } else {
+                    y = y + 1
+                }
+            }
+        "#;
+        let items = parse(lex(src).unwrap()).unwrap();
+        match &items[0] {
+            Item::Fn { body, .. } => match &body[0].kind {
+                StmtKind::If {
+                    cond,
+                    then_body,
+                    else_body,
+                } => {
+                    assert!(matches!(&cond.kind, ExprKind::Ident(s) if s == "c"));
+                    assert_eq!(then_body.len(), 1);
+                    assert!(
+                        matches!(&then_body[0].kind, StmtKind::Assign { name, .. } if name == "x")
+                    );
+                    let el = else_body.as_ref().unwrap();
+                    assert_eq!(el.len(), 1);
+                    assert!(matches!(&el[0].kind, StmtKind::Assign { name, .. } if name == "y"));
+                }
+                other => panic!("expected StmtKind::If, got {other:?}"),
+            },
             _ => panic!("expected fn"),
         }
     }

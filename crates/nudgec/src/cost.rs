@@ -82,6 +82,25 @@ pub fn report(items: &[Item]) -> String {
                         }
                     }
                 }
+                StmtKind::If {
+                    cond,
+                    then_body,
+                    else_body,
+                } => {
+                    count_expr(cond, false, &mut c);
+                    for s in then_body.iter() {
+                        if let StmtKind::ExprStmt(e) = &s.kind {
+                            count_expr(e, false, &mut c);
+                        }
+                    }
+                    if let Some(else_stmts) = else_body {
+                        for s in else_stmts.iter() {
+                            if let StmtKind::ExprStmt(e) = &s.kind {
+                                count_expr(e, false, &mut c);
+                            }
+                        }
+                    }
+                }
                 // properties are pure (E0804) — no cost contribution
                 StmtKind::ForAll { .. } => {}
             }
@@ -100,6 +119,25 @@ pub fn report(items: &[Item]) -> String {
                     for s in body.iter() {
                         if let StmtKind::ExprStmt(e) = &s.kind {
                             collect_calls(e, false, &mut edges);
+                        }
+                    }
+                }
+                StmtKind::If {
+                    cond,
+                    then_body,
+                    else_body,
+                } => {
+                    collect_calls(cond, false, &mut edges);
+                    for s in then_body.iter() {
+                        if let StmtKind::ExprStmt(e) = &s.kind {
+                            collect_calls(e, false, &mut edges);
+                        }
+                    }
+                    if let Some(else_stmts) = else_body {
+                        for s in else_stmts.iter() {
+                            if let StmtKind::ExprStmt(e) = &s.kind {
+                                collect_calls(e, false, &mut edges);
+                            }
                         }
                     }
                 }

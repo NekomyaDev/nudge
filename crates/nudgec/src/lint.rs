@@ -400,6 +400,21 @@ fn walk_stmt(ctx: &str, s: &Stmt, records: &[(String, Vec<String>)], out: &mut V
                 walk_stmt(ctx, s, records, out);
             }
         }
+        StmtKind::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            walk_expr(ctx, cond, records, out);
+            for s in then_body {
+                walk_stmt(ctx, s, records, out);
+            }
+            if let Some(else_stmts) = else_body {
+                for s in else_stmts {
+                    walk_stmt(ctx, s, records, out);
+                }
+            }
+        }
         // properties are pure (E0804) — prompt lints don't apply inside
         StmtKind::ForAll { .. } => {}
     }
