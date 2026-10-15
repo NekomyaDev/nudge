@@ -1621,6 +1621,7 @@ fn check_expr_pos(
                             "status" => return Ty::Str,
                             "cancel" => return Ty::None_,
                             "is_cancelled" => return Ty::Bool,
+                            "wait_cancelled" => return Ty::None_,
                             "join" => {
                                 if !args.is_empty() {
                                     let arg_ty = check_expr(&args[0], locals, g, errs);

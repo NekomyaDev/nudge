@@ -1770,6 +1770,23 @@ impl Interpreter {
                 let cancelled = nudge_runtime::task::task_is_cancelled(target_id.as_deref());
                 Ok(NudgeVal::Bool(cancelled))
             }
+            "task.wait_cancelled" => {
+                let target_id = if args.is_empty() {
+                    None
+                } else {
+                    match &args[0] {
+                        NudgeVal::Task(id) => Some(id.clone()),
+                        NudgeVal::Str(s) => Some(s.clone()),
+                        NudgeVal::Map(m) => m.get("id").and_then(|v| match v {
+                            NudgeVal::Str(s) => Some(s.clone()),
+                            _ => None,
+                        }),
+                        _ => Some(args[0].to_string()),
+                    }
+                };
+                nudge_runtime::task::task_wait_cancelled(target_id.as_deref());
+                Ok(NudgeVal::Unit)
+            }
             "task.join" => {
                 let target_id = if args.is_empty() {
                     return Err(
@@ -4404,8 +4421,13 @@ data: [DONE]\n\n";
                 impl: "mcp:fs"
             }
 
+            fn worker() -> bool uses Tool {
+                task.wait_cancelled()
+                mock_write("leaked_mutation")
+            }
+
             fn main() -> bool uses Tool {
-                let t = spawn mock_write("leaked_mutation")
+                let t = spawn worker()
                 task.cancel(t)
                 let res = task.join(t)
                 res
@@ -4438,6 +4460,7 @@ data: [DONE]\n\n";
 
         let src = r#"
             fn slow_op() -> int {
+                task.wait_cancelled()
                 42
             }
 
@@ -4594,6 +4617,7 @@ data: [DONE]\n\n";
             }
 
             fn run_worker() -> bool uses Tools {
+                task.wait_cancelled()
                 mock_write("hello")
             }
 
@@ -4781,6 +4805,7 @@ data: [DONE]\n\n";
             }
 
             fn child_worker() -> string uses Tools {
+                task.wait_cancelled()
                 mock_op("data")
             }
 

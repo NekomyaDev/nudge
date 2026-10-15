@@ -25,3 +25,7 @@ ureq = { version = "2.10", default-features = false, features = ["tls"], optiona
 winit = { version = "0.30", optional = true }
 softbuffer = { version = "0.4", optional = true }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+nudgec = { path = "../nudgec" }
+
+

@@ -309,20 +309,22 @@ pub fn layout_element(
 // Application Handler and Event Loop
 // -----------------------------------------------------------------------------
 
-struct NativeApp<D: UiDispatcher> {
-    config: WindowConfig,
-    dispatcher: D,
-    window: Option<Arc<Window>>,
-    context: Option<softbuffer::Context<Arc<Window>>>,
-    surface: Option<softbuffer::Surface<Arc<Window>, Arc<Window>>>,
-    width: u32,
-    height: u32,
-    cursor_pos: (i32, i32),
-    layout_boxes: Vec<LayoutBox>,
+pub struct NativeApp<D: UiDispatcher> {
+    pub config: WindowConfig,
+    pub dispatcher: D,
+    pub window: Option<Arc<Window>>,
+    pub context: Option<softbuffer::Context<Arc<Window>>>,
+    pub surface: Option<softbuffer::Surface<Arc<Window>, Arc<Window>>>,
+    pub width: u32,
+    pub height: u32,
+    pub cursor_pos: (i32, i32),
+    pub layout_boxes: Vec<LayoutBox>,
+    pub render_count: usize,
+    pub test_runner: Option<fn(&mut NativeApp<D>, &ActiveEventLoop)>,
 }
 
 impl<D: UiDispatcher> NativeApp<D> {
-    fn new(config: WindowConfig, dispatcher: D) -> Self {
+    pub fn new(config: WindowConfig, dispatcher: D) -> Self {
         let width = config.width.max(100);
         let height = config.height.max(100);
         Self {
@@ -335,10 +337,12 @@ impl<D: UiDispatcher> NativeApp<D> {
             height,
             cursor_pos: (0, 0),
             layout_boxes: Vec::new(),
+            render_count: 0,
+            test_runner: None,
         }
     }
 
-    fn render(&mut self) {
+    pub fn render(&mut self) {
         if self.surface.is_none() || self.window.is_none() {
             return;
         }
@@ -480,10 +484,11 @@ impl<D: UiDispatcher> NativeApp<D> {
             }
         }
 
+        self.render_count += 1;
         let _ = buffer.present();
     }
 
-    fn handle_click(&mut self) {
+    pub fn handle_click(&mut self) {
         let (mx, my) = self.cursor_pos;
         let mut clicked_id = None;
 
@@ -502,6 +507,26 @@ impl<D: UiDispatcher> NativeApp<D> {
         if let Some(button_id) = clicked_id {
             self.dispatcher.dispatch_click(&button_id);
             self.render();
+        }
+    }
+
+    /// Programmatically dispatch a click on a button by its id.
+    pub fn click_button(&mut self, button_id: &str) -> bool {
+        let target = self
+            .layout_boxes
+            .iter()
+            .find(|b| {
+                b.tag == "button"
+                    && (b.id.as_deref() == Some(button_id)
+                        || b.on_click.as_deref() == Some(button_id))
+            })
+            .cloned();
+        if let Some(b) = target {
+            self.cursor_pos = (b.rect.x + b.rect.w / 2, b.rect.y + b.rect.h / 2);
+            self.handle_click();
+            true
+        } else {
+            false
         }
     }
 }
@@ -582,17 +607,47 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
             _ => {}
         }
     }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(runner) = self.test_runner.take() {
+            runner(self, event_loop);
+        }
+    }
 }
 
-/// Run native event loop with softbuffer presenting to an OS window.
-pub fn run_window<D: UiDispatcher>(config: WindowConfig, dispatcher: D) -> Result<(), String> {
-    let event_loop =
-        EventLoop::new().map_err(|e| format!("failed to initialize winit event loop: {e}"))?;
+/// Create a winit EventLoop configured to run on any thread (needed for tests / background threads).
+pub fn create_event_loop() -> Result<EventLoop<()>, String> {
+    let mut builder = EventLoop::builder();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        use winit::platform::wayland::EventLoopBuilderExtWayland;
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        EventLoopBuilderExtX11::with_any_thread(&mut builder, true);
+        EventLoopBuilderExtWayland::with_any_thread(&mut builder, true);
+    }
+    builder
+        .build()
+        .map_err(|e| format!("failed to initialize winit event loop: {e}"))
+}
+
+/// Run native event loop with softbuffer presenting to an OS window, with an optional test runner.
+pub fn run_window_with_test_runner<D: UiDispatcher>(
+    config: WindowConfig,
+    dispatcher: D,
+    test_runner: Option<fn(&mut NativeApp<D>, &ActiveEventLoop)>,
+) -> Result<(), String> {
+    let event_loop = create_event_loop()?;
     let mut app = NativeApp::new(config, dispatcher);
+    app.test_runner = test_runner;
     event_loop
         .run_app(&mut app)
         .map_err(|e| format!("error during native window execution: {e}"))?;
     Ok(())
+}
+
+/// Run native event loop with softbuffer presenting to an OS window.
+pub fn run_window<D: UiDispatcher>(config: WindowConfig, dispatcher: D) -> Result<(), String> {
+    run_window_with_test_runner(config, dispatcher, None)
 }
 
 #[cfg(test)]
@@ -656,5 +711,177 @@ mod tests {
         draw_text(&mut fb, 100, 50, 10, 10, "Hi", 0xFFFFFFFF, 1);
         let non_zero_pixels = fb.iter().filter(|&&p| p == 0xFFFFFFFF).count();
         assert!(non_zero_pixels > 0, "must rasterize character glyphs");
+    }
+
+    #[test]
+    #[ignore = "requires an active display (X11/Wayland/Xvfb); run via scripts/gui_acceptance.sh"]
+    fn test_native_gui_desktop_acceptance() {
+        if std::env::var("DISPLAY").is_err() && std::env::var("WAYLAND_DISPLAY").is_err() {
+            eprintln!(
+                "Skipping desktop acceptance test: neither DISPLAY nor WAYLAND_DISPLAY is set."
+            );
+            return;
+        }
+
+        // 1. Load small .ndg UI (examples/gui_counter.ndg)
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let ndg_path = manifest_dir.join("../../examples/gui_counter.ndg");
+        let src = std::fs::read_to_string(&ndg_path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", ndg_path.display()));
+
+        let tokens = nudgec::lexer::lex(&src).expect("lex failed");
+        let items = nudgec::parser::parse(tokens).expect("parse failed");
+        let mut interp = nudgec::eval::interpreter::Interpreter::new();
+        interp.load_items(&items).expect("load_items failed");
+
+        let env = std::rc::Rc::new(std::cell::RefCell::new(nudgec::eval::env::Env::new()));
+        let app_id = interp
+            .mount_headless_app(&Some("CounterApp".to_string()), "MainWindow", &env)
+            .expect("mount MainWindow failed");
+
+        fn convert_ui_element(from: &nudgec::nudge_runtime::ui::UiElement) -> UiElement {
+            UiElement {
+                tag: from.tag.clone(),
+                id: from.id.clone(),
+                text: from.text.clone(),
+                props: from.props.clone(),
+                children: from.children.iter().map(convert_ui_element).collect(),
+                on_click: from.on_click.clone(),
+                on_change: from.on_change.clone(),
+            }
+        }
+
+        struct TestDispatcher<'a> {
+            interp: &'a mut nudgec::eval::interpreter::Interpreter,
+            app_id: usize,
+            env: &'a std::rc::Rc<std::cell::RefCell<nudgec::eval::env::Env>>,
+        }
+
+        impl<'a> UiDispatcher for TestDispatcher<'a> {
+            fn root(&mut self) -> Option<UiElement> {
+                let elem = self
+                    .interp
+                    .headless_apps
+                    .get(self.app_id)
+                    .and_then(|a| a.root.as_ref())?;
+                Some(convert_ui_element(elem))
+            }
+
+            fn dispatch_click(&mut self, button_id: &str) {
+                let _ = self
+                    .interp
+                    .dispatch_click_headless(self.app_id, button_id, self.env);
+            }
+        }
+
+        let config = WindowConfig {
+            title: "Nudge Desktop Acceptance Test".into(),
+            width: 300,
+            height: 200,
+        };
+
+        fn acceptance_runner(app: &mut NativeApp<TestDispatcher>, event_loop: &ActiveEventLoop) {
+            println!("[desktop-gui-test] Event loop started, verifying OS window creation...");
+            assert!(app.window.is_some(), "winit OS window was not created");
+            assert!(app.surface.is_some(), "softbuffer surface was not created");
+            let win = app.window.as_ref().unwrap();
+            let size = win.inner_size();
+            println!(
+                "[desktop-gui-test] Real OS window created: title={:?}, inner_size={}x{}",
+                app.config.title, size.width, size.height
+            );
+
+            // Assert initial render happened
+            assert_eq!(app.render_count, 1, "initial frame should be rendered");
+            let text_before = app
+                .layout_boxes
+                .iter()
+                .find(|b| b.tag == "text")
+                .and_then(|b| b.text.as_deref())
+                .unwrap_or("");
+            assert_eq!(
+                text_before, "Counter: 0",
+                "initial rendered text must be 'Counter: 0'"
+            );
+            println!(
+                "[desktop-gui-test] Initial view rendered: {:?}",
+                text_before
+            );
+
+            // Check initial agent state in interpreter
+            let val_before = app
+                .dispatcher
+                .interp
+                .agent_store
+                .get_field("CounterApp", "val");
+            assert_eq!(
+                val_before,
+                Ok(nudgec::eval::val::NudgeVal::Int(0)),
+                "initial agent state val must be 0"
+            );
+            println!("[desktop-gui-test] Initial agent state verified: CounterApp.state.val = 0");
+
+            // Dispatch click on 'btn_inc' through window path
+            println!("[desktop-gui-test] Programmatically dispatching click to 'btn_inc'...");
+            let clicked = app.click_button("btn_inc");
+            assert!(clicked, "button 'btn_inc' must be found and clicked");
+            println!("[desktop-gui-test] Click event dispatched through runtime handler");
+
+            // Check agent state changed
+            let val_after = app
+                .dispatcher
+                .interp
+                .agent_store
+                .get_field("CounterApp", "val");
+            assert_eq!(
+                val_after,
+                Ok(nudgec::eval::val::NudgeVal::Int(1)),
+                "agent state val must increment to 1 after click"
+            );
+            println!("[desktop-gui-test] Agent state change verified: CounterApp.state.val = 1");
+
+            // Check re-render happened
+            assert_eq!(
+                app.render_count, 2,
+                "framebuffer re-render must have fired after event dispatch"
+            );
+            let text_after = app
+                .layout_boxes
+                .iter()
+                .find(|b| b.tag == "text")
+                .and_then(|b| b.text.as_deref())
+                .unwrap_or("");
+            assert_eq!(
+                text_after, "Counter: 1",
+                "re-rendered text must be 'Counter: 1'"
+            );
+            println!(
+                "[desktop-gui-test] Framebuffer re-render verified: {:?} (render_count={})",
+                text_after, app.render_count
+            );
+
+            println!("[desktop-gui-test] All desktop acceptance assertions passed. Exiting winit event loop.");
+            event_loop.exit();
+        }
+
+        let dispatcher = TestDispatcher {
+            interp: &mut interp,
+            app_id,
+            env: &env,
+        };
+
+        run_window_with_test_runner(config, dispatcher, Some(acceptance_runner))
+            .expect("run_window execution failed");
+
+        let final_val = interp
+            .agent_store
+            .get_field("CounterApp", "val")
+            .expect("read CounterApp.state.val");
+        assert_eq!(
+            final_val,
+            nudgec::eval::val::NudgeVal::Int(1),
+            "final state in interpreter must be 1"
+        );
+        println!("[desktop-gui-test] Desktop acceptance test successfully completed!");
     }
 }

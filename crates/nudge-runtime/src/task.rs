@@ -345,6 +345,21 @@ impl TaskToken {
         }
     }
 
+    /// Block until this task is cancelled or terminal (e.g. for deterministic synchronization).
+    pub fn wait_cancelled(&self) {
+        let (lock, cvar) = &*self.result;
+        let mut guard = lock.lock().unwrap();
+        while !self.is_cancelled() && !self.state.lock().unwrap().is_terminal() {
+            let (next_guard, timeout_res) = cvar
+                .wait_timeout(guard, std::time::Duration::from_secs(5))
+                .unwrap();
+            guard = next_guard;
+            if timeout_res.timed_out() {
+                break;
+            }
+        }
+    }
+
     /// Add to this task's held budget reservation.
     pub fn add_reservation(&self, amount: f64) {
         let mut r = self.budget_reserved.lock().unwrap();
@@ -542,6 +557,18 @@ pub fn task_is_cancelled(id: Option<&str>) -> bool {
         task_lookup(id).map(|t| t.is_cancelled()).unwrap_or(false)
     } else {
         is_current_cancelled()
+    }
+}
+
+/// Wait until a task is cancelled (or returns immediately if already cancelled/terminal).
+pub fn task_wait_cancelled(id: Option<&str>) {
+    let token = if let Some(id) = id {
+        task_lookup(id)
+    } else {
+        current_task()
+    };
+    if let Some(t) = token {
+        t.wait_cancelled();
     }
 }
 
@@ -788,6 +815,33 @@ mod tests {
 
         let res = t.join();
         assert_eq!(res.unwrap_err(), "error[E-task-0001]: TaskCancelled");
+
+        task_reset();
+    }
+
+    #[test]
+    fn test_task_wait_cancelled_unblocks_on_cancel() {
+        let _lock = TASK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        task_reset();
+
+        let t = TaskToken::new(TaskId::new("root.wait_cancel_test"));
+        task_register(t.clone());
+
+        let t_clone = t.clone();
+        let handle = std::thread::spawn(move || {
+            t_clone.wait_cancelled();
+            assert!(t_clone.is_cancelled());
+        });
+
+        // Small yield so child thread enters wait_cancelled
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        // Cancel should unblock the waiter
+        t.cancel();
+        handle.join().expect("waiter thread unblocks and finishes");
+
+        // Calling wait_cancelled when already cancelled returns immediately
+        t.wait_cancelled();
 
         task_reset();
     }

@@ -492,6 +492,8 @@ mod computer_tests {
         // Clean any stale lease file in /tmp or temp dir so cu_bridge does not return controller_busy
         let _ = std::fs::remove_file("/tmp/cu_bridge.lock");
         let _ = std::fs::remove_file(std::env::temp_dir().join("cu_bridge.lock"));
+        let _ = std::fs::remove_file("/tmp/nudge-cu-bridge.lock");
+        let _ = std::fs::remove_file(std::env::temp_dir().join("nudge-cu-bridge.lock"));
 
         std::env::set_var(
             "NUDGE_COMPUTER_SERVERS",
@@ -510,6 +512,8 @@ mod computer_tests {
         }
         std::env::remove_var("NUDGE_COMPUTER_PROVIDER");
         std::env::remove_var("NUDGE_COMPUTER_SERVERS");
+        let _ = std::fs::remove_file("/tmp/nudge-cu-bridge.lock");
+        let _ = std::fs::remove_file(std::env::temp_dir().join("nudge-cu-bridge.lock"));
     }
 
     fn fake_elements() -> String {
