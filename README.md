@@ -6,15 +6,15 @@
 
 <p align="center">
   <strong>Don't parse your agents. Nudge them.</strong><br>
-  A typed, replayable, budget-aware programming language for LLM agents.<br>
-  Compiles to Python & TypeScript.
+  A typed, replayable, budget-aware programming language for AI agents.<br>
+  Native bytecode runtime and standalone compiler. Compiles to Python and TypeScript.
 </p>
 
 <p align="center">
   <img alt="Version" src="https://img.shields.io/badge/version-1.5-blue">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-green">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-green">
-  <img alt="Target" src="https://img.shields.io/badge/target-Python%20%7C%20TypeScript-yellow">
+  <img alt="Target" src="https://img.shields.io/badge/target-Native%20%7C%20Python%20%7C%20TypeScript%20%7C%20WASM-yellow">
   <a href="https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang"><img alt="VS Code" src="https://img.shields.io/badge/VS%20Code-Nudge%20Language-007ACC?logo=visualstudiocode"></a>
   <a href="https://snyk.io"><img alt="Snyk Verified" src="https://img.shields.io/badge/Snyk-Verified%20Secure-4C556A?logo=snyk"></a>
 </p>
@@ -30,19 +30,19 @@
 
 ## Why Nudge?
 
-Production agents are still held together with glue code: prompt chains parsed by hand, tool calls wrapped in try/except, no replay, no cost control, no regression tests. Libraries patch symptoms. **Nudge fixes the layer where the problem actually lives: the language.**
+Production agents are still held together with glue code: prompt chains parsed by hand, tool calls wrapped in try/except blocks, missing replayability, unpredictable costs, and no regression tests. Libraries patch symptoms after they happen. **Nudge fixes the layer where the problem actually lives: the language.**
 
-| Pain | Libraries | Nudge |
-|---|---|---|
-| Untyped LLM output | validate at runtime | schema is a type — proven at compile time |
-| Hidden side effects | invisible | `uses LLM, Tool, IO` in every signature |
-| No regression testing | record/replay bolted on | every run emits a trace; every trace is a test |
-| Cost surprises | dashboards after the fact | budget is a contract, enforced by compiler + runtime |
-| Async fan-out spaghetti | manual asyncio | `par map / race / all`, race safety proven |
+| Pain Point | Libraries | Nudge |
+|:---|:---|:---|
+| Untyped LLM output | Validate at runtime | Schema is a first-class language type, verified at compile time |
+| Hidden side effects | Invisible | 10 explicit typed effects declared in signatures (`uses LLM, Tool, IO, ...`) |
+| No regression testing | Record and replay bolted on | Every run writes an NTF trace, and every trace is a deterministic $0 test |
+| Cost surprises | Monitored after the bill arrives | Budget is a hard contract enforced by compiler and runtime |
+| Concurrency spaghetti | Manual async loops | Native `par map / race / all` with compile-time race safety |
 
 ## A Taste of Nudge
 
-```
+```nudge
 type Finding = { claim: string, source: Url, confidence: float @range(0, 1) }
 
 fn analyze(q: string, hits: [SearchResult]) -> [Finding] uses LLM {
@@ -57,137 +57,23 @@ test "stays within budget on recorded trace" {
 }
 ```
 
-The compiler proves the schema matches, infers effects, and computes a static cost bound. The runtime records every call to a content-addressed trace you can diff, commit, and replay.
-
-## Real-World Examples
-
-See what you can build with Nudge:
-
-> [!NOTE]
-> **Testing & Preview Stage / 测试与技术预览阶段**: Examples in [`examples/`](examples/) serve as compiler integration test fixtures, smoke tests, and technical previews under active development and testing.
-
-| Example | Description | Features |
-|:---|:---|:---|
-| [AI Chatbot](examples/chatbot/) | Conversational agent with memory | Typed LLM, Replay, Budget |
-| [Code Reviewer](examples/code-reviewer/) | Code quality analyzer | Structured output, Scoring |
-| [Research Agent](examples/research_agent.ndg) | Multi-source research acceptance fixture | Confidence scores, Par map |
-| [Data Analyzer](examples/data-analyzer/) | Data pattern recognition | Insights, Recommendations |
-| [Translator](examples/translator/) | Multi-language translation | Quality scoring, Parallel |
-| [Classifier](examples/classifier/) | Support ticket triage & model routing | Route model choice, Batch |
-| [RAG Agent](examples/rag-agent/) | Grounded retrieval with citations | MCP tool retrieval, Grounded answers |
-| [Dungeon Crawler](examples/dungeon-crawler/) | Turn-based RPG dungeon crawler | Pure Nudge, Stateful Hero, Combat |
-| [Computer Automation](examples/computer-automation/) | Observe → decide → act desktop loop | Computer Use, Replay, Drift check |
-
-```sh
-# Try any example
-cd examples/chatbot
-nudgec check chatbot.ndg && nudgec build chatbot.ndg
-python3 out/chatbot.py
-```
-
-## 🛡️ Security & Enterprise Stability
-
-Nudge is built from the ground up with secure-by-design principles to ensure autonomous agent execution never compromises your system or budget.
-
-* **Snyk Verified:** Nudge has been selected for the **Snyk Secure Developer Program**. Our entire ecosystem is continuously monitored and secured under an enterprise security pilot.
-* **Compile-Time Safety:** Prevents loose prompt schemas from injecting malicious inputs or malformed types into your downstream tools.
-* **Hardcoded Budget Boundaries:** Native protection against infinite tool-calling loops that drain API tokens and wallet resources.
-
----
-
-## Native Engine Roadmap & Language Independence
-
-While Nudge compiles to Python and TypeScript today for ecosystem interoperability, Nudge is actively evolving into a **fully self-contained, independent programming language** that runs with zero Python/Node.js dependencies:
-
-- **Phase 1 (Shipped): Pure Nudge AST Interpreter (`nudgec run`)**: execute pure Nudge programs (state machines, algorithms, games) directly in Rust with sub-millisecond startup.
-- **Phase 2 (Shipped): In-Tree Native AI & Tool Runtime**: embedded Tokio + Reqwest (rustls) HTTP/SSE clients, deterministic NTF trace engine, and native MCP stdio communication.
-- **Phase 3 (Shipped): Cargo-Free Standalone Binaries, WebAssembly & Bytecode VM**:
-  - `nudgec build --standalone`: distribute single-binary native agents via AST stamping without Cargo or a build-site Rust toolchain (~2.09MB full live, ~832KB replay-only with bincode bundle). See [docs/standalone.md](docs/standalone.md).
-  - `nudge-replay-wasi` & WebAssembly: offline trace replay inside WASI (~526KB) and live tool calls via host bridge (`nudge_host_tool_call`) with end-to-end Node WASI verification. See [docs/wasm.md](docs/wasm.md).
-  - Bytecode VM is now the default engine: stack VM executes pure compute ~70x faster with deep recursion safety, effect delegation, and exact interpreter trace parity (`NUDGE_VM=0` reverts to interpreter).
-- **Phase 4: Python Decoupled as an Optional Plugin**: Python reserved strictly for opt-in legacy library bridging (`use python "pandas" as pd`).
-
-See the complete architecture RFC in [`docs/native-runtime-roadmap.md`](docs/native-runtime-roadmap.md).
-
-## Standalone Native Agents (Cargo-Free)
-
-Nudge packages agents into single self-contained native executable binaries without invoking Cargo or requiring a Rust compiler at build time:
-
-```sh
-# Build a standalone native binary
-nudgec build --standalone my-agent.ndg -o bin/my-agent
-
-# Run directly on the host (zero Python/Node dependencies)
-./bin/my-agent
-```
-
-- **AST Stamping:** `nudgec` type-checks the source, serializes the AST bundle, and appends it to a pre-built `nudge-agent` runtime binary (`NDGAGNT1` footer). Build takes milliseconds and requires no build-site compiler.
-- **Two Runtime Flavors:**
-  - **Full (~2.09MB, default):** live-capable runtime with embedded HTTP/TLS (`ureq` + `rustls`) for live LLMs and MCP servers (reduced from ~2.18MB via bincode bundle).
-  - **Replay-Only (~832KB):** compiled with `--no-default-features` (network stack omitted) for deterministic offline replay at $0 cost (reduced from ~909KB via bincode bundle).
-- **Runtime Discovery:** located via `NUDGE_AGENT_RUNTIME` environment variable or as a sibling binary next to `nudgec`.
-- **Packaging Helper:** one-command Makefile shortcuts `make agent PROG=... OUT=...` (full) and `make agent-small ...` (replay-only).
-- **Full Language Support:** runs LLM calls, MCP tools, computer use, parallel blocks, typed decisions, and deterministic replay.
-
-Read the [Standalone Agent Documentation](docs/standalone.md) for complete details.
-
-## WebAssembly Target (Offline Replay & Host Bridge)
-
-Nudge runs inside WebAssembly (`wasm32-wasip1` and `wasm32-unknown-unknown`) for browser, edge, and WASI environments:
-
-- **Offline Replay (`nudge-replay-wasi`):** Replay recorded NTF traces offline inside a .wasm module with byte-identical output to native runs:
-  ```sh
-  wasmtime run --dir . nudge-replay-wasi.wasm bundle.json trace.jsonl
-  ```
-- **Live Tool Calls via Host Bridge:** When deployed in browser or edge JavaScript runtimes, agents execute live tools through the `nudge_host_tool_call` import bridge (see `examples/wasm-host/`). Proven end-to-end via `scripts/wasm_host_e2e.sh` and `examples/wasm-host/e2e.mjs` under Node WASI with a live `calculator::add` round-trip returning 42.
-- **Sandboxed Safety:** Network sockets and process spawning are compiled out on wasm32, ensuring deterministic, isolated execution.
-
-Read the [WebAssembly Runtime Documentation](docs/wasm.md) for architecture and build instructions.
-
-## Features
-
-<div align="center">
-
-| Feature | Description |
-|:---:|:---|
-| **Typed LLM Calls** | Output schema is a language type; violations trigger automatic repair |
-| **Effect System** | Pure / `LLM` / `Tool` / `IO` / `Decision` / `Computer` effects inferred and shown in signatures |
-| **Deterministic Replay** | Full, hybrid, and live modes; traces are git-friendly JSONL |
-| **Budget Contracts** | Per-call, per-run, and per-repair USD ceilings with static estimation |
-| **Checkpoint Resume** | Crash, then `nudge resume` from the last checkpoint |
-| **Native Parallelism** | `par map`, `par race`, `par all` with compile-time race safety |
-| **Prompt Clippy** | Compiler lints your `llm"""` blocks: vague instructions, missing contracts |
-| **MCP & Python Interop** | Consume real MCP servers over stdio; escape to any pip package |
-| **Real Providers** | OpenAI / Gemini / Groq / MiMo / Mistral / Anthropic / Ollama |
-| **Trace Viewer** | Local web UI: timeline, tokens, cost, repairs highlighted |
-| **Trace Diff** | Compare two traces: "what changed when I edited the prompt?" |
-| **Nudge CI** | GitHub Action: agent regression testing on every push, $0 |
-| **NTF** | Open trace format (frozen v1) + conformance suite — logs you can replay |
-| **Property Tests** | `for_all x in gen { … }`: fuzz your agent logic (incl. an injection corpus), shrink failures |
-| **Typed Decisions** | `decide { … choose / yes/no / score }`: batched JEV-family decisions with distributions, confidence, deadlines |
-| **Computer Use** | `computer.observe` + typed actions: the machine as a replayable effect — the language owns control, the model owns perception |
-| **Standalone Agents** | `nudgec build --standalone`: single native binary via cargo-free AST stamping (~2.09MB live, ~832KB replay) |
-| **Bytecode VM Engine** | Stack VM default for pure compute and routes (~70x faster, deep-recursion safe, effect delegation) |
-| **WASM Replay & Host** | `nudge-replay-wasi` offline replay in WASI/wasmtime; live tools via `nudge_host_tool_call` bridge |
-| **A2A & LSP & OTel** | Built in, not bolted on |
-
-</div>
+The compiler proves the schema matches, infers effects, and bounds worst-case cost. The runtime records every call to a content-addressed trace you can diff, commit, and replay for $0.
 
 ## Quick Start
 
-### Install
+### 1. Install Nudge
 
-**One-Line Install (Recommended):**
+**One-line installer (Recommended):**
 
 ```sh
 # Linux / macOS
 curl -fsSL https://raw.githubusercontent.com/NekomyaDev/nudge/main/install.sh | bash
 
-# Windows (PowerShell as Admin)
+# Windows (PowerShell as Administrator)
 irm https://raw.githubusercontent.com/NekomyaDev/nudge/main/install.ps1 | iex
 ```
 
-**Package Managers:**
+**Package managers and containers:**
 
 ```sh
 # Snap (Linux)
@@ -197,54 +83,11 @@ sudo snap install nudge --classic
 docker run -it --rm -v $(pwd):/workspace nekomyadev/nudge nudgec --help
 ```
 
-**GUI Installers (Double-Click):**
+Pre-built binaries for Linux, macOS, and Windows are also available on the [Releases](https://github.com/NekomyaDev/nudge/releases) page.
 
-- **Windows:** Download [`install.bat`](https://github.com/NekomyaDev/nudge/releases/download/v1.2.0/install.bat) and double-click
-- **macOS:** Download [`install.command`](https://github.com/NekomyaDev/nudge/releases/download/v1.2.0/install.command) and double-click
+### 2. 60-Second First Run (Native, $0)
 
-**Manual Install:**
-
-Download from [Releases](https://github.com/NekomyaDev/nudge/releases) page:
-
-| Platform | File |
-|:---|:---|
-| Linux x86_64 | `nudgec-v1.2.0-linux-x86_64.tar.gz` |
-| macOS x86_64 | `nudgec-v1.2.0-macos-x86_64.tar.gz` |
-| macOS Apple Silicon | `nudgec-v1.2.0-macos-aarch64.tar.gz` |
-| Windows x86_64 | `nudgec-v1.2.0-windows-x86_64.zip` |
-
-```sh
-# Linux/macOS
-tar xzf nudgec-*.tar.gz
-chmod +x nudgec
-sudo mv nudgec /usr/local/bin/
-
-# Windows
-# Extract zip and add to PATH
-```
-
-### Or take the 10-minute tour
-
-```sh
-nudgec learn          # six terminal lessons: hello, types, decide, policy, test, trace
-nudgec learn decide   # jump straight to typed decisions
-```
-
-### Or scaffold a project
-
-```sh
-nudgec init my-agent --list        # browse templates (hello, triage, rag-agent, ...)
-nudgec init my-agent --template triage
-cd my-agent && nudgec check my-agent.ndg && nudgec build my-agent.ndg
-```
-
-### Your First Nudge Program
-
-Install the Python runtime that the generated code imports:
-
-```sh
-pip install nudge-runtime   # pure stdlib, no dependencies
-```
+No Python, no Node.js, and no API keys required. Nudge includes a native stack VM and an in-memory deterministic fake provider:
 
 ```sh
 # Create a program
@@ -255,183 +98,225 @@ fn greet(name: string) -> Greeting uses LLM {
     llm"""Create a greeting for {name}. Return message and timestamp."""
     with { schema: Greeting, model: "anthropic:sonnet-4.6", budget: 0.01 USD }
 }
+
+fn main() -> Greeting uses LLM {
+    greet("World")
+}
 EOF
 
-# Type check
+# Type-check your program
 nudgec check hello.ndg
 
-# Compile to Python
-nudgec build hello.ndg
+# Run directly on the native Bytecode VM ($0, no keys needed)
+nudgec run hello.ndg
 
-# Run (no API key needed - uses fake provider)
+# Run offline regression tests
+nudgec test hello.ndg
+```
+
+### 3. Interactive Lessons and Project Scaffolding
+
+```sh
+# Six interactive lessons in your terminal (hello, types, decide, policy, test, trace)
+nudgec learn
+
+# Scaffold a project from ready-made templates (triage, chatbot, rag-agent, etc.)
+nudgec init my-agent --template triage
+cd my-agent && nudgec check my-agent.ndg && nudgec run my-agent.ndg
+```
+
+### 4. Compile to Python or TypeScript (Optional)
+
+If you are deploying into an existing Python or TypeScript service:
+
+```sh
+# Python target
+pip install nudge-runtime          # standard library only, zero dependencies
+nudgec build hello.ndg              # emits out/hello.py
 python3 out/hello.py
+
+# TypeScript target
+nudgec build-ts hello.ndg             # emits out/hello.ts
 ```
 
-Everything runs against a deterministic fake provider by default: **no API key, no token spend.** Prefer building from source? See [Building from Source](#building-from-source).
+## Core Features at a Glance
 
-### Your First Decision (5 minutes)
+| Feature | What It Delivers | Section |
+|:---|:---|:---|
+| **Typed LLM Calls** | Output schema is a type, and violations trigger automatic repair | [A Taste of Nudge](#a-taste-of-nudge) |
+| **Control Flow & Data** | `if/else`, `for` loops, record literals `{k: v}`, indexing, mutable locals | [Control Flow & Data](#control-flow--data) |
+| **Typed Effects** | 10 known effects tracked and checked at compile time | [Typed Effects](#typed-effects) |
+| **Workspace & Store** | Sandboxed scoped filesystem + typed persistent key-value store | [Workspace & Store](#scoped-workspace--persistent-store) |
+| **Local UI** | Typed views, windows, headless tests, and native OS desktop window | [Local UI](#local-ui) |
+| **Tasks & Concurrency** | Task spawn/join, cooperative cancellation, safe `par race`, budget release | [Task Lifecycle & Concurrency](#task-lifecycle--concurrency) |
+| **Provider Auth** | Fail-closed RFC 8628 OAuth device flow, no foreign token harvesting | [Provider Authentication](#provider-authentication) |
+| **Typed Decisions** | Batched classification, yes/no, rubric scoring over states (`/v1/systemone`) | [Typed Decisions](#typed-decisions) |
+| **Computer Use** | Screen observation, typed actions, app allowlisting, kill switch | [Computer Use](#computer-use) |
+| **Bytecode VM** | Default stack VM engine (~70x faster pure compute, deep recursion safety) | [Bytecode VM Engine](#bytecode-vm-engine) |
+| **Standalone Agents** | Cargo-free single binary packaging (~2.09MB live, ~832KB replay) | [Standalone Native Agents](#standalone-native-agents-cargo-free) |
+| **WebAssembly** | Offline replay in WASI (~526KB), live tool host bridge | [WebAssembly Target](#webassembly-target) |
+| **Deterministic Traces** | Open NTF v1 traces, $0 replay, CI regression gates, trace diffing | [Deterministic Traces & Agent CI](#deterministic-traces--agent-ci) |
+| **Privacy Redaction** | Default auto-redaction of secrets/PII at a single choke point | [Privacy & Trace Redaction](#privacy--trace-redaction) |
 
-`decide{}` asks a decision model typed questions about a state — one
-batched call, answers with probabilities and confidence. Start with the
-fake provider (no server, no key):
+## Language & Capabilities
 
-```sh
-cat > first-decision.ndg << 'NDEOF'
-fn route_ticket(t: string) -> string uses Decision {
-    let d = decide {
-        dept: "which team handles this?" choose [billing, technical, security],
-        urgent: "is this urgent?" yes/no
-    }
-    on t
-    route { auto:  d.dept.winner when d.dept.confidence > 0.5,
-            human: "escalate to a human" otherwise }
-}
-NDEOF
+### Control Flow & Data
 
-nudgec check first-decision.ndg && nudgec build first-decision.ndg
-python3 out/first-decision.py   # deterministic, $0, offline
-```
-
-To answer with a **real** decision model (Laya / Jev family), point the
-registry at a running `/v1/systemone` server — one line:
-
-```sh
-export NUDGE_DECISION_SERVERS='{"laya": {"base_url": "http://localhost:8000"}}'
-```
-
-Measured against a live Laya 0.3.20 encoder (same program, 3 questions):
-`dept=technical p=0.866`, `churn=0.768`, `urgency=1.91` — **~51 ms per
-decision** including HTTP, roughly 5x faster than the hosted Jev API.
-Every decision lands in the NTF trace with its latency, replays are $0,
-and `NUDGE_DECISION_CACHE` stops you from ever paying for the same
-decision twice. See [Typed Decisions](#typed-decisions-v14).
-
-## Backend Parity
-
-| Capability | Python | TypeScript |
-|:---|:---:|:---:|
-| Typed calls, schema validation, repair | ✅ | ✅ |
-| Traces, replay, budget walls | ✅ | ✅ |
-| `par map/all/race` + branch labels | ✅ | ✅ |
-| Streaming (`stream let`) | ✅ | ✅ |
-| Real providers | ✅ | ⬜ |
-| Typed decisions (`decide{}`) | ✅ | ✅ |
-| Computer use (`computer.*`) | ✅ | ✅ fake provider only |
-| MCP tools, checkpoint/resume, OTel | ✅ | ⬜ |
-
-## MCP Integration
-
-Tools that declare `impl: mcp("server").tool` talk to real MCP servers over
-stdio. This section documents the contract as of v1.2.1.
-
-### Declaring and calling MCP tools
+Nudge provides familiar structured programming constructs with deterministic safety bounds:
 
 ```nudge
-type Result = { url: string, title: string }
+fn process_scores(raw: [int]) -> { total: int, count: int } {
+    let mut total = 0
+    let mut count = 0
 
-tool web_search(query: string) -> [Result] {
-    impl: mcp("search").web_search(query)
-    side_effects: none
-}
+    for (score, idx) in raw {
+        if score >= 50 {
+            total = total + score
+            count = count + 1
+        } else {
+            // skip failing scores
+        }
+    }
 
-fn main() -> string uses Tool {
-    let hits = web_search("nudge lang")
-    hits[0].title        # tool results support .field access (v1.2.1)
+    { total: total, count: count }
 }
 ```
 
-The compiler lowers every call to the tool's declared parameters. As of
-v1.2.1, arguments are passed to the MCP server as a **named `arguments`
-object** (`{"query": "nudge lang"}`), which is what MCP `tools/call`
-expects — servers built on FastMCP and similar frameworks reject the older
-positional framing.
+- **Branching:** `if/else` and `else if` expressions supporting multi-statement branch blocks.
+- **Iteration:** sequential `for item in coll` loops and indexed `for (item, idx) in coll` loops.
+- **Structured Data:** record literals `{ field1: expr1, field2: expr2 }` with static typing and field access (`obj.field`).
+- **Indexing:** indexed access on collections and records (`items[0]`, `map["key"]`). Bounds errors fail cleanly with `E0705`.
+- **Mutable Locals:** explicit `let mut name = init` variables with reassignment (`name = next`).
+- **Loop Bounds:** loops are bound by `NUDGE_MAX_LOOP_ITERATIONS` (default 10,000) to prevent runaway execution, raising `E0703` on overrun.
 
-### Server registry
+### Typed Effects
 
-Live MCP calls resolve servers from the `NUDGE_MCP_SERVERS` environment
-variable (JSON):
+Every side effect is declared in the function signature and validated by the compiler:
 
-```sh
-export NUDGE_MCP_SERVERS='{"search": {"command": "mcp-server-websearch"}}'
-python3 out/hello.py
+```nudge
+fn run_pipeline() -> bool uses LLM, Tool, Workspace, Store {
+    // Calling unlisted effects triggers compiler error E0301
+}
 ```
 
-- `command` may be a string (shell-parsed) or an argv list.
-- A call to a tool whose server is missing from the registry **fails fast**
-  with a clear error.
-- A registry entry **without** a `command` returns `[]` for that tool in
-  live mode (no transport configured) — but the call is still recorded in
-  the trace, so replay works.
-- Unknown tool or server errors raise; nothing silently fakes a result.
-- An MCP server that reports `isError` raises a `RuntimeError` with the
-  server's content.
-- Text content that parses as JSON is returned decoded; other content
-  types are returned as-is.
+Nudge defines 10 known effects (`crates/nudgec/src/check.rs`):
+- `LLM`: Invokes language model completions or streaming prompts.
+- `Tool`: Invokes external MCP or registered tools.
+- `IO`: Host input/output operations (`print`, `println`).
+- `Decision`: Queries decision models via `decide{}`.
+- `Computer`: Interacts with desktop environments and accessibility trees via `computer.*`.
+- `Workspace`: Scoped read and write operations inside the sandboxed workspace.
+- `WorkspaceDelete`: Destructive file or directory deletion inside the workspace.
+- `Store`: Persistent key-value storage operations via `store.*`.
+- `UI`: Creates, mounts, or dispatches events to graphical user interface elements.
+- `Auth`: Accesses authenticated provider resources (supports scoped `Auth(account)`).
 
-### Replay semantics
+Functions without a `uses` clause are proven pure at compile time. Unknown effects are rejected with `E0302`.
 
-Full replay (`NUDGE_REPLAY=trace.jsonl`) mocks both llm and tool calls from
-the trace. A program that makes **more** calls than the trace holds fails
-with `ReplayMismatch` — there is no silent empty-result mocking. Use
-`NUDGE_RESUME` to continue past the recorded prefix against a live provider.
+### Scoped Workspace & Persistent Store
 
-## Environment Variables
+Local agents must work with files and maintain state across runs without compromising system security:
 
-Everything a compiled Nudge program reads comes from these variables:
+```nudge
+record Config {
+    theme: string,
+    max_entries: int
+}
 
-| Variable | Purpose |
-|:---|:---|
-| `NUDGE_PROVIDER` | Provider override (`fake`, `openai`, `anthropic`, …). `fake` synthesizes schema-valid outputs — no API key needed |
-| `NUDGE_DECISION_SERVERS` | Decision provider registry (JSON): `{"laya": {"base_url": "http://localhost:8000"}}`. Unconfigured named providers raise — no silent fake |
-| `NUDGE_AGENT_RUNTIME` | Path to pre-built nudge-agent runtime binary for nudgec build --standalone |
-| `NUDGE_VM` | Execution engine toggle. Bytecode VM is default (unset or `1`), while `0` reverts to the AST interpreter fallback |
-| `NUDGE_PRICING` | JSON pricing table for real providers: `{"my-model": [1.0, 2.0]}` (USD per 1M in/out tokens). Extends the built-in table — unknown models stop recording $0 |
-| `NUDGE_RETRY_TRANSIENT` | Retries for transient provider errors (429/5xx), default 3; `0` disables |
-| `NUDGE_TOOL_GRANTS` | Execution-layer tool policy (JSON): `{"web_search": ["*"], "kb/*": ["retrieve"], "shell": []}` — ungranted tools raise `ToolDenied` and the denial is traced (`outcome: "denied"`); policy present = fail closed |
-| `NUDGE_GUARD` | Output guards: `pii` masks secrets, emails, IPs and long digit runs in model output; the applied guards land in the trace (`guard: [...]`) — masking is auditable, never silent |
-| `NUDGE_BACKOFF_BASE` | Exponential backoff base in seconds (5s, 25s, 125s by default) |
-| `NUDGE_DECISION_CACHE` | Path for the decision cache: validated answers for real providers persist across runs (replay takes precedence) |
-| `NUDGE_API_KEY` / `NUDGE_BASE_URL` | Credentials and endpoint for OpenAI-compatible providers |
-| `NUDGE_MCP_SERVERS` | MCP server registry JSON (see above) |
-| `NUDGE_COMPUTER_SERVERS` | Computer bridge registry (JSON): `{"cu": {"command": "python3 tools/cu_bridge.py"}}` (subprocess JSONL) or `{"cu": {"base_url": "http://localhost:9333"}}` (HTTP) |
-| `NUDGE_COMPUTER_PROVIDER` | Which registered bridge handles `computer.*` calls (default: `fake` — a deterministic in-memory desktop, so tests run at $0) |
-| `NUDGE_COMPUTER_KILL` | `1` refuses all computer work (kill switch) and aborts held mouse buttons |
-| `NUDGE_COMPUTER_DRIFT` | `1` re-observes live during replay and attaches a mechanical `Drift` diff — actions stay dry-run |
-| `NUDGE_COMPUTER_SCENARIO` | JSON scenes + `advance_on` for the fake desktop — script the UI your tests run against |
-| `NUDGE_COMPUTER_STRICT` | `1` turns soft `deadline_missed` outcomes into `ComputerTimeout` errors |
-| `NUDGE_TRACE` | Write a JSONL trace to this path while running |
-| `NUDGE_REPLAY` | Load a trace and replay it (`NUDGE_REPLAY_MODE=all` for tools+llm, `llm` for llm-only) |
-| `NUDGE_RESUME` | Continue a crashed run from its checkpoint, consuming the recorded trace prefix |
-| `NUDGE_RUN_ID` | Checkpoint/run directory id (default: `run-<pid>`) |
-| `NUDGE_BUDGET` / `NUDGE_REPAIR_BUDGET` | Run-wide USD ceilings enforced across `par` fan-out |
-| `NUDGE_OTEL` | OTel endpoint for span export |
-| `NUDGE_FAKE_FAIL_FIRST` | Make the fake provider fail the first attempt (k times) — for testing repair loops |
-| `NUDGE_ALLOW_FAKE_RESUME` | Explicitly allow `NUDGE_RESUME` to continue on the fake provider |
+fn update_workspace_file(path: string, new_content: string) -> bool uses Workspace, Store {
+    // 1. Scoped filesystem access (path traversal and symlink escapes denied)
+    if workspace.exists(path) {
+        workspace.write(path, new_content)   // Atomic write: staging, fsync, rename
+    }
 
-Notes:
+    // 2. Typed persistent store (survives process restarts and reboots)
+    store.set("app_config", Config { theme: "dark", max_entries: 100 })
+    true
+}
+```
 
-- A program's entry point is `fn main()` with **no parameters** — argv and
-  stdin are not read in v1.2.x. External data enters through MCP tools.
-- The fake provider is deterministic and schema-aware; it is what makes
-  `nudgec test` and the CI examples run without keys.
+- **Sandboxed Workspace (`workspace.*`):** all operations are confined to an explicit workspace root (configured via `--workspace` or `NUDGE_WORKSPACE_DIR`, defaulting to the current directory). Path traversals (`../`) and symlink escapes outside the root are blocked. Writes are crash-consistent (atomic write-to-temp and rename).
+- **Separation of Deletion Authority:** deleting files or directories requires the dedicated `WorkspaceDelete` effect (`uses WorkspaceDelete`), preventing general write routines from deleting directories.
+- **Persistent Key-Value Store (`store.*`):** strongly typed storage saved to `<workspace>/.nudge/store.json` (or `NUDGE_STORE_PATH`). Unlike ephemeral run checkpoints, this data store persists across distinct executions and reboots.
 
-## NTF — an open trace format
+### Local UI
 
-Traces are JSONL records (`llm.call` / `tool.call` / `fn.return`) with a
-**frozen v1 schema**: additive-only changes, validated by
-`nudgec trace-check`. The spec lives at
-[docs/ntf-spec.md](docs/ntf-spec.md), and
-[`conformance/`](conformance/) is the corpus any producer or consumer can
-be tested against. A LangChain bridge ([`bridges/langchain_ntf.py`](bridges/langchain_ntf.py))
-converts other frameworks' runs into NTF, so replay, diffing and CI gates
-work on them too.
+Build native human-in-the-loop interfaces, approval stations, and interactive inspection panels directly in Nudge:
 
-## Typed Decisions (v1.4)
+```nudge
+type ReviewState = { prompt: string, approved: bool }
 
-Nudge compiles uncertainty from **any** source — LLM generation or a
-decision model — with the same effect system, traces and replay. Decisions
-talk the `/v1/systemone` wire contract that Laya's `laya.serve` and the
-TypeSafe Jev API share:
+view ReviewCard(state: ReviewState) -> View {
+    column(padding = 16, gap = 12) [
+        text("Agent Review Station", size = 18, bold = true),
+        text("Request: " + state.prompt),
+        row(gap = 8) [
+            button("Approve", on_click = approve_action),
+            button("Reject", on_click = reject_action)
+        ]
+    ]
+}
+
+agent ReviewStation {
+    state {
+        prompt: string = "Execute deploy script",
+        approved: bool = false
+    }
+
+    fn approve_action() uses UI, IO {
+        state.approved = true
+        io.println("Action approved")
+    }
+
+    fn reject_action() uses UI {
+        state.approved = false
+    }
+
+    window MainWindow {
+        title: "Nudge Review Station",
+        width: 500,
+        height: 300,
+        content: ReviewCard(state)
+    }
+}
+```
+
+- **Dual-Mode Execution:**
+  - **Headless Testing:** `mount_headless()` and `dispatch_click()` evaluate UI trees and state transitions entirely in memory without opening a physical window. Runs in CI for $0.
+  - **Native Desktop GUI:** when compiled with the `native-gui` Cargo feature, `window.open()` creates a native OS window powered by `winit` and `softbuffer`.
+- **Headless Fallback:** setting `NUDGE_UI_HEADLESS=1` or running during trace replay (`NUDGE_REPLAY`) routes window calls to the headless engine automatically.
+
+### Task Lifecycle & Concurrency
+
+Coordinate concurrent agent arms with formal task state management and cooperative cancellation:
+
+```nudge
+fn race_models(prompt: string) -> string uses LLM {
+    // par race automatically cancels losing branches
+    par race {
+        fast: query_fast_model(prompt),
+        deep: query_deep_model(prompt)
+    }
+}
+```
+
+- **Cooperative Cancellation:** when a race resolves, losing branches are halted at loop, stream, and effect boundaries instead of continuing to spend budget in the background.
+- **Budget Protection:** unspent budget reservations under `NUDGE_BUDGET` are immediately released upon task cancellation.
+- **Fail-Closed Grants:** cancelled tasks immediately lose permission to dispatch further tool calls (`Tool`) or computer actions (`Computer`).
+- **Task Primitives:** explicit task control via `task.spawn`, `task.join`, `task.status`, and `task.cancel`.
+
+### Provider Authentication
+
+Secure credential management built directly into the language and runtime:
+
+- **Fail-Closed Authentication:** functions declare explicit authentication requirements with `uses Auth` or `uses Auth(account)`. Unauthenticated calls fail closed.
+- **No Foreign Token Harvesting:** Nudge never reads private token caches or credential stores belonging to third-party tools.
+- **Native RFC 8628 Device Flow:** interactive terminal authorization via OAuth 2.0 Device Authorization Grant with secure credential storage in `~/.nudge/credentials.json` (file mode 0600).
+- **Provider Gates:** providers must satisfy verifiable security contracts (`E-auth-0401` for missing credentials, `E-auth-0403` for scope deficits, `E-auth-0404` for disabled providers).
+
+### Typed Decisions
+
+Compile uncertainty from decision models (such as Laya and Jev) via the `/v1/systemone` wire protocol:
 
 ```nudge
 fn triage(t: string) -> string uses Decision {
@@ -441,132 +326,236 @@ fn triage(t: string) -> string uses Decision {
         urgency: "how urgent is this?" score [low, soon, critical]
     }
     on t
-    with { model: "laya:multilingual", deadline: 50 }   // ms — the family prices in time, not dollars
-    route { auto: resolve(d.dept.winner) when d.dept.confidence > 0.8,
-            review: escalate(d) otherwise }
+    with { model: "laya:multilingual", deadline: 50 }   // ms latency budget
+    route {
+        auto: resolve(d.dept.winner) when d.dept.confidence > 0.8,
+        review: escalate(d) otherwise
+    }
 }
 ```
 
-- One batched call per `decide` block; answers carry `winner/p/distribution/confidence`.
-- The **fake decision provider** (default) synthesizes deterministic seeded distributions — tests stay $0.
-- Live providers: `NUDGE_DECISION_SERVERS='{"laya": {"base_url": "http://localhost:8000"}}'` (HTTP `/v1/systemone`) or `{"valen": {"command": "python -m valen.inference ..."}}` (subprocess JSONL).
-- Decisions land in NTF traces (`decision.call`, with `latency_ms`); replay is $0; `trace-diff --fail-on-regression` gates latency growth.
-- `nudgec policy-sweep trace.jsonl --question dept --thresholds 0.5,0.8` re-cuts thresholds over recorded distributions — zero model calls.
+- **Batched Execution:** one call evaluates all questions simultaneously, returning winner, probability, distribution, and confidence.
+- **Zero-Dollar Testing:** the default fake decision provider synthesizes deterministic seeded distributions for $0 test runs.
+- **Live Providers:** connect local or remote models via `NUDGE_DECISION_SERVERS='{"laya": {"base_url": "http://localhost:8000"}}'`.
+- **Decision Cache:** `NUDGE_DECISION_CACHE=<path>` caches validated answers across runs so you never pay twice for the same state.
+- **Policy Sweeps:** run `nudgec policy-sweep trace.jsonl --question dept --thresholds 0.5,0.8` to evaluate threshold adjustments over recorded distributions with zero model invocations. Read the [Decision Documentation](docs/decision.md).
 
-See [docs/decision.md](docs/decision.md) for the full contract.
+### Computer Use
 
-## Computer Use (v1.5)
-
-The machine is a typed effect, with the same guarantees as every other
-call. The language owns control and safety — app allowlists, deadlines,
-the kill switch, replay; the model owns perception and judgment:
+Control desktop environments with typed observations and actions where the language owns control and safety while the model owns perception:
 
 ```nudge
-fn run(app: string) -> bool uses Computer, Decision {
+fn automate_app(app: string) -> bool uses Computer, Decision {
     let obs = computer.observe(app, allow = [app], deadline = 30000)
-    let sane = decide {
-        looks_right: "does this screen show the expected app?" yes/no
+    let check = decide {
+        ready: "is the target button visible?" yes/no
     } on obs.tree
     with { deadline: 100 }
+
     let r = route {
-        press: computer.click(1, allow = [app]) when sane.looks_right.p > 0.4,
-        quit:  computer.key("Escape", allow = [app]) otherwise
+        click: computer.click(1, allow = [app]) when check.ready.p > 0.5,
+        close: computer.key("Escape", allow = [app]) otherwise
     }
     r.ok
 }
 ```
 
-- `computer.observe(app)` returns a typed `Observation` (`tree`, `elements`,
-  optional `screenshot`); `computer.click/type/key/scroll/set_value/drag/
-  perform/paste` return `ActionResult` with a dispatch receipt
-  (`action_sent` — only `false` is safe to retry).
-- **Replay never re-fires actions** — they run as dry-run audits. With
-  `NUDGE_COMPUTER_DRIFT=1` the runtime re-observes live and attaches a
-  mechanical `Drift` diff (tree diff + screenshot hash); interpreting it is
-  the model's job.
-- Bridges enforce hardening invariants: a single controller lease, stale
-  element indices refused (`stale_state` instead of a blind click), and
-  `abort` on exit so an interrupted drag never stays pressed.
-- The default **fake provider** is a deterministic virtual desktop
-  (`NUDGE_COMPUTER_SCENARIO` scripts the scenes), so the whole loop runs in
-  `nudgec test` at $0. Real desktops connect through the reference JSONL
-  bridge (`tools/cu_bridge.py` — AT-SPI + xdotool on X11) or any HTTP
-  transport speaking the same contract.
+- **Typed Primitives:** `computer.observe` returns an `Observation` record (accessibility tree, elements, optional screenshot). Actions (`click`, `type`, `key`, `scroll`, `set_value`, `drag`, `paste`) return `ActionResult` with dispatch receipts (`action_sent`).
+- **Replay Safety:** trace replay never re-fires physical actions. With `NUDGE_COMPUTER_DRIFT=1`, the runtime re-observes live and calculates a mechanical `Drift` diff without executing actions.
+- **Hardening:** app allowlisting (`allow: [app]`), controller lease locks, rejection of stale element indices (`stale_state`), and a hard kill switch (`NUDGE_COMPUTER_KILL=1`).
+- **Deterministic Desktop:** default fake provider runs in-memory UI scenarios (`NUDGE_COMPUTER_SCENARIO`), allowing $0 end-to-end tests. Read the [Computer Use Documentation](docs/computer-use.md).
 
-Full RFC and wire contract: [docs/computer-use.md](docs/computer-use.md).
+## Native Infrastructure
 
-## Agent CI (GitHub Action)
+### Bytecode VM Engine
 
-Regression-test your agents on every push — replays recorded traces, so it
-costs **$0** and needs **no API keys**. Add `.github/workflows/agents.yml`:
+Pure functions, data transformations, and route branching execute on a dedicated stack-based bytecode VM (`crates/nudgec/src/bytecode.rs` and `vm.rs`):
+
+- **High-Speed Pure Compute:** executes pure code ~70x faster than the tree-walking interpreter.
+- **Deep Recursion Safety:** managed frame stack eliminates OS stack overflows on recursive algorithms.
+- **Transparent Effect Delegation:** effectful expressions (`llm`, `tool`, `computer`, `workspace`) delegate seamlessly from the VM to the runtime evaluator via `DelegateCall` and `DelegateExpr`.
+- **Default Engine:** the VM runs by default for `nudgec run` and standalone binaries. Set `NUDGE_VM=0` to fall back to the AST interpreter.
+
+### Standalone Native Agents (Cargo-Free)
+
+Package your agent into a single, self-contained native executable binary with zero build-site toolchain dependencies:
+
+```sh
+# Package an agent into a standalone binary
+nudgec build --standalone my-agent.ndg -o bin/my-agent
+
+# Run directly on the host (zero Python/Node/Rust dependencies)
+./bin/my-agent
+```
+
+- **AST Stamping:** `nudgec` type-checks the source, serializes the AST bundle into bincode, and appends it to a pre-compiled `nudge-agent` runtime binary (`NDGAGNT1` footer) in milliseconds.
+- **Two Runtime Flavors:**
+  - **Full (~2.09MB, default):** live-capable runtime with embedded `ureq` + `rustls` HTTP/TLS stack for live LLMs and MCP servers.
+  - **Replay-Only (~832KB):** compact runtime with network dependencies omitted, serving all operations from recorded NTF traces for $0 offline execution.
+- **Runtime Discovery:** located via the `NUDGE_AGENT_RUNTIME` environment variable or as a sibling binary next to `nudgec`. Read the [Standalone Documentation](docs/standalone.md).
+
+### WebAssembly Target
+
+Deploy agents into browser sandboxes, edge runtimes (Cloudflare Workers, Fastly), and WASI environments:
+
+- **Offline Replay (`nudge-replay-wasi`):** replay recorded NTF traces offline inside a ~526KB `.wasm` module under `wasmtime` with byte-identical output to native runs:
+  ```sh
+  wasmtime run --dir . nudge-replay-wasi.wasm bundle.json trace.jsonl
+  ```
+- **Live Tool Host Bridge:** agents in browser or edge JavaScript runtimes make live tool calls through the standardized `nudge_host_tool_call` import contract (verified under Node WASI, see `examples/wasm-host/`).
+- **Sandboxed Security:** network sockets and OS process spawning are gated out on `wasm32`, ensuring sandboxed execution. Read the [WebAssembly Documentation](docs/wasm.md).
+
+## Tooling & Integrations
+
+### MCP Integration
+
+Declare tools backed by Model Context Protocol (MCP) servers communicating over stdio:
+
+```nudge
+type SearchResult = { url: string, title: string }
+
+tool web_search(query: string) -> [SearchResult] {
+    impl: mcp("search").web_search(query)
+    side_effects: none
+}
+
+fn main() -> [SearchResult] uses Tool {
+    web_search("nudge language")
+}
+```
+
+Configure live servers via `NUDGE_MCP_SERVERS`:
+
+```sh
+export NUDGE_MCP_SERVERS='{"search": {"command": "mcp-server-websearch"}}'
+nudgec run search_agent.ndg
+```
+
+Parameters are passed as named JSON argument objects for compatibility with FastMCP and standard servers. Missing servers fail fast with clear diagnostics.
+
+### Deterministic Traces & Agent CI
+
+Every run emits an open NTF v1 JSONL trace capturing all effect interactions:
+
+```sh
+# Verify trace integrity against the open specification
+nudgec trace-check trace.jsonl
+
+# Compare two traces to identify cost or behavior changes
+nudgec trace-diff baseline.jsonl candidate.jsonl --fail-on-regression
+```
+
+**GitHub Action (`action.yml`):** test agents in CI on every push at $0 cost with zero API keys:
 
 ```yaml
 name: agents
 on: [push, pull_request]
 jobs:
-  agents:
+  test-agents:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: NekomyaDev/nudge@v1
         with:
-          files: |
-            agents/**/*.ndg
+          files: "agents/**/*.ndg"
+          trace-diff: "baseline.jsonl candidate.jsonl"
 ```
 
-Inputs: `files` (required, globs allowed), `version` (pin nudgec),
-`check-only` (skip replay), and `trace-diff: "baseline.jsonl candidate.jsonl"`
-— a regression gate that fails the build when the candidate trace spends
-more, repairs more, or turns a passing call into a failure. CI is where the
-trace/replay design pays off: the agent's behavior becomes a testable
-artifact, like any other.
+The frozen NTF specification lives at [docs/ntf-spec.md](docs/ntf-spec.md), with a full test suite in [`conformance/`](conformance/) and bridges for LangChain, CrewAI, and LangGraph.
 
-## VS Code Extension
+### Developer Tools
 
-Install the [Nudge Language](https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang) extension for:
+- **Local Trace Viewer:** `nudgec trace-view <trace.jsonl>` starts a local web UI with visual execution timelines, token expenditure, and repair highlights.
+- **Run Explainer:** `nudgec explain <trace.jsonl>` produces a human-readable CLI summary highlighting failures, token consumption, and low-confidence decisions.
+- **Formatter & Watcher:** `nudgec fmt <file.ndg>` safely formats code, and `nudgec check <file.ndg> --watch` type-checks on every save.
+- **Static HTML Export:** `nudgec trace-html trace.jsonl -o report.html` exports self-contained interactive audit reports.
 
-- Syntax highlighting
-- Code snippets
-- Real-time diagnostics via `nudgec lsp`
-- Hover information
-- Go to definition
+### VS Code Extension
 
-> **Note:** the extension may lag behind the latest language features — new
-> grammar (like the v1.5 `computer.*` surface) can ship in the compiler before
-> the extension's highlighting, snippets, and grammar catch up. The compiler
-> and `nudgec lsp` are always the source of truth.
+Install the [Nudge Language Extension](https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang) for syntax highlighting, code snippets, hover documentation, and real-time type diagnostics powered by `nudgec lsp`.
 
-## Privacy Note
+## Privacy & Trace Redaction
 
-Traces record prompts, model outputs, and tool results verbatim — they can contain secrets or personal data. Treat trace files as sensitive artifacts; a redaction hook is on the roadmap.
+AI agents frequently handle sensitive tokens, authorization headers, private keys, and user PII. Nudge protects your data with a fail-closed trace redaction pipeline:
 
-## License
+- **Single Choke Point:** redaction occurs inside `TraceWriter::emit` before records are serialized to disk or memory buffers. Every record type (`llm.call`, `tool.call`, `decision.call`, `computer.*`, `fn.return`) is masked at this single bottleneck.
+- **Fail-Closed by Default:** trace redaction is active by default (`NUDGE_TRACE_REDACT=1`). Set `NUDGE_TRACE_REDACT=0` only for explicit local debugging.
+- **Automatic Secret Detection:** automatically identifies and masks environment variables ending in `_KEY`, `_SECRET`, `_TOKEN`, `_PASSWORD`, `_PAT`, or containing `AUTH` (with values of 6 or more characters).
+- **Layered Pattern Masking:** scrubs bearer tokens, authorization headers, key-value credential pairs, private key blocks, and vendor token prefixes (OpenAI `sk-...`, Anthropic `sk-ant-...`, GitHub `ghp_...`, AWS `AKIA...`, Slack `xox...`).
+- **Cryptographic Replay Invariance:** the content-addressed `request_hash` is computed on **pre-redaction** inputs. This guarantees that masked traces remain byte-identical during replay lookup with O(1) matching without persisting credentials to disk.
 
-Apache-2.0 — see [LICENSE](LICENSE).
+## Environment Variables
 
-Nudge is open source: the compiler (`crates/nudgec`), the bytecode VM experiment (`crates/nudge-runtime`), the Python runtime (`runtime/`), and the VS Code extension (`editors/vscode/`) all live in this repository. Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+| Variable | Purpose | Default |
+|:---|:---|:---|
+| `NUDGE_PROVIDER` | Active LLM provider (`fake`, `openai`, `anthropic`, `gemini`, `groq`, `ollama`) | `fake` |
+| `NUDGE_VM` | Bytecode VM execution engine toggle (`1` = VM default, `0` = AST interpreter fallback) | `1` |
+| `NUDGE_DEFAULT_MODEL` | Default model string when not explicitly specified in `with` block | Provider default |
+| `NUDGE_API_KEY` / `NUDGE_BASE_URL` | Credentials and base endpoint for OpenAI-compatible LLM providers | None |
+| `NUDGE_PRICING` | Custom JSON pricing table: `{"model": [usd_per_1M_in, usd_per_1M_out]}` | Built-in table |
+| `NUDGE_GUARD` | Output guards (`pii` masks secrets, emails, IP addresses in LLM outputs) | None |
+| `NUDGE_BUDGET` / `NUDGE_REPAIR_BUDGET` | Run-wide USD spending ceilings enforced across parallel fan-outs | None |
+| `NUDGE_MAX_LOOP_ITERATIONS` | Maximum sequential loop iterations before raising runtime error `E0703` | `10000` |
+| `NUDGE_TRACE` | Destination path for writing the NTF JSONL execution trace | `trace.jsonl` |
+| `NUDGE_REPLAY` | Trace path for deterministic offline replay (`NUDGE_REPLAY_MODE=all` or `llm`) | None |
+| `NUDGE_RESUME` | Resume crashed execution from checkpoint using recorded trace prefix | None |
+| `NUDGE_TRACE_REDACT` | Enable single choke point secret and PII masking in traces (`1` or `0`) | `1` (Active) |
+| `NUDGE_TRACE_REDACT_ENV` | Automatically mask values of secret environment variables in traces | `1` (Active) |
+| `NUDGE_TRACE_REDACT_KEYS` | Comma-separated list of additional JSON object keys to mask | None |
+| `NUDGE_TRACE_REDACT_PATTERNS` | Comma-separated regex list or path to a regex file for custom trace masking | None |
+| `NUDGE_WORKSPACE_DIR` | Root directory authority for sandboxed `workspace.*` operations | Current directory |
+| `NUDGE_STORE_PATH` | Storage file location for persistent typed key-value data | `<workspace>/.nudge/store.json` |
+| `NUDGE_UI_HEADLESS` | Force UI window operations to run headlessly in memory (`1` or `true`) | `0` |
+| `NUDGE_TOOL_GRANTS` | Execution-layer JSON tool policy (e.g. `{"web_search": ["*"]}`). Fails closed | None |
+| `NUDGE_MCP_SERVERS` | JSON registry mapping MCP server names to stdio commands | None |
+| `NUDGE_DECISION_SERVERS` | JSON registry for decision model endpoints (e.g. `{"laya": {"base_url": "..."}}`) | None |
+| `NUDGE_DECISION_CACHE` | Cache file path for persisted decision model distributions | None |
+| `NUDGE_COMPUTER_SERVERS` | JSON registry for computer use bridges (subprocess JSONL or HTTP) | None |
+| `NUDGE_COMPUTER_PROVIDER` | Selected bridge for computer actions (`fake`, or registered server name) | `fake` |
+| `NUDGE_COMPUTER_KILL` | Hard kill switch: `1` immediately refuses all computer operations | `0` |
+| `NUDGE_COMPUTER_DRIFT` | When `1`, re-observes live state during replay and attaches mechanical drift diffs | `0` |
+| `NUDGE_AGENT_RUNTIME` | Path to pre-built `nudge-agent` binary for `nudgec build --standalone` | Sibling binary |
+| `NUDGE_CREDENTIALS_PATH` | Custom path to Nudge authentication credentials store | `~/.nudge/credentials.json` |
+| `NUDGE_OTEL` / `NUDGE_OTEL_ENDPOINT` | OpenTelemetry span export configuration | None |
 
-## Building from Source
+## Real-World Examples
 
-Requires Rust 1.75+ (stable):
+Explore complete agent implementations in [`examples/`](examples/):
 
-```bash
+| Example | Domain | Highlights |
+|:---|:---|:---|
+| [AI Chatbot](examples/chatbot/) | Conversational Assistant | Typed memory schemas, deterministic replay, budget ceilings |
+| [Triage Agent](examples/triage-agent/) | Support Classification | Batched `decide{}` blocks, confidence thresholds, routing policies |
+| [Code Reviewer](examples/code-reviewer/) | Software Engineering | Structured syntax diagnostics, automated rubric scoring |
+| [Research Agent](examples/research_agent.ndg) | Multi-Source Synthesis | Parallel retrieval with `par map`, confidence scoring |
+| [Computer Automation](examples/computer-automation/) | Desktop Agent | Screen observation, accessibility trees, drift validation |
+| [RAG Agent](examples/rag-agent/) | Retrieval-Augmented Generation | MCP stdio retrieval tool bindings, citation extraction |
+| [Property Fuzzer](examples/property-fuzz/) | Agent Testing | `for_all` invariant testing, prompt injection fuzzing |
+| [Dungeon Crawler](examples/dungeon-crawler/) | State Machine Simulation | Pure Nudge, agent state transitions, turn-based combat |
+
+## License & Building from Source
+
+Nudge is open source under the **Apache-2.0** license. See [LICENSE](LICENSE) for details.
+
+### Building from Source
+
+Building the compiler requires Rust 1.75+ (stable):
+
+```sh
 git clone https://github.com/NekomyaDev/nudge.git
 cd nudge
 cargo build --release -p nudgec   # compiler binary at target/release/nudgec
-cargo test --workspace            # compiler + VM tests
+cargo test --workspace            # compiler, VM, and runtime test suite
 ```
 
-The Python runtime is standalone (pure stdlib, no dependencies):
+The Python runtime is located in `runtime/` (standard library only, zero external dependencies):
 
-```bash
-pip install nudge-runtime         # from PyPI
-# or from this repo:
+```sh
 pip install ./runtime
 ```
 
 ---
 
 <p align="center">
-  Made with ❤️ by <a href="https://github.com/NekomyaDev">NekomyaDev</a>
+  Made with love by <a href="https://github.com/NekomyaDev">NekomyaDev</a>
 </p>
