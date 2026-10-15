@@ -1,5 +1,10 @@
 # Nudge Language Capability Request: Pack 4 (Task Lifecycle)
 
+**Status:** Implemented (see git log)  
+**Implementation Commits:** `059c68e` (PACK 4 slice 1: task lifecycle with cooperative cancellation), `0f44e11` (PACK 4 slice 2: full async task runtime spawn/join)  
+**Author:** Pack 4 Coordinator  
+**Target Repository:** `/home/neko/Belgeler/ZCode-AI-Calisma-Alani/nudge` at commit `e2cafc0`  
+
 ## Overview and Classification: MEVCUT / KISMI / ONERI
 
 | Feature | Classification | Source Reference / Status |

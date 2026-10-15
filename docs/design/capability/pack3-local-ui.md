@@ -1,6 +1,7 @@
 # Nudge Language Capability Request: Pack 3 (Local UI)
 
-**Status:** Proposed  
+**Status:** Implemented (see git log)  
+**Implementation Commits:** `565f6df` (PACK 3 slice 1: typed UI capability with headless view-tree runtime), `6363e3d` (PACK 3 slice 2: real native OS window backend winit + softbuffer, opt-in)  
 **Author:** Pack 3 Coordinator  
 **Target Repository:** `/home/neko/Belgeler/ZCode-AI-Calisma-Alani/nudge` at commit `e2cafc0`  
 **Classification:** MEVCUT / KISMI / ÖNERİ  

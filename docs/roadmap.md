@@ -89,7 +89,7 @@ The language thesis ships: **the language where agents are safe to deploy.**
   genuinely free call (Ollama / plan-priced MiMo stay exempt)
 - **MCP deadline & lifecycle** — per-RPC timeouts, hung-server cleanup and
   restart strategy for persistent MCP sessions
-- **Trace redaction hooks** — filter secrets/PII before records hit disk
+- ~~**Trace redaction hooks**~~ ✅ shipped (commit `a3e36e4`, issue #104) - filter secrets/PII before records hit disk via fail-closed `TraceWriter::emit` masking while preserving `request_hash` deterministic replay
 - Security conformance suite + a threat-model document; possibly a short
   industry-track paper
 
@@ -108,9 +108,9 @@ The language thesis ships: **the language where agents are safe to deploy.**
 ## v2.0 — Door 6 + the runtime thesis: *inevitable* & *sovereign*
 
 Agent frameworks are libraries; **Nudge is the language + runtime**.
-- **Pure Native Execution Engine (`nudgec run`)** — In-tree Rust AST interpreter and bytecode VM, eliminating mandatory Python runtime dependencies for pure execution, state machines, and agents. See detailed architectural roadmap in [native-runtime-roadmap.md](native-runtime-roadmap.md).
-- **Native Tokio + Reqwest AI Engine** — In-tree async client for LLM providers, JSON schema repair, and deterministic NTF v1 replays with zero pip packages.
-- **Standalone Binary & WASM Compilation** — Single static executable distribution (`./agent`) with sub-millisecond cold start.
+- ~~**Pure Native Execution Engine (`nudgec run`)**~~ ✅ shipped (Phase 1, commit `1b98279`) - In-tree Rust AST interpreter and bytecode VM, eliminating mandatory Python runtime dependencies for pure execution, state machines, and agents. See detailed architectural roadmap in [native-runtime-roadmap.md](native-runtime-roadmap.md).
+- ~~**Native Tokio + Reqwest AI Engine**~~ ✅ shipped (Phase 2) - In-tree async client for LLM providers, JSON schema repair, and deterministic NTF v1 replays with zero pip packages.
+- ~~**Standalone Binary & WASM Compilation**~~ ✅ shipped (Phase 3) - Single static executable distribution (`./agent`) with sub-millisecond cold start.
 - **Distributed trace store** — traces stream to a local daemon / OTLP
   collector; regression suites run against history
 - **A2A serving** — a compiled Nudge agent is a network-addressable A2A peer

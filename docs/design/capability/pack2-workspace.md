@@ -1,6 +1,7 @@
 # NUDGE LANGUAGE CAPABILITY REQUEST
 **PACK 2: Safe Workspace and Persistence**
-**Status:** PROPOSED
+**Status:** Implemented (see git log)
+**Implementation Commits:** `0668add` (PACK 2 slice 1: scoped, safe workspace.* filesystem containment), `b2d5f16` (PACK 2 slice 2: store.* typed persistent key-value app-data store)
 **Author:** Nudge Core Architecture Review
 **Target Repo:** `/home/neko/Belgeler/ZCode-AI-Calisma-Alani/nudge` (HEAD `e2cafc0`)
 
