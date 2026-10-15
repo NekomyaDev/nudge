@@ -16,11 +16,12 @@ pub struct Span {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TypeExpr {
-    Named(String),                   // string, Url, Plan
-    List(Box<TypeExpr>),             // [T]
-    Record(Vec<(String, TypeExpr)>), // {k: T, ...}
+    Named(String),                            // string, Url, Plan
+    List(Box<TypeExpr>),                      // [T]
+    Record(Vec<(String, TypeExpr)>),          // {k: T, ...}
     Refine(Box<TypeExpr>, String, Vec<Expr>), // float @range(0, 1)
-                                     // TODO: Optional (T?) and union (T | U) — lexer/parser support lands with the type checker
+    Generic(String, Vec<TypeExpr>),           // Task[T]
+                                              // TODO: Optional (T?) and union (T | U) — lexer/parser support lands with the type checker
 }
 
 impl fmt::Display for TypeExpr {
@@ -39,6 +40,16 @@ impl fmt::Display for TypeExpr {
                 write!(f, "}}")
             }
             TypeExpr::Refine(inner, name, _) => write!(f, "{inner} @{name}(…)"),
+            TypeExpr::Generic(name, args) => {
+                write!(
+                    f,
+                    "{name}[{}]",
+                    args.iter()
+                        .map(|a| a.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
         }
     }
 }
@@ -184,6 +195,12 @@ pub enum ExprKind {
         then: Box<Expr>,
         else_: Option<Box<Expr>>,
     },
+
+    /// `spawn <expr-or-block>` (Pack 4 task lifecycle)
+    Spawn(Box<Expr>),
+
+    /// `{ stmt; ...; expr }` block expression
+    Block(Vec<Stmt>),
 }
 
 /// An expression with its source span attached (spanned AST, stage 2).

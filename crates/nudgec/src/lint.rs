@@ -234,6 +234,14 @@ fn has_computer_call(e: &Expr) -> bool {
                 || args.iter().any(has_computer_call)
                 || kwargs.iter().any(|(_, v)| has_computer_call(v))
         }
+        ExprKind::Spawn(b) => has_computer_call(b),
+        ExprKind::Block(stmts) => stmts.iter().any(|s| match &s.kind {
+            StmtKind::Let { value, .. }
+            | StmtKind::Assign { value, .. }
+            | StmtKind::StateWrite { value, .. } => has_computer_call(value),
+            StmtKind::Assert(e) | StmtKind::ExprStmt(e) => has_computer_call(e),
+            _ => false,
+        }),
         _ => false,
     }
 }
@@ -368,6 +376,12 @@ fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut V
                 if let Some(c) = cond {
                     walk_expr(ctx, c, records, out);
                 }
+            }
+        }
+        ExprKind::Spawn(b) => walk_expr(ctx, b, records, out),
+        ExprKind::Block(stmts) => {
+            for s in stmts {
+                walk_stmt(ctx, s, records, out);
             }
         }
         _ => {}

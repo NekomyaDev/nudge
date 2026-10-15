@@ -167,6 +167,10 @@ impl Parser {
                 self.bump();
                 Ok("state".to_string())
             }
+            Tok::Spawn => {
+                self.bump();
+                Ok("spawn".to_string())
+            }
             other => self.err(format!("expected identifier, found {other:?}")),
         }
     }
@@ -568,7 +572,19 @@ impl Parser {
         let mut ty = match self.peek().clone() {
             Tok::Ident(name) => {
                 self.bump();
-                TypeExpr::Named(name)
+                if self.eat(&Tok::LBracket) {
+                    let g = self.enter()?;
+                    let mut args = Vec::new();
+                    while !self.at(&Tok::RBracket) {
+                        args.push(self.parse_type()?);
+                        self.eat(&Tok::Comma);
+                    }
+                    self.expect(&Tok::RBracket, "']' in generic type")?;
+                    self.leave(g);
+                    TypeExpr::Generic(name, args)
+                } else {
+                    TypeExpr::Named(name)
+                }
             }
             Tok::LBracket => {
                 self.bump();
@@ -789,6 +805,28 @@ impl Parser {
                     end: x.span.end,
                 };
                 Ok(self.ex(span, ExprKind::Unary { op, x: Box::new(x) }))
+            }
+            Tok::Spawn => {
+                let start = self.pos();
+                self.bump();
+                let g = self.enter()?;
+                let body = if self.at(&Tok::LBrace) {
+                    let b_start = self.pos();
+                    let stmts = self.parse_block()?;
+                    let b_span = Span {
+                        start: b_start,
+                        end: self.t[self.i - 1].end,
+                    };
+                    self.ex(b_span, ExprKind::Block(stmts))
+                } else {
+                    self.parse_unary()?
+                };
+                self.leave(g);
+                let span = Span {
+                    start,
+                    end: body.span.end,
+                };
+                Ok(self.ex(span, ExprKind::Spawn(Box::new(body))))
             }
             _ => self.parse_postfix(),
         }

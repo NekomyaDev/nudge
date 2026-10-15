@@ -10,7 +10,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 /// Hierarchical task identifier.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -101,6 +101,8 @@ impl std::str::FromStr for TaskState {
     }
 }
 
+type TaskResultSlot = Arc<(Mutex<Option<Result<serde_json::Value, String>>>, Condvar)>;
+
 /// A cooperative cancellation and lifecycle token for a task.
 #[derive(Debug, Clone)]
 pub struct TaskToken {
@@ -110,7 +112,7 @@ pub struct TaskToken {
     children: Arc<Mutex<Vec<TaskToken>>>,
     state: Arc<Mutex<TaskState>>,
     budget_reserved: Arc<Mutex<f64>>,
-    result: Arc<Mutex<Option<Result<serde_json::Value, String>>>>,
+    result: TaskResultSlot,
 }
 
 impl TaskToken {
@@ -123,7 +125,7 @@ impl TaskToken {
             children: Arc::new(Mutex::new(Vec::new())),
             state: Arc::new(Mutex::new(TaskState::Pending)),
             budget_reserved: Arc::new(Mutex::new(0.0)),
-            result: Arc::new(Mutex::new(None)),
+            result: Arc::new((Mutex::new(None), Condvar::new())),
         }
     }
 
@@ -136,7 +138,7 @@ impl TaskToken {
             children: Arc::new(Mutex::new(Vec::new())),
             state: Arc::new(Mutex::new(TaskState::Pending)),
             budget_reserved: Arc::new(Mutex::new(0.0)),
-            result: Arc::new(Mutex::new(None)),
+            result: Arc::new((Mutex::new(None), Condvar::new())),
         }
     }
 
@@ -154,7 +156,7 @@ impl TaskToken {
                 TaskState::Pending
             })),
             budget_reserved: Arc::new(Mutex::new(0.0)),
-            result: Arc::new(Mutex::new(None)),
+            result: Arc::new((Mutex::new(None), Condvar::new())),
         };
         self.children.lock().unwrap().push(child.clone());
         child
@@ -174,7 +176,7 @@ impl TaskToken {
                 TaskState::Pending
             })),
             budget_reserved: Arc::new(Mutex::new(0.0)),
-            result: Arc::new(Mutex::new(None)),
+            result: Arc::new((Mutex::new(None), Condvar::new())),
         };
         self.children.lock().unwrap().push(child.clone());
         child
@@ -210,6 +212,8 @@ impl TaskToken {
             }
         }
         self.release_budget();
+        let (_lock, cvar) = &*self.result;
+        cvar.notify_all();
         let kids = self.children.lock().unwrap().clone();
         for kid in kids {
             kid.cancel();
@@ -235,6 +239,10 @@ impl TaskToken {
             return;
         }
         *st = new_state;
+        if new_state.is_terminal() {
+            let (_lock, cvar) = &*self.result;
+            cvar.notify_all();
+        }
         if new_state == TaskState::Cancelled {
             drop(st);
             self.cancel();
@@ -243,13 +251,57 @@ impl TaskToken {
 
     /// Record task outcome.
     pub fn set_result(&self, res: Result<serde_json::Value, String>) {
-        let mut r = self.result.lock().unwrap();
+        let (lock, cvar) = &*self.result;
+        let mut r = lock.lock().unwrap();
         *r = Some(res);
+        cvar.notify_all();
     }
 
     /// Retrieve recorded task outcome.
     pub fn get_result(&self) -> Option<Result<serde_json::Value, String>> {
-        self.result.lock().unwrap().clone()
+        let (lock, _) = &*self.result;
+        lock.lock().unwrap().clone()
+    }
+
+    /// Join task synchronously, blocking until completion, failure, or cancellation.
+    pub fn join(&self) -> Result<serde_json::Value, String> {
+        let (lock, cvar) = &*self.result;
+        let mut guard = lock.lock().unwrap();
+        while guard.is_none() && !self.is_cancelled() && !self.state.lock().unwrap().is_terminal() {
+            guard = cvar.wait(guard).unwrap();
+        }
+        if self.is_cancelled() {
+            return Err("error[E-task-0001]: TaskCancelled".to_string());
+        }
+        let st = *self.state.lock().unwrap();
+        match st {
+            TaskState::Cancelled => Err("error[E-task-0001]: TaskCancelled".to_string()),
+            TaskState::Failed => {
+                if let Some(Err(e)) = guard.as_ref() {
+                    if e.starts_with("error[E-task-0002]: TaskFailed") {
+                        Err(e.clone())
+                    } else {
+                        Err(format!("error[E-task-0002]: TaskFailed: {e}"))
+                    }
+                } else {
+                    Err("error[E-task-0002]: TaskFailed".to_string())
+                }
+            }
+            TaskState::Completed => {
+                if let Some(Ok(val)) = guard.as_ref() {
+                    Ok(val.clone())
+                } else {
+                    Ok(serde_json::Value::Null)
+                }
+            }
+            _ => {
+                if self.is_cancelled() {
+                    Err("error[E-task-0001]: TaskCancelled".to_string())
+                } else {
+                    Err("error[E-task-0002]: TaskFailed".to_string())
+                }
+            }
+        }
     }
 
     /// Add to this task's held budget reservation.
@@ -439,27 +491,7 @@ pub fn task_is_cancelled(id: Option<&str>) -> bool {
 pub fn task_join(id: &str) -> Result<serde_json::Value, String> {
     let token = task_lookup(id)
         .ok_or_else(|| format!("error[E-task-0003]: InvalidTaskHandle: task '{id}' not found"))?;
-    if token.is_cancelled() {
-        return Err("error[E-task-0001]: TaskCancelled".to_string());
-    }
-    match token.state() {
-        TaskState::Cancelled => Err("error[E-task-0001]: TaskCancelled".to_string()),
-        TaskState::Failed => {
-            if let Some(Err(e)) = token.get_result() {
-                Err(format!("error[E-task-0002]: TaskFailed: {e}"))
-            } else {
-                Err("error[E-task-0002]: TaskFailed".to_string())
-            }
-        }
-        TaskState::Completed => {
-            if let Some(Ok(val)) = token.get_result() {
-                Ok(val)
-            } else {
-                Ok(serde_json::Value::Null)
-            }
-        }
-        _ => Err("task still running (async join not resolved)".to_string()),
-    }
+    token.join()
 }
 
 /// Clear the task registry and budget state.

@@ -45,6 +45,7 @@ pub enum Tok {
     True,
     False,
     None,
+    Spawn,
 
     // punctuation & operators
     LParen,
@@ -123,6 +124,7 @@ const KEYWORDS: &[(&str, Tok)] = &[
     ("true", Tok::True),
     ("false", Tok::False),
     ("none", Tok::None),
+    ("spawn", Tok::Spawn),
 ];
 
 pub fn lex(src: &str) -> Result<Vec<Spanned>, LexError> {

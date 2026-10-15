@@ -42,6 +42,9 @@ pub fn hint(code: &str) -> Option<&'static str> {
         "E-auth-0403" | "E0403" => "account does not have the required scope or permissions",
         "E-auth-0404" | "E0404" => "provider adapter is disabled because no official public OAuth contract exists",
         "E-auth-0405" | "E0405" => "credential store is corrupted, insecure, or unreadable",
+        "E-task-0001" => "task was cancelled — cooperative checkpoints prevent further execution",
+        "E-task-0002" => "task failed during execution — inspect the inner error for failure details",
+        "E-task-0003" => "invalid or corrupt task handle — verify task handle origin and lifecycle",
         _ => return None,
     })
 }

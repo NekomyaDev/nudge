@@ -38,6 +38,7 @@ enum Ty {
     Record(Vec<(String, Ty)>),
     Refine(Box<Ty>, String),
     View,
+    Task(Box<Ty>),
 }
 
 impl fmt::Display for Ty {
@@ -56,6 +57,7 @@ impl fmt::Display for Ty {
             }
             Ty::Refine(base, name) => write!(f, "{base} @{name}"),
             Ty::View => write!(f, "View"),
+            Ty::Task(inner) => write!(f, "Task[{inner}]"),
         }
     }
 }
@@ -139,6 +141,17 @@ fn resolve(
             validate_refinement(name, args, errs);
             Ty::Refine(Box::new(resolve(base, g, visiting, errs)), name.clone())
         }
+        TypeExpr::Generic(name, args) => match name.as_str() {
+            "Task" if args.len() == 1 => Ty::Task(Box::new(resolve(&args[0], g, visiting, errs))),
+            _ => {
+                errs.push(CheckError {
+                    span: None,
+                    code: "E0201",
+                    msg: format!("unknown generic type '{name}'"),
+                });
+                Ty::Unknown
+            }
+        },
     }
 }
 
@@ -195,6 +208,7 @@ fn assignable(src: &Ty, dst: &Ty) -> bool {
     match (src, dst) {
         (Ty::Int, Ty::Float) => true, // numeric widening
         (Ty::List(a), Ty::List(b)) => assignable(a, b),
+        (Ty::Task(a), Ty::Task(b)) => assignable(a, b),
         (Ty::Record(a), Ty::Record(b)) => {
             a.len() == b.len()
                 && b.iter().all(|(k, bt)| {
@@ -439,6 +453,8 @@ fn direct_effects(
             }
             direct_effects(body, g, effects, calls);
         }
+        ExprKind::Block(stmts) => body_effects(stmts, g, effects, calls),
+        ExprKind::Spawn(_) => {}
         _ => {}
     }
 }
@@ -590,6 +606,8 @@ fn expr_has_effect_call(
                     .as_ref()
                     .is_some_and(|c| expr_has_effect_call(c, g, inferred))
         }),
+        ExprKind::Block(stmts) => stmts_have_effect_call(stmts, g, inferred),
+        ExprKind::Spawn(_) => false,
         _ => false,
     }
 }
@@ -1463,7 +1481,15 @@ fn check_expr_pos(
                             "status" => return Ty::Str,
                             "cancel" => return Ty::None_,
                             "is_cancelled" => return Ty::Bool,
-                            "join" => return Ty::Unknown,
+                            "join" => {
+                                if !args.is_empty() {
+                                    let arg_ty = check_expr(&args[0], locals, g, errs);
+                                    if let Ty::Task(inner) = arg_ty {
+                                        return *inner;
+                                    }
+                                }
+                                return Ty::Unknown;
+                            }
                             "spawn" => {
                                 return Ty::Record(vec![
                                     ("id".to_string(), Ty::Str),
@@ -1478,6 +1504,18 @@ fn check_expr_pos(
             Ty::Unknown
         }
         ExprKind::Field { obj, name } => match check_expr(obj, locals, g, errs) {
+            Ty::Task(_) => {
+                if name == "id" || name == "state" || name == "status" {
+                    Ty::Str
+                } else {
+                    errs.push(CheckError {
+                        span: None,
+                        code: "E0101",
+                        msg: format!("task has no field '{name}'"),
+                    });
+                    Ty::Unknown
+                }
+            }
             Ty::Record(fs) => {
                 // map-shaped record (v1.2.1): `{string: T}` is a string-keyed
                 // map — any field name resolves to the value type, matching
@@ -2086,6 +2124,22 @@ fn check_expr_pos(
                     }
                 }
             }
+        }
+        ExprKind::Spawn(body) => {
+            let inner_ty = check_expr(body, locals, g, errs);
+            Ty::Task(Box::new(inner_ty))
+        }
+        ExprKind::Block(stmts) => {
+            let mut child_locals = locals.clone();
+            let mut child_mut_locals = HashSet::new();
+            check_fn_stmts(
+                stmts,
+                &mut child_locals,
+                &mut child_mut_locals,
+                AgentCtx::None,
+                g,
+                errs,
+            )
         }
     }
 }

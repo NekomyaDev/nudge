@@ -464,6 +464,16 @@ fn sink_path() -> Option<PathBuf> {
     })
 }
 
+/// Query the currently configured sink path (from thread override or environment).
+pub fn current_sink_path() -> Option<PathBuf> {
+    sink_path()
+}
+
+/// Query the currently configured replay path (from thread override or environment).
+pub fn current_replay_path() -> Option<PathBuf> {
+    replay_path()
+}
+
 /// Is trace writing active for the current call?
 pub fn sink_active() -> bool {
     sink_path().is_some()

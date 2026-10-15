@@ -283,6 +283,20 @@ fn collect_calls(e: &Expr, in_par: bool, out: &mut Vec<(String, bool)>) {
                 collect_calls(v, in_par, out);
             }
         }
+        ExprKind::Spawn(body) => collect_calls(body, in_par, out),
+        ExprKind::Block(stmts) => {
+            for s in stmts {
+                match &s.kind {
+                    StmtKind::Let { value, .. }
+                    | StmtKind::Assign { value, .. }
+                    | StmtKind::StateWrite { value, .. } => {
+                        collect_calls(value, in_par, out);
+                    }
+                    StmtKind::Assert(e) | StmtKind::ExprStmt(e) => collect_calls(e, in_par, out),
+                    _ => {}
+                }
+            }
+        }
     }
 }
 
@@ -391,6 +405,20 @@ fn count_expr(e: &Expr, in_par: bool, c: &mut Count) {
                 count_expr(val, in_par, c);
                 if let Some(x) = cond {
                     count_expr(x, in_par, c);
+                }
+            }
+        }
+        ExprKind::Spawn(body) => count_expr(body, in_par, c),
+        ExprKind::Block(stmts) => {
+            for s in stmts {
+                match &s.kind {
+                    StmtKind::Let { value, .. }
+                    | StmtKind::Assign { value, .. }
+                    | StmtKind::StateWrite { value, .. } => {
+                        count_expr(value, in_par, c);
+                    }
+                    StmtKind::Assert(e) | StmtKind::ExprStmt(e) => count_expr(e, in_par, c),
+                    _ => {}
                 }
             }
         }

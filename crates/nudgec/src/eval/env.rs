@@ -34,6 +34,14 @@ impl Env {
         }
     }
 
+    /// Create an environment populated with initial bindings.
+    pub fn from_bindings(bindings: HashMap<String, Binding>) -> Self {
+        Self {
+            bindings,
+            parent: None,
+        }
+    }
+
     /// Define or overwrite an immutable binding in the current local scope.
     pub fn define(&mut self, name: String, val: NudgeVal) {
         self.bindings.insert(
@@ -77,6 +85,22 @@ impl Env {
             return parent.borrow_mut().assign(name, val);
         }
         Err(format!("unknown identifier '{name}'"))
+    }
+
+    /// Snapshot all visible bindings into a flat, independent environment.
+    pub fn snapshot(&self) -> Self {
+        Self::from_bindings(self.snapshot_bindings())
+    }
+
+    /// Snapshot all visible bindings into a flat HashMap.
+    pub fn snapshot_bindings(&self) -> HashMap<String, Binding> {
+        let mut flat_bindings = HashMap::new();
+        if let Some(parent) = &self.parent {
+            let parent_snapshot = parent.borrow().snapshot_bindings();
+            flat_bindings.extend(parent_snapshot);
+        }
+        flat_bindings.extend(self.bindings.clone());
+        flat_bindings
     }
 }
 

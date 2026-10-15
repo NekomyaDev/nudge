@@ -752,6 +752,10 @@ impl<'a> Compiler<'a> {
                 self.emit_delegated_expr(expr);
                 Ok(())
             }
+            ExprKind::Spawn(_) | ExprKind::Block(_) => {
+                self.emit_delegated_expr(expr);
+                Ok(())
+            }
             ExprKind::ComputerCall { .. } => {
                 Err("not in bytecode subset: computer call".to_string())
             }
@@ -980,6 +984,23 @@ fn check_expr_effects(expr: &Expr, tool_names: &[String]) -> Result<(), String> 
             check_expr_effects(then, tool_names)?;
             if let Some(el) = else_ {
                 check_expr_effects(el, tool_names)?;
+            }
+            Ok(())
+        }
+        ExprKind::Spawn(_) => Ok(()),
+        ExprKind::Block(stmts) => {
+            for s in stmts {
+                match &s.kind {
+                    StmtKind::Let { value, .. }
+                    | StmtKind::Assign { value, .. }
+                    | StmtKind::StateWrite { value, .. } => {
+                        check_expr_effects(value, tool_names)?;
+                    }
+                    StmtKind::Assert(e) | StmtKind::ExprStmt(e) => {
+                        check_expr_effects(e, tool_names)?;
+                    }
+                    _ => {}
+                }
             }
             Ok(())
         }

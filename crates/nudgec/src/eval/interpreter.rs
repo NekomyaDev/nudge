@@ -23,6 +23,7 @@ pub struct HeadlessAppRecord {
 }
 
 /// Runtime context holding global functions, tools, tests, agent store, and active agent.
+#[derive(Debug, Clone)]
 pub struct Interpreter {
     pub fns: HashMap<String, (Item, Option<String>)>, // name -> (Fn Item, agent_name)
     pub tools: HashMap<String, Item>,
@@ -564,6 +565,17 @@ impl Interpreter {
                             .ok_or_else(|| format!("element has no property '{name}'")),
                     },
                     NudgeVal::UiElement { found: false, .. } => Ok(NudgeVal::Unit),
+                    NudgeVal::Task(ref id) => {
+                        if name == "id" {
+                            Ok(NudgeVal::Str(id.clone()))
+                        } else if name == "state" || name == "status" {
+                            let st = nudge_runtime::task::task_status(id)
+                                .unwrap_or(nudge_runtime::task::TaskState::Pending);
+                            Ok(NudgeVal::Str(st.as_str().to_string()))
+                        } else {
+                            Err(format!("task has no field '{name}'"))
+                        }
+                    }
                     NudgeVal::Map(m) => m
                         .get(name)
                         .cloned()
@@ -739,6 +751,76 @@ impl Interpreter {
                 } else {
                     Ok(NudgeVal::Unit)
                 }
+            }
+            ExprKind::Block(stmts) => {
+                let child_env = Rc::new(RefCell::new(Env::new_child(env.clone())));
+                self.eval_body(stmts, &child_env)
+            }
+            ExprKind::Spawn(body) => {
+                let child_token = nudge_runtime::task::task_spawn(None);
+                let child_token_clone = child_token.clone();
+                let body = body.clone();
+                let mut child_interp = self.clone();
+                let env_bindings = env.borrow().snapshot_bindings();
+                let trace_sink = nudge_runtime::trace::current_sink_path();
+                let trace_replay = nudge_runtime::trace::current_replay_path();
+
+                std::thread::spawn(move || {
+                    let _trace_scope =
+                        nudge_runtime::trace::testing::scope(trace_sink, trace_replay);
+                    let _guard = nudge_runtime::task::push_current_task(child_token_clone.clone());
+                    if child_token_clone.is_cancelled() {
+                        child_token_clone.set_state(nudge_runtime::task::TaskState::Cancelled);
+                        child_token_clone
+                            .set_result(Err("error[E-task-0001]: TaskCancelled".to_string()));
+                        return;
+                    }
+                    child_token_clone.set_state(nudge_runtime::task::TaskState::Running);
+
+                    let thread_env = Rc::new(RefCell::new(Env::from_bindings(env_bindings)));
+                    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        child_interp.eval_expr(&body, &thread_env)
+                    }));
+
+                    match res {
+                        Ok(Ok(val)) => {
+                            if child_token_clone.is_cancelled() {
+                                child_token_clone
+                                    .set_state(nudge_runtime::task::TaskState::Cancelled);
+                                child_token_clone.set_result(Err(
+                                    "error[E-task-0001]: TaskCancelled".to_string(),
+                                ));
+                            } else {
+                                let json_val = crate::eval::val::nudgeval_to_json(&val);
+                                child_token_clone.set_result(Ok(json_val));
+                                child_token_clone
+                                    .set_state(nudge_runtime::task::TaskState::Completed);
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            if child_token_clone.is_cancelled()
+                                || e.contains("TaskCancelled")
+                                || e.contains("E-task-0001")
+                            {
+                                child_token_clone.cancel();
+                                child_token_clone.set_result(Err(
+                                    "error[E-task-0001]: TaskCancelled".to_string(),
+                                ));
+                            } else {
+                                child_token_clone.set_state(nudge_runtime::task::TaskState::Failed);
+                                child_token_clone.set_result(Err(e));
+                            }
+                        }
+                        Err(_panic) => {
+                            child_token_clone.set_state(nudge_runtime::task::TaskState::Failed);
+                            child_token_clone.set_result(Err(
+                                "error[E-task-0002]: TaskFailed: task panicked".to_string(),
+                            ));
+                        }
+                    }
+                });
+
+                Ok(NudgeVal::Task(child_token.id.as_str().to_string()))
             }
         }
     }
@@ -1525,6 +1607,7 @@ impl Interpreter {
                     nudge_runtime::task::current_task().map(|t| t.id.as_str().to_string())
                 } else {
                     match &args[0] {
+                        NudgeVal::Task(id) => Some(id.clone()),
                         NudgeVal::Str(s) => Some(s.clone()),
                         NudgeVal::Map(m) => m.get("id").and_then(|v| match v {
                             NudgeVal::Str(s) => Some(s.clone()),
@@ -1534,8 +1617,13 @@ impl Interpreter {
                     }
                 };
                 if let Some(id) = target_id {
-                    let status = nudge_runtime::task::task_status(&id)
-                        .map_err(|e| format!("error[E-native-0202]: {name} failed: {e}"))?;
+                    let status = nudge_runtime::task::task_status(&id).map_err(|e| {
+                        if e.starts_with("error[") {
+                            e
+                        } else {
+                            format!("error[E-native-0202]: {name} failed: {e}")
+                        }
+                    })?;
                     Ok(NudgeVal::Str(status.as_str().to_string()))
                 } else {
                     Ok(NudgeVal::Str("pending".to_string()))
@@ -1546,6 +1634,7 @@ impl Interpreter {
                     nudge_runtime::task::current_task().map(|t| t.id.as_str().to_string())
                 } else {
                     match &args[0] {
+                        NudgeVal::Task(id) => Some(id.clone()),
                         NudgeVal::Str(s) => Some(s.clone()),
                         NudgeVal::Map(m) => m.get("id").and_then(|v| match v {
                             NudgeVal::Str(s) => Some(s.clone()),
@@ -1555,8 +1644,13 @@ impl Interpreter {
                     }
                 };
                 if let Some(id) = target_id {
-                    nudge_runtime::task::task_cancel(&id)
-                        .map_err(|e| format!("error[E-native-0202]: {name} failed: {e}"))?;
+                    nudge_runtime::task::task_cancel(&id).map_err(|e| {
+                        if e.starts_with("error[") {
+                            e
+                        } else {
+                            format!("error[E-native-0202]: {name} failed: {e}")
+                        }
+                    })?;
                 } else if let Some(cur) = nudge_runtime::task::current_task() {
                     cur.cancel();
                 }
@@ -1567,6 +1661,7 @@ impl Interpreter {
                     None
                 } else {
                     match &args[0] {
+                        NudgeVal::Task(id) => Some(id.clone()),
                         NudgeVal::Str(s) => Some(s.clone()),
                         NudgeVal::Map(m) => m.get("id").and_then(|v| match v {
                             NudgeVal::Str(s) => Some(s.clone()),
@@ -1586,6 +1681,7 @@ impl Interpreter {
                     );
                 } else {
                     match &args[0] {
+                        NudgeVal::Task(id) => id.clone(),
                         NudgeVal::Str(s) => s.clone(),
                         NudgeVal::Map(m) => m
                             .get("id")
@@ -2688,6 +2784,7 @@ fn type_schema_json(
                 }
             }
         }
+        TypeExpr::Generic(name, _) => json!({"type": "object", "description": name}),
     }
 }
 
@@ -2862,7 +2959,7 @@ pub fn consume_sse_stream_with<R: std::io::BufRead, F: FnMut(&str)>(
 }
 
 #[cfg(all(test, feature = "compiler"))]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::ast::{Expr, ExprKind, Param, Span, TypeExpr};
     use crate::eval::run_program;
@@ -2870,7 +2967,7 @@ mod tests {
     use crate::parser::parse;
     use std::sync::Mutex;
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    pub(crate) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     struct EnvReset(&'static str, Option<String>);
     impl EnvReset {
@@ -4114,5 +4211,201 @@ data: [DONE]\n\n";
             "compute outputs must be byte-identical VM=1 vs VM=0"
         );
         assert_eq!(res_vm2, NudgeVal::Int(111));
+    }
+
+    #[test]
+    fn test_task_spawn_join_returns_value() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        nudge_runtime::task::task_reset();
+
+        let src = r#"
+            fn compute(x: int) -> int {
+                x * 2 + 10
+            }
+
+            fn main() -> int {
+                let t: Task[int] = spawn compute(16)
+                let res: int = task.join(t)
+                res
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+        let res = run_program(&items, "main", &[]).expect("run spawn+join");
+        assert_eq!(res, NudgeVal::Int(42));
+    }
+
+    #[test]
+    fn test_task_cancel_before_tool_raises_cancelled_and_no_tool_call() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let trace_path = std::env::temp_dir().join(format!(
+            "nudge_test_cancel_before_tool_{}.jsonl",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _scope = nudge_runtime::trace::testing::scope(Some(trace_path.clone()), None);
+        let _env_provider = EnvReset::set("NUDGE_PROVIDER", "fake");
+        nudge_runtime::task::task_reset();
+
+        let src = r#"
+            tool mock_write(data: string) -> bool {
+                impl: "mcp:fs"
+            }
+
+            fn main() -> bool uses Tool {
+                let t = spawn mock_write("leaked_mutation")
+                task.cancel(t)
+                let res = task.join(t)
+                res
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let err = run_program(&items, "main", &[]).expect_err("join must fail on cancelled task");
+        assert!(
+            err.contains("TaskCancelled") || err.contains("E-task-0001"),
+            "expected TaskCancelled error, got: {err}"
+        );
+
+        let trace_content = std::fs::read_to_string(&trace_path).unwrap_or_default();
+        let _ = std::fs::remove_file(&trace_path);
+        assert!(
+            !trace_content.contains("\"tool.call\""),
+            "cancelled task must NOT emit any tool.call records, trace was: {trace_content}"
+        );
+    }
+
+    #[test]
+    fn test_task_status_transitions_to_cancelled_and_terminal() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        nudge_runtime::task::task_reset();
+
+        let src = r#"
+            fn slow_op() -> int {
+                42
+            }
+
+            fn main() -> bool {
+                let t = spawn slow_op()
+                task.cancel(t)
+                assert task.status(t) == "cancelled"
+                assert task.is_cancelled(t)
+                true
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+        let res = run_program(&items, "main", &[]).expect("run status transitions");
+        assert_eq!(res, NudgeVal::Bool(true));
+    }
+
+    #[test]
+    fn test_task_child_spawned_inside_cancelled_parent_is_cancelled() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        nudge_runtime::task::task_reset();
+
+        // 1. In native runtime directly
+        let parent = nudge_runtime::task::TaskToken::root();
+        parent.cancel();
+        let _g = nudge_runtime::task::push_current_task(parent.clone());
+
+        let child = nudge_runtime::task::task_spawn(Some("propagated_child"));
+        assert!(
+            child.is_cancelled(),
+            "child must inherit parent cancellation"
+        );
+        assert_eq!(child.state(), nudge_runtime::task::TaskState::Cancelled);
+
+        // 2. In Nudge source execution
+        let src = r#"
+            fn worker() -> int {
+                let c = spawn 100
+                task.join(c)
+            }
+
+            fn main() -> int {
+                task.cancel()
+                let t = spawn worker()
+                task.join(t)
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+        let err = run_program(&items, "main", &[])
+            .expect_err("child in cancelled parent must fail with cancelled");
+        assert!(
+            err.contains("TaskCancelled") || err.contains("E-task-0001"),
+            "expected TaskCancelled error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_task_failing_body_raises_task_failed() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        nudge_runtime::task::task_reset();
+
+        let src = r#"
+            fn buggy() -> int {
+                assert 1 == 2
+                42
+            }
+
+            fn main() -> int {
+                let t = spawn buggy()
+                let res = task.join(t)
+                res
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+        let err = run_program(&items, "main", &[]).expect_err("join must re-raise task failure");
+        assert!(
+            err.contains("TaskFailed") || err.contains("E-task-0002"),
+            "expected TaskFailed error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_task_spawn_runs_effect_and_produces_llm_record() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let trace_path = std::env::temp_dir().join(format!(
+            "nudge_test_spawn_llm_{}.jsonl",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _scope = nudge_runtime::trace::testing::scope(Some(trace_path.clone()), None);
+        let _env_provider = EnvReset::set("NUDGE_PROVIDER", "fake");
+        nudge_runtime::task::task_reset();
+
+        // Notice: `main` does NOT declare `uses LLM`, because `spawn` captures the body's effects!
+        let src = r#"
+            fn run_worker() -> string uses LLM {
+                llm"""echo hello from worker""" with { model: "fake" }
+            }
+
+            fn main() -> string {
+                let t: Task[string] = spawn run_worker()
+                let res: string = task.join(t)
+                assert task.status(t) == "completed"
+                res
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+        let res = run_program(&items, "main", &[]).expect("spawn effectful body runs cleanly");
+        assert!(matches!(res, NudgeVal::Str(_)));
+
+        // Verify that trace actually contains the llm.call record
+        let trace_content = std::fs::read_to_string(&trace_path).unwrap_or_default();
+        let _ = std::fs::remove_file(&trace_path);
+        assert!(
+            trace_content.contains("\"llm.call\""),
+            "spawned task must execute LLM call and emit llm.call record, trace was: {trace_content}"
+        );
     }
 }

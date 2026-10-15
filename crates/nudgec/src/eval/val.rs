@@ -25,6 +25,7 @@ pub enum NudgeVal {
         elem: Box<nudge_runtime::ui::UiElement>,
     },
     HeadlessApp(usize),
+    Task(String),
 }
 
 impl NudgeVal {
@@ -43,6 +44,7 @@ impl NudgeVal {
             NudgeVal::WindowRef { .. } => true,
             NudgeVal::UiElement { found, .. } => *found,
             NudgeVal::HeadlessApp(_) => true,
+            NudgeVal::Task(_) => true,
         }
     }
 
@@ -61,6 +63,7 @@ impl NudgeVal {
             NudgeVal::WindowRef { .. } => "window",
             NudgeVal::UiElement { .. } => "element",
             NudgeVal::HeadlessApp(_) => "app",
+            NudgeVal::Task(_) => "task",
         }
     }
 
@@ -135,6 +138,7 @@ impl fmt::Display for NudgeVal {
                 }
             }
             NudgeVal::HeadlessApp(id) => write!(f, "<App #{id}>"),
+            NudgeVal::Task(id) => write!(f, "Task({id})"),
         }
     }
 }
@@ -200,6 +204,7 @@ pub fn nudgeval_to_json(v: &NudgeVal) -> serde_json::Value {
         NudgeVal::HeadlessApp(id) => serde_json::json!({
             "app_id": id
         }),
+        NudgeVal::Task(id) => serde_json::Value::String(id.clone()),
     }
 }
 
@@ -269,6 +274,7 @@ pub fn nudgeval_to_value(v: &NudgeVal) -> Result<nudge_runtime::value::Value, St
         NudgeVal::WindowRef { name, .. } => Value::String(format!("window {name}")),
         NudgeVal::UiElement { elem, .. } => Value::String(format!("<{}>", elem.tag)),
         NudgeVal::HeadlessApp(id) => Value::Int(*id as i64),
+        NudgeVal::Task(id) => Value::String(id.clone()),
     })
 }
 

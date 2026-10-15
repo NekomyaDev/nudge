@@ -324,6 +324,7 @@ fn ty_ts(t: &TypeExpr, aliases: &HashSet<String>) -> String {
         TypeExpr::List(_) => "any[]".into(),
         TypeExpr::Record(_) => "Record<string, any>".into(),
         TypeExpr::Refine(base, ..) => ty_ts(base, aliases),
+        TypeExpr::Generic(name, _) => format!("/* {name} */ any"),
     }
 }
 
@@ -405,6 +406,9 @@ fn schema_ts(
                     }
                 }
             }
+        }
+        TypeExpr::Generic(name, _) => {
+            format!("{{\"type\": \"object\", \"description\": \"{name}\"}}")
         }
     }
 }
@@ -708,9 +712,11 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
                 ),
             }
         }
-        ExprKind::RecordLit(_) | ExprKind::Index { .. } | ExprKind::If { .. } => {
-            "// pack1 codegen not yet lowered".to_string()
-        }
+        ExprKind::RecordLit(_)
+        | ExprKind::Index { .. }
+        | ExprKind::If { .. }
+        | ExprKind::Spawn(_)
+        | ExprKind::Block(_) => "// pack1/pack4 codegen not yet lowered".to_string(),
     }
 }
 

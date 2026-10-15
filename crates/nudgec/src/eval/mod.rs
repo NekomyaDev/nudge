@@ -429,10 +429,10 @@ mod tests {
     /// The computer statics (last-observation authority, replay cursors),
     /// the NUDGE_* bridge env vars and the trace/replay state are
     /// process-global — serialize the bridge + LLM trace/replay tests.
-    static COMPUTER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     fn computer_guard() -> std::sync::MutexGuard<'static, ()> {
-        COMPUTER_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+        interpreter::tests::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
     }
 
     /// Same lock for every test that runs LLM calls or touches the

@@ -655,6 +655,9 @@ fn schema_py(t: &TypeExpr, aliases: &HashSet<String>) -> String {
                 }
             }
         }
+        TypeExpr::Generic(name, _) => {
+            format!("{{\"type\": \"object\", \"description\": \"{name}\"}}")
+        }
     }
 }
 
@@ -861,9 +864,11 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
             );
             format!("rt.computer_{}({})", method, parts.join(", "))
         }
-        ExprKind::RecordLit(_) | ExprKind::Index { .. } | ExprKind::If { .. } => {
-            "# pack1 codegen not yet lowered".to_string()
-        }
+        ExprKind::RecordLit(_)
+        | ExprKind::Index { .. }
+        | ExprKind::If { .. }
+        | ExprKind::Spawn(_)
+        | ExprKind::Block(_) => "# pack1/pack4 codegen not yet lowered".to_string(),
     }
 }
 

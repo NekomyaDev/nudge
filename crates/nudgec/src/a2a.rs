@@ -19,6 +19,10 @@ fn ty_name(t: &TypeExpr) -> String {
                 .join(", ")
         ),
         TypeExpr::Refine(inner, name, _) => format!("{} @{name}(…)", ty_name(inner)),
+        TypeExpr::Generic(name, args) => format!(
+            "{name}[{}]",
+            args.iter().map(ty_name).collect::<Vec<_>>().join(", ")
+        ),
     }
 }
 
