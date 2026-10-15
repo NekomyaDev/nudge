@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Bytecode VM as default engine**: Stack VM (`crates/nudgec/src/bytecode.rs` and `vm.rs`) compiles pure functions to NBC bytecode and executes pure compute ~70x faster than the AST interpreter with explicit frame recursion safety. The VM is now the default execution path for `nudgec run` and standalone binaries. Reversible via `NUDGE_VM=0` (reverts to AST interpreter fallback) and `NUDGE_VM=1` (forces VM execution).
+- **Effect delegation in bytecode VM**: Pure functions orchestrate on the VM while delegating effectful callee functions to the AST interpreter (`DelegateCall`). Expression-level delegation (`DelegateExpr`) evaluates inline `llm` or `tool` expressions inside pure functions via the interpreter with lexical scope capture, returning to VM execution for subsequent instructions.
+- **Bytecode route support**: Compiles pure `route` branching expressions into `BranchIfFalse` and `Fail` bytecode instructions for exact parity with the interpreter.
+- **WASM live-tool host bridge end-to-end verification**: Verified live tool calls over the WebAssembly host bridge (`scripts/wasm_host_e2e.sh`, `examples/wasm-host/e2e.mjs`) under Node WASI, providing the `nudge_host_tool_call` import and completing a live `calculator::add` round-trip returning 42.
 - **Native standalone agent builds (cargo-free)**: `nudgec build --standalone <prog.ndg>` emits a single self-contained native agent by stamping the serialized AST into a compiler-free `nudge-agent` runtime — NO Rust toolchain is needed at the build site. Two flavors by size/capability: FULL (live-LLM capable, ~2.1MB) and REPLAY-ONLY (~866KB, offline). One-command packaging via `scripts/build_agent.sh` / `make agent[-small]`. The agent runs the complete language (LLM, MCP, computer, par, decide, replay, grants, stream let) — only the parser is omitted, since the program ships as a compiled AST (see docs/standalone.md).
 - **WebAssembly target (replay-only + live-tool host bridge)**: `nudge-runtime` compiles for wasm32 (wasip1 + unknown-unknown) with the network stack and process spawning gated out; `nudge-replay-wasi` replays a recorded NTF trace offline inside a .wasm (verified byte-identical under wasmtime). A browser/edge agent can make LIVE tool calls through the `nudge_host_tool_call` host-bridge import implemented by the JS host (`examples/wasm-host/`; see docs/wasm.md).
 - **Native Rust runtime parity**: the in-tree interpreter closes the last gaps — `tool.call` replay (deterministic $0, served from the trace before any live call), execution-layer `NUDGE_TOOL_GRANTS` enforcement (fail-closed, matching the Python reference), and `stream let` (token-by-token streaming with a fake/replay fallback).
@@ -51,6 +55,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **`nudge-ci` GitHub Action** (`action.yml`): agent regression CI in any repo — `nudgec check` + `nudgec test` (replay, $0) over a glob of `.ndg` programs, with optional `trace-diff` regression gate and `version`/`check-only` inputs; the repository now dogfoods it via `.github/workflows/agent-ci.yml`
 - `nudgec trace-diff a b --fail-on-regression`: exits 1 when the candidate trace costs more, uses more tokens, performs more repair rounds, or turns a passing llm call into a failure — turning trace diffing into a CI gate
 - `install.sh`: `NUDGE_VERSION` environment variable pins an exact release (or `main`) instead of the per-platform default
+
+### Changed
+- **Buffered trace writes**: Batched trace sink using a 64KB `BufWriter` with flush-on-drop, improving record and replay throughput by ~5.4x (from ~50k to ~272k calls/s) while preserving byte-identical JSONL trace outputs.
+- **Standalone bundle bincode encoding and reduced binary sizes**: Standalone agent payload switched from `serde_json` to `bincode` within the unchanged `[binary][bundle][u64 LE len][NDGAGNT1]` binary framing. Standalone replay-only agent binary reduced to ~832KB (was ~909KB), WASI replay `.wasm` reduced to ~526KB (was ~599KB), and full live agent reduced to ~2.09MB (was ~2.18MB).
+
+### Fixed
+- **VM function return trace parity**: Bytecode VM emits `fn.return` trace records identical to the AST interpreter, ensuring recorded traces are byte-identical across VM and interpreter runs for deterministic cross-engine replay.
 
 ## [1.2.1] - 2026-09-26
 

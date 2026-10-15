@@ -30,7 +30,7 @@ Nudge now uses **cargo-free AST stamping** (append-payload packaging):
 │ (Evaluator + Runtime Engine + Built-in Stdlib)                  │
 ├─────────────────────────────────────────────────────────────────┤
 │ Appended Payload:                                               │
-│ 1. Serialized StandaloneBundle JSON (entry point + AST items)   │
+│ 1. Serialized StandaloneBundle bincode (entry point + AST)      │
 │ 2. 64-bit Little-Endian Payload Length (8 bytes)                │
 │ 3. Magic Tag: b"NDGAGNT1" (8 bytes)                             │
 └─────────────────────────────────────────────────────────────────┘
@@ -39,12 +39,12 @@ Nudge now uses **cargo-free AST stamping** (append-payload packaging):
 ### Build Steps
 
 1. **Static Validation:** `nudgec` compiles and type-checks the `.ndg` source. If errors are detected, build terminates immediately with clear diagnostics and no binary is produced.
-2. **AST Serialization:** The verified AST items and selected entry function are serialized into a `StandaloneBundle`.
+2. **AST Serialization:** The verified AST items and selected entry function are serialized into a bincode-encoded `StandaloneBundle`.
 3. **Runtime Discovery:** `nudgec` locates the pre-compiled `nudge-agent` runtime binary.
 4. **Copy and Append:** `nudgec` copies the runtime binary to the output destination and appends the payload with the `NDGAGNT1` footer.
 5. **Executable Permissions:** On Unix systems, executable permissions (`0o755`) are automatically set.
 
-Because the program is pre-compiled into an AST at build time, the grammar parser is completely omitted from the agent binary. The resulting binary contains only the evaluation loop and runtime engine.
+Because the program is pre-compiled into an AST at build time, the grammar parser is completely omitted from the agent binary. The resulting binary contains the bytecode VM (the default execution engine for pure compute and routes), effect delegation to the evaluator, and runtime engine.
 
 ---
 
@@ -69,10 +69,10 @@ To balance capability and binary size, the standalone runtime is provided in two
 
 | Flavor | Size | Cargo Features | Description |
 |:---|:---:|:---|:---|
-| **Full (Default)** | ~2.1MB | `default` (with `live-provider`) | Full live-capable runtime with embedded HTTP/TLS stack (`ureq` + `rustls`). Connects to real LLM providers and live MCP services. |
-| **Replay-Only** | ~866KB | `--no-default-features` | Ultra-compact runtime with network and TLS dependencies compiled out. Evaluates logic and serves all model/tool calls offline from recorded NTF traces. |
+| **Full (Default)** | ~2.09MB | `default` (with `live-provider`) | Full live-capable runtime with embedded HTTP/TLS stack (`ureq` + `rustls`). Connects to real LLM providers and live MCP services (reduced from ~2.18MB via bincode payload and tuned release profile). |
+| **Replay-Only** | ~832KB | `--no-default-features` | Ultra-compact runtime with network and TLS dependencies compiled out. Evaluates logic and serves all model/tool calls offline from recorded NTF traces (reduced from ~909KB via bincode payload). |
 
-Both flavors are stripped and optimized with size optimization (`opt-level = "z"`).
+Both flavors are stripped and compiled with size optimization (`opt-level = "z"`, LTO, codegen-units=1, panic=abort). Standalone payloads use compact bincode encoding instead of JSON while preserving the `[binary][bundle][u64 LE len][NDGAGNT1]` binary framing.
 
 ---
 
@@ -92,10 +92,10 @@ If neither location contains a valid runtime binary, `nudgec` exits with an info
 A Makefile helper provides convenient one-command packaging shortcuts:
 
 ```sh
-# Build a full live-capable standalone agent (~2.1MB)
+# Build a full live-capable standalone agent (~2.09MB)
 make agent PROG=examples/chatbot/chatbot.ndg OUT=bin/chatbot
 
-# Build a compact replay-only standalone agent (~866KB)
+# Build a compact replay-only standalone agent (~832KB)
 make agent-small PROG=examples/chatbot/chatbot.ndg OUT=bin/chatbot-replay
 ```
 

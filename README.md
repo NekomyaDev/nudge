@@ -101,10 +101,10 @@ While Nudge compiles to Python and TypeScript today for ecosystem interoperabili
 
 - **Phase 1 (Shipped): Pure Nudge AST Interpreter (`nudgec run`)**: execute pure Nudge programs (state machines, algorithms, games) directly in Rust with sub-millisecond startup.
 - **Phase 2 (Shipped): In-Tree Native AI & Tool Runtime**: embedded Tokio + Reqwest (rustls) HTTP/SSE clients, deterministic NTF trace engine, and native MCP stdio communication.
-- **Phase 3 (Shipped): Cargo-Free Standalone Binaries & WebAssembly**:
-  - `nudgec build --standalone`: distribute single-binary native agents via AST stamping without Cargo or a build-site Rust toolchain. See [docs/standalone.md](docs/standalone.md).
-  - `nudge-replay-wasi` & WebAssembly: offline trace replay inside WASI and live tool calls via host bridge (`nudge_host_tool_call`). See [docs/wasm.md](docs/wasm.md).
-  - Bytecode VM deferred as premature given interpreter sub-millisecond cold starts.
+- **Phase 3 (Shipped): Cargo-Free Standalone Binaries, WebAssembly & Bytecode VM**:
+  - `nudgec build --standalone`: distribute single-binary native agents via AST stamping without Cargo or a build-site Rust toolchain (~2.09MB full live, ~832KB replay-only with bincode bundle). See [docs/standalone.md](docs/standalone.md).
+  - `nudge-replay-wasi` & WebAssembly: offline trace replay inside WASI (~526KB) and live tool calls via host bridge (`nudge_host_tool_call`) with end-to-end Node WASI verification. See [docs/wasm.md](docs/wasm.md).
+  - Bytecode VM is now the default engine: stack VM executes pure compute ~70x faster with deep recursion safety, effect delegation, and exact interpreter trace parity (`NUDGE_VM=0` reverts to interpreter).
 - **Phase 4: Python Decoupled as an Optional Plugin**: Python reserved strictly for opt-in legacy library bridging (`use python "pandas" as pd`).
 
 See the complete architecture RFC in [`docs/native-runtime-roadmap.md`](docs/native-runtime-roadmap.md).
@@ -123,8 +123,8 @@ nudgec build --standalone my-agent.ndg -o bin/my-agent
 
 - **AST Stamping:** `nudgec` type-checks the source, serializes the AST bundle, and appends it to a pre-built `nudge-agent` runtime binary (`NDGAGNT1` footer). Build takes milliseconds and requires no build-site compiler.
 - **Two Runtime Flavors:**
-  - **Full (~2.1MB, default):** live-capable runtime with embedded HTTP/TLS (`ureq` + `rustls`) for live LLMs and MCP servers.
-  - **Replay-Only (~866KB):** compiled with `--no-default-features` (network stack omitted) for deterministic offline replay at $0 cost.
+  - **Full (~2.09MB, default):** live-capable runtime with embedded HTTP/TLS (`ureq` + `rustls`) for live LLMs and MCP servers (reduced from ~2.18MB via bincode bundle).
+  - **Replay-Only (~832KB):** compiled with `--no-default-features` (network stack omitted) for deterministic offline replay at $0 cost (reduced from ~909KB via bincode bundle).
 - **Runtime Discovery:** located via `NUDGE_AGENT_RUNTIME` environment variable or as a sibling binary next to `nudgec`.
 - **Packaging Helper:** one-command Makefile shortcuts `make agent PROG=... OUT=...` (full) and `make agent-small ...` (replay-only).
 - **Full Language Support:** runs LLM calls, MCP tools, computer use, parallel blocks, typed decisions, and deterministic replay.
@@ -139,7 +139,7 @@ Nudge runs inside WebAssembly (`wasm32-wasip1` and `wasm32-unknown-unknown`) for
   ```sh
   wasmtime run --dir . nudge-replay-wasi.wasm bundle.json trace.jsonl
   ```
-- **Live Tool Calls via Host Bridge:** When deployed in browser or edge JavaScript runtimes, agents execute live tools through the `nudge_host_tool_call` import bridge (see `examples/wasm-host/`).
+- **Live Tool Calls via Host Bridge:** When deployed in browser or edge JavaScript runtimes, agents execute live tools through the `nudge_host_tool_call` import bridge (see `examples/wasm-host/`). Proven end-to-end via `scripts/wasm_host_e2e.sh` and `examples/wasm-host/e2e.mjs` under Node WASI with a live `calculator::add` round-trip returning 42.
 - **Sandboxed Safety:** Network sockets and process spawning are compiled out on wasm32, ensuring deterministic, isolated execution.
 
 Read the [WebAssembly Runtime Documentation](docs/wasm.md) for architecture and build instructions.
@@ -166,7 +166,8 @@ Read the [WebAssembly Runtime Documentation](docs/wasm.md) for architecture and 
 | **Property Tests** | `for_all x in gen { … }`: fuzz your agent logic (incl. an injection corpus), shrink failures |
 | **Typed Decisions** | `decide { … choose / yes/no / score }`: batched JEV-family decisions with distributions, confidence, deadlines |
 | **Computer Use** | `computer.observe` + typed actions: the machine as a replayable effect — the language owns control, the model owns perception |
-| **Standalone Agents** | `nudgec build --standalone`: single native binary via cargo-free AST stamping (~2.1MB live, ~866KB replay) |
+| **Standalone Agents** | `nudgec build --standalone`: single native binary via cargo-free AST stamping (~2.09MB live, ~832KB replay) |
+| **Bytecode VM Engine** | Stack VM default for pure compute and routes (~70x faster, deep-recursion safe, effect delegation) |
 | **WASM Replay & Host** | `nudge-replay-wasi` offline replay in WASI/wasmtime; live tools via `nudge_host_tool_call` bridge |
 | **A2A & LSP & OTel** | Built in, not bolted on |
 
@@ -383,6 +384,7 @@ Everything a compiled Nudge program reads comes from these variables:
 | `NUDGE_PROVIDER` | Provider override (`fake`, `openai`, `anthropic`, …). `fake` synthesizes schema-valid outputs — no API key needed |
 | `NUDGE_DECISION_SERVERS` | Decision provider registry (JSON): `{"laya": {"base_url": "http://localhost:8000"}}`. Unconfigured named providers raise — no silent fake |
 | `NUDGE_AGENT_RUNTIME` | Path to pre-built nudge-agent runtime binary for nudgec build --standalone |
+| `NUDGE_VM` | Execution engine toggle. Bytecode VM is default (unset or `1`), while `0` reverts to the AST interpreter fallback |
 | `NUDGE_PRICING` | JSON pricing table for real providers: `{"my-model": [1.0, 2.0]}` (USD per 1M in/out tokens). Extends the built-in table — unknown models stop recording $0 |
 | `NUDGE_RETRY_TRANSIENT` | Retries for transient provider errors (429/5xx), default 3; `0` disables |
 | `NUDGE_TOOL_GRANTS` | Execution-layer tool policy (JSON): `{"web_search": ["*"], "kb/*": ["retrieve"], "shell": []}` — ungranted tools raise `ToolDenied` and the denial is traced (`outcome: "denied"`); policy present = fail closed |

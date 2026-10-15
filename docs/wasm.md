@@ -58,7 +58,7 @@ The `nudge-replay-wasi` binary is a dedicated WASI executable (`wasm32-wasip1`) 
 
 ### How It Works
 
-1. **Input Bundle and Trace:** Takes a serialized `StandaloneBundle` JSON file (pre-compiled AST items and entry point) and an NTF trace JSONL file.
+1. **Input Bundle and Trace:** Takes a serialized `StandaloneBundle` bincode file (pre-compiled AST items and entry point) and an NTF trace JSONL file.
 2. **Environment Configuration:** Sets `NUDGE_REPLAY` internally pointing to the provided trace path.
 3. **Trace-Driven Evaluation:** Executes `nudgec::eval::run_program`. When the program encounters `llm"""` blocks or `tool` calls, the replay engine intercepts the call and serves recorded outcomes directly from the trace.
 4. **Byte-Identical Output:** Verified under `wasmtime` to produce output byte-identical to the native recording run.
@@ -72,7 +72,7 @@ wasmtime run --dir . nudge-replay-wasi.wasm bundle.json trace.jsonl [optional_ar
 
 ### Binary Size
 
-When compiled with size optimizations (`opt-level = "z"`), the `nudge-replay-wasi.wasm` module measures approximately **543KB**, making it suitable for fast distribution and rapid instantiation.
+When compiled with size optimizations (`opt-level = "z"`, LTO, bincode bundle), the `nudge-replay-wasi.wasm` module measures approximately **526KB** (reduced from ~599KB), making it suitable for fast distribution and rapid instantiation.
 
 ---
 
@@ -107,6 +107,8 @@ extern "C" {
 
 See `examples/wasm-host/` for a reference implementation of the host harness and browser integration code.
 
+The live-tool host bridge is verified end-to-end via `scripts/wasm_host_e2e.sh` and `examples/wasm-host/e2e.mjs`. Under Node WASI, the harness instantiates the WASM module, provides the `nudge_host_tool_call` import, and executes a live `calculator::add({a: 17, b: 25})` call over WASM linear memory, round-tripping to 42 with zero network access.
+
 ---
 
 ## 5. Building the WASM Artifacts / 构建指南
@@ -139,7 +141,8 @@ cargo build --release -p nudge-runtime --target wasm32-unknown-unknown
 
 | Capability | Native Agent | WASM (nudge-replay-wasi) | WASM + Host Bridge |
 |:---|:---:|:---:|:---:|
-| Pure AST Evaluation | Supported | Supported | Supported |
+| Bytecode VM (Default) | Supported | Supported | Supported |
+| Pure AST Evaluation (Fallback) | Supported | Supported | Supported |
 | State Machines & Routes | Supported | Supported | Supported |
 | Deterministic NTF Replay | Supported | Supported | Supported |
 | Offline $0 Testing | Supported | Supported | Supported |

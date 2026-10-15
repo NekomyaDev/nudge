@@ -1,7 +1,7 @@
 # RFC & Architectural Roadmap: Pure Nudge Native Execution Engine
 # 原生独立执行引擎与去 Python 依赖路线图
 
-> **Status:** Active Execution (Phases 1-2 Shipped; Phase 3 Standalone & WASM Shipped)
+> **Status:** Active Execution (Phases 1-3 Shipped: Interpreter, Runtime, Standalone, WASM & Bytecode VM)
 > **Authors:** Nudge Core Architecture Team
 > **Language Support:** English & Chinese (zh-CN)
 > **Target Version:** v1.3 - v2.0
@@ -125,26 +125,30 @@ Transitioning from an external runtime to a pure native execution engine will be
 
 ---
 
-### Phase 3: Standalone Binary, WebAssembly & Bytecode VM [Standalone & WASM DONE, Bytecode VM Deferred]
-### 第三阶段：独立二进制导出、WebAssembly 与字节码虚拟机 [独立二进制与 WASM 已完成，字节码虚拟机暂缓]
+### Phase 3: Standalone Binary, WebAssembly & Bytecode VM [DONE (Shipped)]
+### 第三阶段：独立二进制导出、WebAssembly 与字节码虚拟机 [已完成]
 
 * **Goal:** Maximize execution portability and enable single-binary deployment.
 * **Status Summary:**
-  - **Standalone Binary (`nudgec build --standalone`): DONE (Shipped).** Implemented via cargo-free AST stamping into pre-built `nudge-agent` runtime (~2.1MB full live, ~866KB replay-only). See [`docs/standalone.md`](standalone.md).
-  - **WebAssembly Target (`wasm32-wasip1` / `wasm32-unknown-unknown`): DONE (Shipped).** Offline NTF replay runner `nudge-replay-wasi` verified under wasmtime, and live tool calls supported via `nudge_host_tool_call` host bridge. See [`docs/wasm.md`](wasm.md).
-  - **Nudge Bytecode (NBC) VM: DEFERRED (Premature).** The tree-walking AST interpreter and compiled AST payload deliver sub-millisecond cold starts and satisfy current performance goals. Introducing a separate bytecode VM layer is deferred until profiling justifies VM complexity.
+  - **Standalone Binary (`nudgec build --standalone`): DONE (Shipped).** Implemented via cargo-free AST stamping into pre-built `nudge-agent` runtime (~2.09MB full live, ~832KB replay-only) using compact bincode encoding. See [`docs/standalone.md`](standalone.md).
+  - **WebAssembly Target (`wasm32-wasip1` / `wasm32-unknown-unknown`): DONE (Shipped).** Offline NTF replay runner `nudge-replay-wasi` (~526KB) verified under wasmtime, and live tool calls proven end-to-end via `nudge_host_tool_call` host bridge under Node WASI (`scripts/wasm_host_e2e.sh`). See [`docs/wasm.md`](wasm.md).
+  - **Nudge Bytecode (NBC) VM: DONE (Shipped, Default Engine).** A stack VM (`crates/nudgec/src/bytecode.rs` + `vm.rs`) compiles pure functions to NBC bytecode and executes pure compute ~70x faster than the AST interpreter. Now the default execution engine for `run_program` in both `nudgec` and standalone binaries. Supports pure calls, routes (`BranchIfFalse`/`Fail`), and effect delegation (function-level `DelegateCall` and expression-level `DelegateExpr` with lexical scope capture). Emits identical `fn.return` traces for deterministic cross-engine replay parity. Reversible via `NUDGE_VM=0` (interpreter fallback) and `NUDGE_VM=1` (force VM).
 * **Features:**
   1. **Standalone Executable Compiler (`nudgec build --standalone`):** [DONE]
      - Embed the runtime engine and serialized AST bundle into a single self-contained native binary via append-payload (`NDGAGNT1` footer).
      - No Rust toolchain or Cargo invocation required at the build site.
-     - Two runtime flavors: Full (~2.1MB, live LLM/MCP/computer) and Replay-only (~866KB, `--no-default-features`).
+     - Two runtime flavors: Full (~2.09MB, live LLM/MCP/computer) and Replay-only (~832KB, `--no-default-features`), using compact bincode encoding.
   2. **WebAssembly Target (`wasm32-wasip1` / `wasm32-unknown-unknown`):** [DONE]
      - Offline replay binary `nudge-replay-wasi` executes recorded traces inside WASI with byte-identical output to native runs.
-     - Live tool calls supported through JavaScript host bridge (`nudge_host_tool_call`).
-  3. **Nudge Bytecode (NBC) VM:** [DEFERRED]
-     - Deferred as premature: the direct AST interpreter already starts in under 2ms.
+     - Live tool calls supported through JavaScript host bridge (`nudge_host_tool_call`), verified end-to-end in Node WASI (`examples/wasm-host/e2e.mjs`).
+  3. **Nudge Bytecode (NBC) VM:** [DONE]
+     - Stack-based virtual machine executing NBC bytecode with explicit call frames, overcoming the ~1,250 frame OS stack limit of the tree-walker.
+     - Default execution path with graceful fallback to the AST interpreter for uncompiled or effectful constructs.
+     - Mixed-program execution via function-level and expression-level effect delegation with lexical scope capture.
+     - Byte-identical trace records (`fn.return`) matching interpreter output for full deterministic replay compatibility.
+     - Buffered trace writes via 64KB `BufWriter` with flush-on-drop, boosting throughput ~5.4x (50k to 272k calls/s).
 * **Milestone Deliverable:**
-  Exporting any Nudge agent as a single, portable binary with sub-millisecond cold start without requiring Cargo or an external runtime.
+  Exporting any Nudge agent as a single portable binary running on the bytecode VM by default with sub-millisecond cold start without requiring Cargo or an external runtime.
 
 ---
 
