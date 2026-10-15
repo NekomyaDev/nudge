@@ -73,3 +73,20 @@ jobs:
       - name: Run the WASM live-tool host bridge e2e
         run: bash scripts/wasm_host_e2e.sh
 
+  gui-acceptance:
+    name: native GUI desktop acceptance (Xvfb)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+      - name: Install Xvfb + X11 build/runtime libs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb pkg-config libx11-dev libxkbcommon-dev libxkbcommon-x11-dev libxkbcommon-x11-0 libgl1-mesa-dev
+      - name: Run the real native-window acceptance test under a virtual display
+        # Builds the window runtime behind `native-gui` and drives a REAL OS window:
+        # create window -> dispatch click -> agent state changes -> re-render.
+        run: bash scripts/gui_acceptance.sh
+
