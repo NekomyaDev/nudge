@@ -429,4 +429,50 @@ mod tests {
         assert!(fnmatch("exact_match", "exact_match"));
         assert!(!fnmatch("exact_match", "exact_match_2"));
     }
+
+    #[test]
+    fn test_cancel_beats_grants_for_task_and_descendants() {
+        let _task_lock = crate::task::TASK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let guard = EnvGuard::new();
+        guard.set(r#"{"*": ["*"]}"#);
+        crate::task::task_reset();
+
+        // Without cancellation, tool calls are granted
+        assert!(check("any_tool", Some("any_server")).is_ok());
+
+        let root = crate::task::TaskToken::root();
+        let child = root.child(0);
+        let grandchild = child.child(0);
+        crate::task::task_register(root.clone());
+        crate::task::task_register(child.clone());
+        crate::task::task_register(grandchild.clone());
+
+        // Cancel root
+        root.cancel();
+
+        // Explicit test: cancelled task itself cannot call tool even with grants
+        {
+            let _g = crate::task::push_current_task(root);
+            let err = check("any_tool", Some("any_server")).unwrap_err();
+            assert_eq!(err, "error[E-task-0001]: TaskCancelled");
+        }
+
+        // Explicit test: child cannot call tool even with grants
+        {
+            let _g = crate::task::push_current_task(child);
+            let err = check("any_tool", Some("any_server")).unwrap_err();
+            assert_eq!(err, "error[E-task-0001]: TaskCancelled");
+        }
+
+        // Explicit test: grandchild cannot call tool even with grants
+        {
+            let _g = crate::task::push_current_task(grandchild);
+            let err = check("any_tool", Some("any_server")).unwrap_err();
+            assert_eq!(err, "error[E-task-0001]: TaskCancelled");
+        }
+
+        crate::task::task_reset();
+    }
 }

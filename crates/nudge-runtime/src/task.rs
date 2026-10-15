@@ -184,16 +184,26 @@ impl TaskToken {
 
     /// Check if this task or any of its ancestors is cancelled.
     pub fn is_cancelled(&self) -> bool {
+        {
+            let st = self.state.lock().unwrap();
+            if *st == TaskState::Cancelled {
+                return true;
+            }
+            if *st == TaskState::Completed || *st == TaskState::Failed {
+                return false;
+            }
+        }
         if self.cancelled.load(Ordering::SeqCst) {
             return true;
         }
         if let Some(parent) = &self.parent {
             if parent.is_cancelled() {
-                self.cancelled.store(true, Ordering::SeqCst);
                 let mut st = self.state.lock().unwrap();
-                if !st.is_terminal() {
-                    *st = TaskState::Cancelled;
+                if st.is_terminal() {
+                    return false;
                 }
+                self.cancelled.store(true, Ordering::SeqCst);
+                *st = TaskState::Cancelled;
                 drop(st);
                 self.release_budget();
                 return true;
@@ -204,16 +214,27 @@ impl TaskToken {
 
     /// Cancel this task and propagate cancellation to all subtasks.
     pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::SeqCst);
         {
             let mut st = self.state.lock().unwrap();
-            if !st.is_terminal() {
-                *st = TaskState::Cancelled;
+            if st.is_terminal() {
+                let kids = self.children.lock().unwrap().clone();
+                for kid in kids {
+                    kid.cancel();
+                }
+                return;
             }
+            *st = TaskState::Cancelled;
         }
+        self.cancelled.store(true, Ordering::SeqCst);
         self.release_budget();
-        let (_lock, cvar) = &*self.result;
-        cvar.notify_all();
+        {
+            let (lock, cvar) = &*self.result;
+            let mut r = lock.lock().unwrap();
+            if r.is_none() {
+                *r = Some(Err("error[E-task-0001]: TaskCancelled".to_string()));
+            }
+            cvar.notify_all();
+        }
         let kids = self.children.lock().unwrap().clone();
         for kid in kids {
             kid.cancel();
@@ -240,7 +261,18 @@ impl TaskToken {
         }
         *st = new_state;
         if new_state.is_terminal() {
-            let (_lock, cvar) = &*self.result;
+            let (lock, cvar) = &*self.result;
+            let mut r = lock.lock().unwrap();
+            if r.is_none() {
+                *r = match new_state {
+                    TaskState::Completed => Some(Ok(serde_json::Value::Null)),
+                    TaskState::Cancelled => {
+                        Some(Err("error[E-task-0001]: TaskCancelled".to_string()))
+                    }
+                    TaskState::Failed => Some(Err("error[E-task-0002]: TaskFailed".to_string())),
+                    _ => None,
+                };
+            }
             cvar.notify_all();
         }
         if new_state == TaskState::Cancelled {
@@ -251,8 +283,27 @@ impl TaskToken {
 
     /// Record task outcome.
     pub fn set_result(&self, res: Result<serde_json::Value, String>) {
+        let (lock, cvar) = &*self.result;
+        let mut r = lock.lock().unwrap();
         {
             let mut st = self.state.lock().unwrap();
+            let is_cancelled = *st == TaskState::Cancelled
+                || self.cancelled.load(Ordering::SeqCst)
+                || self
+                    .parent
+                    .as_ref()
+                    .map(|p| p.is_cancelled())
+                    .unwrap_or(false);
+            if is_cancelled {
+                if !st.is_terminal() {
+                    *st = TaskState::Cancelled;
+                }
+                if r.is_none() {
+                    *r = Some(Err("error[E-task-0001]: TaskCancelled".to_string()));
+                }
+                cvar.notify_all();
+                return;
+            }
             if !st.is_terminal() {
                 *st = match &res {
                     Ok(_) => TaskState::Completed,
@@ -263,8 +314,6 @@ impl TaskToken {
                 };
             }
         }
-        let (lock, cvar) = &*self.result;
-        let mut r = lock.lock().unwrap();
         *r = Some(res);
         cvar.notify_all();
     }
@@ -279,36 +328,18 @@ impl TaskToken {
     pub fn join(&self) -> Result<serde_json::Value, String> {
         let (lock, cvar) = &*self.result;
         let mut guard = lock.lock().unwrap();
-        while guard.is_none() && !self.is_cancelled() && !self.state.lock().unwrap().is_terminal() {
+        while guard.is_none() {
             guard = cvar.wait(guard).unwrap();
         }
-        if self.is_cancelled() {
-            return Err("error[E-task-0001]: TaskCancelled".to_string());
-        }
-        if let Some(res) = guard.as_ref() {
-            return match res {
-                Ok(val) => Ok(val.clone()),
-                Err(e) => {
-                    if e.contains("TaskCancelled") || e.contains("E-task-0001") {
-                        Err("error[E-task-0001]: TaskCancelled".to_string())
-                    } else if e.starts_with("error[E-task-0002]: TaskFailed") {
-                        Err(e.clone())
-                    } else {
-                        Err(format!("error[E-task-0002]: TaskFailed: {e}"))
-                    }
-                }
-            };
-        }
-        let st = *self.state.lock().unwrap();
-        match st {
-            TaskState::Cancelled => Err("error[E-task-0001]: TaskCancelled".to_string()),
-            TaskState::Failed => Err("error[E-task-0002]: TaskFailed".to_string()),
-            TaskState::Completed => Ok(serde_json::Value::Null),
-            _ => {
-                if self.is_cancelled() {
+        match guard.as_ref().unwrap() {
+            Ok(val) => Ok(val.clone()),
+            Err(e) => {
+                if e.contains("TaskCancelled") || e.contains("E-task-0001") {
                     Err("error[E-task-0001]: TaskCancelled".to_string())
+                } else if e.starts_with("error[E-task-0002]: TaskFailed") {
+                    Err(e.clone())
                 } else {
-                    Err("error[E-task-0002]: TaskFailed".to_string())
+                    Err(format!("error[E-task-0002]: TaskFailed: {e}"))
                 }
             }
         }
@@ -365,8 +396,17 @@ pub fn budget_reserve(amount: f64) -> Result<(), String> {
     if is_current_cancelled() {
         return Err("error[E-task-0001]: TaskCancelled".to_string());
     }
+    let cur = current_task();
+    if let Some(ref task) = cur {
+        if task.is_cancelled() {
+            return Err("error[E-task-0001]: TaskCancelled".to_string());
+        }
+    }
     if let Some(limit) = budget_limit() {
         let mut tracker = BUDGET_TRACKER.lock().unwrap();
+        if is_current_cancelled() {
+            return Err("error[E-task-0001]: TaskCancelled".to_string());
+        }
         let available = limit - tracker.spent - tracker.reserved;
         if amount > available + 1e-9 {
             return Err(format!(
@@ -376,8 +416,16 @@ pub fn budget_reserve(amount: f64) -> Result<(), String> {
         }
         tracker.reserved += amount;
     }
-    if let Some(task) = current_task() {
+    if let Some(task) = cur {
+        if task.is_cancelled() {
+            budget_release_internal(amount);
+            return Err("error[E-task-0001]: TaskCancelled".to_string());
+        }
         task.add_reservation(amount);
+        if task.is_cancelled() {
+            task.release_budget();
+            return Err("error[E-task-0001]: TaskCancelled".to_string());
+        }
     }
     Ok(())
 }
@@ -511,6 +559,16 @@ pub fn task_reset() {
         reg.clear();
     });
     budget_reset();
+}
+
+/// Query the number of registered tasks in the global task registry.
+pub fn task_registry_count() -> usize {
+    with_registry(|reg| reg.len())
+}
+
+/// Query whether the global task registry is empty.
+pub fn task_registry_is_empty() -> bool {
+    with_registry(|reg| reg.is_empty())
 }
 
 /// Serialize tests that share process-global task state like `TASK_REGISTRY`,
@@ -687,6 +745,188 @@ mod tests {
 
         t2.cancel();
         budget_reset();
+        unsafe {
+            std::env::remove_var("NUDGE_BUDGET");
+        }
+    }
+
+    #[test]
+    fn test_cancel_pending_task_join_raises_cancelled() {
+        let _lock = TASK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        task_reset();
+
+        let t = TaskToken::new(TaskId::new("root.pending_test"));
+        task_register(t.clone());
+        assert_eq!(t.state(), TaskState::Pending);
+
+        // Cancel while still pending
+        t.cancel();
+        assert_eq!(t.state(), TaskState::Cancelled);
+        assert!(t.is_cancelled());
+
+        // Join must raise TaskCancelled immediately
+        let res = t.join();
+        assert_eq!(res.unwrap_err(), "error[E-task-0001]: TaskCancelled");
+
+        task_reset();
+    }
+
+    #[test]
+    fn test_cancel_twice_is_idempotent_no_panic() {
+        let _lock = TASK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        task_reset();
+
+        let t = TaskToken::new(TaskId::new("root.idempotent_test"));
+        t.cancel();
+        assert_eq!(t.state(), TaskState::Cancelled);
+        assert!(t.is_cancelled());
+
+        // Second cancel should be a clean no-op, no panic, state unchanged
+        t.cancel();
+        assert_eq!(t.state(), TaskState::Cancelled);
+        assert!(t.is_cancelled());
+
+        let res = t.join();
+        assert_eq!(res.unwrap_err(), "error[E-task-0001]: TaskCancelled");
+
+        task_reset();
+    }
+
+    #[test]
+    fn test_cancel_already_completed_task_terminal_state_unchanged() {
+        let _lock = TASK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        task_reset();
+
+        let t = TaskToken::new(TaskId::new("root.completed_test"));
+        t.set_state(TaskState::Running);
+        t.set_result(Ok(serde_json::json!(42)));
+        assert_eq!(t.state(), TaskState::Completed);
+        assert!(!t.is_cancelled());
+
+        // Cancelling an already-completed task MUST NOT change terminal state or value
+        t.cancel();
+        assert_eq!(t.state(), TaskState::Completed);
+        assert!(!t.is_cancelled());
+
+        let res = t.join().expect("join on completed task must succeed");
+        assert_eq!(res, serde_json::json!(42));
+
+        task_reset();
+    }
+
+    #[test]
+    fn test_join_unknown_handle_raises_invalid_task_handle() {
+        let _lock = TASK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        task_reset();
+
+        let res = task_join("nonexistent_unknown_handle_9999");
+        assert!(res.is_err());
+        let err = res.unwrap_err();
+        assert!(
+            err.contains("error[E-task-0003]: InvalidTaskHandle"),
+            "expected InvalidTaskHandle error, got: {err}"
+        );
+
+        task_reset();
+    }
+
+    #[test]
+    fn test_shutdown_registry_leak_prevention_after_run_and_task_reset() {
+        let _lock = TASK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        task_reset();
+        assert!(task_registry_is_empty());
+        assert_eq!(task_registry_count(), 0);
+
+        let t1 = TaskToken::new(TaskId::new("root.task1"));
+        let t2 = TaskToken::new(TaskId::new("root.task2"));
+        task_register(t1);
+        task_register(t2);
+        assert_eq!(task_registry_count(), 2);
+        assert!(!task_registry_is_empty());
+
+        task_reset();
+        assert_eq!(task_registry_count(), 0);
+        assert!(task_registry_is_empty());
+    }
+
+    #[test]
+    fn test_cancelled_task_cannot_reserve_budget_no_false_exceeded_for_siblings() {
+        let _lock = TASK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        budget_reset();
+        task_reset();
+
+        unsafe {
+            std::env::set_var("NUDGE_BUDGET", "0.0050");
+        }
+
+        let root = TaskToken::root();
+        task_register(root.clone());
+        let t1 = root.child_named("worker1");
+        let t2 = root.child_named("worker2");
+        task_register(t1.clone());
+        task_register(t2.clone());
+
+        // t1 reserves 0.0040 of 0.0050
+        {
+            let _g1 = push_current_task(t1.clone());
+            assert!(budget_reserve(0.0040).is_ok());
+        }
+
+        // t2 trying to reserve 0.0030 fails because only 0.0010 is available
+        {
+            let _g2 = push_current_task(t2.clone());
+            assert!(budget_reserve(0.0030).is_err());
+        }
+
+        // Cancel t1 -> reservation is released immediately
+        t1.cancel();
+        assert_eq!(budget_status().1, 0.0);
+
+        // t2 can now reserve 0.0030 without false BudgetExceeded!
+        {
+            let _g2 = push_current_task(t2.clone());
+            assert!(budget_reserve(0.0030).is_ok());
+        }
+
+        // Cancelled t1 cannot reserve new budget; returns TaskCancelled, NOT BudgetExceeded
+        {
+            let _g1 = push_current_task(t1.clone());
+            let err = budget_reserve(0.0010).unwrap_err();
+            assert_eq!(err, "error[E-task-0001]: TaskCancelled");
+        }
+
+        t2.cancel();
+        budget_reset();
+        task_reset();
+        unsafe {
+            std::env::remove_var("NUDGE_BUDGET");
+        }
+    }
+
+    #[test]
+    fn test_cancelled_descendants_cannot_reserve_budget() {
+        let _lock = TASK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        budget_reset();
+        task_reset();
+
+        unsafe {
+            std::env::set_var("NUDGE_BUDGET", "0.0050");
+        }
+
+        let root = TaskToken::root();
+        let child = root.child(0);
+        let grandchild = child.child(0);
+
+        // Cancel root
+        root.cancel();
+
+        // Grandchild observes cancellation and cannot reserve budget
+        let _g = push_current_task(grandchild);
+        let err = budget_reserve(0.0010).unwrap_err();
+        assert_eq!(err, "error[E-task-0001]: TaskCancelled");
+
+        budget_reset();
+        task_reset();
         unsafe {
             std::env::remove_var("NUDGE_BUDGET");
         }

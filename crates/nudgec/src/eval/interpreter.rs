@@ -912,7 +912,6 @@ impl Interpreter {
                         nudge_runtime::trace::testing::scope(trace_sink, trace_replay);
                     let _guard = nudge_runtime::task::push_current_task(child_token_clone.clone());
                     if child_token_clone.is_cancelled() {
-                        child_token_clone.set_state(nudge_runtime::task::TaskState::Cancelled);
                         child_token_clone
                             .set_result(Err("error[E-task-0001]: TaskCancelled".to_string()));
                         return;
@@ -927,15 +926,11 @@ impl Interpreter {
                     match res {
                         Ok(Ok(val)) => {
                             if child_token_clone.is_cancelled() {
-                                child_token_clone
-                                    .set_state(nudge_runtime::task::TaskState::Cancelled);
                                 child_token_clone.set_result(Err(
                                     "error[E-task-0001]: TaskCancelled".to_string(),
                                 ));
                             } else {
                                 let json_val = crate::eval::val::nudgeval_to_json(&val);
-                                child_token_clone
-                                    .set_state(nudge_runtime::task::TaskState::Completed);
                                 child_token_clone.set_result(Ok(json_val));
                             }
                         }
@@ -945,19 +940,20 @@ impl Interpreter {
                                 || e.contains("E-task-0001")
                             {
                                 child_token_clone.cancel();
-                                child_token_clone.set_result(Err(
-                                    "error[E-task-0001]: TaskCancelled".to_string(),
-                                ));
                             } else {
-                                child_token_clone.set_state(nudge_runtime::task::TaskState::Failed);
                                 child_token_clone.set_result(Err(e));
                             }
                         }
-                        Err(_panic) => {
-                            child_token_clone.set_state(nudge_runtime::task::TaskState::Failed);
-                            child_token_clone.set_result(Err(
-                                "error[E-task-0002]: TaskFailed: task panicked".to_string(),
-                            ));
+                        Err(payload) => {
+                            let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+                                (*s).to_string()
+                            } else if let Some(s) = payload.downcast_ref::<String>() {
+                                s.clone()
+                            } else {
+                                "task panicked".to_string()
+                            };
+                            child_token_clone
+                                .set_result(Err(format!("error[E-task-0002]: TaskFailed: {msg}")));
                         }
                     }
                 });
@@ -2664,10 +2660,28 @@ fn fake_distribution(mut seed: u64, k: usize) -> Vec<f64> {
 
 /// Public API: Execute a Nudge program from entry point with arguments.
 pub fn run_program(items: &[Item], entry: &str, args: &[NudgeVal]) -> Result<NudgeVal, String> {
+    let is_top_run = nudge_runtime::task::current_task().is_none();
     let root_task =
         nudge_runtime::task::current_task().unwrap_or_else(nudge_runtime::task::TaskToken::root);
     nudge_runtime::task::task_register(root_task.clone());
-    let _task_guard = nudge_runtime::task::push_current_task(root_task);
+    let _task_guard = nudge_runtime::task::push_current_task(root_task.clone());
+
+    struct RunExitGuard {
+        task: nudge_runtime::task::TaskToken,
+        is_top: bool,
+    }
+    impl Drop for RunExitGuard {
+        fn drop(&mut self) {
+            if self.is_top {
+                // Cancel running background tasks on exit so unjoined children do not hang
+                self.task.cancel();
+            }
+        }
+    }
+    let _exit_guard = RunExitGuard {
+        task: root_task.clone(),
+        is_top: is_top_run,
+    };
 
     let vm_enabled = std::env::var("NUDGE_VM").as_deref() != Ok("0");
     if vm_enabled {
@@ -2689,13 +2703,24 @@ pub fn run_program(items: &[Item], entry: &str, args: &[NudgeVal]) -> Result<Nud
                 }
             };
             let res = vm::run_with_delegate(&program, entry, args, &mut delegate);
+            if res.is_ok() {
+                root_task.set_state(nudge_runtime::task::TaskState::Completed);
+            } else {
+                root_task.set_state(nudge_runtime::task::TaskState::Failed);
+            }
             return res;
         }
     }
 
     let mut interp = Interpreter::new();
     interp.load_items(items)?;
-    interp.invoke_fn(entry, args)
+    let outcome = interp.invoke_fn(entry, args);
+    if outcome.is_ok() {
+        root_task.set_state(nudge_runtime::task::TaskState::Completed);
+    } else {
+        root_task.set_state(nudge_runtime::task::TaskState::Failed);
+    }
+    outcome
 }
 
 /// Convenience alias for `run_program`.
@@ -4543,6 +4568,236 @@ data: [DONE]\n\n";
         assert!(
             trace_content.contains("\"llm.call\""),
             "spawned task must execute LLM call and emit llm.call record, trace was: {trace_content}"
+        );
+    }
+
+    #[test]
+    fn test_task_cancel_pending_task_no_tool_call_fires() {
+        let _task_lock = nudge_runtime::task::TASK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let trace_path = std::env::temp_dir().join(format!(
+            "nudge_test_cancel_pending_{}.jsonl",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _scope = nudge_runtime::trace::testing::scope(Some(trace_path.clone()), None);
+        let _env_provider = EnvReset::set("NUDGE_PROVIDER", "fake");
+        nudge_runtime::task::task_reset();
+
+        let src = r#"
+            tool mock_write(data: string) -> bool {
+                impl: "mcp:fs"
+            }
+
+            fn run_worker() -> bool uses Tools {
+                mock_write("hello")
+            }
+
+            fn main() -> bool {
+                let t: Task[bool] = spawn run_worker()
+                task.cancel(t)
+                let res: bool = task.join(t)
+                res
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+        let err = run_program(&items, "main", &[]).expect_err("join must fail on cancelled task");
+        assert!(
+            err.contains("TaskCancelled") || err.contains("E-task-0001"),
+            "expected TaskCancelled error, got: {err}"
+        );
+
+        // Verify that NO tool call was emitted to the trace
+        let trace_content = std::fs::read_to_string(&trace_path).unwrap_or_default();
+        let _ = std::fs::remove_file(&trace_path);
+        assert!(
+            !trace_content.contains("\"tool.call\""),
+            "no tool call should fire when pending task is cancelled, trace: {trace_content}"
+        );
+    }
+
+    #[test]
+    fn test_task_cancel_already_completed_preserves_value() {
+        let _task_lock = nudge_runtime::task::TASK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        nudge_runtime::task::task_reset();
+
+        let src = r#"
+            fn compute(x: int) -> int {
+                x * 2 + 10
+            }
+
+            fn main() -> int {
+                let t: Task[int] = spawn compute(16)
+                let res: int = task.join(t)
+                task.cancel(t)
+                assert task.status(t) == "completed"
+                res
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+        let res = run_program(&items, "main", &[]).expect("completed task cancel returns value");
+        assert_eq!(res, NudgeVal::Int(42));
+    }
+
+    #[test]
+    fn test_task_body_panics_join_raises_task_failed_process_continues() {
+        let _task_lock = nudge_runtime::task::TASK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        nudge_runtime::task::task_reset();
+
+        let src = r#"
+            fn panic_worker() -> int {
+                assert 1 == 2
+                999
+            }
+
+            fn main() -> int {
+                let t: Task[int] = spawn panic_worker()
+                let res: int = task.join(t)
+                res
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+        let err = run_program(&items, "main", &[])
+            .expect_err("join must catch panic and return TaskFailed");
+        assert!(
+            err.contains("TaskFailed") || err.contains("E-task-0002"),
+            "expected TaskFailed error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_task_join_unknown_handle_ndg() {
+        let _task_lock = nudge_runtime::task::TASK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        nudge_runtime::task::task_reset();
+
+        let src = r#"
+            fn main() -> int {
+                let res: int = task.join("nonexistent_task_handle")
+                res
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+        let err = run_program(&items, "main", &[]).expect_err("join on unknown handle must fail");
+        assert!(
+            err.contains("InvalidTaskHandle") || err.contains("E-task-0003"),
+            "expected InvalidTaskHandle error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_shutdown_still_running_child_exits_cleanly_no_hang() {
+        let _task_lock = nudge_runtime::task::TASK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        nudge_runtime::task::task_reset();
+
+        // Background child sleeps, main returns immediately without joining.
+        let src = r#"
+            fn long_worker() -> int {
+                let _ = time.sleep(10.0)
+                42
+            }
+
+            fn main() -> int {
+                let t = spawn long_worker()
+                100
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+        let start = std::time::Instant::now();
+        let res = run_program(&items, "main", &[]).expect("run_program must exit cleanly");
+        let elapsed = start.elapsed();
+        assert_eq!(res, NudgeVal::Int(100));
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "run_program must not hang on still-running background task, took {:?}",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn test_shutdown_no_registry_leak_after_run_program_and_task_reset() {
+        let _task_lock = nudge_runtime::task::TASK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        nudge_runtime::task::task_reset();
+
+        let src = r#"
+            fn worker() -> int {
+                123
+            }
+
+            fn main() -> int {
+                let t = spawn worker()
+                task.join(t)
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+        let res = run_program(&items, "main", &[]).expect("run");
+        assert_eq!(res, NudgeVal::Int(123));
+
+        // Registry had tasks during execution
+        assert!(nudge_runtime::task::task_registry_count() > 0);
+
+        // After task_reset(), global registry is fully cleaned
+        nudge_runtime::task::task_reset();
+        assert_eq!(nudge_runtime::task::task_registry_count(), 0);
+        assert!(nudge_runtime::task::task_registry_is_empty());
+    }
+
+    #[test]
+    fn test_cancelled_task_and_descendants_fail_closed_with_grants() {
+        let _task_lock = nudge_runtime::task::TASK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env_grants = EnvReset::set("NUDGE_TOOL_GRANTS", r#"{"*": ["*"]}"#);
+        nudge_runtime::task::task_reset();
+
+        let src = r#"
+            tool mock_op(data: string) -> string {
+                impl: "mcp:fs"
+            }
+
+            fn child_worker() -> string uses Tools {
+                mock_op("data")
+            }
+
+            fn main() -> string {
+                let t: Task[string] = spawn child_worker()
+                task.cancel(t)
+                let res: string = task.join(t)
+                res
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+        let err = run_program(&items, "main", &[])
+            .expect_err("tool must fail closed on cancelled task even with grants");
+        assert!(
+            err.contains("TaskCancelled") || err.contains("E-task-0001"),
+            "expected TaskCancelled error, got: {err}"
         );
     }
 }
