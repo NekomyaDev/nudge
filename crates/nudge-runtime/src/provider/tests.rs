@@ -1,7 +1,7 @@
 use super::*;
 use std::sync::Mutex;
 
-static ENV_LOCK: Mutex<()> = Mutex::new(());
+pub(crate) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 struct EnvGuard {
     saved: Vec<(&'static str, Option<String>)>,
@@ -373,11 +373,16 @@ fn test_antigravity_no_longer_reads_foreign_tokens_and_fails_closed() {
         ("HOME", Some(temp_home)),
         ("USERPROFILE", Some(temp_home)),
         ("NUDGE_PROVIDER", Some("antigravity")),
+        ("NUDGE_CREDENTIALS_PATH", None),
+        ("NUDGE_AUTH_ANTIGRAVITY", None),
+        ("ANTIGRAVITY_TOKEN", None),
+        ("NUDGE_NON_INTERACTIVE", Some("1")),
+        ("NUDGE_FORCE_TTY", None),
         ("NUDGE_API_KEY", None),
         ("ANTIGRAVITY_API_KEY", None),
     ]);
 
-    // 1. try_get_active_provider fails closed with E-auth-0404
+    // 1. try_get_active_provider fails closed with E-auth-0401
     let res = try_get_active_provider();
     assert!(
         res.is_err(),
@@ -385,12 +390,8 @@ fn test_antigravity_no_longer_reads_foreign_tokens_and_fails_closed() {
     );
     let err = res.err().unwrap();
     assert!(
-        err.contains("error[E-auth-0404]"),
-        "expected E-auth-0404, got: {err}"
-    );
-    assert!(
-        err.contains("disabled because no official public OAuth contract exists"),
-        "expected disabled reason, got: {err}"
+        err.contains("error[E-auth-0401]"),
+        "expected E-auth-0401, got: {err}"
     );
 
     // 2. get_active_provider().call(&req) fails closed
@@ -405,8 +406,8 @@ fn test_antigravity_no_longer_reads_foreign_tokens_and_fails_closed() {
     assert!(call_res.is_err());
     let call_err = call_res.err().unwrap();
     assert!(
-        call_err.contains("error[E-auth-0404]"),
-        "expected E-auth-0404 on call, got: {call_err}"
+        call_err.contains("error[E-auth-0401]"),
+        "expected E-auth-0401 on call, got: {call_err}"
     );
 
     // 3. Direct AntigravityProvider::new().call(&req) also fails closed
@@ -415,7 +416,7 @@ fn test_antigravity_no_longer_reads_foreign_tokens_and_fails_closed() {
     assert!(direct_res.is_err());
     let direct_err = direct_res.err().unwrap();
     assert!(
-        direct_err.contains("error[E-auth-0404]"),
+        direct_err.contains("error[E-auth-0401]"),
         "direct antigravity call must fail closed, got: {direct_err}"
     );
 
@@ -427,9 +428,10 @@ fn test_antigravity_no_longer_reads_foreign_tokens_and_fails_closed() {
 fn test_provider_marked_disabled_refuses_live_call() {
     let _lock = ENV_LOCK.lock().unwrap();
 
-    // 1. antigravity without credentials is typed Disabled in the gate
+    // 1. antigravity when explicitly disabled in the gate
     let _guard_ag = EnvGuard::set(&[
         ("NUDGE_PROVIDER", Some("antigravity")),
+        ("NUDGE_DISABLE_PROVIDER_ANTIGRAVITY", Some("1")),
         ("NUDGE_API_KEY", None),
         ("ANTIGRAVITY_API_KEY", None),
     ]);
@@ -486,15 +488,26 @@ fn test_provider_gate_table_and_policy() {
         .any(|e| e.name == "claude" && !e.oauth_enabled));
     assert!(PROVIDER_GATE_TABLE
         .iter()
-        .any(|e| e.name == "antigravity" && !e.oauth_enabled));
+        .any(|e| e.name == "antigravity" && e.oauth_enabled));
 
     // Test get_provider_gate_policy
     let _guard = EnvGuard::set(&[("NUDGE_API_KEY", None), ("ANTIGRAVITY_API_KEY", None)]);
     match get_provider_gate_policy("antigravity") {
-        ProviderGatePolicy::Disabled { reason } => {
-            assert!(reason.contains("no official public OAuth contract exists"));
+        ProviderGatePolicy::LoopbackOAuth { auth_url, .. } => {
+            assert!(auth_url.contains("accounts.google.com"));
         }
-        other => panic!("expected Disabled, got: {other:?}"),
+        other => panic!("expected LoopbackOAuth, got: {other:?}"),
+    }
+
+    // Explicit disable via env in scoped block
+    {
+        let _guard_dis = EnvGuard::set(&[("NUDGE_DISABLE_PROVIDER_ANTIGRAVITY", Some("1"))]);
+        match get_provider_gate_policy("antigravity") {
+            ProviderGatePolicy::Disabled { reason } => {
+                assert!(reason.contains("explicitly disabled"));
+            }
+            other => panic!("expected Disabled, got: {other:?}"),
+        }
     }
 
     // When first-party key is set, antigravity switches to ApiKey policy

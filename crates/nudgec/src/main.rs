@@ -88,6 +88,43 @@ fn main() {
         lsp::run();
         return;
     }
+    // `auth` manages credentials and OAuth login (e.g. `nudgec auth login antigravity`)
+    if args.len() >= 2 && args[1] == "auth" {
+        if args.len() >= 3 && args[2] == "login" {
+            let provider = args.get(3).map(|s| s.as_str()).unwrap_or("antigravity");
+            match nudge_runtime::auth::login_interactive(provider) {
+                Ok(_) => {
+                    println!("Successfully authenticated with provider '{provider}'.");
+                    process::exit(0);
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    process::exit(1);
+                }
+            }
+        } else if args.len() >= 3 && args[2] == "status" {
+            let store = nudge_runtime::auth::CredentialStore::load_default().unwrap_or_default();
+            println!(
+                "Credential store: {}",
+                nudge_runtime::auth::CredentialStore::default_path().display()
+            );
+            if store.providers.is_empty() {
+                println!("  No authenticated providers found.");
+            } else {
+                for (p, cred) in &store.providers {
+                    println!(
+                        "  provider '{p}': authenticated (expired={})",
+                        cred.is_expired()
+                    );
+                }
+            }
+            process::exit(0);
+        } else {
+            eprintln!("usage: nudgec auth login [provider]");
+            eprintln!("       nudgec auth status");
+            process::exit(64);
+        }
+    }
     // `trace-diff` takes two trace files; `--fail-on-regression` turns the
     // report into a CI gate (exit 1 when the candidate regresses)
     if args.len() >= 4 && args[1] == "trace-diff" {

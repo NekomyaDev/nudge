@@ -116,6 +116,14 @@ pub fn create_provider(provider_name: &str) -> Result<Box<dyn Provider>, String>
                 "error[E-auth-0404]: provider adapter '{other}' has no live implementation"
             )),
         },
+        gate::ProviderGatePolicy::LoopbackOAuth { .. } => match provider_name {
+            "antigravity" => {
+                AntigravityProvider::try_new().map(|p| Box::new(p) as Box<dyn Provider>)
+            }
+            other => Err(format!(
+                "error[E-auth-0404]: provider adapter '{other}' has no live implementation"
+            )),
+        },
         gate::ProviderGatePolicy::Disabled { reason } => {
             Err(format!("error[E-auth-0404]: {reason}"))
         }
@@ -144,4 +152,4 @@ pub fn get_active_provider() -> Box<dyn Provider> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

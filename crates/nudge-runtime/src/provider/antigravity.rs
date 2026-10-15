@@ -1,4 +1,5 @@
 use super::{http, pricing, tokenizer, LlmRequest, LlmResponse, ModelInfo, Provider};
+use crate::auth::{is_tty, loopback, CredentialStore, LoopbackOAuthClient};
 use std::time::Duration;
 
 #[derive(Debug, Clone)]
@@ -6,6 +7,7 @@ pub struct AntigravityProvider {
     base_url: String,
     model: Option<String>,
     api_key: Option<String>,
+    token: Option<String>,
 }
 
 impl Default for AntigravityProvider {
@@ -28,26 +30,69 @@ impl AntigravityProvider {
             .ok()
             .filter(|k| !k.trim().is_empty());
 
+        let mut token = std::env::var("NUDGE_AUTH_ANTIGRAVITY")
+            .or_else(|_| std::env::var("ANTIGRAVITY_TOKEN"))
+            .ok()
+            .filter(|t| !t.trim().is_empty());
+
+        if token.is_none() && api_key.is_none() {
+            if let Ok(store) = CredentialStore::load_default() {
+                if let Some(cred) = store.get_provider("antigravity").cloned() {
+                    if cred.is_expired() {
+                        if let Ok(refreshed) = loopback::refresh_provider_token("antigravity") {
+                            token = Some(refreshed.access_token().to_string());
+                        }
+                    } else {
+                        token = Some(cred.access_token().to_string());
+                    }
+                }
+            }
+        }
+
         Self {
             base_url,
             model,
             api_key,
+            token,
         }
     }
 
     pub fn try_new() -> Result<Self, String> {
-        let p = Self::new();
-        if p.api_key.is_none() {
-            Err(
-                "error[E-auth-0404]: provider adapter 'antigravity' is disabled because no official public OAuth contract exists"
+        let mut p = Self::new();
+        if p.api_key.is_none() && p.token.is_none() {
+            if !is_tty() {
+                return Err(
+                    "error[E-auth-0401]: credential missing or uninitialized for provider 'antigravity': cannot run interactive OAuth loopback in non-interactive session (no TTY)"
+                        .to_string(),
+                );
+            }
+            if std::env::var("NUDGE_AUTH_INTERACTIVE")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false)
+            {
+                let client = LoopbackOAuthClient::for_provider("antigravity")?;
+                let cred = client.authenticate("default")?;
+                p.token = Some(cred.access_token().to_string());
+                return Ok(p);
+            }
+            return Err(
+                "error[E-auth-0401]: credential missing or uninitialized for provider 'antigravity': run `nudgec auth login antigravity` to authenticate"
                     .to_string(),
-            )
-        } else {
-            Ok(p)
+            );
+        }
+        Ok(p)
+    }
+
+    pub fn with_token(token: impl Into<String>, base_url: Option<String>) -> Self {
+        Self {
+            base_url: base_url.unwrap_or_else(|| "http://127.0.0.1:8642".to_string()),
+            model: None,
+            api_key: None,
+            token: Some(token.into()),
         }
     }
 
-    /// Try calling local HTTP proxy with first-party API key credentials
+    /// Try calling local HTTP proxy with credentials
     fn call_via_proxy(&self, req: &LlmRequest, model: &str) -> Result<LlmResponse, String> {
         let endpoint = format!(
             "{}/v1/chat/completions",
@@ -75,6 +120,8 @@ impl AntigravityProvider {
         let mut headers = vec![("Content-Type".to_string(), "application/json".to_string())];
         if let Some(key) = &self.api_key {
             headers.push(("Authorization".to_string(), format!("Bearer {}", key)));
+        } else if let Some(tok) = &self.token {
+            headers.push(("Authorization".to_string(), format!("Bearer {}", tok)));
         }
 
         let (status, response_body) = http::post_json(&endpoint, &headers, &json_payload)?;
@@ -145,13 +192,52 @@ impl AntigravityProvider {
             cache_write: None,
         })
     }
+
+    fn parse_cloudcode_models(json_val: &crate::json::Json) -> Vec<ModelInfo> {
+        let mut models = Vec::new();
+        if let Some(crate::json::Json::Arr(arr)) = json_val.get("models") {
+            for item in arr {
+                let id_opt = item
+                    .get("modelName")
+                    .or_else(|| item.get("id"))
+                    .or_else(|| item.get("name"))
+                    .or_else(|| item.get("displayName"))
+                    .and_then(|v| v.as_str());
+                if let Some(id) = id_opt {
+                    let pricing = pricing::get_model_pricing(id);
+                    models.push(ModelInfo {
+                        id: id.to_string(),
+                        name: id.to_string(),
+                        provider: "antigravity".to_string(),
+                        input_price_per_1m: pricing.as_ref().map(|p| p.input_usd_per_1m),
+                        output_price_per_1m: pricing.as_ref().map(|p| p.output_usd_per_1m),
+                        context_window: Some(1_000_000),
+                    });
+                }
+            }
+        } else if let Some(crate::json::Json::Obj(map)) = json_val.get("models") {
+            for (key, val) in map {
+                let id = val.get("modelName").and_then(|v| v.as_str()).unwrap_or(key);
+                let pricing = pricing::get_model_pricing(id);
+                models.push(ModelInfo {
+                    id: id.to_string(),
+                    name: id.to_string(),
+                    provider: "antigravity".to_string(),
+                    input_price_per_1m: pricing.as_ref().map(|p| p.input_usd_per_1m),
+                    output_price_per_1m: pricing.as_ref().map(|p| p.output_usd_per_1m),
+                    context_window: Some(1_000_000),
+                });
+            }
+        }
+        models
+    }
 }
 
 impl Provider for AntigravityProvider {
     fn call(&self, req: &LlmRequest) -> Result<LlmResponse, String> {
-        if self.api_key.is_none() {
+        if self.api_key.is_none() && self.token.is_none() {
             return Err(
-                "error[E-auth-0404]: provider adapter 'antigravity' is disabled because no official public OAuth contract exists"
+                "error[E-auth-0401]: credential missing or uninitialized for provider 'antigravity'"
                     .to_string(),
             );
         }
@@ -171,6 +257,8 @@ impl Provider for AntigravityProvider {
         let mut headers = Vec::new();
         if let Some(key) = &self.api_key {
             headers.push(("Authorization".to_string(), format!("Bearer {}", key)));
+        } else if let Some(tok) = &self.token {
+            headers.push(("Authorization".to_string(), format!("Bearer {}", tok)));
         }
 
         let mut models = Vec::new();
@@ -202,7 +290,38 @@ impl Provider for AntigravityProvider {
             }
         }
 
-        // 2. If proxy didn't return, return the full verified Antigravity fleet
+        // 2. Try daily-cloudcode-pa.googleapis.com if proxy didn't return
+        if models.is_empty() {
+            if let Some(tok) = &self.token {
+                let cloudcode_url =
+                    std::env::var("NUDGE_ANTIGRAVITY_MODELS_URL").unwrap_or_else(|_| {
+                        "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels"
+                            .to_string()
+                    });
+                let cloudcode_headers = vec![
+                    ("Authorization".to_string(), format!("Bearer {}", tok)),
+                    ("Content-Type".to_string(), "application/json".to_string()),
+                    (
+                        "x-goog-api-client".to_string(),
+                        "google-cloud-sdk vscode_cloudshelleditor/0.1".to_string(),
+                    ),
+                ];
+                if let Ok((status, resp_text)) = http::post_json_with_timeout(
+                    &cloudcode_url,
+                    &cloudcode_headers,
+                    "{}",
+                    Duration::from_secs(3),
+                ) {
+                    if (200..300).contains(&status) {
+                        if let Ok(json_val) = crate::json::parse(&resp_text) {
+                            models.extend(Self::parse_cloudcode_models(&json_val));
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Fallback to full verified Antigravity fleet
         if models.is_empty() {
             let fleet = [
                 "gemini-3-flash",

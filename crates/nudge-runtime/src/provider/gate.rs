@@ -23,6 +23,12 @@ pub enum ProviderGatePolicy {
         token_endpoint: &'static str,
         client_id: &'static str,
     },
+    /// Enabled via OAuth 2.0 Loopback flow (RFC 8252 installed-app flow with PKCE).
+    LoopbackOAuth {
+        auth_url: &'static str,
+        token_endpoint: &'static str,
+        client_id: &'static str,
+    },
     /// Adapter disabled because no proven official public OAuth contract exists,
     /// or explicitly disabled via configuration.
     Disabled { reason: &'static str },
@@ -59,10 +65,12 @@ pub const PROVIDER_GATE_TABLE: &[ProviderGateEntry] = &[
     },
     ProviderGateEntry {
         name: "antigravity",
-        policy: ProviderGatePolicy::Disabled {
-            reason: "provider adapter 'antigravity' is disabled because no official public OAuth contract exists",
+        policy: ProviderGatePolicy::LoopbackOAuth {
+            auth_url: "https://accounts.google.com/o/oauth2/v2/auth",
+            token_endpoint: "https://oauth2.googleapis.com/token",
+            client_id: "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
         },
-        oauth_enabled: false,
+        oauth_enabled: true,
     },
     ProviderGateEntry {
         name: "github_copilot",
@@ -96,14 +104,17 @@ pub fn get_provider_gate_policy(name: &str) -> ProviderGatePolicy {
             .or_else(|_| std::env::var("ANTIGRAVITY_API_KEY"))
             .map(|k| !k.trim().is_empty())
             .unwrap_or(false);
-        if !has_first_party_key {
-            return ProviderGatePolicy::Disabled {
-                reason: "provider adapter 'antigravity' is disabled because no official public OAuth contract exists",
-            };
-        } else {
+        if has_first_party_key {
             return ProviderGatePolicy::ApiKey {
                 primary_env: "NUDGE_API_KEY",
                 fallback_env: Some("ANTIGRAVITY_API_KEY"),
+            };
+        } else {
+            return ProviderGatePolicy::LoopbackOAuth {
+                auth_url: "https://accounts.google.com/o/oauth2/v2/auth",
+                token_endpoint: "https://oauth2.googleapis.com/token",
+                client_id:
+                    "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
             };
         }
     }

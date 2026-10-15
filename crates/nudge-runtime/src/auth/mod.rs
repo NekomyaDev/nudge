@@ -9,10 +9,12 @@
 
 pub mod credential;
 pub mod device_flow;
+pub mod loopback;
 pub mod store;
 
 pub use credential::Credential;
 pub use device_flow::{is_tty, validate_scope, DeviceFlowClient, DeviceFlowConfig};
+pub use loopback::{login_interactive, LoopbackOAuthClient, LoopbackOAuthConfig};
 pub use store::{AccountEntry, CredentialStore};
 
 #[cfg(test)]
