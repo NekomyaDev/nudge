@@ -251,6 +251,18 @@ impl TaskToken {
 
     /// Record task outcome.
     pub fn set_result(&self, res: Result<serde_json::Value, String>) {
+        {
+            let mut st = self.state.lock().unwrap();
+            if !st.is_terminal() {
+                *st = match &res {
+                    Ok(_) => TaskState::Completed,
+                    Err(e) if e.contains("TaskCancelled") || e.contains("E-task-0001") => {
+                        TaskState::Cancelled
+                    }
+                    Err(_) => TaskState::Failed,
+                };
+            }
+        }
         let (lock, cvar) = &*self.result;
         let mut r = lock.lock().unwrap();
         *r = Some(res);
@@ -273,27 +285,25 @@ impl TaskToken {
         if self.is_cancelled() {
             return Err("error[E-task-0001]: TaskCancelled".to_string());
         }
-        let st = *self.state.lock().unwrap();
-        match st {
-            TaskState::Cancelled => Err("error[E-task-0001]: TaskCancelled".to_string()),
-            TaskState::Failed => {
-                if let Some(Err(e)) = guard.as_ref() {
-                    if e.starts_with("error[E-task-0002]: TaskFailed") {
+        if let Some(res) = guard.as_ref() {
+            return match res {
+                Ok(val) => Ok(val.clone()),
+                Err(e) => {
+                    if e.contains("TaskCancelled") || e.contains("E-task-0001") {
+                        Err("error[E-task-0001]: TaskCancelled".to_string())
+                    } else if e.starts_with("error[E-task-0002]: TaskFailed") {
                         Err(e.clone())
                     } else {
                         Err(format!("error[E-task-0002]: TaskFailed: {e}"))
                     }
-                } else {
-                    Err("error[E-task-0002]: TaskFailed".to_string())
                 }
-            }
-            TaskState::Completed => {
-                if let Some(Ok(val)) = guard.as_ref() {
-                    Ok(val.clone())
-                } else {
-                    Ok(serde_json::Value::Null)
-                }
-            }
+            };
+        }
+        let st = *self.state.lock().unwrap();
+        match st {
+            TaskState::Cancelled => Err("error[E-task-0001]: TaskCancelled".to_string()),
+            TaskState::Failed => Err("error[E-task-0002]: TaskFailed".to_string()),
+            TaskState::Completed => Ok(serde_json::Value::Null),
             _ => {
                 if self.is_cancelled() {
                     Err("error[E-task-0001]: TaskCancelled".to_string())
@@ -496,11 +506,16 @@ pub fn task_join(id: &str) -> Result<serde_json::Value, String> {
 
 /// Clear the task registry and budget state.
 pub fn task_reset() {
+    set_current_task(None);
     with_registry(|reg| {
         reg.clear();
     });
     budget_reset();
 }
+
+/// Serialize tests that share process-global task state like `TASK_REGISTRY`,
+/// `BUDGET_TRACKER`, and `NUDGE_BUDGET`.
+pub static TASK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 // ── Thread-local current task & checkpoints ──────────────────────────
 
@@ -564,6 +579,7 @@ mod tests {
 
     #[test]
     fn test_task_id_hierarchy() {
+        let _lock = TASK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let root = TaskId::root();
         assert_eq!(root.as_str(), "root");
 
@@ -579,6 +595,7 @@ mod tests {
 
     #[test]
     fn test_task_state_machine() {
+        let _lock = TASK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let t = TaskToken::root();
         assert_eq!(t.state(), TaskState::Pending);
 
@@ -595,6 +612,7 @@ mod tests {
 
     #[test]
     fn test_cancellation_propagation_to_children() {
+        let _lock = TASK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let root = TaskToken::root();
         let child1 = root.child(0);
         let child2 = root.child(1);
@@ -623,6 +641,7 @@ mod tests {
 
     #[test]
     fn test_cooperative_checkpoint() {
+        let _lock = TASK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let t = TaskToken::root();
         assert!(check_checkpoint().is_ok());
 
@@ -638,7 +657,7 @@ mod tests {
 
     #[test]
     fn test_budget_reservation_released_on_cancel() {
-        let _lock = std::sync::Mutex::new(());
+        let _lock = TASK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         budget_reset();
 
         unsafe {

@@ -171,6 +171,10 @@ impl Parser {
                 self.bump();
                 Ok("spawn".to_string())
             }
+            Tok::Type => {
+                self.bump();
+                Ok("type".to_string())
+            }
             other => self.err(format!("expected identifier, found {other:?}")),
         }
     }
@@ -194,6 +198,8 @@ impl Parser {
             Tok::Ident(ref s) if s == "view" => self.parse_view(),
             Tok::Ident(ref s) if s == "window" => self.parse_window(),
             Tok::Ident(ref s) if s == "handle" => self.parse_handle(),
+            Tok::Ident(ref s) if s == "auth" => self.parse_auth(),
+            Tok::Ident(ref s) if s == "account" => self.parse_account(),
             other => self.err(format!(
                 "expected item (type/fn/tool/test/view/window), found {other:?}"
             )),
@@ -227,7 +233,14 @@ impl Parser {
         let mut effs = Vec::new();
         if self.eat(&Tok::Uses) {
             loop {
-                effs.push(self.ident()?);
+                let name = self.ident()?;
+                if self.eat(&Tok::LParen) {
+                    let arg = self.ident()?;
+                    self.expect(&Tok::RParen, "')' after effect parameter")?;
+                    effs.push(format!("{name}({arg})"));
+                } else {
+                    effs.push(name);
+                }
                 if !self.eat(&Tok::Comma) {
                     break;
                 }
@@ -387,6 +400,59 @@ impl Parser {
             ret,
             effects,
             body,
+        })
+    }
+
+    fn parse_auth(&mut self) -> PResult<Item> {
+        self.bump(); // auth
+        let sub = self.ident()?;
+        if sub != "provider" {
+            return self.err(format!("expected 'provider' after 'auth', found '{sub}'"));
+        }
+        let name = self.ident()?;
+        self.expect(&Tok::LBrace, "'{' before auth provider body")?;
+        let mut fields = Vec::new();
+        while !self.at(&Tok::RBrace) {
+            let fname = self.field_ident()?;
+            self.expect(&Tok::Colon, "':' in auth provider field")?;
+            let val = self.parse_expr()?;
+            fields.push((fname, val));
+            self.eat(&Tok::Comma);
+        }
+        self.expect(&Tok::RBrace, "'}' after auth provider body")?;
+        Ok(Item::AuthProvider { name, fields })
+    }
+
+    fn parse_account(&mut self) -> PResult<Item> {
+        self.bump(); // account
+        let name = self.ident()?;
+        if !self.eat(&Tok::For) {
+            match self.peek() {
+                Tok::Ident(ref s) if s == "for" => {
+                    self.bump();
+                }
+                other => {
+                    return self.err(format!(
+                        "expected 'for' after account name, found {other:?}"
+                    ));
+                }
+            }
+        }
+        let provider = self.ident()?;
+        self.expect(&Tok::LBrace, "'{' before account body")?;
+        let mut fields = Vec::new();
+        while !self.at(&Tok::RBrace) {
+            let fname = self.field_ident()?;
+            self.expect(&Tok::Colon, "':' in account field")?;
+            let val = self.parse_expr()?;
+            fields.push((fname, val));
+            self.eat(&Tok::Comma);
+        }
+        self.expect(&Tok::RBrace, "'}' after account body")?;
+        Ok(Item::Account {
+            name,
+            provider,
+            fields,
         })
     }
 
@@ -2323,6 +2389,65 @@ test "budget" {
                 }
             }
             _ => panic!("expected fn"),
+        }
+    }
+
+    #[test]
+    fn test_parse_auth_provider_and_account_and_uses_auth() {
+        let src = r#"
+            auth provider github_copilot {
+                type: "device_code",
+                issuer: "https://github.com/login/device/code",
+                client_id: "Iv1.b507a08c87ecfe81",
+                scope: "read:user model:inference"
+            }
+
+            account dev_tier for github_copilot {
+                scope: ["model:inference"]
+            }
+
+            fn query_engine(prompt: string) -> string
+                uses LLM, Auth(dev_tier)
+            {
+                prompt("Analyze: {prompt}")
+            }
+        "#;
+        let toks = lex(src).expect("lex");
+        let items = parse(toks).expect("parse");
+        assert_eq!(items.len(), 3);
+
+        match &items[0] {
+            Item::AuthProvider { name, fields } => {
+                assert_eq!(name, "github_copilot");
+                assert_eq!(fields.len(), 4);
+                assert_eq!(fields[0].0, "type");
+            }
+            other => panic!("expected Item::AuthProvider, got {other:?}"),
+        }
+
+        match &items[1] {
+            Item::Account {
+                name,
+                provider,
+                fields,
+            } => {
+                assert_eq!(name, "dev_tier");
+                assert_eq!(provider, "github_copilot");
+                assert_eq!(fields.len(), 1);
+                assert_eq!(fields[0].0, "scope");
+            }
+            other => panic!("expected Item::Account, got {other:?}"),
+        }
+
+        match &items[2] {
+            Item::Fn { name, effects, .. } => {
+                assert_eq!(name, "query_engine");
+                assert_eq!(
+                    effects,
+                    &vec!["LLM".to_string(), "Auth(dev_tier)".to_string()]
+                );
+            }
+            other => panic!("expected Item::Fn, got {other:?}"),
         }
     }
 }

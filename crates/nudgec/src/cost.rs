@@ -58,7 +58,9 @@ pub fn report(items: &[Item]) -> String {
             | Item::TypeAlias { .. }
             | Item::Tool { .. }
             | Item::View { .. }
-            | Item::Window { .. } => {}
+            | Item::Window { .. }
+            | Item::AuthProvider { .. }
+            | Item::Account { .. } => {}
         }
     }
 

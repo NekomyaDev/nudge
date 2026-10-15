@@ -327,6 +327,17 @@ pub enum Item {
         name: String,
         fields: Vec<(String, Expr)>,
     },
+    /// `auth provider <name> { ... }` (Pack 5 Provider Auth).
+    AuthProvider {
+        name: String,
+        fields: Vec<(String, Expr)>,
+    },
+    /// `account <name> for <provider> { ... }` (Pack 5 Provider Auth).
+    Account {
+        name: String,
+        provider: String,
+        fields: Vec<(String, Expr)>,
+    },
 }
 
 /// Magic footer constant identifying a standalone Nudge agent binary.

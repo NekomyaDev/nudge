@@ -229,6 +229,7 @@ pub fn emit(items: &[Item]) -> String {
             Item::Window { name, fields } => {
                 out.push_str(&emit_window_def(name, name, fields, None, &aliases));
             }
+            Item::AuthProvider { .. } | Item::Account { .. } => {}
         }
     }
     if has_main {

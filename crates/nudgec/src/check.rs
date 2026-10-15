@@ -74,6 +74,8 @@ struct Globals {
     windows: HashMap<String, Vec<(String, Expr)>>,
     agents: HashMap<String, (Vec<(String, TypeExpr, Expr)>, Vec<Item>)>,
     fn_effects: HashMap<String, Vec<String>>,
+    auth_providers: HashMap<String, Vec<(String, Expr)>>,
+    accounts: HashMap<String, (String, Vec<(String, Expr)>)>,
 }
 
 // ── type resolution ─────────────────────────────────────────────────
@@ -233,7 +235,7 @@ fn elem_of(t: &Ty) -> Ty {
 
 // ── effect inference (design §3.2, v1.4) ──────────────────────────
 
-const KNOWN_EFFECTS: [&str; 9] = [
+const KNOWN_EFFECTS: [&str; 10] = [
     "LLM",
     "Tool",
     "IO",
@@ -243,7 +245,19 @@ const KNOWN_EFFECTS: [&str; 9] = [
     "WorkspaceDelete",
     "Store",
     "UI",
+    "Auth",
 ];
+
+fn is_known_effect(eff: &str) -> bool {
+    if KNOWN_EFFECTS.contains(&eff) {
+        return true;
+    }
+    if eff.starts_with("Auth(") && eff.ends_with(')') {
+        let inner = &eff[5..eff.len() - 1];
+        return !inner.trim().is_empty();
+    }
+    false
+}
 
 /// Builtin record types of the computer-use surface (v1.5): these names
 /// resolve like user type aliases but need no declaration. Additive
@@ -326,8 +340,46 @@ fn direct_effects(
     match &e.kind {
         ExprKind::LlmCall { options, .. } => {
             effects.insert("LLM".into());
-            for (_, v) in options {
+            let mut explicit_account = None;
+            let mut is_authenticated = false;
+            for (k, v) in options {
+                if k == "account" {
+                    if let ExprKind::Str(acc) = &v.kind {
+                        explicit_account = Some(acc.clone());
+                    } else if let ExprKind::Ident(acc) = &v.kind {
+                        explicit_account = Some(acc.clone());
+                    }
+                    is_authenticated = true;
+                } else if k == "auth" {
+                    if let ExprKind::Str(acc) = &v.kind {
+                        explicit_account = Some(acc.clone());
+                    } else if let ExprKind::Ident(acc) = &v.kind {
+                        explicit_account = Some(acc.clone());
+                    } else if let ExprKind::Bool(b) = &v.kind {
+                        if *b {
+                            is_authenticated = true;
+                        }
+                    }
+                } else if k == "live" {
+                    if let ExprKind::Bool(b) = &v.kind {
+                        if *b {
+                            is_authenticated = true;
+                        }
+                    }
+                }
                 direct_effects(v, g, effects, calls);
+            }
+
+            if let Some(acc) = explicit_account {
+                effects.insert(format!("Auth({acc})"));
+            } else if !g.accounts.is_empty() {
+                if let Some(acc) = g.accounts.keys().next() {
+                    effects.insert(format!("Auth({acc})"));
+                } else {
+                    effects.insert("Auth".into());
+                }
+            } else if is_authenticated {
+                effects.insert("Auth".into());
             }
         }
         ExprKind::DecideCall { state, options, .. } => {
@@ -2448,6 +2500,34 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                     });
                 }
             }
+            Item::AuthProvider { name, fields } => {
+                if g.auth_providers
+                    .insert(name.clone(), fields.clone())
+                    .is_some()
+                {
+                    errs.push(CheckError {
+                        span: None,
+                        code: "E0102",
+                        msg: format!("duplicate auth provider '{name}'"),
+                    });
+                }
+            }
+            Item::Account {
+                name,
+                provider,
+                fields,
+            } => {
+                if g.accounts
+                    .insert(name.clone(), (provider.clone(), fields.clone()))
+                    .is_some()
+                {
+                    errs.push(CheckError {
+                        span: None,
+                        code: "E0102",
+                        msg: format!("duplicate account '{name}'"),
+                    });
+                }
+            }
             Item::Test { .. } => {}
         }
     }
@@ -2616,6 +2696,25 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                 check_test_body(body, &locals, &g, &mut errs, &inferred);
             }
             Item::TypeAlias { .. } => {}
+            Item::AuthProvider { fields, .. } => {
+                for (_, v) in fields {
+                    check_expr(v, &HashMap::new(), &g, &mut errs);
+                }
+            }
+            Item::Account {
+                provider, fields, ..
+            } => {
+                if !g.auth_providers.is_empty() && !g.auth_providers.contains_key(provider) {
+                    errs.push(CheckError {
+                        span: None,
+                        code: "E-auth-0404",
+                        msg: format!("provider '{provider}' is not declared in auth configuration"),
+                    });
+                }
+                for (_, v) in fields {
+                    check_expr(v, &HashMap::new(), &g, &mut errs);
+                }
+            }
         }
     }
 
@@ -2628,20 +2727,68 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
         } = item
         {
             for d in declared {
-                if !KNOWN_EFFECTS.contains(&d.as_str()) {
+                if !is_known_effect(d) {
                     errs.push(CheckError {
                         span: None,
                         code: "E0101",
-                        msg: format!("unknown effect '{d}' in fn '{name}' (known: LLM, Tool, IO, Decision, Computer, Workspace, WorkspaceDelete, Store, UI)"),
+                        msg: format!("unknown effect '{d}' in fn '{name}' (known: LLM, Tool, IO, Decision, Computer, Workspace, WorkspaceDelete, Store, UI, Auth)"),
                     });
                 }
             }
             let want = &inferred[name];
             let missing: Vec<&String> = want
                 .iter()
-                .filter(|e| !declared.iter().any(|d| d == *e))
+                .filter(|e| {
+                    if *e == "Auth" {
+                        !declared
+                            .iter()
+                            .any(|d| d == "Auth" || d.starts_with("Auth("))
+                    } else if e.starts_with("Auth(") {
+                        !declared.iter().any(|d| d == *e || d == "Auth")
+                    } else {
+                        !declared.iter().any(|d| d == *e)
+                    }
+                })
                 .collect();
             if missing.is_empty() {
+                // Scope verification for declared Auth(acc)
+                for d in declared {
+                    if d.starts_with("Auth(") && d.ends_with(')') {
+                        let acc_name = &d[5..d.len() - 1];
+                        if let Some((_, fields)) = g.accounts.get(acc_name) {
+                            let mut account_scopes = Vec::new();
+                            for (fname, fval) in fields {
+                                if fname == "scope" {
+                                    match &fval.kind {
+                                        ExprKind::ListLit(items) => {
+                                            for it in items {
+                                                if let ExprKind::Str(s) = &it.kind {
+                                                    account_scopes.push(s.clone());
+                                                }
+                                            }
+                                        }
+                                        ExprKind::Str(s) => {
+                                            for part in s.split_whitespace() {
+                                                account_scopes.push(part.to_string());
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            if inferred[name].contains("LLM")
+                                && !account_scopes.is_empty()
+                                && !account_scopes.iter().any(|s| s == "model:inference")
+                            {
+                                errs.push(CheckError {
+                                    span: None,
+                                    code: "E-auth-0403",
+                                    msg: format!("account '{acc_name}' lacks required scope 'model:inference' (has: {account_scopes:?})"),
+                                });
+                            }
+                        }
+                    }
+                }
                 continue;
             }
             let list = missing
@@ -2650,10 +2797,19 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                 .collect::<Vec<_>>()
                 .join(", ");
             let has_ui = missing.iter().any(|e| *e == "UI");
+            let has_auth = missing
+                .iter()
+                .any(|e| *e == "Auth" || e.starts_with("Auth("));
             if declared.is_empty() {
                 errs.push(CheckError {
                     span: None,
-                    code: if has_ui { "E1001" } else { "E0301" },
+                    code: if has_auth {
+                        "E-auth-0403"
+                    } else if has_ui {
+                        "E1001"
+                    } else {
+                        "E0301"
+                    },
                     msg: format!(
                         "fn '{name}' uses {list} but has no `uses` clause — add `uses {list}` to its signature"
                     ),
@@ -2661,7 +2817,13 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
             } else {
                 errs.push(CheckError {
                     span: None,
-                    code: if has_ui { "E1001" } else { "E0302" },
+                    code: if has_auth {
+                        "E-auth-0403"
+                    } else if has_ui {
+                        "E1001"
+                    } else {
+                        "E0302"
+                    },
                     msg: format!(
                         "fn '{name}' declares `uses {}` but its body also uses {list} — annotation too narrow",
                         declared.join(", ")
@@ -4020,6 +4182,133 @@ fn f(c: bool) -> string uses IO {
                 .iter()
                 .any(|e| e.code == "E1004" && e.msg.contains("V")),
             "expected E1004 for duplicate view, got {errs_view:?}"
+        );
+    }
+
+    #[test]
+    fn test_auth_syntax_and_checker_gating_missing_auth_effect_trips_e_auth_0403() {
+        let src = r#"
+            auth provider github_copilot {
+                type: "device_code",
+                issuer: "https://github.com/login/device/code",
+                client_id: "Iv1.b507a08c87ecfe81",
+                scope: "model:inference"
+            }
+            account dev_tier for github_copilot {
+                scope: ["model:inference"]
+            }
+            fn query_engine(input: string) -> string
+                uses LLM
+            {
+                llm"""Analyze: {input}""" with {}
+            }
+        "#;
+        let errs = check_src(src);
+        assert!(
+            errs.iter()
+                .any(|e| (e.code == "E-auth-0403" || e.code == "E0301")
+                    && (e.msg.contains("Auth") || e.msg.contains("dev_tier"))),
+            "Expected E-auth-0403 or E0301 for missing Auth effect, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_auth_syntax_clean_with_uses_auth() {
+        let src = r#"
+            auth provider github_copilot {
+                type: "device_code",
+                issuer: "https://github.com/login/device/code",
+                client_id: "Iv1.b507a08c87ecfe81",
+                scope: "model:inference"
+            }
+            account dev_tier for github_copilot {
+                scope: ["model:inference"]
+            }
+            fn query_engine(input: string) -> string
+                uses LLM, Auth(dev_tier)
+            {
+                llm"""Analyze: {input}""" with {}
+            }
+        "#;
+        let errs = check_src(src);
+        assert!(
+            errs.is_empty(),
+            "Expected clean check with uses Auth(dev_tier), got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_auth_pure_function_cannot_call_authenticated_op() {
+        let src = r#"
+            auth provider github_copilot {
+                type: "device_code",
+                issuer: "https://github.com/login/device/code",
+                client_id: "Iv1.b507a08c87ecfe81",
+                scope: "model:inference"
+            }
+            account dev_tier for github_copilot {
+                scope: ["model:inference"]
+            }
+            fn query_engine(input: string) -> string
+                uses LLM, Auth(dev_tier)
+            {
+                llm"""Analyze: {input}""" with {}
+            }
+            fn pure_caller() -> string {
+                query_engine("test")
+            }
+        "#;
+        let errs = check_src(src);
+        assert!(
+            errs.iter()
+                .any(|e| (e.code == "E-auth-0403" || e.code == "E0301")
+                    && e.msg.contains("pure_caller")),
+            "Expected pure_caller to be rejected for unannotated authenticated call, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_auth_scope_deficit_trips_e_auth_0403() {
+        let src = r#"
+            auth provider github_copilot {
+                type: "device_code",
+                issuer: "https://github.com/login/device/code",
+                client_id: "Iv1.b507a08c87ecfe81",
+                scope: "read:user"
+            }
+            account dev_tier for github_copilot {
+                scope: ["read:user"]
+            }
+            fn query_engine(input: string) -> string
+                uses LLM, Auth(dev_tier)
+            {
+                llm"""Analyze: {input}""" with {}
+            }
+        "#;
+        let errs = check_src(src);
+        assert!(
+            errs.iter().any(|e| e.code == "E-auth-0403"
+                && e.msg.contains("lacks required scope 'model:inference'")),
+            "Expected E-auth-0403 for scope deficit, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_auth_provider_undeclared_in_account_trips_e_auth_0404() {
+        let src = r#"
+            auth provider anthropic {
+                type: "api_key",
+                env: "ANTHROPIC_API_KEY"
+            }
+            account dev_tier for github_copilot {
+                scope: ["model:inference"]
+            }
+        "#;
+        let errs = check_src(src);
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E-auth-0404" && e.msg.contains("github_copilot")),
+            "Expected E-auth-0404 for undeclared provider in account, got {errs:?}"
         );
     }
 }

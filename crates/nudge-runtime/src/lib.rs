@@ -1,3 +1,4 @@
+pub mod auth;
 #[cfg(feature = "native-gui")]
 pub mod font8x8;
 pub mod grants;
@@ -16,6 +17,7 @@ pub mod ui_window;
 pub mod value;
 pub mod workspace;
 
+pub use auth::*;
 pub use provider::*;
 pub use task::*;
 pub use ui::*;

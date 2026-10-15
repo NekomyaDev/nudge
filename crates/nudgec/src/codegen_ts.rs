@@ -267,6 +267,7 @@ pub fn emit_ts(items: &[Item]) -> String {
                     name, name, fields, None, &aliases, &sigs,
                 ));
             }
+            Item::AuthProvider { .. } | Item::Account { .. } => {}
         }
     }
     if has_main {

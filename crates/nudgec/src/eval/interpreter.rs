@@ -116,6 +116,7 @@ impl Interpreter {
                         }
                     }
                 }
+                Item::AuthProvider { .. } | Item::Account { .. } => {}
             }
         }
 
@@ -628,7 +629,11 @@ impl Interpreter {
                 })
                 .map_err(|e| match e {
                     nudge_runtime::trace::LlmBridgeError::Provider(msg) => {
-                        format!("error[E-native-0300]: LLM provider call failed: {msg}")
+                        if msg.starts_with("error[") {
+                            msg
+                        } else {
+                            format!("error[E-native-0300]: LLM provider call failed: {msg}")
+                        }
                     }
                     nudge_runtime::trace::LlmBridgeError::SchemaParse(msg) => {
                         format!(
@@ -929,9 +934,9 @@ impl Interpreter {
                                 ));
                             } else {
                                 let json_val = crate::eval::val::nudgeval_to_json(&val);
-                                child_token_clone.set_result(Ok(json_val));
                                 child_token_clone
                                     .set_state(nudge_runtime::task::TaskState::Completed);
+                                child_token_clone.set_result(Ok(json_val));
                             }
                         }
                         Ok(Err(e)) => {
@@ -4034,6 +4039,9 @@ data: [DONE]\n\n";
 
     #[test]
     fn test_cancel_mid_flow_prevents_subsequent_tool_and_llm() {
+        let _task_lock = nudge_runtime::task::TASK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let trace_path = std::env::temp_dir().join(format!(
             "nudge_test_cancel_flow_{}.jsonl",
@@ -4076,6 +4084,9 @@ data: [DONE]\n\n";
 
     #[test]
     fn test_par_race_loser_stopped_before_tool_call() {
+        let _task_lock = nudge_runtime::task::TASK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let trace_path = std::env::temp_dir().join(format!(
             "nudge_test_par_race_{}.jsonl",
@@ -4134,6 +4145,9 @@ data: [DONE]\n\n";
 
     #[test]
     fn test_budget_reservation_released_on_cancel() {
+        let _task_lock = nudge_runtime::task::TASK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         nudge_runtime::task::task_reset();
         let _env_budget = EnvReset::set("NUDGE_BUDGET", "0.0025");
@@ -4172,6 +4186,9 @@ data: [DONE]\n\n";
 
     #[test]
     fn test_cancelled_task_tool_call_refused_fail_closed_with_grants() {
+        let _task_lock = nudge_runtime::task::TASK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _scope = nudge_runtime::trace::testing::scope(None, None);
         let _env_provider = EnvReset::set("NUDGE_PROVIDER", "fake");
@@ -4201,6 +4218,9 @@ data: [DONE]\n\n";
 
     #[test]
     fn test_sse_chunk_cancellation_stops_stream() {
+        let _task_lock = nudge_runtime::task::TASK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         nudge_runtime::task::task_reset();
 
@@ -4234,6 +4254,9 @@ data: [DONE]\n\n";
 
     #[test]
     fn test_task_stdlib_primitives_in_ndg() {
+        let _task_lock = nudge_runtime::task::TASK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         nudge_runtime::task::task_reset();
 
@@ -4311,6 +4334,9 @@ data: [DONE]\n\n";
 
     #[test]
     fn test_task_spawn_join_returns_value() {
+        let _task_lock = nudge_runtime::task::TASK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         nudge_runtime::task::task_reset();
 
@@ -4333,6 +4359,9 @@ data: [DONE]\n\n";
 
     #[test]
     fn test_task_cancel_before_tool_raises_cancelled_and_no_tool_call() {
+        let _task_lock = nudge_runtime::task::TASK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let trace_path = std::env::temp_dir().join(format!(
             "nudge_test_cancel_before_tool_{}.jsonl",
@@ -4376,6 +4405,9 @@ data: [DONE]\n\n";
 
     #[test]
     fn test_task_status_transitions_to_cancelled_and_terminal() {
+        let _task_lock = nudge_runtime::task::TASK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         nudge_runtime::task::task_reset();
 
@@ -4400,6 +4432,9 @@ data: [DONE]\n\n";
 
     #[test]
     fn test_task_child_spawned_inside_cancelled_parent_is_cancelled() {
+        let _task_lock = nudge_runtime::task::TASK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         nudge_runtime::task::task_reset();
 
@@ -4440,6 +4475,9 @@ data: [DONE]\n\n";
 
     #[test]
     fn test_task_failing_body_raises_task_failed() {
+        let _task_lock = nudge_runtime::task::TASK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         nudge_runtime::task::task_reset();
 
@@ -4466,6 +4504,9 @@ data: [DONE]\n\n";
 
     #[test]
     fn test_task_spawn_runs_effect_and_produces_llm_record() {
+        let _task_lock = nudge_runtime::task::TASK_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let trace_path = std::env::temp_dir().join(format!(
             "nudge_test_spawn_llm_{}.jsonl",

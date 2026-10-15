@@ -1,5 +1,6 @@
 pub mod antigravity;
 pub mod claude;
+pub mod copilot;
 pub mod fake;
 pub mod gate;
 pub mod http;
@@ -10,6 +11,7 @@ pub mod tokenizer;
 
 pub use antigravity::AntigravityProvider;
 pub use claude::ClaudeProvider;
+pub use copilot::CopilotProvider;
 pub use fake::FakeProvider;
 pub use gate::{
     get_provider_gate_policy, ProviderGateEntry, ProviderGatePolicy, PROVIDER_GATE_TABLE,
@@ -104,6 +106,12 @@ pub fn create_provider(provider_name: &str) -> Result<Box<dyn Provider>, String>
             "antigravity" => {
                 AntigravityProvider::try_new().map(|p| Box::new(p) as Box<dyn Provider>)
             }
+            other => Err(format!(
+                "error[E-auth-0404]: provider adapter '{other}' has no live implementation"
+            )),
+        },
+        gate::ProviderGatePolicy::DeviceFlow { .. } => match provider_name {
+            "github_copilot" => CopilotProvider::new().map(|p| Box::new(p) as Box<dyn Provider>),
             other => Err(format!(
                 "error[E-auth-0404]: provider adapter '{other}' has no live implementation"
             )),

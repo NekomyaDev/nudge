@@ -17,6 +17,12 @@ pub enum ProviderGatePolicy {
         primary_env: &'static str,
         fallback_env: Option<&'static str>,
     },
+    /// Enabled via RFC 8628 Device Flow.
+    DeviceFlow {
+        issuer: &'static str,
+        token_endpoint: &'static str,
+        client_id: &'static str,
+    },
     /// Adapter disabled because no proven official public OAuth contract exists,
     /// or explicitly disabled via configuration.
     Disabled { reason: &'static str },
@@ -57,6 +63,15 @@ pub const PROVIDER_GATE_TABLE: &[ProviderGateEntry] = &[
             reason: "provider adapter 'antigravity' is disabled because no official public OAuth contract exists",
         },
         oauth_enabled: false,
+    },
+    ProviderGateEntry {
+        name: "github_copilot",
+        policy: ProviderGatePolicy::DeviceFlow {
+            issuer: "https://github.com/login/device/code",
+            token_endpoint: "https://github.com/login/oauth/access_token",
+            client_id: "Iv1.b507a08c87ecfe81",
+        },
+        oauth_enabled: true,
     },
 ];
 
