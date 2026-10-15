@@ -23,3 +23,4 @@ bincode = "1.3"
 [features]
 default = ["compiler"]
 compiler = []
+native-gui = ["nudge-runtime/native-gui"]

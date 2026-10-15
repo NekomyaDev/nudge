@@ -1,3 +1,5 @@
+#[cfg(feature = "native-gui")]
+pub mod font8x8;
 pub mod grants;
 pub mod host_tool;
 pub mod json;
@@ -9,6 +11,8 @@ pub mod store;
 pub mod task;
 pub mod trace;
 pub mod ui;
+#[cfg(feature = "native-gui")]
+pub mod ui_window;
 pub mod value;
 pub mod workspace;
 

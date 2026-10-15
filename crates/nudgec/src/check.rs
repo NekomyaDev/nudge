@@ -1441,7 +1441,7 @@ fn check_expr_pos(
             if let ExprKind::Field { obj: _, name } = &func.as_ref().kind {
                 match name.as_str() {
                     "exists" => return Ty::Bool,
-                    "mount_headless" => return Ty::Unknown,
+                    "open" | "mount_headless" => return Ty::Unknown,
                     "find" | "find_text" => return Ty::Unknown,
                     "dispatch_click" => return Ty::None_,
                     "get_text" | "text" => return Ty::Str,

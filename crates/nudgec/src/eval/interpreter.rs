@@ -161,6 +161,124 @@ impl Interpreter {
         Ok(())
     }
 
+    /// Mounts a headless window app record and returns its app_id.
+    pub fn mount_headless_app(
+        &mut self,
+        agent: &Option<String>,
+        win_name: &str,
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<usize, String> {
+        let win_key = agent
+            .as_ref()
+            .map(|a| format!("{a}.{win_name}"))
+            .unwrap_or_else(|| win_name.to_string());
+        let (win_item, _) = self
+            .windows
+            .get(&win_key)
+            .or_else(|| self.windows.get(win_name))
+            .cloned()
+            .ok_or_else(|| format!("window '{win_name}' not found"))?;
+        let fields = match &win_item {
+            Item::Window { fields, .. } => fields,
+            _ => return Err(format!("item '{win_name}' is not a window")),
+        };
+        let mut title = win_name.to_string();
+        let mut width = None;
+        let mut height = None;
+        let mut content_expr = None;
+        for (k, v) in fields {
+            if k == "title" {
+                if let Ok(tv) = self.eval_expr(v, env) {
+                    title = match tv {
+                        NudgeVal::Str(s) => s,
+                        other => other.to_string(),
+                    };
+                }
+            } else if k == "width" {
+                if let Ok(NudgeVal::Int(w)) = self.eval_expr(v, env) {
+                    width = Some(w);
+                }
+            } else if k == "height" {
+                if let Ok(NudgeVal::Int(h)) = self.eval_expr(v, env) {
+                    height = Some(h);
+                }
+            } else if k == "content" {
+                content_expr = Some(v.clone());
+            }
+        }
+        let content_expr =
+            content_expr.ok_or_else(|| format!("window '{win_name}' has no content expression"))?;
+        let prev_agent = self.active_agent.clone();
+        if agent.is_some() {
+            self.active_agent = agent.clone();
+        }
+        let root_val = self.eval_expr(&content_expr, env)?;
+        self.active_agent = prev_agent;
+        let root = match root_val {
+            NudgeVal::UiElement { found: true, elem } => Some(*elem),
+            _ => None,
+        };
+        let app_id = self.headless_apps.len();
+        self.headless_apps.push(HeadlessAppRecord {
+            agent: agent.clone(),
+            window: win_name.to_string(),
+            title,
+            width,
+            height,
+            content_expr,
+            root,
+        });
+        Ok(app_id)
+    }
+
+    /// Dispatches a click event to a component inside a mounted window app.
+    pub fn dispatch_click_headless(
+        &mut self,
+        app_id: usize,
+        target_id: &str,
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<(), String> {
+        let app = self
+            .headless_apps
+            .get(app_id)
+            .ok_or_else(|| "invalid app id".to_string())?;
+        let on_click = app
+            .root
+            .as_ref()
+            .and_then(|r| r.find_by_id(target_id))
+            .and_then(|e| e.on_click.clone());
+        if let Some(hname) = on_click {
+            let agent = app.agent.clone();
+            let prev_agent = self.active_agent.clone();
+            if agent.is_some() {
+                self.active_agent = agent.clone();
+            }
+            if let Some((fn_item, fn_agent)) = self.fns.get(&hname).cloned() {
+                self.call_user_fn(
+                    &fn_item,
+                    fn_agent.as_deref().or(agent.as_deref()),
+                    &[],
+                    &[],
+                    env,
+                )?;
+            }
+            self.active_agent = prev_agent;
+
+            // Re-render view tree from updated state
+            let content_expr = self.headless_apps[app_id].content_expr.clone();
+            let prev_agent2 = self.active_agent.clone();
+            if agent.is_some() {
+                self.active_agent = agent;
+            }
+            let new_root_val = self.eval_expr(&content_expr, env)?;
+            self.active_agent = prev_agent2;
+            if let NudgeVal::UiElement { found: true, elem } = new_root_val {
+                self.headless_apps[app_id].root = Some(*elem);
+            }
+        }
+        Ok(())
+    }
+
     /// Evaluates a single statement.
     pub fn eval_stmt(&mut self, stmt: &Stmt, env: &Rc<RefCell<Env>>) -> Result<(), String> {
         if nudge_runtime::task::is_current_cancelled() {
@@ -1120,67 +1238,63 @@ impl Interpreter {
                     name: win_name,
                 } => {
                     if method_name == "mount_headless" {
-                        let win_key = agent
-                            .as_ref()
-                            .map(|a| format!("{a}.{win_name}"))
-                            .unwrap_or_else(|| win_name.clone());
-                        let (win_item, _) = self
-                            .windows
-                            .get(&win_key)
-                            .or_else(|| self.windows.get(&win_name))
-                            .cloned()
-                            .ok_or_else(|| format!("window '{win_name}' not found"))?;
-                        let fields = match &win_item {
-                            Item::Window { fields, .. } => fields,
-                            _ => return Err(format!("item '{win_name}' is not a window")),
-                        };
-                        let mut title = win_name.clone();
-                        let mut width = None;
-                        let mut height = None;
-                        let mut content_expr = None;
-                        for (k, v) in fields {
-                            if k == "title" {
-                                if let Ok(tv) = self.eval_expr(v, env) {
-                                    title = match tv {
-                                        NudgeVal::Str(s) => s,
-                                        other => other.to_string(),
-                                    };
-                                }
-                            } else if k == "width" {
-                                if let Ok(NudgeVal::Int(w)) = self.eval_expr(v, env) {
-                                    width = Some(w);
-                                }
-                            } else if k == "height" {
-                                if let Ok(NudgeVal::Int(h)) = self.eval_expr(v, env) {
-                                    height = Some(h);
-                                }
-                            } else if k == "content" {
-                                content_expr = Some(v.clone());
+                        let app_id = self.mount_headless_app(&agent, &win_name, env)?;
+                        return Ok(NudgeVal::HeadlessApp(app_id));
+                    }
+                    if method_name == "open" {
+                        let app_id = self.mount_headless_app(&agent, &win_name, env)?;
+                        let headless_env = std::env::var("NUDGE_UI_HEADLESS")
+                            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                            .unwrap_or(false);
+                        let replaying = std::env::var("NUDGE_REPLAY").is_ok_and(|v| !v.is_empty());
+
+                        #[cfg(feature = "native-gui")]
+                        if !headless_env && !replaying {
+                            let app = self
+                                .headless_apps
+                                .get(app_id)
+                                .ok_or_else(|| "invalid app id".to_string())?;
+                            let title = app.title.clone();
+                            let width = app.width.unwrap_or(400).max(100) as u32;
+                            let height = app.height.unwrap_or(300).max(100) as u32;
+
+                            struct AppDispatcher<'a> {
+                                interp: &'a mut Interpreter,
+                                app_id: usize,
+                                env: &'a Rc<RefCell<Env>>,
                             }
+
+                            impl<'a> nudge_runtime::ui_window::UiDispatcher for AppDispatcher<'a> {
+                                fn root(&mut self) -> Option<nudge_runtime::ui::UiElement> {
+                                    self.interp
+                                        .headless_apps
+                                        .get(self.app_id)
+                                        .and_then(|a| a.root.clone())
+                                }
+
+                                fn dispatch_click(&mut self, button_id: &str) {
+                                    let _ = self.interp.dispatch_click_headless(
+                                        self.app_id,
+                                        button_id,
+                                        self.env,
+                                    );
+                                }
+                            }
+
+                            let config = nudge_runtime::ui_window::WindowConfig {
+                                title,
+                                width,
+                                height,
+                            };
+                            let dispatcher = AppDispatcher {
+                                interp: self,
+                                app_id,
+                                env,
+                            };
+                            nudge_runtime::ui_window::run_window(config, dispatcher)?;
                         }
-                        let content_expr = content_expr.ok_or_else(|| {
-                            format!("window '{win_name}' has no content expression")
-                        })?;
-                        let prev_agent = self.active_agent.clone();
-                        if agent.is_some() {
-                            self.active_agent = agent.clone();
-                        }
-                        let root_val = self.eval_expr(&content_expr, env)?;
-                        self.active_agent = prev_agent;
-                        let root = match root_val {
-                            NudgeVal::UiElement { found: true, elem } => Some(*elem),
-                            _ => None,
-                        };
-                        let app_id = self.headless_apps.len();
-                        self.headless_apps.push(HeadlessAppRecord {
-                            agent,
-                            window: win_name,
-                            title,
-                            width,
-                            height,
-                            content_expr,
-                            root,
-                        });
+
+                        let _ = (headless_env, replaying);
                         return Ok(NudgeVal::HeadlessApp(app_id));
                     }
                 }
@@ -1249,44 +1363,7 @@ impl Interpreter {
                             NudgeVal::Str(s) => s,
                             other => other.to_string(),
                         };
-                        let app = self
-                            .headless_apps
-                            .get(app_id)
-                            .ok_or_else(|| "invalid app id".to_string())?;
-                        let on_click = app
-                            .root
-                            .as_ref()
-                            .and_then(|r| r.find_by_id(&target_id))
-                            .and_then(|e| e.on_click.clone());
-                        if let Some(hname) = on_click {
-                            let agent = app.agent.clone();
-                            let prev_agent = self.active_agent.clone();
-                            if agent.is_some() {
-                                self.active_agent = agent.clone();
-                            }
-                            if let Some((fn_item, fn_agent)) = self.fns.get(&hname).cloned() {
-                                self.call_user_fn(
-                                    &fn_item,
-                                    fn_agent.as_deref().or(agent.as_deref()),
-                                    &[],
-                                    &[],
-                                    env,
-                                )?;
-                            }
-                            self.active_agent = prev_agent;
-
-                            // Re-render view tree from updated state
-                            let content_expr = self.headless_apps[app_id].content_expr.clone();
-                            let prev_agent2 = self.active_agent.clone();
-                            if agent.is_some() {
-                                self.active_agent = agent;
-                            }
-                            let new_root_val = self.eval_expr(&content_expr, env)?;
-                            self.active_agent = prev_agent2;
-                            if let NudgeVal::UiElement { found: true, elem } = new_root_val {
-                                self.headless_apps[app_id].root = Some(*elem);
-                            }
-                        }
+                        self.dispatch_click_headless(app_id, &target_id, env)?;
                         return Ok(NudgeVal::Unit);
                     }
                 }

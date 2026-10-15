@@ -859,4 +859,45 @@ mod tests {
             NudgeVal::Bool(true)
         );
     }
+
+    #[test]
+    fn test_ui_window_open_headless_fallback_and_reactivity() {
+        let _cleanup = EnvReset("NUDGE_UI_HEADLESS");
+        std::env::set_var("NUDGE_UI_HEADLESS", "1");
+
+        let src = r#"
+            view CounterView(val: int) -> View {
+                column(padding = 20, gap = 10) [
+                    text("Counter: " + val),
+                    button("Click Me", id = "btn_inc", on_click = inc)
+                ]
+            }
+
+            agent CounterApp {
+                state { val: int = 0 }
+                fn inc() uses UI {
+                    state.val = state.val + 1
+                }
+                window MainWindow {
+                    title: "Nudge Acceptance GUI",
+                    width: 300,
+                    height: 200,
+                    content: CounterView(state.val)
+                }
+            }
+
+            test "open window headless and verify reactivity" {
+                let app = CounterApp.MainWindow.open()
+                assert app.find("btn_inc").exists()
+                assert app.find_text("Counter: 0").exists()
+                app.dispatch_click("btn_inc")
+                assert app.find_text("Counter: 1").exists()
+                assert CounterApp.state.val == 1
+            }
+        "#;
+        let items = parse_src(src);
+        let mut interp = crate::eval::interpreter::Interpreter::new();
+        interp.load_items(&items).expect("load_items failed");
+        interp.run_all_tests().expect("test execution failed");
+    }
 }

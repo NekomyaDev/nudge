@@ -17,7 +17,10 @@ regex = "1.10"
 [features]
 default = []
 live-provider = ["dep:ureq"]
+native-gui = ["dep:winit", "dep:softbuffer"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = { version = "2.10", default-features = false, features = ["tls"], optional = true }
+winit = { version = "0.30", optional = true }
+softbuffer = { version = "0.4", optional = true }
 

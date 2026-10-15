@@ -1,0 +1,23 @@
+view CounterView(val: int) -> View {
+    column(padding = 20, gap = 10) [
+        text("Counter: " + val),
+        button("Click Me", id = "btn_inc", on_click = inc)
+    ]
+}
+
+agent CounterApp {
+    state { val: int = 0 }
+    fn inc() uses UI {
+        state.val = state.val + 1
+    }
+    window MainWindow {
+        title: "Nudge Acceptance GUI",
+        width: 300,
+        height: 200,
+        content: CounterView(state.val)
+    }
+}
+
+fn main() uses UI {
+    CounterApp.MainWindow.open()
+}
