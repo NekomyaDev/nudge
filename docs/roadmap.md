@@ -120,6 +120,26 @@ Agent frameworks are libraries; **Nudge is the language + runtime**.
 - **Session types for conversations** (research track) — typed multi-turn
   protocols between agents and users
 
+## Open language/runtime needs (Studio-oriented)
+
+Identified as language/runtime work (distinct from building the Studio app
+itself in `.ndg`, which stays a separate effort). Current `Local UI` ships
+headless trees + a native window with buttons/text/column/row, but these are
+still open:
+
+- **Native text input & editing** — a real editor surface: cursor movement,
+  selection, multi-line editing, undo/redo; `input(...)` today is single-line
+  value state, not an editor.
+- **Scrolling** — viewport scrolling in `view`/`window` (overflow + scroll state),
+  needed for any real panel.
+- **Keyboard events** — key chords / shortcuts and text-entry events routed to
+  `handle` handlers (beyond button clicks); IME-safe text input.
+- **File watching** — a typed effect for filesystem events (watch a workspace
+  path, react to changes) for live/reload and tooling workflows.
+- **Controlled process management** — spawn/await/signal child processes with
+  the same effect + grants discipline (bounded lifecycle, no orphan, kill on
+  cancel), for build/test runners and language servers.
+
 ## Horizon (authority plays, date-free)
 
 - **Talk circuit** — FOSDEM / RustConf / PyCon proposals
