@@ -65,9 +65,19 @@ pub fn report(items: &[Item]) -> String {
         let mut c = Count::default();
         for st in body.iter() {
             match &st.kind {
-                StmtKind::Let { value, .. } => count_expr(value, false, &mut c),
+                StmtKind::Let { value, .. } | StmtKind::Assign { value, .. } => {
+                    count_expr(value, false, &mut c)
+                }
                 StmtKind::StateWrite { value, .. } => count_expr(value, false, &mut c),
                 StmtKind::Assert(e) | StmtKind::ExprStmt(e) => count_expr(e, false, &mut c),
+                StmtKind::For { coll, body, .. } => {
+                    count_expr(coll, false, &mut c);
+                    for s in body.iter() {
+                        if let StmtKind::ExprStmt(e) = &s.kind {
+                            count_expr(e, false, &mut c);
+                        }
+                    }
+                }
                 // properties are pure (E0804) — no cost contribution
                 StmtKind::ForAll { .. } => {}
             }
@@ -76,9 +86,19 @@ pub fn report(items: &[Item]) -> String {
         let mut edges = Vec::new();
         for st in body.iter() {
             match &st.kind {
-                StmtKind::Let { value, .. } => collect_calls(value, false, &mut edges),
+                StmtKind::Let { value, .. } | StmtKind::Assign { value, .. } => {
+                    collect_calls(value, false, &mut edges)
+                }
                 StmtKind::StateWrite { value, .. } => collect_calls(value, false, &mut edges),
                 StmtKind::Assert(e) | StmtKind::ExprStmt(e) => collect_calls(e, false, &mut edges),
+                StmtKind::For { coll, body, .. } => {
+                    collect_calls(coll, false, &mut edges);
+                    for s in body.iter() {
+                        if let StmtKind::ExprStmt(e) = &s.kind {
+                            collect_calls(e, false, &mut edges);
+                        }
+                    }
+                }
                 StmtKind::ForAll { .. } => {}
             }
         }
@@ -209,6 +229,22 @@ fn collect_calls(e: &Expr, in_par: bool, out: &mut Vec<(String, bool)>) {
             collect_calls(r, in_par, out);
         }
         ExprKind::Unary { x, .. } => collect_calls(x, in_par, out),
+        ExprKind::RecordLit(fields) => {
+            for (_, v) in fields {
+                collect_calls(v, in_par, out);
+            }
+        }
+        ExprKind::Index { obj, idx } => {
+            collect_calls(obj, in_par, out);
+            collect_calls(idx, in_par, out);
+        }
+        ExprKind::If { cond, then, else_ } => {
+            collect_calls(cond, in_par, out);
+            collect_calls(then, in_par, out);
+            if let Some(el) = else_ {
+                collect_calls(el, in_par, out);
+            }
+        }
         ExprKind::ParMap {
             coll, kwargs, body, ..
         } => {
@@ -320,6 +356,22 @@ fn count_expr(e: &Expr, in_par: bool, c: &mut Count) {
             count_expr(r, in_par, c);
         }
         ExprKind::Unary { x, .. } => count_expr(x, in_par, c),
+        ExprKind::RecordLit(fields) => {
+            for (_, v) in fields {
+                count_expr(v, in_par, c);
+            }
+        }
+        ExprKind::Index { obj, idx } => {
+            count_expr(obj, in_par, c);
+            count_expr(idx, in_par, c);
+        }
+        ExprKind::If { cond, then, else_ } => {
+            count_expr(cond, in_par, c);
+            count_expr(then, in_par, c);
+            if let Some(el) = else_ {
+                count_expr(el, in_par, c);
+            }
+        }
         ExprKind::ParMap {
             coll, kwargs, body, ..
         } => {

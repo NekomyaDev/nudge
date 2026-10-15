@@ -3,10 +3,17 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+/// A variable binding with its mutability flag.
+#[derive(Debug, Clone)]
+pub struct Binding {
+    pub val: NudgeVal,
+    pub mutable: bool,
+}
+
 /// Lexical scope environment with parent pointer for variable lookups.
 #[derive(Debug, Clone)]
 pub struct Env {
-    bindings: HashMap<String, NudgeVal>,
+    bindings: HashMap<String, Binding>,
     parent: Option<Rc<RefCell<Env>>>,
 }
 
@@ -29,18 +36,47 @@ impl Env {
 
     /// Define or overwrite an immutable binding in the current local scope.
     pub fn define(&mut self, name: String, val: NudgeVal) {
-        self.bindings.insert(name, val);
+        self.bindings.insert(
+            name,
+            Binding {
+                val,
+                mutable: false,
+            },
+        );
+    }
+
+    /// Define a binding with explicit mutability.
+    pub fn define_mut(&mut self, name: String, val: NudgeVal, mutable: bool) {
+        self.bindings.insert(name, Binding { val, mutable });
     }
 
     /// Look up a variable by name walking up the scope chain.
     pub fn get(&self, name: &str) -> Option<NudgeVal> {
-        if let Some(val) = self.bindings.get(name) {
-            return Some(val.clone());
+        if let Some(b) = self.bindings.get(name) {
+            return Some(b.val.clone());
         }
         if let Some(parent) = &self.parent {
             return parent.borrow().get(name);
         }
         None
+    }
+
+    /// Reassign an existing variable in the scope chain.
+    /// Returns error if variable is immutable or undefined.
+    pub fn assign(&mut self, name: &str, val: NudgeVal) -> Result<(), String> {
+        if let Some(b) = self.bindings.get_mut(name) {
+            if !b.mutable {
+                return Err(format!(
+                    "cannot assign to immutable local '{name}'; declare it with `let mut`"
+                ));
+            }
+            b.val = val;
+            return Ok(());
+        }
+        if let Some(parent) = &self.parent {
+            return parent.borrow_mut().assign(name, val);
+        }
+        Err(format!("unknown identifier '{name}'"))
     }
 }
 

@@ -14,7 +14,7 @@
 //! Deferred: optional/union types, flow analysis.
 
 use crate::ast::*;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -361,6 +361,22 @@ fn direct_effects(
             }
         }
         ExprKind::Unary { x, .. } => direct_effects(x, g, effects, calls),
+        ExprKind::RecordLit(fields) => {
+            for (_, v) in fields {
+                direct_effects(v, g, effects, calls);
+            }
+        }
+        ExprKind::Index { obj, idx } => {
+            direct_effects(obj, g, effects, calls);
+            direct_effects(idx, g, effects, calls);
+        }
+        ExprKind::If { cond, then, else_ } => {
+            direct_effects(cond, g, effects, calls);
+            direct_effects(then, g, effects, calls);
+            if let Some(el) = else_ {
+                direct_effects(el, g, effects, calls);
+            }
+        }
         ExprKind::ParMap {
             coll, kwargs, body, ..
         } => {
@@ -382,9 +398,15 @@ fn body_effects(
 ) {
     for st in body {
         match &st.kind {
-            StmtKind::Let { value, .. } => direct_effects(value, g, effects, calls),
+            StmtKind::Let { value, .. } | StmtKind::Assign { value, .. } => {
+                direct_effects(value, g, effects, calls)
+            }
             StmtKind::StateWrite { value, .. } => direct_effects(value, g, effects, calls),
             StmtKind::Assert(e) | StmtKind::ExprStmt(e) => direct_effects(e, g, effects, calls),
+            StmtKind::For { coll, body, .. } => {
+                direct_effects(coll, g, effects, calls);
+                body_effects(body, g, effects, calls);
+            }
             // for_all only survives checking inside test blocks, which
             // carry no effect signature — nothing to contribute here
             StmtKind::ForAll { .. } => {}
@@ -464,6 +486,19 @@ fn expr_has_effect_call(
             expr_has_effect_call(l, g, inferred) || expr_has_effect_call(r, g, inferred)
         }
         ExprKind::Unary { x, .. } => expr_has_effect_call(x, g, inferred),
+        ExprKind::RecordLit(fields) => fields
+            .iter()
+            .any(|(_, v)| expr_has_effect_call(v, g, inferred)),
+        ExprKind::Index { obj, idx } => {
+            expr_has_effect_call(obj, g, inferred) || expr_has_effect_call(idx, g, inferred)
+        }
+        ExprKind::If { cond, then, else_ } => {
+            expr_has_effect_call(cond, g, inferred)
+                || expr_has_effect_call(then, g, inferred)
+                || else_
+                    .as_ref()
+                    .is_some_and(|el| expr_has_effect_call(el, g, inferred))
+        }
         ExprKind::ParMap {
             coll, kwargs, body, ..
         } => {
@@ -492,10 +527,13 @@ fn stmts_have_effect_call(
     inferred: &HashMap<String, BTreeSet<String>>,
 ) -> bool {
     body.iter().any(|st| match &st.kind {
-        StmtKind::Let { value, .. } | StmtKind::StateWrite { value, .. } => {
-            expr_has_effect_call(value, g, inferred)
-        }
+        StmtKind::Let { value, .. }
+        | StmtKind::Assign { value, .. }
+        | StmtKind::StateWrite { value, .. } => expr_has_effect_call(value, g, inferred),
         StmtKind::Assert(e) | StmtKind::ExprStmt(e) => expr_has_effect_call(e, g, inferred),
+        StmtKind::For { coll, body, .. } => {
+            expr_has_effect_call(coll, g, inferred) || stmts_have_effect_call(body, g, inferred)
+        }
         StmtKind::ForAll { args, body, .. } => {
             args.iter().any(|a| expr_has_effect_call(a, g, inferred))
                 || stmts_have_effect_call(body, g, inferred)
@@ -569,12 +607,29 @@ fn check_test_body(
     errs: &mut Vec<CheckError>,
     inferred: &HashMap<String, BTreeSet<String>>,
 ) {
+    let mut_locals = HashSet::new();
+    check_test_body_inner(body, locals, &mut_locals, g, errs, inferred);
+}
+
+fn check_test_body_inner(
+    body: &[Stmt],
+    locals: &HashMap<String, Ty>,
+    mut_locals: &HashSet<String>,
+    g: &Globals,
+    errs: &mut Vec<CheckError>,
+    inferred: &HashMap<String, BTreeSet<String>>,
+) {
     let mut locals = locals.clone();
+    let mut mut_locals = mut_locals.clone();
     for st in body {
         let before = errs.len();
         match &st.kind {
             StmtKind::Let {
-                name, ty, value, ..
+                name,
+                ty,
+                value,
+                mutable,
+                ..
             } => {
                 let vt = check_expr(value, &locals, g, errs);
                 check_reserved_binding(name, errs);
@@ -589,6 +644,48 @@ fn check_test_body(
                     }
                 }
                 locals.insert(name.clone(), vt);
+                if *mutable {
+                    mut_locals.insert(name.clone());
+                } else {
+                    mut_locals.remove(name);
+                }
+            }
+            StmtKind::Assign { name, value } => {
+                let vt = check_expr(value, &locals, g, errs);
+                if let Some(target_ty) = locals.get(name) {
+                    if !mut_locals.contains(name) {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0706",
+                            msg: format!(
+                                "cannot assign to immutable local '{name}'; declare it with `let mut`"
+                            ),
+                        });
+                    } else if !assignable(&vt, target_ty) {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0201",
+                            msg: format!(
+                                "local '{name}' has type {target_ty} but assigned value is {vt}"
+                            ),
+                        });
+                    }
+                } else {
+                    let registry = g
+                        .fns
+                        .keys()
+                        .chain(g.tools.keys())
+                        .chain(g.aliases.keys())
+                        .chain(locals.keys());
+                    let did = crate::hints::closest(name, registry)
+                        .map(|c| format!(", did you mean '{c}'?"))
+                        .unwrap_or_default();
+                    errs.push(CheckError {
+                        span: None,
+                        code: "E0101",
+                        msg: format!("unknown identifier '{name}'{did}"),
+                    });
+                }
             }
             StmtKind::StateWrite { field, .. } => {
                 errs.push(CheckError {
@@ -608,7 +705,40 @@ fn check_test_body(
                 }
             }
             StmtKind::ExprStmt(e) => {
-                check_expr(e, &locals, g, errs);
+                check_expr_pos(e, &locals, g, errs, true);
+            }
+            StmtKind::For {
+                var,
+                idx_var,
+                coll,
+                body: for_body,
+            } => {
+                let coll_ty = check_expr(coll, &locals, g, errs);
+                let inner_ty = match &coll_ty {
+                    Ty::List(elem) => (**elem).clone(),
+                    Ty::Unknown => Ty::Unknown,
+                    _ => {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0201",
+                            msg: format!("for loop requires a list collection, got {coll_ty}"),
+                        });
+                        Ty::Unknown
+                    }
+                };
+                check_reserved_binding(var, errs);
+                if let Some(idx) = idx_var {
+                    check_reserved_binding(idx, errs);
+                }
+                let mut loop_locals = locals.clone();
+                let mut loop_mut_locals = mut_locals.clone();
+                loop_locals.insert(var.clone(), inner_ty);
+                loop_mut_locals.remove(var);
+                if let Some(idx) = idx_var {
+                    loop_locals.insert(idx.clone(), Ty::Int);
+                    loop_mut_locals.remove(idx);
+                }
+                check_test_body_inner(for_body, &loop_locals, &loop_mut_locals, g, errs, inferred);
             }
             StmtKind::ForAll {
                 var,
@@ -627,36 +757,26 @@ fn check_test_body(
     }
 }
 
-fn check_fn_body(
-    name: &str,
-    params: &[Param],
-    ret: &TypeExpr,
+fn check_fn_stmts(
     body: &[Stmt],
+    locals: &mut HashMap<String, Ty>,
+    mut_locals: &mut HashSet<String>,
     agent_ctx: AgentCtx<'_>,
     g: &Globals,
     errs: &mut Vec<CheckError>,
-) {
-    let mut locals: HashMap<String, Ty> = HashMap::new();
-    for p in params {
-        locals.insert(p.name.clone(), resolve(&p.ty, g, &mut Vec::new(), errs));
-    }
-    if let Some((_, fields)) = agent_ctx {
-        let rec = Ty::Record(
-            fields
-                .iter()
-                .map(|(f, ty, _)| (f.clone(), resolve(ty, g, &mut Vec::new(), errs)))
-                .collect(),
-        );
-        locals.insert("state".into(), rec);
-    }
+) -> Ty {
     let mut last_ty = Ty::None_;
     for st in body {
         let before = errs.len();
         match &st.kind {
             StmtKind::Let {
-                name: n, ty, value, ..
+                name: n,
+                ty,
+                value,
+                mutable,
+                ..
             } => {
-                let vt = check_expr(value, &locals, g, errs);
+                let vt = check_expr(value, locals, g, errs);
                 check_reserved_binding(n, errs);
                 let bound = match ty {
                     Some(ann) => {
@@ -673,9 +793,52 @@ fn check_fn_body(
                     None => vt,
                 };
                 locals.insert(n.clone(), bound);
+                if *mutable {
+                    mut_locals.insert(n.clone());
+                } else {
+                    mut_locals.remove(n);
+                }
+            }
+            StmtKind::Assign { name, value } => {
+                let vt = check_expr(value, locals, g, errs);
+                if let Some(target_ty) = locals.get(name) {
+                    if !mut_locals.contains(name) {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0706",
+                            msg: format!(
+                                "cannot assign to immutable local '{name}'; declare it with `let mut`"
+                            ),
+                        });
+                    } else if !assignable(&vt, target_ty) {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0201",
+                            msg: format!(
+                                "local '{name}' has type {target_ty} but assigned value is {vt}"
+                            ),
+                        });
+                    }
+                } else {
+                    let registry = g
+                        .fns
+                        .keys()
+                        .chain(g.tools.keys())
+                        .chain(g.aliases.keys())
+                        .chain(locals.keys());
+                    let did = crate::hints::closest(name, registry)
+                        .map(|c| format!(", did you mean '{c}'?"))
+                        .unwrap_or_default();
+                    errs.push(CheckError {
+                        span: None,
+                        code: "E0101",
+                        msg: format!("unknown identifier '{name}'{did}"),
+                    });
+                }
+                last_ty = Ty::None_;
             }
             StmtKind::StateWrite { field, op, value } => {
-                let vt = check_expr(value, &locals, g, errs);
+                let vt = check_expr(value, locals, g, errs);
                 match agent_ctx {
                     None => errs.push(CheckError {
                         span: None,
@@ -690,10 +853,6 @@ fn check_fn_body(
                                 msg: format!("agent state has no field '{field}' — declare it in the state block"),
                             }),
                             Some((_, fty, _)) => {
-                                // `=`: the value must fit the declared type.
-                                // `+=`/`-=`: list-concat / numeric add-sub —
-                                // the runtime checkpoint stores whatever the
-                                // write yields.
                                 if matches!(op, StateOp::Set) {
                                     let want = resolve(fty, g, &mut Vec::new(), errs);
                                     if !assignable(&vt, &want) {
@@ -710,7 +869,7 @@ fn check_fn_body(
                 }
             }
             StmtKind::Assert(e) => {
-                let at = check_expr(e, &locals, g, errs);
+                let at = check_expr(e, locals, g, errs);
                 if !assignable(&at, &Ty::Bool) {
                     errs.push(CheckError {
                         span: None,
@@ -720,7 +879,48 @@ fn check_fn_body(
                 }
             }
             StmtKind::ExprStmt(e) => {
-                last_ty = check_expr(e, &locals, g, errs);
+                last_ty = check_expr_pos(e, locals, g, errs, true);
+            }
+            StmtKind::For {
+                var,
+                idx_var,
+                coll,
+                body: for_body,
+            } => {
+                let coll_ty = check_expr(coll, locals, g, errs);
+                let inner_ty = match &coll_ty {
+                    Ty::List(elem) => (**elem).clone(),
+                    Ty::Unknown => Ty::Unknown,
+                    _ => {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0201",
+                            msg: format!("for loop requires a list collection, got {coll_ty}"),
+                        });
+                        Ty::Unknown
+                    }
+                };
+                check_reserved_binding(var, errs);
+                if let Some(idx) = idx_var {
+                    check_reserved_binding(idx, errs);
+                }
+                let mut loop_locals = locals.clone();
+                let mut loop_mut_locals = mut_locals.clone();
+                loop_locals.insert(var.clone(), inner_ty);
+                loop_mut_locals.remove(var);
+                if let Some(idx) = idx_var {
+                    loop_locals.insert(idx.clone(), Ty::Int);
+                    loop_mut_locals.remove(idx);
+                }
+                check_fn_stmts(
+                    for_body,
+                    &mut loop_locals,
+                    &mut loop_mut_locals,
+                    agent_ctx,
+                    g,
+                    errs,
+                );
+                last_ty = Ty::None_;
             }
             StmtKind::ForAll {
                 var,
@@ -744,6 +944,33 @@ fn check_fn_body(
             }
         }
     }
+    last_ty
+}
+
+fn check_fn_body(
+    name: &str,
+    params: &[Param],
+    ret: &TypeExpr,
+    body: &[Stmt],
+    agent_ctx: AgentCtx<'_>,
+    g: &Globals,
+    errs: &mut Vec<CheckError>,
+) {
+    let mut locals: HashMap<String, Ty> = HashMap::new();
+    let mut mut_locals: HashSet<String> = HashSet::new();
+    for p in params {
+        locals.insert(p.name.clone(), resolve(&p.ty, g, &mut Vec::new(), errs));
+    }
+    if let Some((_, fields)) = agent_ctx {
+        let rec = Ty::Record(
+            fields
+                .iter()
+                .map(|(f, ty, _)| (f.clone(), resolve(ty, g, &mut Vec::new(), errs)))
+                .collect(),
+        );
+        locals.insert("state".into(), rec);
+    }
+    let last_ty = check_fn_stmts(body, &mut locals, &mut mut_locals, agent_ctx, g, errs);
     let want = resolve(ret, g, &mut Vec::new(), errs);
     if !assignable(&last_ty, &want) {
         errs.push(CheckError {
@@ -800,6 +1027,16 @@ fn check_expr(
     locals: &HashMap<String, Ty>,
     g: &Globals,
     errs: &mut Vec<CheckError>,
+) -> Ty {
+    check_expr_pos(e, locals, g, errs, false)
+}
+
+fn check_expr_pos(
+    e: &Expr,
+    locals: &HashMap<String, Ty>,
+    g: &Globals,
+    errs: &mut Vec<CheckError>,
+    in_stmt_pos: bool,
 ) -> Ty {
     match &e.kind {
         ExprKind::Int(_) => Ty::Int,
@@ -1527,6 +1764,113 @@ fn check_expr(
                 }
             }
             result_ty
+        }
+        ExprKind::RecordLit(fields) => {
+            let mut seen = std::collections::HashSet::new();
+            let mut record_fields = Vec::new();
+            for (name, val) in fields {
+                if !seen.insert(name.clone()) {
+                    errs.push(CheckError {
+                        span: None,
+                        code: "E0203",
+                        msg: format!("duplicate field '{name}' in record literal"),
+                    });
+                }
+                let ty = check_expr(val, locals, g, errs);
+                record_fields.push((name.clone(), ty));
+            }
+            Ty::Record(record_fields)
+        }
+        ExprKind::Index { obj, idx } => {
+            let obj_ty = check_expr(obj, locals, g, errs);
+            let idx_ty = check_expr(idx, locals, g, errs);
+            match obj_ty {
+                Ty::List(elem) => {
+                    if !assignable(&idx_ty, &Ty::Int) {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0201",
+                            msg: format!("list index must be an integer, got {idx_ty}"),
+                        });
+                    }
+                    *elem
+                }
+                Ty::Record(fields) => {
+                    if !assignable(&idx_ty, &Ty::Str) {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0201",
+                            msg: format!("record index must be a string, got {idx_ty}"),
+                        });
+                        Ty::Unknown
+                    } else if let ExprKind::Str(s) = &idx.kind {
+                        if let Some((_, fty)) = fields.iter().find(|(f, _)| f == s) {
+                            fty.clone()
+                        } else {
+                            errs.push(CheckError {
+                                span: None,
+                                code: "E0201",
+                                msg: format!("record has no field '{s}'"),
+                            });
+                            Ty::Unknown
+                        }
+                    } else {
+                        Ty::Unknown
+                    }
+                }
+                Ty::Unknown => Ty::Unknown,
+                _ => {
+                    errs.push(CheckError {
+                        span: None,
+                        code: "E0201",
+                        msg: format!("cannot index into type {obj_ty}"),
+                    });
+                    Ty::Unknown
+                }
+            }
+        }
+        ExprKind::If { cond, then, else_ } => {
+            let cond_ty = check_expr(cond, locals, g, errs);
+            if !assignable(&cond_ty, &Ty::Bool) {
+                errs.push(CheckError {
+                    span: None,
+                    code: "E0201",
+                    msg: format!("if condition must be bool, got {cond_ty}"),
+                });
+            }
+            match else_ {
+                None => {
+                    if in_stmt_pos {
+                        check_expr_pos(then, locals, g, errs, true);
+                        Ty::None_
+                    } else {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0704",
+                            msg: "if expression used as a value must include an else branch".into(),
+                        });
+                        check_expr(then, locals, g, errs)
+                    }
+                }
+                Some(else_expr) => {
+                    let then_ty = check_expr_pos(then, locals, g, errs, in_stmt_pos);
+                    let else_ty = check_expr_pos(else_expr, locals, g, errs, in_stmt_pos);
+                    if !assignable(&then_ty, &else_ty) && !assignable(&else_ty, &then_ty) {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0201",
+                            msg: format!(
+                                "if and else branches have incompatible types: then yields {then_ty}, else yields {else_ty}"
+                            ),
+                        });
+                    }
+                    if assignable(&then_ty, &else_ty) {
+                        else_ty
+                    } else {
+                        then_ty
+                    }
+                }
+            }
         }
     }
 }
@@ -2595,5 +2939,340 @@ fn f(c: bool) -> string uses IO {
         // records only equal matching records
         let errs = check_src("type R = { t: string }\nfn f(r: R) -> bool { r == 1 }");
         assert!(errs.iter().any(|e| e.code == "E0201"), "got {errs:?}");
+    }
+
+    #[test]
+    fn pack1_record_literal_typecheck() {
+        // Accept valid record matching type alias
+        let src = r#"
+            type User = { id: int, name: string }
+            fn f() -> User {
+                { id: 1, name: "Alice" }
+            }
+        "#;
+        assert_eq!(check_src(src), vec![]);
+
+        // E0203 on duplicate field
+        let src_dup = r#"
+            fn f() -> { a: int } {
+                { a: 1, a: 2 }
+            }
+        "#;
+        let errs = check_src(src_dup);
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0203"
+                    && e.msg.contains("duplicate field 'a' in record literal")),
+            "got {errs:?}"
+        );
+
+        // E0201 on field type mismatch
+        let src_mismatch = r#"
+            type User = { id: int, name: string }
+            fn f() -> User {
+                { id: "wrong", name: "Alice" }
+            }
+        "#;
+        let errs = check_src(src_mismatch);
+        assert!(errs.iter().any(|e| e.code == "E0201"), "got {errs:?}");
+    }
+
+    #[test]
+    fn pack1_indexing_typecheck() {
+        // Accept valid list and record indexing
+        let src = r#"
+            type Item = { id: int, name: string }
+            fn f(items: [Item], idx: int) -> string {
+                let first = items[0]
+                let dynamic_item = items[idx]
+                let field_str = first["name"]
+                field_str
+            }
+        "#;
+        assert_eq!(check_src(src), vec![]);
+
+        // E0201: list index must be integer
+        let src_bad_list_idx = "fn f(xs: [int]) -> int { xs[\"bad\"] }";
+        let errs = check_src(src_bad_list_idx);
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("list index must be an integer")),
+            "got {errs:?}"
+        );
+
+        // E0201: record index must be string
+        let src_bad_rec_idx = "type R = { a: int }\nfn f(r: R) -> int { r[0] }";
+        let errs = check_src(src_bad_rec_idx);
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("record index must be a string")),
+            "got {errs:?}"
+        );
+
+        // E0201: cannot index non-indexable type
+        let src_non_indexable = "fn f(x: int) -> int { x[0] }";
+        let errs = check_src(src_non_indexable);
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("cannot index into type int")),
+            "got {errs:?}"
+        );
+
+        // E0201: record has no field
+        let src_no_field = "type R = { a: int }\nfn f(r: R) -> int { r[\"missing\"] }";
+        let errs = check_src(src_no_field);
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("record has no field 'missing'")),
+            "got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn pack1_if_else_typecheck() {
+        // Accept valid if-else expression in value position
+        let src = r#"
+            fn f(score: int) -> string {
+                let s = if score >= 80 { "pass" } else { "fail" }
+                s
+            }
+        "#;
+        assert_eq!(check_src(src), vec![]);
+
+        // Accept if statement without else in statement position
+        let src_stmt = r#"
+            fn f(cond: bool) -> () {
+                if cond {
+                    "side_effect"
+                }
+                none
+            }
+        "#;
+        assert_eq!(check_src(src_stmt), vec![]);
+
+        // E0704: if expression used as value missing else
+        let src_missing_else = r#"
+            fn f(cond: bool) -> string {
+                let s = if cond { "pass" }
+                s
+            }
+        "#;
+        let errs = check_src(src_missing_else);
+        assert!(
+            errs.iter().any(|e| e.code == "E0704"
+                && e.msg
+                    .contains("if expression used as a value must include an else branch")),
+            "got {errs:?}"
+        );
+
+        // E0201: non-bool condition
+        let src_bad_cond = r#"
+            fn f(x: int) -> string {
+                if x { "a" } else { "b" }
+            }
+        "#;
+        let errs = check_src(src_bad_cond);
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("if condition must be bool")),
+            "got {errs:?}"
+        );
+
+        // E0201: branch type mismatch
+        let src_mismatch = r#"
+            fn f(c: bool) -> int {
+                if c { 1 } else { "not an int" }
+            }
+        "#;
+        let errs = check_src(src_mismatch);
+        assert!(
+            errs.iter().any(|e| e.code == "E0201"
+                && e.msg
+                    .contains("if and else branches have incompatible types")),
+            "got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn pack1_for_loop_typecheck() {
+        // Accept valid for loops (with and without index)
+        let src = r#"
+            fn f(items: [string]) -> () {
+                for item in items {
+                    assert true
+                }
+                for (item, idx) in items {
+                    assert idx >= 0
+                }
+                none
+            }
+        "#;
+        assert_eq!(check_src(src), vec![]);
+
+        // E0201: collection not a list
+        let src_bad_coll = r#"
+            fn f(x: int) -> () {
+                for item in x {
+                    assert true
+                }
+                none
+            }
+        "#;
+        let errs = check_src(src_bad_coll);
+        assert!(
+            errs.iter().any(|e| e.code == "E0201" && e.msg.contains("for loop requires a list collection")),
+            "got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn pack1_effect_propagation() {
+        // Tool called inside if branch: pure fn trips E0301
+        let src_if_tool = r#"
+            tool query_db(q: string) -> string {
+                impl: mcp("db").query(q)
+            }
+            fn f(c: bool) -> string {
+                if c {
+                    query_db("test")
+                } else {
+                    "fallback"
+                }
+            }
+        "#;
+        let errs = check_src(src_if_tool);
+        assert!(errs.iter().any(|e| e.code == "E0301"), "got {errs:?}");
+
+        // Tool called inside for body: pure fn trips E0301
+        let src_for_tool = r#"
+            tool query_db(q: string) -> string {
+                impl: mcp("db").query(q)
+            }
+            fn f(items: [string]) -> () {
+                for it in items {
+                    let _ = query_db(it)
+                }
+                none
+            }
+        "#;
+        let errs = check_src(src_for_tool);
+        assert!(errs.iter().any(|e| e.code == "E0301"), "got {errs:?}");
+
+        // Tool called inside record literal: pure fn trips E0301
+        let src_record_tool = r#"
+            tool query_db(q: string) -> string {
+                impl: mcp("db").query(q)
+            }
+            fn f() -> { res: string } {
+                { res: query_db("q") }
+            }
+        "#;
+        let errs = check_src(src_record_tool);
+        assert!(errs.iter().any(|e| e.code == "E0301"), "got {errs:?}");
+
+        // Declaring uses Tool satisfies the checker
+        let src_declared = r#"
+            tool query_db(q: string) -> string {
+                impl: mcp("db").query(q)
+            }
+            fn f(c: bool) -> string uses Tool {
+                if c {
+                    query_db("test")
+                } else {
+                    "fallback"
+                }
+            }
+        "#;
+        assert_eq!(check_src(src_declared), vec![]);
+    }
+
+    #[test]
+    fn mutable_locals_typecheck() {
+        // 1. Assign to immutable local -> E0706
+        let src = r#"
+            fn main() -> int {
+                let x = 1
+                x = 2
+                x
+            }
+        "#;
+        let errs = check_src(src);
+        assert!(
+            errs.iter().any(|e| e.code == "E0706"
+                && e.msg
+                    .contains("cannot assign to immutable local 'x'; declare it with `let mut`")),
+            "got {errs:?}"
+        );
+
+        // 2. Assign wrong type to mutable local -> E0201
+        let src_mismatch = r#"
+            fn main() -> int {
+                let mut x = 1
+                x = "hello"
+                x
+            }
+        "#;
+        let errs_mismatch = check_src(src_mismatch);
+        assert!(
+            errs_mismatch.iter().any(|e| e.code == "E0201"
+                && e.msg
+                    .contains("local 'x' has type int but assigned value is string")),
+            "got {errs_mismatch:?}"
+        );
+
+        // 3. Assign to undeclared variable -> E0101
+        let src_undef = r#"
+            fn main() -> int {
+                unknown_var = 42
+                0
+            }
+        "#;
+        let errs_undef = check_src(src_undef);
+        assert!(
+            errs_undef
+                .iter()
+                .any(|e| e.code == "E0101" && e.msg.contains("unknown_var")),
+            "got {errs_undef:?}"
+        );
+
+        // 4. Valid let mut with reassignment -> clean
+        let src_valid = r#"
+            fn main() -> int {
+                let mut x = 1
+                x = 2
+                x
+            }
+        "#;
+        assert_eq!(check_src(src_valid), vec![]);
+
+        // 5. For-loop accumulation with outer let mut -> clean
+        let src_loop = r#"
+            fn sum_list(xs: [int]) -> int {
+                let mut acc = 0
+                for x in xs {
+                    acc = acc + x
+                }
+                acc
+            }
+        "#;
+        assert_eq!(check_src(src_loop), vec![]);
+
+        // 6. Assign to loop variable (immutable) -> E0706
+        let src_loop_var = r#"
+            fn main() -> int {
+                let xs = [1, 2, 3]
+                for x in xs {
+                    x = 10
+                }
+                0
+            }
+        "#;
+        let errs_loop_var = check_src(src_loop_var);
+        assert!(
+            errs_loop_var.iter().any(|e| e.code == "E0706"
+                && e.msg
+                    .contains("cannot assign to immutable local 'x'; declare it with `let mut`")),
+            "got {errs_loop_var:?}"
+        );
     }
 }

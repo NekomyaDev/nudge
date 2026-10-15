@@ -326,6 +326,14 @@ impl Parser {
         match self.peek().clone() {
             Tok::Let => {
                 self.bump();
+                let mutable = if self.eat(&Tok::Mut) {
+                    true
+                } else if matches!(self.peek(), Tok::Ident(s) if s == "mut") {
+                    self.bump();
+                    true
+                } else {
+                    false
+                };
                 let name = self.ident()?;
                 let ty = if self.eat(&Tok::Colon) {
                     Some(self.parse_type()?)
@@ -341,6 +349,7 @@ impl Parser {
                         ty,
                         value,
                         stream: false,
+                        mutable,
                     },
                 ))
             }
@@ -364,13 +373,48 @@ impl Parser {
                         ty,
                         value,
                         stream: true,
+                        mutable: false,
                     },
                 ))
+            }
+            // Local variable assignment `name = expr` (plain assignment).
+            // Disambiguated from `==` (Tok::EqEq) and `let`.
+            Tok::Ident(_) if self.peek2() == &Tok::Assign => {
+                let name = self.ident()?;
+                self.expect(&Tok::Assign, "'=' in assignment")?;
+                let value = self.parse_expr()?;
+                Ok(self.spanned(start, StmtKind::Assign { name, value }))
             }
             Tok::Assert => {
                 self.bump();
                 let e = self.parse_expr()?;
                 Ok(self.spanned(start, StmtKind::Assert(e)))
+            }
+            // `for item in coll { body }` or `for (item, idx) in coll { body }` (Pack 1)
+            Tok::For => {
+                self.bump();
+                let (var, idx_var) = if self.eat(&Tok::LParen) {
+                    let item = self.ident()?;
+                    self.expect(&Tok::Comma, "',' between item and index in for loop")?;
+                    let idx = self.ident()?;
+                    self.expect(&Tok::RParen, "')' after for loop variables")?;
+                    (item, Some(idx))
+                } else {
+                    let item = self.ident()?;
+                    (item, None)
+                };
+                self.expect(&Tok::In, "'in' after for loop variable(s)")?;
+                let coll = self.parse_expr()?;
+                let body = self.parse_block()?;
+                Ok(self.spanned(
+                    start,
+                    StmtKind::For {
+                        var,
+                        idx_var,
+                        coll,
+                        body,
+                    },
+                ))
             }
             // `for_all x in gen.int(0, 10) { ... }` (design §6.4) — parsed
             // anywhere a statement fits; the checker confines it to test
@@ -706,6 +750,28 @@ impl Parser {
                         },
                     );
                 }
+                Tok::LBracket
+                    if !self
+                        .t
+                        .get(self.i)
+                        .map(|s| s.newline_before)
+                        .unwrap_or(false) =>
+                {
+                    self.bump();
+                    let idx = self.parse_expr()?;
+                    self.expect(&Tok::RBracket, "']' after index expression")?;
+                    let span = Span {
+                        start: e.span.start,
+                        end: self.t[self.i - 1].end,
+                    };
+                    e = self.ex(
+                        span,
+                        ExprKind::Index {
+                            obj: Box::new(e),
+                            idx: Box::new(idx),
+                        },
+                    );
+                }
                 _ => break,
             }
         }
@@ -749,8 +815,56 @@ impl Parser {
         Ok((params, body))
     }
 
+    fn parse_if(&mut self) -> PResult<Expr> {
+        let start = self.pos();
+        self.bump(); // 'if'
+        let g = self.enter()?;
+        let cond = self.parse_expr()?;
+        self.expect(&Tok::LBrace, "'{' after if condition")?;
+        let then_expr = self.parse_expr()?;
+        self.expect(&Tok::RBrace, "'}' after if branch")?;
+        let else_ = if self.eat(&Tok::Else) {
+            if self.at(&Tok::If) {
+                Some(Box::new(self.parse_if()?))
+            } else {
+                self.expect(&Tok::LBrace, "'{' after else")?;
+                let else_expr = self.parse_expr()?;
+                self.expect(&Tok::RBrace, "'}' after else branch")?;
+                Some(Box::new(else_expr))
+            }
+        } else {
+            None
+        };
+        self.leave(g);
+        Ok(self.ex_from(
+            start,
+            ExprKind::If {
+                cond: Box::new(cond),
+                then: Box::new(then_expr),
+                else_,
+            },
+        ))
+    }
+
     fn parse_primary(&mut self) -> PResult<Expr> {
         match self.peek().clone() {
+            Tok::If => self.parse_if(),
+            Tok::LBrace => {
+                let start = self.pos();
+                self.bump();
+                let g = self.enter()?;
+                let mut fields = Vec::new();
+                while !self.at(&Tok::RBrace) {
+                    let key = self.ident()?;
+                    self.expect(&Tok::Colon, "':' after record field name")?;
+                    let val = self.parse_expr()?;
+                    fields.push((key, val));
+                    self.eat(&Tok::Comma);
+                }
+                self.expect(&Tok::RBrace, "'}' after record literal")?;
+                self.leave(g);
+                Ok(self.ex_from(start, ExprKind::RecordLit(fields)))
+            }
             Tok::Int(v) => {
                 let start = self.pos();
                 self.bump();
@@ -1723,5 +1837,248 @@ test "budget" {
         assert!(overflow.is_err());
         assert!(overflow.unwrap_err().msg.contains("nesting too deep"));
         assert_eq!(p.depth, Parser::MAX_DEPTH);
+    }
+
+    #[test]
+    fn pack1_record_literal_parsing() {
+        let src = r#"
+            fn f() -> int {
+                let empty = {}
+                let u = { id: 1, name: "Alice", active: true, }
+                u.id
+            }
+        "#;
+        let items = parse(lex(src).unwrap()).unwrap();
+        match &items[0] {
+            Item::Fn { body, .. } => {
+                let StmtKind::Let { value: v1, .. } = &body[0].kind else {
+                    panic!()
+                };
+                assert!(matches!(&v1.kind, ExprKind::RecordLit(fs) if fs.is_empty()));
+
+                let StmtKind::Let { value: v2, .. } = &body[1].kind else {
+                    panic!()
+                };
+                match &v2.kind {
+                    ExprKind::RecordLit(fields) => {
+                        assert_eq!(fields.len(), 3);
+                        assert_eq!(fields[0].0, "id");
+                        assert!(matches!(fields[0].1.kind, ExprKind::Int(1)));
+                        assert_eq!(fields[1].0, "name");
+                        assert!(matches!(&fields[1].1.kind, ExprKind::Str(s) if s == "Alice"));
+                        assert_eq!(fields[2].0, "active");
+                        assert!(matches!(fields[2].1.kind, ExprKind::Bool(true)));
+                    }
+                    other => panic!("expected RecordLit, got {other:?}"),
+                }
+            }
+            _ => panic!("expected fn"),
+        }
+    }
+
+    #[test]
+    fn pack1_indexing_parsing() {
+        let src = r#"
+            fn f(items: [int], rec: { name: string }) -> int {
+                let first = items[0]
+                let dynamic_val = items[first]
+                let nested = items[0][1]
+                let f_name = rec["name"]
+                first
+            }
+        "#;
+        let items = parse(lex(src).unwrap()).unwrap();
+        match &items[0] {
+            Item::Fn { body, .. } => {
+                let StmtKind::Let { value: v1, .. } = &body[0].kind else {
+                    panic!()
+                };
+                match &v1.kind {
+                    ExprKind::Index { obj, idx } => {
+                        assert!(matches!(&obj.kind, ExprKind::Ident(s) if s == "items"));
+                        assert!(matches!(&idx.kind, ExprKind::Int(0)));
+                    }
+                    other => panic!("expected Index, got {other:?}"),
+                }
+
+                let StmtKind::Let { value: v2, .. } = &body[1].kind else {
+                    panic!()
+                };
+                match &v2.kind {
+                    ExprKind::Index { obj, idx } => {
+                        assert!(matches!(&obj.kind, ExprKind::Ident(s) if s == "items"));
+                        assert!(matches!(&idx.kind, ExprKind::Ident(s) if s == "first"));
+                    }
+                    other => panic!("expected Index, got {other:?}"),
+                }
+
+                let StmtKind::Let { value: v3, .. } = &body[2].kind else {
+                    panic!()
+                };
+                match &v3.kind {
+                    ExprKind::Index { obj, idx } => {
+                        assert!(matches!(&idx.kind, ExprKind::Int(1)));
+                        assert!(matches!(&obj.kind, ExprKind::Index { .. }));
+                    }
+                    other => panic!("expected chained Index, got {other:?}"),
+                }
+
+                let StmtKind::Let { value: v4, .. } = &body[3].kind else {
+                    panic!()
+                };
+                match &v4.kind {
+                    ExprKind::Index { obj, idx } => {
+                        assert!(matches!(&obj.kind, ExprKind::Ident(s) if s == "rec"));
+                        assert!(matches!(&idx.kind, ExprKind::Str(s) if s == "name"));
+                    }
+                    other => panic!("expected Index, got {other:?}"),
+                }
+            }
+            _ => panic!("expected fn"),
+        }
+    }
+
+    #[test]
+    fn pack1_if_else_parsing() {
+        let src = r#"
+            fn f(score: int) -> string {
+                if score >= 90 {
+                    "gold"
+                } else if score >= 75 {
+                    "silver"
+                } else {
+                    "bronze"
+                }
+            }
+        "#;
+        let items = parse(lex(src).unwrap()).unwrap();
+        match &items[0] {
+            Item::Fn { body, .. } => {
+                let StmtKind::ExprStmt(e) = &body[0].kind else {
+                    panic!()
+                };
+                match &e.kind {
+                    ExprKind::If { cond, then, else_ } => {
+                        assert!(matches!(&cond.kind, ExprKind::Binary { .. }));
+                        assert!(matches!(&then.kind, ExprKind::Str(s) if s == "gold"));
+                        let inner_else = else_.as_ref().unwrap();
+                        match &inner_else.kind {
+                            ExprKind::If {
+                                cond: c2,
+                                then: t2,
+                                else_: e2,
+                            } => {
+                                assert!(matches!(&c2.kind, ExprKind::Binary { .. }));
+                                assert!(matches!(&t2.kind, ExprKind::Str(s) if s == "silver"));
+                                let final_else = e2.as_ref().unwrap();
+                                assert!(
+                                    matches!(&final_else.kind, ExprKind::Str(s) if s == "bronze")
+                                );
+                            }
+                            other => panic!("expected nested If, got {other:?}"),
+                        }
+                    }
+                    other => panic!("expected If, got {other:?}"),
+                }
+            }
+            _ => panic!("expected fn"),
+        }
+    }
+
+    #[test]
+    fn pack1_for_loop_parsing() {
+        let src = r#"
+            fn f(items: [string]) -> () {
+                for item in items {
+                    assert true
+                }
+                for (item, idx) in items {
+                    assert true
+                }
+            }
+        "#;
+        let items = parse(lex(src).unwrap()).unwrap();
+        match &items[0] {
+            Item::Fn { body, .. } => {
+                match &body[0].kind {
+                    StmtKind::For {
+                        var,
+                        idx_var,
+                        coll,
+                        body: for_body,
+                    } => {
+                        assert_eq!(var, "item");
+                        assert_eq!(idx_var, &None);
+                        assert!(matches!(&coll.kind, ExprKind::Ident(s) if s == "items"));
+                        assert_eq!(for_body.len(), 1);
+                    }
+                    other => panic!("expected For, got {other:?}"),
+                }
+                match &body[1].kind {
+                    StmtKind::For {
+                        var,
+                        idx_var,
+                        coll,
+                        body: for_body,
+                    } => {
+                        assert_eq!(var, "item");
+                        assert_eq!(idx_var, &Some("idx".to_string()));
+                        assert!(matches!(&coll.kind, ExprKind::Ident(s) if s == "items"));
+                        assert_eq!(for_body.len(), 1);
+                    }
+                    other => panic!("expected For with index, got {other:?}"),
+                }
+            }
+            _ => panic!("expected fn"),
+        }
+    }
+
+    #[test]
+    fn mutable_locals_parsing() {
+        let src = r#"
+            fn main() -> int {
+                let mut acc = 0
+                let x = 10
+                acc = acc + 1
+                acc == 1
+                acc
+            }
+        "#;
+        let p = parse(lex(src).unwrap()).expect("parse error");
+        match &p[0] {
+            Item::Fn { body, .. } => {
+                match &body[0].kind {
+                    StmtKind::Let { name, mutable, .. } => {
+                        assert_eq!(name, "acc");
+                        assert!(mutable);
+                    }
+                    other => panic!("expected Let mut, got {other:?}"),
+                }
+                match &body[1].kind {
+                    StmtKind::Let { name, mutable, .. } => {
+                        assert_eq!(name, "x");
+                        assert!(!mutable);
+                    }
+                    other => panic!("expected Let immutable, got {other:?}"),
+                }
+                match &body[2].kind {
+                    StmtKind::Assign { name, value } => {
+                        assert_eq!(name, "acc");
+                        assert!(matches!(
+                            &value.kind,
+                            ExprKind::Binary { op: BinOp::Add, .. }
+                        ));
+                    }
+                    other => panic!("expected Assign, got {other:?}"),
+                }
+                match &body[3].kind {
+                    StmtKind::ExprStmt(e) => {
+                        assert!(matches!(&e.kind, ExprKind::Binary { op: BinOp::Eq, .. }));
+                    }
+                    other => panic!("expected ExprStmt equality, got {other:?}"),
+                }
+            }
+            _ => panic!("expected fn"),
+        }
     }
 }

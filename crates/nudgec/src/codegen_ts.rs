@@ -207,16 +207,21 @@ fn emit_body(
                 name,
                 value,
                 stream,
+                mutable,
                 ..
             } => {
+                let kw = if *mutable { "let" } else { "const" };
                 if *stream {
                     // the TS runtime now streams (fake parity): swap the
                     // emitted llmCall for llmStream — same opts shape
                     let call = ts(value, aliases, sigs).replacen("rt.llmCall(", "rt.llmStream(", 1);
-                    format!("const {name} = {call};")
+                    format!("{kw} {name} = {call};")
                 } else {
-                    format!("const {name} = {};", ts(value, aliases, sigs))
+                    format!("{kw} {name} = {};", ts(value, aliases, sigs))
                 }
+            }
+            StmtKind::Assign { name, value } => {
+                format!("{name} = {};", ts(value, aliases, sigs))
             }
             // a state write is a checkpoint — the runtime Proxy persists it
             StmtKind::StateWrite { field, op, value } => {
@@ -261,8 +266,17 @@ fn emit_body(
                 let mut inner = String::new();
                 for st in body {
                     let line = match &st.kind {
-                        StmtKind::Let { name, value, .. } => {
-                            format!("const {name} = {};", ts(value, aliases, sigs))
+                        StmtKind::Let {
+                            name,
+                            value,
+                            mutable,
+                            ..
+                        } => {
+                            let kw = if *mutable { "let" } else { "const" };
+                            format!("{kw} {name} = {};", ts(value, aliases, sigs))
+                        }
+                        StmtKind::Assign { name, value } => {
+                            format!("{name} = {};", ts(value, aliases, sigs))
                         }
                         StmtKind::Assert(e) => format!(
                             "if (!({})) throw new Error(\"assertion failed\");",
@@ -274,6 +288,9 @@ fn emit_body(
                         ),
                         // one nesting level is the documented v1 surface
                         StmtKind::ForAll { .. } => "// error: nested for_all (E0805)".to_string(),
+                        StmtKind::For { .. } => {
+                            "// pack1 codegen not yet lowered: for loop".to_string()
+                        }
                     };
                     inner.push_str("    ");
                     inner.push_str(&line);
@@ -283,6 +300,7 @@ fn emit_body(
                     "rt.forAll(\"{gen}\", [{arg_list}], ({var}) => {{\n{inner}    }}, \"{var}\");"
                 )
             }
+            StmtKind::For { .. } => "// pack1 codegen not yet lowered: for loop".to_string(),
         };
         out.push_str("  ");
         out.push_str(&line);
@@ -688,6 +706,9 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
                     "/* warning: unknown computer method {other} (rejected by the checker) */ null"
                 ),
             }
+        }
+        ExprKind::RecordLit(_) | ExprKind::Index { .. } | ExprKind::If { .. } => {
+            "// pack1 codegen not yet lowered".to_string()
         }
     }
 }

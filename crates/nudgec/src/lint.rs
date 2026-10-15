@@ -202,6 +202,13 @@ fn has_computer_call(e: &Expr) -> bool {
         }
         ExprKind::Binary { l, r, .. } => has_computer_call(l) || has_computer_call(r),
         ExprKind::Unary { x, .. } => has_computer_call(x),
+        ExprKind::RecordLit(fields) => fields.iter().any(|(_, v)| has_computer_call(v)),
+        ExprKind::Index { obj, idx } => has_computer_call(obj) || has_computer_call(idx),
+        ExprKind::If { cond, then, else_ } => {
+            has_computer_call(cond)
+                || has_computer_call(then)
+                || else_.as_ref().is_some_and(|el| has_computer_call(el))
+        }
         ExprKind::Field { obj, .. } => has_computer_call(obj),
         ExprKind::Merge { l, r } => has_computer_call(l) || has_computer_call(r),
         ExprKind::ParMap {
@@ -330,6 +337,22 @@ fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut V
             walk_expr(ctx, r, records, out);
         }
         ExprKind::Unary { x, .. } => walk_expr(ctx, x, records, out),
+        ExprKind::RecordLit(fields) => {
+            for (_, v) in fields {
+                walk_expr(ctx, v, records, out);
+            }
+        }
+        ExprKind::Index { obj, idx } => {
+            walk_expr(ctx, obj, records, out);
+            walk_expr(ctx, idx, records, out);
+        }
+        ExprKind::If { cond, then, else_ } => {
+            walk_expr(ctx, cond, records, out);
+            walk_expr(ctx, then, records, out);
+            if let Some(el) = else_ {
+                walk_expr(ctx, el, records, out);
+            }
+        }
         ExprKind::ParMap {
             coll, kwargs, body, ..
         } => {
@@ -353,10 +376,16 @@ fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut V
 
 fn walk_stmt(ctx: &str, s: &Stmt, records: &[(String, Vec<String>)], out: &mut Vec<Lint>) {
     match &s.kind {
-        StmtKind::Let { value, .. } | StmtKind::StateWrite { value, .. } => {
-            walk_expr(ctx, value, records, out)
-        }
+        StmtKind::Let { value, .. }
+        | StmtKind::Assign { value, .. }
+        | StmtKind::StateWrite { value, .. } => walk_expr(ctx, value, records, out),
         StmtKind::Assert(e) | StmtKind::ExprStmt(e) => walk_expr(ctx, e, records, out),
+        StmtKind::For { coll, body, .. } => {
+            walk_expr(ctx, coll, records, out);
+            for s in body {
+                walk_stmt(ctx, s, records, out);
+            }
+        }
         // properties are pure (E0804) — prompt lints don't apply inside
         StmtKind::ForAll { .. } => {}
     }

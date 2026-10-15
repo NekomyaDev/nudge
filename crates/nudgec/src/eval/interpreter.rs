@@ -107,6 +107,7 @@ impl Interpreter {
                 name,
                 value,
                 stream,
+                mutable,
                 ..
             } => {
                 if *stream {
@@ -131,18 +132,22 @@ impl Interpreter {
                     // IDENTICALLY to a normal let x = llm"""...""" (deterministic, no network).
                     if replay || provider_name == "fake" {
                         let val = self.eval_expr(value, env)?;
-                        env.borrow_mut().define(name.clone(), val);
+                        env.borrow_mut().define_mut(name.clone(), val, *mutable);
                         return Ok(());
                     }
 
                     // Otherwise, streaming-capable OpenAI-compatible provider
                     let val = self.eval_stream_llm(prompt, options, env)?;
-                    env.borrow_mut().define(name.clone(), val);
+                    env.borrow_mut().define_mut(name.clone(), val, *mutable);
                     return Ok(());
                 }
                 let val = self.eval_expr(value, env)?;
-                env.borrow_mut().define(name.clone(), val);
+                env.borrow_mut().define_mut(name.clone(), val, *mutable);
                 Ok(())
+            }
+            StmtKind::Assign { name, value } => {
+                let val = self.eval_expr(value, env)?;
+                env.borrow_mut().assign(name, val)
             }
             StmtKind::StateWrite { field, op, value } => {
                 let agent_name = self.active_agent.clone().ok_or_else(|| {
@@ -229,6 +234,47 @@ impl Interpreter {
                                 "for_all {var} in gen.{gen} failed on {var}={case}: {e}"
                             ));
                         }
+                    }
+                }
+                Ok(())
+            }
+            StmtKind::For {
+                var,
+                idx_var,
+                coll,
+                body,
+            } => {
+                let coll_val = self.eval_expr(coll, env)?;
+                let items = match coll_val {
+                    NudgeVal::List(items) => items,
+                    other => {
+                        return Err(format!(
+                            "for loop requires a list collection, got {}",
+                            other.type_name()
+                        ));
+                    }
+                };
+
+                let limit = std::env::var("NUDGE_MAX_LOOP_ITERATIONS")
+                    .ok()
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(10_000);
+
+                for (idx, item) in items.into_iter().enumerate() {
+                    if idx >= limit {
+                        return Err(format!(
+                            "loop iteration limit exceeded: execution halted after {limit} iterations to prevent infinite loop"
+                        ));
+                    }
+                    let child_env = Rc::new(RefCell::new(Env::new_child(Rc::clone(env))));
+                    child_env.borrow_mut().define(var.clone(), item);
+                    if let Some(i_var) = idx_var {
+                        child_env
+                            .borrow_mut()
+                            .define(i_var.clone(), NudgeVal::Int(idx as i64));
+                    }
+                    for st in body {
+                        self.eval_stmt(st, &child_env)?;
                     }
                 }
                 Ok(())
@@ -495,6 +541,66 @@ impl Interpreter {
                 args,
                 kwargs,
             } => self.eval_computer(method, args, kwargs, env),
+            ExprKind::RecordLit(fields) => {
+                let mut map = HashMap::new();
+                for (name, expr) in fields {
+                    let val = self.eval_expr(expr, env)?;
+                    map.insert(name.clone(), val);
+                }
+                Ok(NudgeVal::Map(map))
+            }
+            ExprKind::Index { obj, idx } => {
+                let obj_val = self.eval_expr(obj, env)?;
+                let idx_val = self.eval_expr(idx, env)?;
+                match obj_val {
+                    NudgeVal::List(items) => match idx_val {
+                        NudgeVal::Int(i) => {
+                            if i < 0 || i as usize >= items.len() {
+                                return Err(format!(
+                                    "index out of bounds: index {i} out of range for list of length {}",
+                                    items.len()
+                                ));
+                            }
+                            Ok(items[i as usize].clone())
+                        }
+                        other => Err(format!(
+                            "list index must be an integer, got {}",
+                            other.type_name()
+                        )),
+                    },
+                    NudgeVal::Map(m) => match idx_val {
+                        NudgeVal::Str(key) => m
+                            .get(&key)
+                            .cloned()
+                            .ok_or_else(|| format!("map has no key '{key}'")),
+                        other => Err(format!(
+                            "map key must be a string, got {}",
+                            other.type_name()
+                        )),
+                    },
+                    NudgeVal::AgentState { fields, .. } => match idx_val {
+                        NudgeVal::Str(key) => fields
+                            .get(&key)
+                            .cloned()
+                            .ok_or_else(|| format!("agent state has no field '{key}'")),
+                        other => Err(format!(
+                            "agent state key must be a string, got {}",
+                            other.type_name()
+                        )),
+                    },
+                    other => Err(format!("cannot index into type {}", other.type_name())),
+                }
+            }
+            ExprKind::If { cond, then, else_ } => {
+                let cond_val = self.eval_expr(cond, env)?;
+                if cond_val.is_truthy() {
+                    self.eval_expr(then, env)
+                } else if let Some(el) = else_ {
+                    self.eval_expr(el, env)
+                } else {
+                    Ok(NudgeVal::Unit)
+                }
+            }
         }
     }
 

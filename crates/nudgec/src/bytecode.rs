@@ -5,7 +5,7 @@
 //! decide, merge, agent state writes, stream let) is rejected with a clear
 //! "not in bytecode subset" error so callers can fall back to the interpreter.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::{self, BinOp, Expr, ExprKind, Item, Stmt, StmtKind};
 use crate::eval::NudgeVal;
@@ -73,6 +73,12 @@ pub enum Op {
     MakeRecord(Vec<String>),
     /// Record field access: pop map object, push field value.
     Field(String),
+    /// Index into list or map: pop index, pop collection, push element or field.
+    Index,
+    /// Verify local slot contains a List: error if not NudgeVal::List.
+    CheckList(u32),
+    /// Loop iteration limit check on counter slot: error if counter >= NUDGE_MAX_LOOP_ITERATIONS.
+    CheckLoopLimit(u32),
     /// Call user function: `(fn_index, argc)`.
     Call(u32, usize),
     /// Delegate call to effectful function in the interpreter: `(fn_name, argc)`.
@@ -165,6 +171,7 @@ struct FnMeta {
 struct Compiler<'a> {
     chunk: Chunk,
     locals: HashMap<String, u32>,
+    mut_locals: HashSet<String>,
     next_local: u32,
     fn_map: &'a HashMap<String, usize>,
     fn_metas: &'a [FnMeta],
@@ -191,6 +198,7 @@ impl<'a> Compiler<'a> {
         Self {
             chunk: Chunk::new(),
             locals,
+            mut_locals: HashSet::new(),
             next_local,
             fn_map,
             fn_metas,
@@ -253,6 +261,7 @@ impl<'a> Compiler<'a> {
                 name,
                 value,
                 stream,
+                mutable,
                 ..
             } => {
                 if *stream {
@@ -267,7 +276,27 @@ impl<'a> Compiler<'a> {
                     self.locals.insert(name.clone(), s);
                     s
                 };
+                if *mutable {
+                    self.mut_locals.insert(name.clone());
+                } else {
+                    self.mut_locals.remove(name);
+                }
                 self.chunk.emit(Op::StoreLocal(slot));
+                Ok(())
+            }
+            StmtKind::Assign { name, value } => {
+                self.compile_expr(value)?;
+                let slot = *self
+                    .locals
+                    .get(name)
+                    .ok_or_else(|| format!("unknown local '{name}'"))?;
+                if !self.mut_locals.contains(name) {
+                    self.chunk.emit(Op::Fail(format!(
+                        "cannot assign to immutable local '{name}'; declare it with `let mut`"
+                    )));
+                } else {
+                    self.chunk.emit(Op::StoreLocal(slot));
+                }
                 Ok(())
             }
             StmtKind::ExprStmt(expr) => {
@@ -286,6 +315,94 @@ impl<'a> Compiler<'a> {
             }
             StmtKind::ForAll { .. } => {
                 Err("not in bytecode subset: for_all property loop".to_string())
+            }
+            StmtKind::For {
+                var,
+                idx_var,
+                coll,
+                body,
+            } => {
+                // 1. Evaluate collection and store in coll_slot
+                self.compile_expr(coll)?;
+                let coll_slot = self.next_local;
+                self.next_local += 1;
+                self.chunk.emit(Op::StoreLocal(coll_slot));
+
+                // 2. Check coll is a list
+                self.chunk.emit(Op::CheckList(coll_slot));
+
+                // 3. Counter slot initialized to 0
+                let counter_slot = self.next_local;
+                self.next_local += 1;
+                let zero_const = self.chunk.add_constant(NudgeVal::Int(0));
+                self.chunk.emit(Op::Const(zero_const));
+                self.chunk.emit(Op::StoreLocal(counter_slot));
+
+                // 4. Compute len(coll) and store in len_slot
+                let len_slot = self.next_local;
+                self.next_local += 1;
+                self.chunk.emit(Op::LoadLocal(coll_slot));
+                self.chunk.emit(Op::CallBuiltin("len".to_string(), 1));
+                self.chunk.emit(Op::StoreLocal(len_slot));
+
+                // 5. Loop header
+                let loop_start = self.chunk.code.len();
+
+                // Check condition: counter < len
+                self.chunk.emit(Op::LoadLocal(counter_slot));
+                self.chunk.emit(Op::LoadLocal(len_slot));
+                self.chunk.emit(Op::Lt);
+                let jump_exit = self.chunk.emit(Op::BranchIfFalse(0));
+
+                // Check iteration limit
+                self.chunk.emit(Op::CheckLoopLimit(counter_slot));
+
+                // Bind loop var = coll[counter]
+                let saved_locals = self.locals.clone();
+                let saved_mut_locals = self.mut_locals.clone();
+
+                let var_slot = self.next_local;
+                self.next_local += 1;
+                self.locals.insert(var.clone(), var_slot);
+                self.mut_locals.remove(var);
+                self.chunk.emit(Op::LoadLocal(coll_slot));
+                self.chunk.emit(Op::LoadLocal(counter_slot));
+                self.chunk.emit(Op::Index);
+                self.chunk.emit(Op::StoreLocal(var_slot));
+
+                if let Some(i_var) = idx_var {
+                    let idx_slot = self.next_local;
+                    self.next_local += 1;
+                    self.locals.insert(i_var.clone(), idx_slot);
+                    self.mut_locals.remove(i_var);
+                    self.chunk.emit(Op::LoadLocal(counter_slot));
+                    self.chunk.emit(Op::StoreLocal(idx_slot));
+                }
+
+                // Compile body
+                for st in body {
+                    self.compile_stmt(st)?;
+                }
+
+                // Restore locals scope so loop body locals and loop vars don't leak
+                self.locals = saved_locals;
+                self.mut_locals = saved_mut_locals;
+
+                // Increment counter: counter = counter + 1
+                self.chunk.emit(Op::LoadLocal(counter_slot));
+                let one_const = self.chunk.add_constant(NudgeVal::Int(1));
+                self.chunk.emit(Op::Const(one_const));
+                self.chunk.emit(Op::Add);
+                self.chunk.emit(Op::StoreLocal(counter_slot));
+
+                // Backward jump to loop_start
+                self.chunk.emit(Op::Jump(loop_start));
+
+                // Patch jump_exit
+                let exit_target = self.chunk.code.len();
+                self.chunk.code[jump_exit] = Op::BranchIfFalse(exit_target);
+
+                Ok(())
             }
         }
     }
@@ -659,6 +776,37 @@ impl<'a> Compiler<'a> {
                 Ok(())
             }
             ExprKind::DecideCall { .. } => Err("not in bytecode subset: decide call".to_string()),
+            ExprKind::RecordLit(fields) => {
+                let mut keys = Vec::with_capacity(fields.len());
+                for (name, expr) in fields {
+                    self.compile_expr(expr)?;
+                    keys.push(name.clone());
+                }
+                self.chunk.emit(Op::MakeRecord(keys));
+                Ok(())
+            }
+            ExprKind::Index { obj, idx } => {
+                self.compile_expr(obj)?;
+                self.compile_expr(idx)?;
+                self.chunk.emit(Op::Index);
+                Ok(())
+            }
+            ExprKind::If { cond, then, else_ } => {
+                self.compile_expr(cond)?;
+                let jump_else = self.chunk.emit(Op::BranchIfFalse(0));
+                self.compile_expr(then)?;
+                let jump_end = self.chunk.emit(Op::Jump(0));
+                let else_target = self.chunk.code.len();
+                self.chunk.code[jump_else] = Op::BranchIfFalse(else_target);
+                if let Some(el) = else_ {
+                    self.compile_expr(el)?;
+                } else {
+                    self.chunk.emit(Op::Unit);
+                }
+                let end_target = self.chunk.code.len();
+                self.chunk.code[jump_end] = Op::Jump(end_target);
+                Ok(())
+            }
         }
     }
 }
@@ -688,11 +836,19 @@ fn check_stmt_effects(stmt: &Stmt, tool_names: &[String]) -> Result<(), String> 
             }
             check_expr_effects(value, tool_names)
         }
+        StmtKind::Assign { value, .. } => check_expr_effects(value, tool_names),
         StmtKind::ExprStmt(expr) | StmtKind::Assert(expr) => check_expr_effects(expr, tool_names),
         StmtKind::StateWrite { .. } => {
             Err("not in bytecode subset: state write (agent state)".to_string())
         }
         StmtKind::ForAll { .. } => Err("not in bytecode subset: for_all property loop".to_string()),
+        StmtKind::For { coll, body, .. } => {
+            check_expr_effects(coll, tool_names)?;
+            for stmt in body {
+                check_stmt_effects(stmt, tool_names)?;
+            }
+            Ok(())
+        }
     }
 }
 
@@ -780,6 +936,24 @@ fn check_expr_effects(expr: &Expr, tool_names: &[String]) -> Result<(), String> 
             Ok(())
         }
         ExprKind::DecideCall { .. } => Err("not in bytecode subset: decide call".to_string()),
+        ExprKind::RecordLit(fields) => {
+            for (_, v) in fields {
+                check_expr_effects(v, tool_names)?;
+            }
+            Ok(())
+        }
+        ExprKind::Index { obj, idx } => {
+            check_expr_effects(obj, tool_names)?;
+            check_expr_effects(idx, tool_names)
+        }
+        ExprKind::If { cond, then, else_ } => {
+            check_expr_effects(cond, tool_names)?;
+            check_expr_effects(then, tool_names)?;
+            if let Some(el) = else_ {
+                check_expr_effects(el, tool_names)?;
+            }
+            Ok(())
+        }
     }
 }
 

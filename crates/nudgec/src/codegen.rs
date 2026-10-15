@@ -220,6 +220,7 @@ fn emit_body(body: &[Stmt], aliases: &HashSet<String>, agent: Option<&str>) -> S
                     "# error: state write 'state.{field}' outside an agent block (E0701)\n    pass"
                 ),
             },
+            StmtKind::Assign { name, value } => format!("{name} = {}", py(value, aliases)),
             StmtKind::Assert(e) => format!("assert {}", py(e, aliases)),
             // MVP return rule: the fn's final expression is its return value.
             StmtKind::ExprStmt(e) if i == last => format!("return {}", py(e, aliases)),
@@ -227,6 +228,7 @@ fn emit_body(body: &[Stmt], aliases: &HashSet<String>, agent: Option<&str>) -> S
             StmtKind::ForAll { .. } => {
                 "# error: for_all outside a test block (E0801)\n    pass".to_string()
             }
+            StmtKind::For { .. } => "# error: for loop not in codegen subset\n    pass".to_string(),
         };
         out.push_str("    ");
         out.push_str(&line);
@@ -289,6 +291,7 @@ fn emit_stmts(
                     "# error: state write 'state.{field}' outside an agent block (E0701)\n    pass"
                 )
             }
+            StmtKind::Assign { name, value } => format!("{name} = {}", py(value, aliases)),
             StmtKind::Assert(e) => format!("assert {}", py(e, aliases)),
             StmtKind::ExprStmt(e) => py(e, aliases),
             StmtKind::ForAll {
@@ -309,6 +312,9 @@ fn emit_stmts(
                 format!(
                     "def _prop_{id}({var}):\n{inner}{indent}rt.for_all(\"{gen}\", [{arg_list}], _prop_{id}, \"{var}\")"
                 )
+            }
+            StmtKind::For { .. } => {
+                format!("{indent}# pack1 codegen not yet lowered: for loop\n{indent}pass")
             }
         };
         // for_all lines arrive pre-indented (inner body at the nested
@@ -332,11 +338,17 @@ pub fn bind_state(body: &[Stmt], agent: &str) -> Vec<Stmt> {
                     ty,
                     value,
                     stream,
+                    mutable,
                 } => StmtKind::Let {
                     name: name.clone(),
                     ty: ty.clone(),
                     value: bind_state_expr(value, agent),
                     stream: *stream,
+                    mutable: *mutable,
+                },
+                StmtKind::Assign { name, value } => StmtKind::Assign {
+                    name: name.clone(),
+                    value: bind_state_expr(value, agent),
                 },
                 StmtKind::StateWrite { field, op, value } => StmtKind::StateWrite {
                     field: field.clone(),
@@ -354,6 +366,17 @@ pub fn bind_state(body: &[Stmt], agent: &str) -> Vec<Stmt> {
                     var: var.clone(),
                     gen: gen.clone(),
                     args: args.iter().map(|a| bind_state_expr(a, agent)).collect(),
+                    body: bind_state(body, agent),
+                },
+                StmtKind::For {
+                    var,
+                    idx_var,
+                    coll,
+                    body,
+                } => StmtKind::For {
+                    var: var.clone(),
+                    idx_var: idx_var.clone(),
+                    coll: bind_state_expr(coll, agent),
                     body: bind_state(body, agent),
                 },
             };
@@ -836,6 +859,9 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
                     .map(|(k, v)| format!("{k}={}", py(v, aliases))),
             );
             format!("rt.computer_{}({})", method, parts.join(", "))
+        }
+        ExprKind::RecordLit(_) | ExprKind::Index { .. } | ExprKind::If { .. } => {
+            "# pack1 codegen not yet lowered".to_string()
         }
     }
 }

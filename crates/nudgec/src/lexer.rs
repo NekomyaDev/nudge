@@ -19,6 +19,7 @@ pub enum Tok {
     // by string in their grammatical positions, so they stay usable as names)
     Fn,
     Let,
+    Mut,
     Type,
     Tool,
     Agent,
@@ -84,6 +85,7 @@ pub struct Spanned {
     pub tok: Tok,
     pub start: usize,
     pub end: usize,
+    pub newline_before: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -95,6 +97,7 @@ pub struct LexError {
 const KEYWORDS: &[(&str, Tok)] = &[
     ("fn", Tok::Fn),
     ("let", Tok::Let),
+    ("mut", Tok::Mut),
     ("type", Tok::Type),
     ("tool", Tok::Tool),
     ("agent", Tok::Agent),
@@ -126,10 +129,15 @@ pub fn lex(src: &str) -> Result<Vec<Spanned>, LexError> {
     let b = src.as_bytes();
     let mut i = 0usize;
     let mut out = Vec::new();
+    let mut newline_before = false;
 
     while i < b.len() {
         let c = b[i] as char;
         match c {
+            '\n' => {
+                newline_before = true;
+                i += 1;
+            }
             c if c.is_ascii_whitespace() => i += 1,
             '/' if b.get(i + 1) == Some(&b'/') => {
                 while i < b.len() && b[i] != b'\n' {
@@ -156,6 +164,7 @@ pub fn lex(src: &str) -> Result<Vec<Spanned>, LexError> {
                                 tok: Tok::Prompt(body.to_string()),
                                 start,
                                 end: i,
+                                newline_before: std::mem::take(&mut newline_before),
                             });
                             continue;
                         }
@@ -173,7 +182,12 @@ pub fn lex(src: &str) -> Result<Vec<Spanned>, LexError> {
                     .find(|(k, _)| *k == word)
                     .map(|(_, t)| t.clone())
                     .unwrap_or_else(|| Tok::Ident(word.to_string()));
-                out.push(Spanned { tok, start, end: i });
+                out.push(Spanned {
+                    tok,
+                    start,
+                    end: i,
+                    newline_before: std::mem::take(&mut newline_before),
+                });
             }
             '0'..='9' => {
                 let start = i;
@@ -217,6 +231,7 @@ pub fn lex(src: &str) -> Result<Vec<Spanned>, LexError> {
                         tok: Tok::Money(v, unit.to_string()),
                         start,
                         end: i,
+                        newline_before: std::mem::take(&mut newline_before),
                     });
                 } else if is_float {
                     let v: f64 = text.parse().map_err(|_| LexError {
@@ -227,6 +242,7 @@ pub fn lex(src: &str) -> Result<Vec<Spanned>, LexError> {
                         tok: Tok::Float(v),
                         start,
                         end: i,
+                        newline_before: std::mem::take(&mut newline_before),
                     });
                 } else {
                     let v: i64 = text.parse().map_err(|_| LexError {
@@ -237,6 +253,7 @@ pub fn lex(src: &str) -> Result<Vec<Spanned>, LexError> {
                         tok: Tok::Int(v),
                         start,
                         end: i,
+                        newline_before: std::mem::take(&mut newline_before),
                     });
                 }
             }
@@ -309,6 +326,7 @@ pub fn lex(src: &str) -> Result<Vec<Spanned>, LexError> {
                     tok: Tok::Str(s),
                     start,
                     end: i,
+                    newline_before: std::mem::take(&mut newline_before),
                 });
             }
             _ => {
@@ -360,7 +378,12 @@ pub fn lex(src: &str) -> Result<Vec<Spanned>, LexError> {
                     },
                 };
                 i += len;
-                out.push(Spanned { tok, start, end: i });
+                out.push(Spanned {
+                    tok,
+                    start,
+                    end: i,
+                    newline_before: std::mem::take(&mut newline_before),
+                });
             }
         }
     }
@@ -368,6 +391,7 @@ pub fn lex(src: &str) -> Result<Vec<Spanned>, LexError> {
         tok: Tok::Eof,
         start: i,
         end: i,
+        newline_before,
     });
     Ok(out)
 }

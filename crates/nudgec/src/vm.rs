@@ -498,6 +498,90 @@ impl<'a> VM<'a> {
                         }
                     }
                 }
+                Op::Index => {
+                    let idx = self.stack.pop().ok_or("stack underflow")?;
+                    let obj = self.stack.pop().ok_or("stack underflow")?;
+                    match obj {
+                        NudgeVal::List(items) => match idx {
+                            NudgeVal::Int(i) => {
+                                if i < 0 || i as usize >= items.len() {
+                                    return Err(format!(
+                                        "index out of bounds: index {i} out of range for list of length {}",
+                                        items.len()
+                                    ));
+                                }
+                                self.stack.push(items[i as usize].clone());
+                            }
+                            other => {
+                                return Err(format!(
+                                    "list index must be an integer, got {}",
+                                    other.type_name()
+                                ));
+                            }
+                        },
+                        NudgeVal::Map(m) => match idx {
+                            NudgeVal::Str(key) => {
+                                let val = m
+                                    .get(&key)
+                                    .cloned()
+                                    .ok_or_else(|| format!("map has no key '{key}'"))?;
+                                self.stack.push(val);
+                            }
+                            other => {
+                                return Err(format!(
+                                    "map key must be a string, got {}",
+                                    other.type_name()
+                                ));
+                            }
+                        },
+                        NudgeVal::AgentState { fields, .. } => match idx {
+                            NudgeVal::Str(key) => {
+                                let val = fields
+                                    .get(&key)
+                                    .cloned()
+                                    .ok_or_else(|| format!("agent state has no field '{key}'"))?;
+                                self.stack.push(val);
+                            }
+                            other => {
+                                return Err(format!(
+                                    "agent state key must be a string, got {}",
+                                    other.type_name()
+                                ));
+                            }
+                        },
+                        other => {
+                            return Err(format!("cannot index into type {}", other.type_name()));
+                        }
+                    }
+                }
+                Op::CheckList(slot) => {
+                    let base = self.frames[frame_idx].stack_base;
+                    let val = &self.stack[base + *slot as usize];
+                    match val {
+                        NudgeVal::List(_) => {}
+                        other => {
+                            return Err(format!(
+                                "for loop requires a list collection, got {}",
+                                other.type_name()
+                            ));
+                        }
+                    }
+                }
+                Op::CheckLoopLimit(slot) => {
+                    let base = self.frames[frame_idx].stack_base;
+                    let val = &self.stack[base + *slot as usize];
+                    if let NudgeVal::Int(count) = val {
+                        let limit = std::env::var("NUDGE_MAX_LOOP_ITERATIONS")
+                            .ok()
+                            .and_then(|s| s.parse::<usize>().ok())
+                            .unwrap_or(10_000);
+                        if *count >= limit as i64 {
+                            return Err(format!(
+                                "loop iteration limit exceeded: execution halted after {limit} iterations to prevent infinite loop"
+                            ));
+                        }
+                    }
+                }
                 Op::Assert(expr_str) => {
                     let val = self.stack.pop().ok_or("stack underflow")?;
                     if !val.is_truthy() {
@@ -2033,5 +2117,409 @@ mod tests {
 
         let _ = std::fs::remove_file(&path_vm);
         let _ = std::fs::remove_file(&path_interp);
+    }
+
+    // ------------------------------------------------------------------------
+    // Pack 1: Control Flow & Data Parity Tests
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn test_parity_pack1_record_literal() {
+        let src = r#"
+            fn make_user() -> { id: int, name: string, active: bool } {
+                let u = { id: 1, name: "Alice", active: true }
+                u
+            }
+            fn main() -> string {
+                let u = make_user()
+                assert u.id == 1
+                assert u.active == true
+                u.name
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_pack1_list_of_records_and_indexing() {
+        let src = r#"
+            type Task = { id: int, title: string, completed: bool }
+            fn main() -> string {
+                let t1 = { id: 1, title: "First", completed: true }
+                let t2 = { id: 2, title: "Second", completed: false }
+                let tasks = [t1, t2]
+                assert tasks[0].id == 1
+                assert tasks[0].completed == true
+                assert tasks[1].id == 2
+                assert tasks[1].completed == false
+                tasks[0].title
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_pack1_dynamic_record_indexing() {
+        let src = r#"
+            fn main() -> string {
+                let u = { id: 1, name: "Bob" }
+                let key = "name"
+                u[key]
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_pack1_if_else_chain() {
+        let src = r#"
+            fn classify(score: int) -> string {
+                if score >= 90 {
+                    "gold"
+                } else if score >= 75 {
+                    "silver"
+                } else {
+                    "bronze"
+                }
+            }
+            fn main() -> string {
+                assert classify(95) == "gold"
+                assert classify(80) == "silver"
+                assert classify(50) == "bronze"
+                classify(80)
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_pack1_if_stmt_without_else() {
+        let src = r#"
+            fn main() -> int {
+                if true {
+                    1
+                }
+                if false {
+                    2
+                }
+                42
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_pack1_for_loop_with_idx() {
+        let src = r#"
+            fn main() -> int {
+                let items = ["zero", "one", "two"]
+                for (item, idx) in items {
+                    assert (if idx == 0 { item == "zero" } else if idx == 1 { item == "one" } else { item == "two" })
+                }
+                100
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_pack1_nested_for_loops() {
+        let src = r#"
+            fn main() -> int {
+                for x in [1, 2] {
+                    for y in [10, 20] {
+                        assert x + y > 0
+                    }
+                }
+                0
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_pack1_pure_fn_combining_all_forms() {
+        let src = r#"
+            type Task = { id: int, title: string, priority: int, completed: bool }
+
+            fn evaluate_task(t: Task) -> string {
+                if t.completed {
+                    "done"
+                } else if t.priority > 5 {
+                    "urgent"
+                } else {
+                    "normal"
+                }
+            }
+
+            fn process_tasks(tasks: [Task]) -> int {
+                for (t, idx) in tasks {
+                    let label = evaluate_task(t)
+                    let is_expected = if label == "urgent" {
+                        tasks[idx].priority > 5
+                    } else if label == "done" {
+                        tasks[idx].completed == true
+                    } else {
+                        tasks[idx].completed == false
+                    }
+                    assert is_expected
+                    assert tasks[idx].id == t.id
+                }
+                100
+            }
+
+            fn main() -> int {
+                let t1 = { id: 1, title: "Girdi Dogrula", priority: 8, completed: false }
+                let t2 = { id: 2, title: "Rapor Uret", priority: 3, completed: true }
+                let t3 = { id: 3, title: "Veritabani Temizle", priority: 2, completed: false }
+                let tasks = [t1, t2, t3]
+                process_tasks(tasks)
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_pack1_acceptance_section8() {
+        let src = r#"
+            type Task = {
+                id: int,
+                title: string,
+                priority: int,
+                completed: bool
+            }
+
+            fn evaluate_task(t: Task) -> string {
+                if t.completed {
+                    "done"
+                } else if t.priority > 5 {
+                    "urgent"
+                } else {
+                    "normal"
+                }
+            }
+
+            fn main() -> int {
+                // 1. Kayit degismezleri ve liste olusturma
+                let t1 = { id: 1, title: "Girdi Dogrula", priority: 8, completed: false }
+                let t2 = { id: 2, title: "Rapor Uret", priority: 3, completed: true }
+                let t3 = { id: 3, title: "Veritabani Temizle", priority: 2, completed: false }
+                let tasks = [t1, t2, t3]
+
+                // 2. Indeks erisimi dogrulamasi
+                assert tasks[0].title == "Girdi Dogrula"
+                assert tasks[1].completed == true
+                assert tasks[2].priority == 2
+
+                // 3. if/else kosul dogrulamasi
+                assert evaluate_task(tasks[0]) == "urgent"
+                assert evaluate_task(tasks[1]) == "done"
+                assert evaluate_task(tasks[2]) == "normal"
+
+                // 4. for dongusu ile liste dolasimi (dogrulama)
+                // Note: Pure Nudge functions use immutable locals (state accumulation is in agent blocks).
+                // Recursion-free iteration is verified via per-element assertions.
+                for (t, idx) in tasks {
+                    let label = evaluate_task(t)
+                    let check = if label == "urgent" {
+                        tasks[idx].id == 1
+                    } else if label == "done" {
+                        tasks[idx].id == 2
+                    } else {
+                        tasks[idx].id == 3
+                    }
+                    assert check
+                    assert tasks[idx].id == t.id
+                }
+                0
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_pack1_index_out_of_bounds_positive_error() {
+        let src = r#"
+            fn main() -> int {
+                let tasks = [10, 20, 30]
+                tasks[99]
+            }
+        "#;
+        assert_parity_error(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_pack1_index_out_of_bounds_negative_error() {
+        let src = r#"
+            fn main() -> int {
+                let tasks = [10, 20, 30]
+                tasks[-1]
+            }
+        "#;
+        assert_parity_error(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_pack1_dynamic_index_missing_key_error() {
+        let src = r#"
+            fn main() -> int {
+                let rec = { a: 1 }
+                rec["missing"]
+            }
+        "#;
+        assert_parity_error(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_pack1_loop_iteration_limit_error() {
+        let _guard = EnvVarGuard::set("NUDGE_MAX_LOOP_ITERATIONS", "3");
+        let src = r#"
+            fn main() -> int {
+                let items = [1, 2, 3, 4, 5]
+                for x in items {
+                    assert x > 0
+                }
+                0
+            }
+        "#;
+        assert_parity_error(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_exact_error_text_e0705_and_e0703() {
+        let src_oob = r#"
+            fn main() -> int {
+                let xs = [10, 20]
+                xs[5]
+            }
+        "#;
+        let items = parse_src(src_oob);
+        let err_interp = run_program(&items, "main", &[]).unwrap_err();
+        assert_eq!(
+            err_interp,
+            "index out of bounds: index 5 out of range for list of length 2"
+        );
+        let prog = compile(&items).unwrap();
+        let err_vm = run(&prog, "main", &[]).unwrap_err();
+        assert_eq!(
+            err_vm,
+            "index out of bounds: index 5 out of range for list of length 2"
+        );
+
+        let _guard2 = EnvVarGuard::set("NUDGE_MAX_LOOP_ITERATIONS", "2");
+        let src_limit = r#"
+            fn main() -> int {
+                let items = [1, 2, 3]
+                for x in items {
+                    assert x > 0
+                }
+                0
+            }
+        "#;
+        let items_limit = parse_src(src_limit);
+        let err_interp = run_program(&items_limit, "main", &[]).unwrap_err();
+        assert_eq!(
+            err_interp,
+            "loop iteration limit exceeded: execution halted after 2 iterations to prevent infinite loop"
+        );
+        let prog_limit = compile(&items_limit).unwrap();
+        let err_vm = run(&prog_limit, "main", &[]).unwrap_err();
+        assert_eq!(
+            err_vm,
+            "loop iteration limit exceeded: execution halted after 2 iterations to prevent infinite loop"
+        );
+    }
+
+    #[test]
+    fn test_parity_mutable_locals_for_loop_sum() {
+        let src = r#"
+            fn main() -> int {
+                let mut acc = 0
+                for x in [1, 2, 3] {
+                    acc = acc + x
+                }
+                acc
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+        let items = parse_src(src);
+        assert_eq!(run_program(&items, "main", &[]).unwrap(), NudgeVal::Int(6));
+    }
+
+    #[test]
+    fn test_parity_mutable_locals_for_loop_count() {
+        let src = r#"
+            fn main() -> int {
+                let mut count = 0
+                for (x, idx) in [10, 20, 30, 40] {
+                    count = count + 1
+                    assert idx < 4
+                    assert x >= 10
+                }
+                count
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+        let items = parse_src(src);
+        assert_eq!(run_program(&items, "main", &[]).unwrap(), NudgeVal::Int(4));
+    }
+
+    #[test]
+    fn test_parity_mutable_locals_assign_to_immutable_error() {
+        let src = r#"
+            fn main() -> int {
+                let x = 42
+                x = 100
+                x
+            }
+        "#;
+        assert_parity_error(src, "main", &[]);
+        let items = parse_src(src);
+        let err = run_program(&items, "main", &[]).unwrap_err();
+        assert!(err.contains("cannot assign to immutable local 'x'; declare it with `let mut`"));
+    }
+
+    #[test]
+    fn test_parity_mutable_locals_reassign_type_mismatch() {
+        let src = r#"
+            fn main() -> int {
+                let mut x = 10
+                x = "not an int"
+                x
+            }
+        "#;
+        let items = parse_src(src);
+        let errs = crate::check::check(&items);
+        assert!(
+            errs.iter().any(|e| e.code == "E0201"
+                && e.msg
+                    .contains("local 'x' has type int but assigned value is string")),
+            "got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_parity_mutable_locals_sum_of_record_cost() {
+        let src = r#"
+            type Task = {
+                title: string,
+                cost: int
+            }
+
+            fn main() -> int {
+                let t1 = { title: "design", cost: 15 }
+                let t2 = { title: "impl", cost: 25 }
+                let t3 = { title: "test", cost: 10 }
+                let tasks = [t1, t2, t3]
+                let mut total_cost = 0
+                for t in tasks {
+                    total_cost = total_cost + t.cost
+                }
+                total_cost
+            }
+        "#;
+        assert_parity(src, "main", &[]);
+        let items = parse_src(src);
+        assert_eq!(run_program(&items, "main", &[]).unwrap(), NudgeVal::Int(50));
     }
 }

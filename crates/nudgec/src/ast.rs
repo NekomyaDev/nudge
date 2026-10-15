@@ -168,6 +168,22 @@ pub enum ExprKind {
         args: Vec<Expr>,
         kwargs: Vec<(String, Expr)>,
     },
+
+    /// `{ field: expr, ... }` (Pack 1 control-flow & data) — record literal.
+    RecordLit(Vec<(String, Expr)>),
+
+    /// `obj[idx]` (Pack 1 control-flow & data) — indexing into list or record.
+    Index {
+        obj: Box<Expr>,
+        idx: Box<Expr>,
+    },
+
+    /// `if cond { then } else { else_ }` (Pack 1 control-flow & data).
+    If {
+        cond: Box<Expr>,
+        then: Box<Expr>,
+        else_: Option<Box<Expr>>,
+    },
 }
 
 /// An expression with its source span attached (spanned AST, stage 2).
@@ -202,6 +218,13 @@ pub enum StmtKind {
         ty: Option<TypeExpr>,
         value: Expr,
         stream: bool,
+        #[serde(default)]
+        mutable: bool,
+    },
+    /// Reassignment of a local variable: `name = value`.
+    Assign {
+        name: String,
+        value: Expr,
     },
     /// `state.x = v` / `+=` / `-=` inside an `agent` block (design §7):
     /// every write is an automatic checkpoint.
@@ -218,6 +241,14 @@ pub enum StmtKind {
         var: String,
         gen: String,
         args: Vec<Expr>,
+        body: Vec<Stmt>,
+    },
+    /// `for item in coll { body }` or `for (item, idx) in coll { body }`
+    /// (Pack 1 control-flow & data) — sequential collection loop.
+    For {
+        var: String,
+        idx_var: Option<String>,
+        coll: Expr,
         body: Vec<Stmt>,
     },
 }
@@ -486,6 +517,7 @@ mod tests {
                                 span: dummy_span,
                             },
                             stream: true,
+                            mutable: false,
                         },
                         span: dummy_span,
                     },
