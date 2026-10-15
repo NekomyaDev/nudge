@@ -59,3 +59,17 @@ jobs:
       - name: Run offline replay regression gate
         run: bash scripts/offline_replay_gate.sh
 
+  wasm-host-e2e:
+    name: wasm live-tool host bridge e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run the WASM live-tool host bridge e2e
+        run: bash scripts/wasm_host_e2e.sh
+
