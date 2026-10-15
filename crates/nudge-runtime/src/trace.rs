@@ -346,6 +346,7 @@ impl TraceWriter {
         let Value::Object(mut fields) = record else {
             return Err("trace record must be a JSON object".into());
         };
+        crate::redact::redact_record_fields(&mut fields);
         self.seq += 1;
         let seq = self.seq;
         let mut line = serde_json::Map::new();
@@ -1669,5 +1670,276 @@ mod tests {
         assert_eq!(resp_a.cost_usd, 0.0005);
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    struct EnvVarGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, val: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::set_var(key, val);
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.prev {
+                Some(v) => std::env::set_var(self.key, v),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    #[test]
+    fn test_trace_redaction_masks_secrets_and_preserves_deterministic_replay() {
+        let _g = guard();
+        let _ws = crate::workspace::WS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let trace_path = tmp("redact_llm_tool");
+        let secret_key = "sk-ant-api03-secretkey1234567890abcdef";
+        let prompt = format!("Translate query using credentials: {secret_key}");
+        let raw_tool_input = json!({
+            "api_key": "secret1234567",
+            "token": "Bearer 1234567890abcdef1234567890",
+            "query": "select * from users"
+        });
+        let raw_tool_output = json!({"status": "ok", "rows": 10});
+
+        // 1. Live recording run with redaction active
+        let live_output = {
+            let _scope = testing::scope(Some(trace_path.clone()), None);
+            let req = LlmBridgeRequest {
+                prompt: &prompt,
+                model: Some("fake:default"),
+                default_model: "fake:default",
+                schema_text: None,
+                schema_json: None,
+                temperature: 0.0,
+                budget_usd: None,
+            };
+            let resp = llm_call(&req).expect("llm call must succeed");
+            assert!(!resp.output.to_string().is_empty());
+
+            // Also emit a tool.call record
+            let tool_hash = tool_request_hash("search", Some("kb"), &raw_tool_input);
+            emit(json!({
+                "kind": "tool.call",
+                "tool": "search",
+                "server": "kb",
+                "input": raw_tool_input,
+                "output": raw_tool_output,
+                "request_hash": tool_hash,
+            }))
+            .expect("tool call emit");
+
+            resp.output
+        };
+
+        // 2. File inspection: Verify that plaintext secrets are absent and [REDACTED] is present
+        let trace_content = std::fs::read_to_string(&trace_path).expect("read trace");
+        assert!(
+            !trace_content.contains(secret_key),
+            "trace file must NOT contain raw secret key"
+        );
+        assert!(
+            !trace_content.contains("secret1234567"),
+            "trace file must NOT contain raw api_key"
+        );
+        assert!(
+            !trace_content.contains("1234567890abcdef1234567890"),
+            "trace file must NOT contain raw bearer token"
+        );
+        assert!(
+            trace_content.contains("[REDACTED]"),
+            "trace file must contain redaction mask"
+        );
+
+        // 3. Offline replay run: Verify deterministic replay matches pre-redaction request_hash
+        {
+            let _scope = testing::scope(None, Some(trace_path.clone()));
+            assert!(replay_active());
+
+            // Replay tool call with original pre-redaction input
+            let tool_res = tool_call_replay("search", Some("kb"), &raw_tool_input)
+                .expect("tool replay must match");
+            assert_eq!(tool_res, Some(raw_tool_output));
+
+            // Replay LLM call with original pre-redaction prompt
+            let req = LlmBridgeRequest {
+                prompt: &prompt,
+                model: Some("fake:default"),
+                default_model: "fake:default",
+                schema_text: None,
+                schema_json: None,
+                temperature: 0.0,
+                budget_usd: None,
+            };
+            let replay_resp = llm_call(&req).expect("llm replay must match recorded trace");
+            // The replay output matches what was recorded into trace
+            assert_eq!(
+                replay_resp.output,
+                Value::String("fake: Translate query using credentials: [REDACTED]".to_string())
+            );
+            assert_eq!(
+                replay_resp.output,
+                Value::String(
+                    live_output
+                        .as_str()
+                        .unwrap()
+                        .replace(secret_key, "[REDACTED]")
+                )
+            );
+        }
+
+        let _ = std::fs::remove_file(&trace_path);
+    }
+
+    #[test]
+    fn test_trace_redaction_escape_hatch_verbatim() {
+        let _g = guard();
+        let _ws = crate::workspace::WS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _env = EnvVarGuard::set("NUDGE_TRACE_REDACT", "0");
+        let trace_path = tmp("redact_verbatim");
+        let secret = "sk-ant-api03-verbatimsecret1234567890";
+
+        {
+            let mut writer = TraceWriter::open(&trace_path).expect("open writer");
+            writer
+                .emit(json!({
+                    "kind": "llm.call",
+                    "model": "fake:default",
+                    "input": format!("raw prompt with {secret}"),
+                    "output": "ok",
+                    "request_hash": "sha256:dummy",
+                }))
+                .expect("emit");
+            writer.flush().expect("flush");
+        }
+
+        let trace_content = std::fs::read_to_string(&trace_path).expect("read trace");
+        assert!(
+            trace_content.contains(secret),
+            "when NUDGE_TRACE_REDACT=0, secret must be preserved verbatim"
+        );
+        assert!(
+            !trace_content.contains("[REDACTED]"),
+            "when NUDGE_TRACE_REDACT=0, [REDACTED] must not appear"
+        );
+
+        let _ = std::fs::remove_file(&trace_path);
+    }
+
+    #[test]
+    fn test_trace_redaction_fn_return_and_computer_records() {
+        let _g = guard();
+        let _ws = crate::workspace::WS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let trace_path = tmp("redact_fn_computer");
+
+        {
+            let mut writer = TraceWriter::open(&trace_path).expect("open writer");
+            // fn.return record
+            writer
+                .emit(json!({
+                    "kind": "fn.return",
+                    "fn": "auth_login",
+                    "args": ["Authorization: Bearer secret_bearer_token_12345"],
+                    "output": {
+                        "password": "super_secret_password_123",
+                        "token": "secret_token_val_456",
+                        "status": "success"
+                    }
+                }))
+                .expect("emit fn.return");
+
+            // computer.act record
+            writer
+                .emit(json!({
+                    "kind": "computer.act",
+                    "action": "type",
+                    "app": "Terminal",
+                    "target": null,
+                    "value": "export API_KEY=ghp_012345678901234567890123456789012345",
+                    "request_hash": "sha256:comp123",
+                    "outcome": "ok",
+                    "latency_ms": 10
+                }))
+                .expect("emit computer.act");
+
+            writer.flush().expect("flush");
+        }
+
+        let trace_content = std::fs::read_to_string(&trace_path).expect("read trace");
+        assert!(
+            !trace_content.contains("secret_bearer_token_12345"),
+            "fn.return bearer token must be masked"
+        );
+        assert!(
+            !trace_content.contains("super_secret_password_123"),
+            "fn.return password must be masked"
+        );
+        assert!(
+            !trace_content.contains("secret_token_val_456"),
+            "fn.return token field must be masked"
+        );
+        assert!(
+            !trace_content.contains("ghp_012345678901234567890123456789012345"),
+            "computer.act ghp token must be masked"
+        );
+        assert!(
+            trace_content.contains(r#""password": "[REDACTED]""#),
+            "structural field password must be [REDACTED]"
+        );
+        assert!(
+            trace_content.contains("sha256:comp123"),
+            "request_hash must be preserved verbatim"
+        );
+
+        let _ = std::fs::remove_file(&trace_path);
+    }
+
+    #[test]
+    fn test_trace_redaction_env_secret_detection() {
+        let _g = guard();
+        let _ws = crate::workspace::WS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let secret_val = "super_secret_env_token_value_789";
+        let _env = EnvVarGuard::set("TEST_RUNTIME_SECRET_TOKEN", secret_val);
+        let trace_path = tmp("redact_env_detect");
+
+        {
+            let mut writer = TraceWriter::open(&trace_path).expect("open writer");
+            writer
+                .emit(json!({
+                    "kind": "llm.call",
+                    "model": "fake:default",
+                    "input": format!("Please query with token {secret_val} now"),
+                    "output": "ok",
+                    "request_hash": "sha256:envhash",
+                }))
+                .expect("emit");
+            writer.flush().expect("flush");
+        }
+
+        let trace_content = std::fs::read_to_string(&trace_path).expect("read trace");
+        assert!(
+            !trace_content.contains(secret_val),
+            "trace must NOT contain raw env secret"
+        );
+        assert!(
+            trace_content.contains("[REDACTED:ENV:TEST_RUNTIME_SECRET_TOKEN]"),
+            "trace must contain [REDACTED:ENV:NAME]"
+        );
+
+        let _ = std::fs::remove_file(&trace_path);
     }
 }

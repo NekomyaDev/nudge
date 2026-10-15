@@ -3,6 +3,7 @@ pub mod host_tool;
 pub mod json;
 pub mod mcp;
 pub mod provider;
+pub mod redact;
 pub mod stdlib;
 pub mod store;
 pub mod task;
