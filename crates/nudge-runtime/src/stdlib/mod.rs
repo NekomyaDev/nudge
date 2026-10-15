@@ -10,6 +10,7 @@ pub mod math;
 pub mod os;
 pub mod string;
 pub mod time;
+pub mod workspace;
 
 #[cfg(test)]
 mod tests;
@@ -23,6 +24,9 @@ pub fn register_all() -> HashMap<String, Value> {
 
     // Register io functions
     functions.extend(io::register());
+
+    // Register workspace functions (safe, sandboxed filesystem)
+    functions.extend(workspace::register());
 
     // Register math functions
     functions.extend(math::register());
@@ -52,6 +56,8 @@ pub fn register_all() -> HashMap<String, Value> {
 pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
     if name.starts_with("io.") {
         io::execute(name, args)
+    } else if name.starts_with("workspace.") {
+        workspace::execute(name, args)
     } else if name.starts_with("math.") {
         math::execute(name, args)
     } else if name.starts_with("str.") {

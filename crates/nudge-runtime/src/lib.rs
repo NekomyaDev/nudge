@@ -6,5 +6,6 @@ pub mod provider;
 pub mod stdlib;
 pub mod trace;
 pub mod value;
+pub mod workspace;
 
 pub use provider::*;

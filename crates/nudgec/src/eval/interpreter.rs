@@ -712,6 +712,7 @@ impl Interpreter {
 
             // Check standard library dispatch
             if name.starts_with("io.")
+                || name.starts_with("workspace.")
                 || name.starts_with("math.")
                 || name.starts_with("str.")
                 || name == "print"
@@ -1005,6 +1006,18 @@ impl Interpreter {
                     call_args.push(converted);
                 }
                 let result = nudge_runtime::stdlib::io::execute(name, call_args)
+                    .map_err(|e| format!("error[E-native-0202]: {name} failed: {e}"))?;
+                value_to_nudgeval(&result).map_err(|e| format!("error[E-native-0203]: {name}: {e}"))
+            }
+            "workspace.read" | "workspace.write" | "workspace.append" | "workspace.exists"
+            | "workspace.list" | "workspace.delete" => {
+                let mut call_args = Vec::with_capacity(args.len());
+                for a in args {
+                    let converted = nudgeval_to_value(a)
+                        .map_err(|e| format!("error[E-native-0203]: {name}: {e}"))?;
+                    call_args.push(converted);
+                }
+                let result = nudge_runtime::workspace::execute(name, call_args)
                     .map_err(|e| format!("error[E-native-0202]: {name} failed: {e}"))?;
                 value_to_nudgeval(&result).map_err(|e| format!("error[E-native-0203]: {name}: {e}"))
             }

@@ -719,7 +719,10 @@ impl<'a> Compiler<'a> {
 
                     self.chunk.emit(Op::DelegateCall(name, total_params));
                     Ok(())
-                } else if self.tool_names.iter().any(|t| t == &name) || name.starts_with("io.") {
+                } else if self.tool_names.iter().any(|t| t == &name)
+                    || name.starts_with("io.")
+                    || name.starts_with("workspace.")
+                {
                     self.emit_delegated_expr(expr);
                     Ok(())
                 } else {
@@ -899,8 +902,11 @@ fn check_expr_effects(expr: &Expr, tool_names: &[String]) -> Result<(), String> 
                 _ => None,
             };
             if let Some(name) = callee_name {
-                if tool_names.iter().any(|t| t == name) || name.starts_with("io.") {
-                    // Tool call / IO expressions are delegated to the interpreter via DelegateExpr.
+                if tool_names.iter().any(|t| t == name)
+                    || name.starts_with("io.")
+                    || name.starts_with("workspace.")
+                {
+                    // Tool call / IO / workspace expressions are delegated to the interpreter via DelegateExpr.
                     return Ok(());
                 }
             }

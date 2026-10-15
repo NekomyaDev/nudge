@@ -211,7 +211,15 @@ fn elem_of(t: &Ty) -> Ty {
 
 // ── effect inference (design §3.2, v1.4) ──────────────────────────
 
-const KNOWN_EFFECTS: [&str; 5] = ["LLM", "Tool", "IO", "Decision", "Computer"];
+const KNOWN_EFFECTS: [&str; 7] = [
+    "LLM",
+    "Tool",
+    "IO",
+    "Decision",
+    "Computer",
+    "Workspace",
+    "WorkspaceDelete",
+];
 
 /// Builtin record types of the computer-use surface (v1.5): these names
 /// resolve like user type aliases but need no declaration. Additive
@@ -339,6 +347,12 @@ fn direct_effects(
                     _ => {
                         if name.starts_with("io.") {
                             effects.insert("IO".into());
+                        } else if name.starts_with("workspace.") {
+                            // workspace.delete requires both Workspace AND WorkspaceDelete
+                            effects.insert("Workspace".into());
+                            if name == "workspace.delete" {
+                                effects.insert("WorkspaceDelete".into());
+                            }
                         } else if g.tools.contains_key(name) {
                             effects.insert("Tool".into());
                         } else if g.fns.contains_key(name) {
@@ -2140,7 +2154,7 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                     errs.push(CheckError {
                         span: None,
                         code: "E0101",
-                        msg: format!("unknown effect '{d}' in fn '{name}' (known: LLM, Tool, IO, Decision, Computer)"),
+                        msg: format!("unknown effect '{d}' in fn '{name}' (known: LLM, Tool, IO, Decision, Computer, Workspace, WorkspaceDelete)"),
                     });
                 }
             }
@@ -2654,6 +2668,83 @@ fn f(c: bool) -> string uses IO {
 
         let errs4 = check_src("fn f(p: string) -> bool uses IO { io.exists(p) }");
         assert_eq!(errs4, vec![]);
+    }
+
+    #[test]
+    fn workspace_read_requires_workspace_effect() {
+        // workspace.read without Workspace declared trips E0301
+        let errs = check_src("fn f(p: string) -> string { workspace.read(p) }");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0301" && e.msg.contains("Workspace")),
+            "expected E0301 for missing Workspace, got {errs:?}"
+        );
+
+        // With Workspace declared, clean
+        let errs2 = check_src("fn f(p: string) -> string uses Workspace { workspace.read(p) }");
+        assert_eq!(errs2, vec![], "unexpected errors: {errs2:?}");
+    }
+
+    #[test]
+    fn workspace_write_requires_workspace_effect() {
+        // workspace.write without Workspace declared trips E0301
+        let errs = check_src(
+            "fn f(p: string, c: string) -> string uses Workspace { workspace.write(p, c)\np }",
+        );
+        assert_eq!(errs, vec![], "unexpected errors: {errs:?}");
+
+        let errs2 = check_src("fn f(p: string, c: string) -> string { workspace.write(p, c)\np }");
+        assert!(
+            errs2
+                .iter()
+                .any(|e| e.code == "E0301" && e.msg.contains("Workspace")),
+            "expected E0301 for missing Workspace, got {errs2:?}"
+        );
+    }
+
+    #[test]
+    fn workspace_delete_requires_workspace_and_workspace_delete_effect() {
+        // workspace.delete without either effect trips E0301 listing both
+        let errs = check_src("fn f(p: string) -> string { workspace.delete(p)\np }");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0301" && e.msg.contains("Workspace")),
+            "expected E0301 for Workspace, got {errs:?}"
+        );
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0301" && e.msg.contains("WorkspaceDelete")),
+            "expected E0301 for WorkspaceDelete, got {errs:?}"
+        );
+
+        // With only Workspace, still trips E0301 for WorkspaceDelete (annotation too narrow)
+        let errs2 =
+            check_src("fn f(p: string) -> string uses Workspace { workspace.delete(p)\np }");
+        assert!(
+            errs2
+                .iter()
+                .any(|e| (e.code == "E0301" || e.code == "E0302")
+                    && e.msg.contains("WorkspaceDelete")),
+            "expected E0301/E0302 for WorkspaceDelete, got {errs2:?}"
+        );
+
+        // With both effects declared, clean
+        let errs3 = check_src(
+            "fn f(p: string) -> string uses Workspace, WorkspaceDelete { workspace.delete(p)\np }",
+        );
+        assert_eq!(errs3, vec![], "unexpected errors: {errs3:?}");
+    }
+
+    #[test]
+    fn workspace_effects_are_known() {
+        // Workspace and WorkspaceDelete are valid effect names (not E0101)
+        let errs = check_src(
+            "fn f(p: string) -> string uses Workspace, WorkspaceDelete { workspace.read(p) }",
+        );
+        assert!(
+            !errs.iter().any(|e| e.code == "E0101"),
+            "Workspace/WorkspaceDelete should be known effects, got {errs:?}"
+        );
     }
 
     #[test]
