@@ -996,6 +996,18 @@ impl Interpreter {
 
     fn call_stdlib(&mut self, name: &str, args: &[NudgeVal]) -> Result<NudgeVal, String> {
         match name {
+            "io.read" | "io.write" | "io.append" | "io.exists" | "io.delete" | "io.list_dir"
+            | "io.read_line" | "io.flush" => {
+                let mut call_args = Vec::with_capacity(args.len());
+                for a in args {
+                    let converted = nudgeval_to_value(a)
+                        .map_err(|e| format!("error[E-native-0203]: {name}: {e}"))?;
+                    call_args.push(converted);
+                }
+                let result = nudge_runtime::stdlib::io::execute(name, call_args)
+                    .map_err(|e| format!("error[E-native-0202]: {name} failed: {e}"))?;
+                value_to_nudgeval(&result).map_err(|e| format!("error[E-native-0203]: {name}: {e}"))
+            }
             "io.print" | "print" => {
                 let s = args
                     .iter()
@@ -2928,6 +2940,45 @@ data: [DONE]\n\n";
         assert_eq!(default_args, interp_args);
         assert_eq!(default_args, vm_args);
         assert_eq!(default_args, NudgeVal::Int(42));
+    }
+
+    #[test]
+    fn test_nudge_vm_io_round_trip_and_parity() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let temp_file =
+            std::env::temp_dir().join(format!("nudge_vm_io_test_{}.txt", std::process::id()));
+        let path_str = temp_file.to_str().unwrap();
+
+        let src = format!(
+            r#"
+            fn test_io(p: string) -> bool uses IO {{
+                io.write(p, "hello nudge io")
+                let exists_before = io.exists(p)
+                let content = io.read(p)
+                io.delete(p)
+                let exists_after = io.exists(p)
+                exists_before and content == "hello nudge io" and !exists_after
+            }}
+            fn main() -> bool {{
+                test_io("{}")
+            }}
+        "#,
+            path_str
+        );
+
+        let tokens = lex(&src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        // 1. NUDGE_VM=1 (delegated VM execution)
+        let _env_vm = EnvReset::set("NUDGE_VM", "1");
+        let res_vm = run_program(&items, "main", &[]).expect("VM io run");
+
+        // 2. NUDGE_VM=0 (interpreter execution)
+        let _env_zero = EnvReset::set("NUDGE_VM", "0");
+        let res_interp = run_program(&items, "main", &[]).expect("interpreter io run");
+
+        assert_eq!(res_vm, NudgeVal::Bool(true));
+        assert_eq!(res_vm, res_interp);
     }
 
     #[test]

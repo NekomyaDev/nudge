@@ -315,7 +315,19 @@ fn direct_effects(
             }
         }
         ExprKind::Call { func, args, kwargs } => {
-            if let ExprKind::Ident(name) = &func.as_ref().kind {
+            let callee_name = match &func.kind {
+                ExprKind::Ident(n) => Some(n.clone()),
+                ExprKind::Field { obj, name } => {
+                    if let ExprKind::Ident(prefix) = &obj.kind {
+                        Some(format!("{prefix}.{name}"))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+
+            if let Some(ref name) = callee_name {
                 match name.as_str() {
                     "replay" | "python" => {
                         effects.insert("IO".into());
@@ -325,7 +337,9 @@ fn direct_effects(
                     }
                     "len" | "zip" => {}
                     _ => {
-                        if g.tools.contains_key(name) {
+                        if name.starts_with("io.") {
+                            effects.insert("IO".into());
+                        } else if g.tools.contains_key(name) {
                             effects.insert("Tool".into());
                         } else if g.fns.contains_key(name) {
                             calls.insert(name.clone());
@@ -2621,15 +2635,25 @@ fn f(c: bool) -> string uses IO {
     }
 
     #[test]
-    fn replay_and_python_are_io() {
-        let errs = check_src("fn f(p: string) -> string { replay(p) }");
+    fn io_file_functions_require_uses_io_and_roundtrip() {
+        // Without uses IO, calling io.read trips E0301
+        let errs = check_src("fn f(p: string) -> string { io.read(p) }");
         assert!(
             errs.iter()
                 .any(|e| e.code == "E0301" && e.msg.contains("IO")),
             "got {errs:?}"
         );
-        let errs2 = check_src("fn f(p: string) -> string uses IO { replay(p) }");
+
+        // With uses IO, checks clean
+        let errs2 = check_src("fn f(p: string) -> string uses IO { io.read(p) }");
         assert_eq!(errs2, vec![]);
+
+        let errs3 =
+            check_src("fn f(p: string, c: string) -> string uses IO {\nio.write(p, c)\np\n}");
+        assert_eq!(errs3, vec![]);
+
+        let errs4 = check_src("fn f(p: string) -> bool uses IO { io.exists(p) }");
+        assert_eq!(errs4, vec![]);
     }
 
     #[test]
