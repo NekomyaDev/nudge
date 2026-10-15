@@ -153,11 +153,19 @@ impl<R: BufRead> SseReader<R> {
     /// - `Ok(None)` when the stream has terminated at EOF.
     /// - `Err(message)` if an underlying I/O read error occurs.
     pub fn read_event(&mut self) -> Result<Option<SseEvent>, String> {
+        if crate::task::is_current_cancelled() {
+            self.ended = true;
+            return Err("error[E-task-0001]: TaskCancelled".to_string());
+        }
         if self.ended {
             return Ok(None);
         }
 
         loop {
+            if crate::task::is_current_cancelled() {
+                self.ended = true;
+                return Err("error[E-task-0001]: TaskCancelled".to_string());
+            }
             self.line_buf.clear();
             let bytes_read = match self.reader.read_line(&mut self.line_buf) {
                 Ok(n) => n,

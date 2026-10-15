@@ -102,6 +102,9 @@ impl Interpreter {
 
     /// Evaluates a single statement.
     pub fn eval_stmt(&mut self, stmt: &Stmt, env: &Rc<RefCell<Env>>) -> Result<(), String> {
+        if nudge_runtime::task::is_current_cancelled() {
+            return Err("error[E-task-0001]: TaskCancelled".to_string());
+        }
         match &stmt.kind {
             StmtKind::Let {
                 name,
@@ -261,6 +264,9 @@ impl Interpreter {
                     .unwrap_or(10_000);
 
                 for (idx, item) in items.into_iter().enumerate() {
+                    if nudge_runtime::task::is_current_cancelled() {
+                        return Err("error[E-task-0001]: TaskCancelled".to_string());
+                    }
                     if idx >= limit {
                         return Err(format!(
                             "loop iteration limit exceeded: execution halted after {limit} iterations to prevent infinite loop"
@@ -342,6 +348,9 @@ impl Interpreter {
                 options,
                 repair: _,
             } => {
+                if nudge_runtime::task::is_current_cancelled() {
+                    return Err("error[E-task-0001]: TaskCancelled".to_string());
+                }
                 let prompt_val = self.eval_expr(prompt, env)?;
                 let prompt_str = prompt_val.to_string();
 
@@ -483,6 +492,9 @@ impl Interpreter {
 
                 let mut results = Vec::with_capacity(items.len());
                 for item in items {
+                    if nudge_runtime::task::is_current_cancelled() {
+                        return Err("error[E-task-0001]: TaskCancelled".to_string());
+                    }
                     let child_env = Rc::new(RefCell::new(Env::new_child(env.clone())));
                     if params.len() == 1 {
                         child_env.borrow_mut().define(params[0].clone(), item);
@@ -523,7 +535,31 @@ impl Interpreter {
                 if xs.is_empty() {
                     return Ok(NudgeVal::Unit);
                 }
-                self.eval_expr(&xs[0], env)
+                let parent = nudge_runtime::task::current_task()
+                    .unwrap_or_else(nudge_runtime::task::TaskToken::root);
+                let arm_tokens: Vec<nudge_runtime::task::TaskToken> = (0..xs.len())
+                    .map(|i| {
+                        let t = parent.child(i);
+                        nudge_runtime::task::task_register(t.clone());
+                        t
+                    })
+                    .collect();
+
+                arm_tokens[0].set_state(nudge_runtime::task::TaskState::Running);
+                let res = {
+                    let _guard = nudge_runtime::task::push_current_task(arm_tokens[0].clone());
+                    self.eval_expr(&xs[0], env)
+                };
+
+                if let Ok(ref val) = res {
+                    arm_tokens[0].set_state(nudge_runtime::task::TaskState::Completed);
+                    for token in arm_tokens.iter().skip(1) {
+                        token.cancel();
+                    }
+                    return Ok(val.clone());
+                }
+
+                res
             }
             ExprKind::Merge { l, r } => {
                 let left = self.eval_expr(l, env)?;
@@ -618,6 +654,9 @@ impl Interpreter {
         kwargs: &[(String, Expr)],
         env: &Rc<RefCell<Env>>,
     ) -> Result<NudgeVal, String> {
+        if nudge_runtime::task::is_current_cancelled() {
+            return Err("error[E-task-0001]: TaskCancelled".to_string());
+        }
         // The VM call surface is positional only (stdlib/computer.rs): the
         // documented Python/TS options `allow`/`deadline`/`screenshot` are
         // advisory policy knobs the positional surface does not consume.
@@ -714,6 +753,7 @@ impl Interpreter {
             if name.starts_with("io.")
                 || name.starts_with("workspace.")
                 || name.starts_with("store.")
+                || name.starts_with("task.")
                 || name.starts_with("math.")
                 || name.starts_with("str.")
                 || name == "print"
@@ -879,6 +919,9 @@ impl Interpreter {
         _kwargs: &[(String, Expr)],
         env: &Rc<RefCell<Env>>,
     ) -> Result<NudgeVal, String> {
+        if nudge_runtime::task::is_current_cancelled() {
+            return Err("error[E-task-0001]: TaskCancelled".to_string());
+        }
         let (name, ret_ty) = match tool_item {
             Item::Tool { name, ret, .. } => (name.as_str(), ret),
             _ => return Err("called item is not a tool".into()),
@@ -925,6 +968,9 @@ impl Interpreter {
         kwargs: &[(String, Expr)],
         env: &Rc<RefCell<Env>>,
     ) -> Result<NudgeVal, String> {
+        if nudge_runtime::task::is_current_cancelled() {
+            return Err("error[E-task-0001]: TaskCancelled".to_string());
+        }
         let (name, params, ret, fields) = match tool_item {
             Item::Tool {
                 name,
@@ -1035,6 +1081,107 @@ impl Interpreter {
                 let result = nudge_runtime::store::execute(name, call_args)
                     .map_err(|e| format!("error[E-native-0202]: {name} failed: {e}"))?;
                 value_to_nudgeval(&result).map_err(|e| format!("error[E-native-0203]: {name}: {e}"))
+            }
+            "task.status" => {
+                let target_id = if args.is_empty() {
+                    nudge_runtime::task::current_task().map(|t| t.id.as_str().to_string())
+                } else {
+                    match &args[0] {
+                        NudgeVal::Str(s) => Some(s.clone()),
+                        NudgeVal::Map(m) => m.get("id").and_then(|v| match v {
+                            NudgeVal::Str(s) => Some(s.clone()),
+                            _ => None,
+                        }),
+                        _ => Some(args[0].to_string()),
+                    }
+                };
+                if let Some(id) = target_id {
+                    let status = nudge_runtime::task::task_status(&id)
+                        .map_err(|e| format!("error[E-native-0202]: {name} failed: {e}"))?;
+                    Ok(NudgeVal::Str(status.as_str().to_string()))
+                } else {
+                    Ok(NudgeVal::Str("pending".to_string()))
+                }
+            }
+            "task.cancel" => {
+                let target_id = if args.is_empty() {
+                    nudge_runtime::task::current_task().map(|t| t.id.as_str().to_string())
+                } else {
+                    match &args[0] {
+                        NudgeVal::Str(s) => Some(s.clone()),
+                        NudgeVal::Map(m) => m.get("id").and_then(|v| match v {
+                            NudgeVal::Str(s) => Some(s.clone()),
+                            _ => None,
+                        }),
+                        _ => Some(args[0].to_string()),
+                    }
+                };
+                if let Some(id) = target_id {
+                    nudge_runtime::task::task_cancel(&id)
+                        .map_err(|e| format!("error[E-native-0202]: {name} failed: {e}"))?;
+                } else if let Some(cur) = nudge_runtime::task::current_task() {
+                    cur.cancel();
+                }
+                Ok(NudgeVal::Unit)
+            }
+            "task.is_cancelled" => {
+                let target_id = if args.is_empty() {
+                    None
+                } else {
+                    match &args[0] {
+                        NudgeVal::Str(s) => Some(s.clone()),
+                        NudgeVal::Map(m) => m.get("id").and_then(|v| match v {
+                            NudgeVal::Str(s) => Some(s.clone()),
+                            _ => None,
+                        }),
+                        _ => Some(args[0].to_string()),
+                    }
+                };
+                let cancelled = nudge_runtime::task::task_is_cancelled(target_id.as_deref());
+                Ok(NudgeVal::Bool(cancelled))
+            }
+            "task.join" => {
+                let target_id = if args.is_empty() {
+                    return Err(
+                        "error[E-task-0003]: InvalidTaskHandle: task.join requires a task handle"
+                            .to_string(),
+                    );
+                } else {
+                    match &args[0] {
+                        NudgeVal::Str(s) => s.clone(),
+                        NudgeVal::Map(m) => m
+                            .get("id")
+                            .and_then(|v| match v {
+                                NudgeVal::Str(s) => Some(s.clone()),
+                                _ => None,
+                            })
+                            .ok_or_else(|| "error[E-task-0003]: InvalidTaskHandle".to_string())?,
+                        _ => args[0].to_string(),
+                    }
+                };
+                let val = nudge_runtime::task::task_join(&target_id)?;
+                Ok(json_to_nudgeval(val))
+            }
+            "task.spawn" => {
+                let name = if args.is_empty() {
+                    None
+                } else {
+                    match &args[0] {
+                        NudgeVal::Str(s) => Some(s.as_str()),
+                        _ => None,
+                    }
+                };
+                let token = nudge_runtime::task::task_spawn(name);
+                let mut map = HashMap::new();
+                map.insert(
+                    "id".to_string(),
+                    NudgeVal::Str(token.id.as_str().to_string()),
+                );
+                map.insert(
+                    "state".to_string(),
+                    NudgeVal::Str(token.state().as_str().to_string()),
+                );
+                Ok(NudgeVal::Map(map))
             }
             "io.print" | "print" => {
                 let s = args
@@ -1624,6 +1771,9 @@ impl Interpreter {
         options: &[(String, Expr)],
         env: &Rc<RefCell<Env>>,
     ) -> Result<NudgeVal, String> {
+        if nudge_runtime::task::is_current_cancelled() {
+            return Err("error[E-task-0001]: TaskCancelled".to_string());
+        }
         let prompt_val = self.eval_expr(prompt, env)?;
         let prompt_str = prompt_val.to_string();
         let mut model_str = None;
@@ -1877,6 +2027,11 @@ fn fake_distribution(mut seed: u64, k: usize) -> Vec<f64> {
 
 /// Public API: Execute a Nudge program from entry point with arguments.
 pub fn run_program(items: &[Item], entry: &str, args: &[NudgeVal]) -> Result<NudgeVal, String> {
+    let root_task =
+        nudge_runtime::task::current_task().unwrap_or_else(nudge_runtime::task::TaskToken::root);
+    nudge_runtime::task::task_register(root_task.clone());
+    let _task_guard = nudge_runtime::task::push_current_task(root_task);
+
     let vm_enabled = std::env::var("NUDGE_VM").as_deref() != Ok("0");
     if vm_enabled {
         if let Ok(program) = bytecode::compile_with_entry(items, entry) {
@@ -2244,6 +2399,9 @@ pub fn consume_sse_stream_with<R: std::io::BufRead, F: FnMut(&str)>(
     let mut accumulated = String::new();
 
     while let Some(event) = sse_reader.read_event()? {
+        if nudge_runtime::task::is_current_cancelled() {
+            return Err("error[E-task-0001]: TaskCancelled".to_string());
+        }
         match nudge_runtime::provider::stream::parse_openai_chunk(&event.data) {
             nudge_runtime::provider::stream::ChunkOutcome::Delta(delta) => {
                 on_delta(&delta);
@@ -3237,5 +3395,284 @@ data: [DONE]\n\n";
         assert_eq!(agent_res_default, agent_res_zero);
         assert_eq!(agent_res_default, agent_res_vm);
         assert_eq!(agent_res_default, NudgeVal::Int(2));
+    }
+
+    // ── PACK 4 SLICE 1: Task Lifecycle & Cancellation tests ─────────
+
+    #[test]
+    fn test_cancel_mid_flow_prevents_subsequent_tool_and_llm() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let trace_path = std::env::temp_dir().join(format!(
+            "nudge_test_cancel_flow_{}.jsonl",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _scope = nudge_runtime::trace::testing::scope(Some(trace_path.clone()), None);
+        let _env_provider = EnvReset::set("NUDGE_PROVIDER", "fake");
+        nudge_runtime::task::task_reset();
+
+        let src = r#"
+            tool mock_write(data: string) -> bool {
+                impl: "mcp:fs"
+            }
+
+            fn main() -> bool uses Tool {
+                task.cancel()
+                mock_write("leaked_mutation")
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let err = run_program(&items, "main", &[]).expect_err("should abort on cancelled task");
+        assert!(
+            err.contains("TaskCancelled") || err.contains("E-task-0001"),
+            "expected TaskCancelled error, got: {err}"
+        );
+
+        // Verify no tool.call records were emitted in the trace
+        let trace_content = std::fs::read_to_string(&trace_path).unwrap_or_default();
+        let _ = std::fs::remove_file(&trace_path);
+        assert!(
+            !trace_content.contains("\"tool.call\""),
+            "cancelled task must not emit any tool.call records, trace was: {trace_content}"
+        );
+    }
+
+    #[test]
+    fn test_par_race_loser_stopped_before_tool_call() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let trace_path = std::env::temp_dir().join(format!(
+            "nudge_test_par_race_{}.jsonl",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _scope = nudge_runtime::trace::testing::scope(Some(trace_path.clone()), None);
+        let _env_provider = EnvReset::set("NUDGE_PROVIDER", "fake");
+        nudge_runtime::task::task_reset();
+
+        let src = r#"
+            tool mock_external_write(data: string) -> bool {
+                impl: "mcp:fs"
+            }
+
+            fn fast_candidate() -> string {
+                "done"
+            }
+
+            fn slow_candidate_with_tool() -> string uses Tool {
+                mock_external_write("leaked_mutation")
+                "slow_done"
+            }
+
+            fn main() -> string uses Tool {
+                par race [
+                    fast_candidate(),
+                    slow_candidate_with_tool()
+                ]
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let res = run_program(&items, "main", &[]).expect("par race should return winner");
+        assert_eq!(res, NudgeVal::Str("done".to_string()));
+
+        // Verify:
+        // 1. Sibling task handle was cancelled
+        let loser_token = nudge_runtime::task::task_lookup("root.1");
+        assert!(loser_token.is_some(), "arm 1 token should be registered");
+        let loser = loser_token.unwrap();
+        assert!(loser.is_cancelled(), "loser arm must be marked cancelled");
+        assert_eq!(loser.state(), nudge_runtime::task::TaskState::Cancelled);
+
+        // 2. Trace must NOT contain any tool.call record for mock_external_write
+        let trace_content = std::fs::read_to_string(&trace_path).unwrap_or_default();
+        let _ = std::fs::remove_file(&trace_path);
+        assert!(
+            !trace_content.contains("\"tool.call\""),
+            "trace must not contain any tool.call record for the loser arm, trace was: {trace_content}"
+        );
+    }
+
+    #[test]
+    fn test_budget_reservation_released_on_cancel() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        nudge_runtime::task::task_reset();
+        let _env_budget = EnvReset::set("NUDGE_BUDGET", "0.0025");
+
+        let t1 = nudge_runtime::task::TaskToken::new(nudge_runtime::task::TaskId::new("root.t1"));
+        nudge_runtime::task::task_register(t1.clone());
+        let _g1 = nudge_runtime::task::push_current_task(t1.clone());
+
+        // Reserve $0.0020 out of $0.0025
+        assert!(nudge_runtime::task::budget_reserve(0.0020).is_ok());
+        let (_, reserved, _) = nudge_runtime::task::budget_status();
+        assert!((reserved - 0.0020).abs() < 1e-6);
+
+        // Attempting to reserve another $0.0010 trips BudgetExceeded
+        let err =
+            nudge_runtime::task::budget_reserve(0.0010).expect_err("should trip budget limit");
+        assert!(err.contains("run budget exhausted"));
+
+        // Cancel t1 -> held reservation is freed immediately
+        t1.cancel();
+        let (_, reserved_after, _) = nudge_runtime::task::budget_status();
+        assert_eq!(reserved_after, 0.0);
+
+        // Subsequent task can now reserve $0.0010 without false BudgetExceeded
+        let t2 = nudge_runtime::task::TaskToken::new(nudge_runtime::task::TaskId::new("root.t2"));
+        nudge_runtime::task::task_register(t2.clone());
+        let _g2 = nudge_runtime::task::push_current_task(t2.clone());
+        assert!(
+            nudge_runtime::task::budget_reserve(0.0010).is_ok(),
+            "released reservation should prevent false BudgetExceeded"
+        );
+
+        t2.cancel();
+        nudge_runtime::task::task_reset();
+    }
+
+    #[test]
+    fn test_cancelled_task_tool_call_refused_fail_closed_with_grants() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _scope = nudge_runtime::trace::testing::scope(None, None);
+        let _env_provider = EnvReset::set("NUDGE_PROVIDER", "fake");
+        let _env_grants = EnvReset::set("NUDGE_TOOL_GRANTS", r#"{"*": ["*"]}"#);
+        nudge_runtime::task::task_reset();
+
+        let src = r#"
+            tool web(query: string) -> string {
+                impl: "mcp:search"
+            }
+
+            fn main() -> string uses Tool {
+                task.cancel()
+                web("search query")
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let err =
+            run_program(&items, "main", &[]).expect_err("tool must be refused on cancelled task");
+        assert!(
+            err.contains("TaskCancelled") || err.contains("E-task-0001"),
+            "expected TaskCancelled fail-closed refusal, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_sse_chunk_cancellation_stops_stream() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        nudge_runtime::task::task_reset();
+
+        let task = nudge_runtime::task::TaskToken::root();
+        let _guard_task = nudge_runtime::task::push_current_task(task.clone());
+
+        // Multi-chunk SSE stream
+        let raw_sse = "data: {\"choices\":[{\"delta\":{\"content\":\"chunk 1\"}}]}\n\n\
+                       data: {\"choices\":[{\"delta\":{\"content\":\"chunk 2\"}}]}\n\n\
+                       data: [DONE]\n\n";
+        let reader = std::io::BufReader::new(raw_sse.as_bytes());
+
+        let mut received_chunks = Vec::new();
+        let task_clone = task.clone();
+        let result = consume_sse_stream_with(reader, move |delta| {
+            received_chunks.push(delta.to_string());
+            // Trigger cancellation after chunk 1
+            task_clone.cancel();
+        });
+
+        assert!(
+            result.is_err(),
+            "stream must abort with error on cancellation"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("TaskCancelled") || err.contains("E-task-0001"),
+            "expected TaskCancelled error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_task_stdlib_primitives_in_ndg() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        nudge_runtime::task::task_reset();
+
+        let src = r#"
+            fn main() -> bool {
+                let not_canc = !task.is_cancelled()
+                assert not_canc
+                let t = task.spawn("worker")
+                let s = task.status(t)
+                assert s == "pending"
+                task.cancel(t)
+                let s_canc = task.status(t)
+                assert s_canc == "cancelled"
+                let canc = task.is_cancelled(t)
+                assert canc
+                true
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let res = run_program(&items, "main", &[]).expect("task stdlib primitives run");
+        assert_eq!(res, NudgeVal::Bool(true));
+    }
+
+    #[test]
+    fn test_examples_corpus_parity_vm1_vs_vm0() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _scope = nudge_runtime::trace::testing::scope(None, None);
+        let _env_provider = EnvReset::set("NUDGE_PROVIDER", "fake");
+
+        // 1. Test hello_llm.ndg example
+        let hello_ndg = include_str!("../../../../examples/hello_llm.ndg");
+        let tokens = lex(hello_ndg).expect("lex hello_llm.ndg");
+        let items = parse(tokens).expect("parse hello_llm.ndg");
+
+        let _env_vm = EnvReset::set("NUDGE_VM", "1");
+        let res_vm = run_program(&items, "main", &[]).expect("run hello_llm under VM=1");
+
+        let _env_interp = EnvReset::set("NUDGE_VM", "0");
+        let res_interp = run_program(&items, "main", &[]).expect("run hello_llm under VM=0");
+
+        assert_eq!(
+            res_vm, res_interp,
+            "hello_llm.ndg outputs must be byte-identical VM=1 vs VM=0"
+        );
+
+        // 2. Test arithmetic & control flow compute program
+        let compute_src = r#"
+            fn fib(n: int) -> int {
+                route {
+                    base: n when n <= 1,
+                    rec: fib(n - 1) + fib(n - 2) otherwise
+                }
+            }
+            fn main() -> int {
+                fib(10) * 2 + 1
+            }
+        "#;
+        let tokens2 = lex(compute_src).expect("lex compute");
+        let items2 = parse(tokens2).expect("parse compute");
+
+        let _env_vm2 = EnvReset::set("NUDGE_VM", "1");
+        let res_vm2 = run_program(&items2, "main", &[]).expect("run compute under VM=1");
+
+        let _env_interp2 = EnvReset::set("NUDGE_VM", "0");
+        let res_interp2 = run_program(&items2, "main", &[]).expect("run compute under VM=0");
+
+        assert_eq!(
+            res_vm2, res_interp2,
+            "compute outputs must be byte-identical VM=1 vs VM=0"
+        );
+        assert_eq!(res_vm2, NudgeVal::Int(111));
     }
 }

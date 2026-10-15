@@ -356,6 +356,8 @@ fn direct_effects(
                             }
                         } else if name.starts_with("store.") {
                             effects.insert("Store".into());
+                        } else if name.starts_with("task.") {
+                            // Task lifecycle primitives are standard runtime primitives requiring no new effects
                         } else if g.tools.contains_key(name) {
                             effects.insert("Tool".into());
                         } else if g.fns.contains_key(name) {
@@ -1330,6 +1332,20 @@ fn check_expr_pos(
                             "write" | "append" | "delete" => return Ty::None_,
                             "exists" => return Ty::Bool,
                             "list" => return Ty::List(Box::new(Ty::Str)),
+                            _ => {}
+                        }
+                    } else if prefix == "task" {
+                        match name.as_str() {
+                            "status" => return Ty::Str,
+                            "cancel" => return Ty::None_,
+                            "is_cancelled" => return Ty::Bool,
+                            "join" => return Ty::Unknown,
+                            "spawn" => {
+                                return Ty::Record(vec![
+                                    ("id".to_string(), Ty::Str),
+                                    ("state".to_string(), Ty::Str),
+                                ]);
+                            }
                             _ => {}
                         }
                     }

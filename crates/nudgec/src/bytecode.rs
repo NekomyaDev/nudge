@@ -723,6 +723,7 @@ impl<'a> Compiler<'a> {
                     || name.starts_with("io.")
                     || name.starts_with("workspace.")
                     || name.starts_with("store.")
+                    || name.starts_with("task.")
                 {
                     self.emit_delegated_expr(expr);
                     Ok(())
@@ -907,6 +908,7 @@ fn check_expr_effects(expr: &Expr, tool_names: &[String]) -> Result<(), String> 
                     || name.starts_with("io.")
                     || name.starts_with("workspace.")
                     || name.starts_with("store.")
+                    || name.starts_with("task.")
                 {
                     // Tool call / IO / workspace / store expressions are delegated to the interpreter via DelegateExpr.
                     return Ok(());

@@ -845,6 +845,9 @@ fn replay_act(op: &str, app: &str, payload_args: &[Value]) -> Result<Value, Stri
 }
 
 pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
+    if crate::task::is_current_cancelled() {
+        return Err("error[E-task-0001]: TaskCancelled".to_string());
+    }
     if !METHODS.contains(&name) {
         return Err(format!("Unknown computer function: {name}"));
     }

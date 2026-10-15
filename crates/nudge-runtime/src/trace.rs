@@ -819,6 +819,11 @@ fn parse_fenced_json(text: &str) -> Result<Value, String> {
 /// the recorded answer and never touches a provider; otherwise the call
 /// goes to the configured provider and is recorded as one `llm.call`.
 pub fn llm_call(req: &LlmBridgeRequest<'_>) -> Result<LlmBridgeResponse, LlmBridgeError> {
+    if crate::task::is_current_cancelled() {
+        return Err(LlmBridgeError::Provider(
+            "error[E-task-0001]: TaskCancelled".to_string(),
+        ));
+    }
     let record_model = req.model.unwrap_or("default").to_string();
     let hash = llm_request_hash(req.model, req.prompt, req.schema_json.as_ref(), &[]);
 

@@ -54,6 +54,9 @@ pub fn post_json_with_timeout(
     body: &str,
     timeout: Duration,
 ) -> Result<(u16, String), String> {
+    if crate::task::is_current_cancelled() {
+        return Err("error[E-task-0001]: TaskCancelled".to_string());
+    }
     let agent = build_agent(timeout);
     let req = agent.post(url);
     let req = apply_headers(req, headers);
@@ -140,6 +143,9 @@ pub fn post_chat_stream_with_timeout(
     body: &serde_json::Value,
     timeout: Duration,
 ) -> Result<Box<dyn BufRead>, String> {
+    if crate::task::is_current_cancelled() {
+        return Err("error[E-task-0001]: TaskCancelled".to_string());
+    }
     let payload = prepare_streaming_payload(body)?;
     let agent = build_agent(timeout);
     let req = agent.post(url);
@@ -179,6 +185,9 @@ pub fn post_chat_stream(
     _headers: &[(String, String)],
     _body: &serde_json::Value,
 ) -> Result<Box<dyn BufRead>, String> {
+    if crate::task::is_current_cancelled() {
+        return Err("error[E-task-0001]: TaskCancelled".to_string());
+    }
     Err("network not available on wasm32; use NUDGE_REPLAY".to_string())
 }
 

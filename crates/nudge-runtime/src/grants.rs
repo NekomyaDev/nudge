@@ -227,6 +227,9 @@ pub fn check_policy_str(raw: &str, tool: &str, server: Option<&str>) -> Result<(
 /// Returns `Ok(())` if granted.
 /// Returns `Err(String)` if denied or if the policy is invalid JSON / improperly typed.
 pub fn check(tool: &str, server: Option<&str>) -> Result<(), String> {
+    if crate::task::is_current_cancelled() {
+        return Err("error[E-task-0001]: TaskCancelled".to_string());
+    }
     let raw = match std::env::var("NUDGE_TOOL_GRANTS") {
         Ok(val) => val,
         Err(std::env::VarError::NotPresent) => return Ok(()),
