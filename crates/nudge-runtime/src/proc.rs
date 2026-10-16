@@ -115,6 +115,31 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
     }
 }
 
+/// Resolve `cmd` to an absolute executable path (PATH search for bare names,
+/// cwd-relative for names with a separator). Returns None if it cannot be
+/// resolved. Used so a grant keyed on a basename cannot be satisfied by a
+/// different, workspace-local executable that happens to share that name.
+#[cfg(not(target_arch = "wasm32"))]
+fn resolve_executable(cmd: &str) -> Option<std::path::PathBuf> {
+    let p = std::path::Path::new(cmd);
+    if cmd.contains('/') || cmd.contains('\\') || p.is_absolute() {
+        let abs = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            std::env::current_dir().ok()?.join(p)
+        };
+        return Some(abs);
+    }
+    let path_var = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_var) {
+        let cand = dir.join(cmd);
+        if cand.is_file() {
+            return Some(cand);
+        }
+    }
+    None
+}
+
 /// Check if a command and arguments are authorized by `NUDGE_PROCESS_GRANTS`.
 ///
 /// Fail-closed security discipline:
@@ -138,9 +163,42 @@ pub fn check_process_grants(cmd: &str, args: &[String]) -> Result<(), String> {
         .and_then(|f| f.to_str())
         .unwrap_or(cmd);
 
+    // Resolve the executable to its absolute path. A workspace-local executable
+    // (e.g. a `./git` in the workspace) must NOT inherit a grant keyed only on
+    // the basename (`git`) — that would let a project-local binary borrow a
+    // system tool's authority. For such executables we only honor an explicit
+    // full-path grant or the `*` wildcard.
+    let resolved = resolve_executable(cmd);
+    let resolved_str = resolved.as_ref().and_then(|p| p.to_str()).unwrap_or(cmd);
+    let workspace_root = crate::workspace::get_workspace_root();
+    let resolved_abs = resolved.as_ref().map(|p| {
+        // normalize .. and . lexically for a stable prefix compare
+        let mut norm = std::path::PathBuf::new();
+        for c in p.components() {
+            match c {
+                std::path::Component::ParentDir => {
+                    norm.pop();
+                }
+                std::path::Component::CurDir => {}
+                other => norm.push(other.as_os_str()),
+            }
+        }
+        norm
+    });
+    let resolved_in_workspace = resolved_abs
+        .as_ref()
+        .map(|p| p.starts_with(&workspace_root))
+        .unwrap_or(false);
+    // Basename matching is only trusted for executables OUTSIDE the workspace.
+    let allow_basename = !resolved_in_workspace;
+
     match parsed {
         serde_json::Value::Object(map) => {
-            let candidate_keys = [cmd, cmd_name, "*"];
+            let mut candidate_keys: Vec<&str> = vec![resolved_str, cmd];
+            if allow_basename {
+                candidate_keys.push(cmd_name);
+            }
+            candidate_keys.push("*");
             for key in candidate_keys {
                 if let Some(val) = map.get(key) {
                     match val {
@@ -194,7 +252,13 @@ pub fn check_process_grants(cmd: &str, args: &[String]) -> Result<(), String> {
         serde_json::Value::Array(list) => {
             for item in list {
                 if let Some(s) = item.as_str() {
-                    if s == "*" || s == cmd || s == cmd_name || crate::grants::fnmatch(s, cmd) {
+                    let matches = s == "*"
+                        || s == cmd
+                        || s == resolved_str
+                        || (allow_basename && s == cmd_name)
+                        || crate::grants::fnmatch(s, cmd)
+                        || crate::grants::fnmatch(s, resolved_str);
+                    if matches {
                         return Ok(());
                     }
                 }
@@ -333,9 +397,12 @@ fn spawn_child(cmd: &str, argv: &[String], timeout: Duration) -> Result<Value, S
         return Err("error[E-task-0001]: TaskCancelled".to_string());
     }
 
-    // 3. Spawn child with piped stdout/stderr and null stdin (no shell injection)
+    // 3. Spawn child with piped stdout/stderr and null stdin (no shell injection).
+    // The child is confined to the workspace root as its working directory (this
+    // pins cwd; it is NOT a full filesystem sandbox).
     let mut child = Command::new(cmd)
         .args(argv)
+        .current_dir(crate::workspace::get_workspace_root())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

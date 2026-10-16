@@ -132,28 +132,17 @@ pub fn url_encode(input: &str) -> String {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn generate_random_bytes(len: usize) -> Vec<u8> {
-    #[cfg(unix)]
-    {
-        if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
-            use std::io::Read;
-            let mut buf = vec![0u8; len];
-            if f.read_exact(&mut buf).is_ok() {
-                return buf;
-            }
-        }
-    }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let seed = now.as_nanos() ^ ((std::process::id() as u128) << 64);
-    let mut state = seed as u64 ^ (seed >> 64) as u64;
-    let mut buf = Vec::with_capacity(len);
-    for _ in 0..len {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
-        buf.push((state >> 33) as u8);
-    }
-    buf
+fn generate_random_bytes(len: usize) -> Result<Vec<u8>, String> {
+    // Cryptographically secure RNG for OAuth `state` and the PKCE
+    // code_verifier. Uses the OS source (getrandom: /dev/urandom on Unix,
+    // BCryptGenRandom/CryptGenRandom on Windows). If the secure source is
+    // unavailable we FAIL CLOSED (return an error) rather than falling back to
+    // a predictable time/PID-derived generator — a guessable state or verifier
+    // would break the CSRF and PKCE guarantees.
+    let mut buf = vec![0u8; len];
+    getrandom::getrandom(&mut buf)
+        .map_err(|e| format!("secure randomness unavailable ({e}); refusing to generate OAuth state/PKCE verifier from an insecure source"))?;
+    Ok(buf)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -387,13 +376,15 @@ impl LoopbackOAuthClient {
             .set_nonblocking(true)
             .map_err(|e| format!("error[E-auth-0401]: failed to set listener nonblocking: {e}"))?;
 
-        let verifier_bytes = generate_random_bytes(64);
+        let verifier_bytes =
+            generate_random_bytes(64).map_err(|e| format!("error[E-auth-0401]: {e}"))?;
         let code_verifier = base64url_encode(&verifier_bytes);
 
         let hash = crate::trace::sha256(code_verifier.as_bytes());
         let code_challenge = base64url_encode(&hash);
 
-        let state_bytes = generate_random_bytes(16);
+        let state_bytes =
+            generate_random_bytes(16).map_err(|e| format!("error[E-auth-0401]: {e}"))?;
         let state: String = state_bytes.iter().map(|b| format!("{:02x}", b)).collect();
 
         let redirect_uri = format!("http://127.0.0.1:{port}{}", self.config.redirect_path);
