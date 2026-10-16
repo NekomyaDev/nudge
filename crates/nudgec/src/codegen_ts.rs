@@ -1413,6 +1413,33 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn ts_async_contagion_spreads_only_to_llm_reachers() {
+        // `a` reaches llm -> async. `b` calls `a` -> async + awaits it. `c`
+        // reaches neither -> stays synchronous (so UI/tree helpers that call it
+        // are not forced async).
+        let src = concat!(
+            "fn a() -> string uses LLM { llm\"\"\"x\"\"\" with { model: \"m\" } }\n",
+            "fn b() -> string { a() }\n",
+            "fn c() -> int { 42 }\n",
+        );
+        let out = gen_ts(src);
+        assert!(
+            out.contains("async function a(): Promise<string> {"),
+            "got:\n{out}"
+        );
+        assert!(
+            out.contains("async function b(): Promise<string> {"),
+            "got:\n{out}"
+        );
+        assert!(out.contains("function c(): number {"), "got:\n{out}");
+        assert!(
+            !out.contains("async function c("),
+            "c must stay sync:\n{out}"
+        );
+        assert!(out.contains("return await a();"), "got:\n{out}");
+    }
+
+    #[test]
     fn ts_agent_and_stream_warn() {
         // v1.6: agents lower to rt.agentState + a checkpointing Proxy
         let src =
