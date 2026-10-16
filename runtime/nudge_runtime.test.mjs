@@ -5,7 +5,15 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { validateOutput, llmCall, toolStub, forAll, decide, predictBatch, route } from "./nudge_runtime.ts";
+// Prefer the compiled JS (works on Node 18/20); fall back to the .ts module on
+// Node >= 22.6 via --experimental-strip-types. Avoids ERR_UNKNOWN_FILE_EXTENSION.
+let rt;
+try {
+  rt = await import("./nudge_runtime.js");
+} catch {
+  rt = await import("./nudge_runtime.ts");
+}
+const { validateOutput, llmCall, toolStub, forAll, decide, predictBatch, route } = rt;
 
 const SCHEMA = {
   type: "object",
