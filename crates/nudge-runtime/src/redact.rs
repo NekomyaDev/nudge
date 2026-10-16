@@ -594,6 +594,44 @@ mod tests {
     }
 
     #[test]
+    fn test_redactor_auto_refresh_picks_up_late_secret() {
+        use serde_json::json;
+        // Warm the cache with an unrelated env secret so a Redactor is built.
+        {
+            let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            std::env::set_var("NUDGE_EARLY_KEY", "sk-early-aaaaaaaaaaaa");
+        }
+        reset_redactor_cache();
+        let mut warm = serde_json::Map::new();
+        warm.insert("output".into(), json!("warm sk-early-aaaaaaaaaaaa"));
+        redact_record_fields(&mut warm);
+        assert!(warm["output"].as_str().unwrap().contains("REDACTED"));
+
+        // Add a NEW secret after the cache is warm, past the throttle window.
+        std::thread::sleep(ENV_GEN_REFRESH + std::time::Duration::from_millis(50));
+        {
+            let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            std::env::set_var("NUDGE_LATE_KEY", "sk-late-bbbbbbbbbbbbbb");
+        }
+        let mut late = serde_json::Map::new();
+        late.insert("output".into(), json!("late sk-late-bbbbbbbbbbbbbb"));
+        redact_record_fields(&mut late);
+        let out = late["output"].as_str().unwrap();
+        assert!(
+            !out.contains("sk-late-bbbbbbbbbbbbbb"),
+            "auto-refresh should redact a secret added after the cache warmed: {out}"
+        );
+
+        // cleanup
+        {
+            let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            std::env::remove_var("NUDGE_EARLY_KEY");
+            std::env::remove_var("NUDGE_LATE_KEY");
+        }
+        reset_redactor_cache();
+    }
+
+    #[test]
     fn test_nudge_api_key_env_var_is_redacted_in_trace_record() {
         use serde_json::json;
         let key_name = "NUDGE_API_KEY";
