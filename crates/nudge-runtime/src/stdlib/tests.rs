@@ -339,14 +339,18 @@ mod tests {
 mod computer_tests {
     use crate::stdlib::computer;
     use crate::value::Value;
-    use std::sync::Mutex;
 
-    // these tests share process-global state (env vars + the VM's
-    // last-observation authority) — they must not run concurrently
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
+    // These tests share PROCESS-GLOBAL state: env vars, the VM's last-observation
+    // authority, and the global trace sink/seq that the computer-replay tests emit
+    // into — so they must not run concurrently, NOR concurrently with
+    // trace::tests, which guard the SAME global trace state. One shared lock is
+    // what provides that mutual exclusion: a private per-module lock would NOT
+    // exclude the trace tests (that lock mismatch was the cause of a 1-in-N
+    // parallel flake in `bridge_records_llm_call_with_request_hash`).
     fn lock() -> std::sync::MutexGuard<'static, ()> {
-        ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+        crate::trace::testing::TEST_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
     }
 
     #[test]

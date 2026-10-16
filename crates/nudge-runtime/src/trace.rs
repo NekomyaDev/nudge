@@ -425,6 +425,16 @@ pub mod testing {
     use super::{Overrides, OVERRIDE};
     use std::path::PathBuf;
 
+    /// Shared lock for tests that mutate GLOBAL trace state — the global sink
+    /// (`Scope::drop` calls `reset_sink()`), the gapless sequence counter, or the
+    /// NUDGE_TRACE / NUDGE_REPLAY environment variables. `scope` isolation is
+    /// thread-local, but emission/reset touch process-global state, so tests that
+    /// touch either must be mutually exclusive. Without this they race under
+    /// parallel test execution (observed as a 1-in-N flake in
+    /// `trace::tests::bridge_records_llm_call_with_request_hash`, whose sibling
+    /// computer-replay tests set NUDGE_REPLAY without any lock).
+    pub static TEST_STATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// Thread-local trace/replay isolation for tests: inside the scope the
     /// current thread uses exactly `sink` / `replay` (None = disabled) and
     /// ignores the environment. Restored on drop.
@@ -933,14 +943,14 @@ pub fn llm_call(req: &LlmBridgeRequest<'_>) -> Result<LlmBridgeResponse, LlmBrid
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use std::sync::Mutex;
 
-    /// trace/replay state and the test scopes are process-global — one
-    /// lock keeps the tests from stepping on each other.
-    static TLOCK: Mutex<()> = Mutex::new(());
-
+    /// Global trace/sink/seq state is shared across tests (and with the
+    /// stdlib computer-replay tests that set NUDGE_REPLAY), so all tests that
+    /// touch it serialize on the shared lock in `trace::testing`.
     fn guard() -> std::sync::MutexGuard<'static, ()> {
-        TLOCK.lock().unwrap_or_else(|e| e.into_inner())
+        crate::trace::testing::TEST_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
     }
 
     fn tmp(name: &str) -> PathBuf {

@@ -9,10 +9,36 @@ pub(crate) fn get_test_lock() -> std::sync::MutexGuard<'static, ()> {
 
 struct EnvGuard {
     saved: Vec<(&'static str, Option<String>)>,
+    /// `Some` when this is the OUTERMOST guard on this thread (it owns the shared
+    /// lock); `None` when nested inside another guard on the same thread.
+    /// `std::sync::Mutex` is NOT reentrant, so a test that creates several
+    /// guards must not re-lock — but while ANY of them is alive the env/global
+    /// trace state is being mutated, so the outermost must still hold the lock to
+    /// stay mutually exclusive with tests that READ that state concurrently
+    /// (otherwise NUDGE_PROVIDER=openai set here races a parallel fake-provider
+    /// test — e.g. trace::tests' bridge call — into a real network call: a 1-in-N
+    /// parallel flake).
+    _lock: Option<std::sync::MutexGuard<'static, ()>>,
+}
+
+// True while the current thread holds the shared test-state lock through an
+// EnvGuard — emulates a reentrant lock for guards nested within one test.
+thread_local! {
+    static ENV_GUARD_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 impl EnvGuard {
     fn set(vars: &[(&'static str, Option<&str>)]) -> Self {
+        let nested = ENV_GUARD_HELD.with(|h| h.replace(true));
+        let _lock = if nested {
+            None
+        } else {
+            Some(
+                crate::trace::testing::TEST_STATE_LOCK
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()),
+            )
+        };
         let mut saved = Vec::new();
         for &(k, v) in vars {
             saved.push((k, std::env::var(k).ok()));
@@ -21,7 +47,7 @@ impl EnvGuard {
                 None => std::env::remove_var(k),
             }
         }
-        Self { saved }
+        Self { saved, _lock }
     }
 }
 
@@ -32,6 +58,12 @@ impl Drop for EnvGuard {
                 Some(val) => std::env::set_var(k, val),
                 None => std::env::remove_var(k),
             }
+        }
+        // Release the shared lock (and the per-thread re-entry flag) only for
+        // the OUTERMOST guard; nested guards just restore their own variables.
+        if self._lock.is_some() {
+            self._lock = None;
+            ENV_GUARD_HELD.with(|h| h.set(false));
         }
     }
 }
