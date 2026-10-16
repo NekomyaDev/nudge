@@ -2,13 +2,15 @@
 #![cfg(feature = "native-gui")]
 
 use crate::font8x8::FONT_8X8_BASIC;
-use crate::ui::UiElement;
+use crate::ui::{TextInputState, UiElement};
+use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowAttributes, WindowId};
 
 /// Configuration for opening a native OS window.
@@ -33,6 +35,12 @@ impl Default for WindowConfig {
 pub trait UiDispatcher {
     fn root(&mut self) -> Option<UiElement>;
     fn dispatch_click(&mut self, button_id: &str);
+    fn dispatch_change(&mut self, element_id: &str, value: &str) {
+        let _ = (element_id, value);
+    }
+    fn dispatch_key(&mut self, key: &str, target_id: Option<&str>) {
+        let _ = (key, target_id);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +65,7 @@ pub struct LayoutBox {
     pub text: Option<String>,
     pub on_click: Option<String>,
     pub on_change: Option<String>,
+    pub on_key: Option<String>,
 }
 
 // -----------------------------------------------------------------------------
@@ -244,6 +253,7 @@ pub fn layout_element(
                 text: Some(content),
                 on_click: None,
                 on_change: None,
+                on_key: elem.on_key.clone(),
             });
             (w, h)
         }
@@ -270,6 +280,7 @@ pub fn layout_element(
                 text: Some(content),
                 on_click: elem.on_click.clone().or_else(|| elem.id.clone()),
                 on_change: None,
+                on_key: elem.on_key.clone(),
             });
             (w, h)
         }
@@ -288,6 +299,7 @@ pub fn layout_element(
                 text: Some(content),
                 on_click: None,
                 on_change: elem.on_change.clone(),
+                on_key: elem.on_key.clone(),
             });
             (w, h)
         }
@@ -321,6 +333,15 @@ pub struct NativeApp<D: UiDispatcher> {
     pub layout_boxes: Vec<LayoutBox>,
     pub render_count: usize,
     pub test_runner: Option<fn(&mut NativeApp<D>, &ActiveEventLoop)>,
+    pub focused_id: Option<String>,
+    pub text_inputs: HashMap<String, TextInputState>,
+    pub scroll_x: i32,
+    pub scroll_y: i32,
+    pub content_width: i32,
+    pub content_height: i32,
+    pub clipboard: String,
+    pub shift_pressed: bool,
+    pub ctrl_pressed: bool,
 }
 
 impl<D: UiDispatcher> NativeApp<D> {
@@ -339,7 +360,32 @@ impl<D: UiDispatcher> NativeApp<D> {
             layout_boxes: Vec::new(),
             render_count: 0,
             test_runner: None,
+            focused_id: None,
+            text_inputs: HashMap::new(),
+            scroll_x: 0,
+            scroll_y: 0,
+            content_width: 0,
+            content_height: 0,
+            clipboard: String::new(),
+            shift_pressed: false,
+            ctrl_pressed: false,
         }
+    }
+
+    pub fn ensure_input_state(&mut self, id: &str, initial_text: &str) -> &mut TextInputState {
+        if !self.text_inputs.contains_key(id) {
+            self.text_inputs
+                .insert(id.to_string(), TextInputState::new(initial_text));
+        }
+        self.text_inputs.get_mut(id).unwrap()
+    }
+
+    pub fn scroll_by(&mut self, dx: i32, dy: i32) {
+        let max_y = (self.content_height - self.height as i32 + 20).max(0);
+        let max_x = (self.content_width - self.width as i32 + 20).max(0);
+        self.scroll_x = (self.scroll_x + dx).clamp(0, max_x);
+        self.scroll_y = (self.scroll_y + dy).clamp(0, max_y);
+        self.render();
     }
 
     pub fn render(&mut self) {
@@ -383,20 +429,44 @@ impl<D: UiDispatcher> NativeApp<D> {
 
         // Fetch latest view tree and layout
         self.layout_boxes.clear();
+        let mut total_w = 0;
+        let mut total_h = 0;
         if let Some(root) = self.dispatcher.root() {
-            layout_element(
+            let (cw, ch) = layout_element(
                 &root,
                 10,
                 10,
                 self.width as i32 - 20,
                 &mut self.layout_boxes,
             );
+            total_w = cw;
+            total_h = ch;
         }
+        self.content_width = total_w;
+        self.content_height = total_h;
+
+        // Clamp scroll offsets
+        let max_scroll_y = (total_h - self.height as i32 + 20).max(0);
+        let max_scroll_x = (total_w - self.width as i32 + 20).max(0);
+        self.scroll_y = self.scroll_y.clamp(0, max_scroll_y);
+        self.scroll_x = self.scroll_x.clamp(0, max_scroll_x);
 
         let (mx, my) = self.cursor_pos;
 
-        // Render each layout box
+        // Render each layout box with viewport scroll offset & clipping
         for lbox in &self.layout_boxes {
+            let rx = lbox.rect.x - self.scroll_x;
+            let ry = lbox.rect.y - self.scroll_y;
+
+            // Viewport clipping: skip completely out-of-bounds elements
+            if ry + lbox.rect.h < 0
+                || ry >= self.height as i32
+                || rx + lbox.rect.w < 0
+                || rx >= self.width as i32
+            {
+                continue;
+            }
+
             match lbox.tag.as_str() {
                 "text" => {
                     if let Some(ref text) = lbox.text {
@@ -404,8 +474,8 @@ impl<D: UiDispatcher> NativeApp<D> {
                             &mut buffer,
                             stride,
                             h_usize,
-                            lbox.rect.x,
-                            lbox.rect.y + 2,
+                            rx,
+                            ry + 2,
                             text,
                             0xFFF4F4F5, // crisp white
                             2,
@@ -413,7 +483,13 @@ impl<D: UiDispatcher> NativeApp<D> {
                     }
                 }
                 "button" => {
-                    let hovered = lbox.rect.contains(mx, my);
+                    let screen_rect = Rect {
+                        x: rx,
+                        y: ry,
+                        w: lbox.rect.w,
+                        h: lbox.rect.h,
+                    };
+                    let hovered = screen_rect.contains(mx, my);
                     let bg_color = if hovered {
                         0xFF2563EB // Blue-600 hover
                     } else {
@@ -423,8 +499,8 @@ impl<D: UiDispatcher> NativeApp<D> {
                         &mut buffer,
                         stride,
                         h_usize,
-                        lbox.rect.x,
-                        lbox.rect.y,
+                        rx,
+                        ry,
                         lbox.rect.w,
                         lbox.rect.h,
                         bg_color,
@@ -433,26 +509,34 @@ impl<D: UiDispatcher> NativeApp<D> {
                         &mut buffer,
                         stride,
                         h_usize,
-                        lbox.rect.x,
-                        lbox.rect.y,
+                        rx,
+                        ry,
                         lbox.rect.w,
                         lbox.rect.h,
                         0xFF60A5FA, // lighter border
                     );
                     if let Some(ref text) = lbox.text {
                         let text_w = (text.len() as i32) * 16;
-                        let tx = lbox.rect.x + ((lbox.rect.w - text_w) / 2).max(8);
-                        let ty = lbox.rect.y + ((lbox.rect.h - 16) / 2).max(4);
+                        let tx = rx + ((lbox.rect.w - text_w) / 2).max(8);
+                        let ty = ry + ((lbox.rect.h - 16) / 2).max(4);
                         draw_text(&mut buffer, stride, h_usize, tx, ty, text, 0xFFFFFFFF, 2);
                     }
                 }
                 "input" => {
+                    let is_focused =
+                        self.focused_id.as_deref() == lbox.id.as_deref() && lbox.id.is_some();
+                    let border_color = if is_focused {
+                        0xFF3B82F6 // Blue-500 focused outline
+                    } else {
+                        0xFF52525B // Zinc-600 unfocused border
+                    };
+
                     draw_rect(
                         &mut buffer,
                         stride,
                         h_usize,
-                        lbox.rect.x,
-                        lbox.rect.y,
+                        rx,
+                        ry,
                         lbox.rect.w,
                         lbox.rect.h,
                         0xFF27272A, // Zinc-800
@@ -461,27 +545,102 @@ impl<D: UiDispatcher> NativeApp<D> {
                         &mut buffer,
                         stride,
                         h_usize,
-                        lbox.rect.x,
-                        lbox.rect.y,
+                        rx,
+                        ry,
                         lbox.rect.w,
                         lbox.rect.h,
-                        0xFF52525B, // Zinc-600
+                        border_color,
                     );
-                    if let Some(ref text) = lbox.text {
-                        draw_text(
+
+                    let (display_text, cursor_opt, selection_opt) = if let Some(ref id) = lbox.id {
+                        if let Some(st) = self.text_inputs.get(id) {
+                            (st.text.clone(), Some(st.cursor), st.selection_range())
+                        } else {
+                            (lbox.text.clone().unwrap_or_default(), None, None)
+                        }
+                    } else {
+                        (lbox.text.clone().unwrap_or_default(), None, None)
+                    };
+
+                    // Draw selection highlight if focused and range selected
+                    if is_focused {
+                        if let Some((sel_start, sel_end)) = selection_opt {
+                            let sel_x = rx + 8 + (sel_start as i32) * 16;
+                            let sel_w = ((sel_end - sel_start) as i32) * 16;
+                            draw_rect(
+                                &mut buffer,
+                                stride,
+                                h_usize,
+                                sel_x,
+                                ry + 6,
+                                sel_w,
+                                24,
+                                0xFF1D4ED8, // Blue-700 selection background
+                            );
+                        }
+                    }
+
+                    // Draw text
+                    draw_text(
+                        &mut buffer,
+                        stride,
+                        h_usize,
+                        rx + 8,
+                        ry + 10,
+                        &display_text,
+                        0xFFE4E4E7,
+                        2,
+                    );
+
+                    // Draw cursor bar if focused
+                    if is_focused {
+                        let cur_idx = cursor_opt.unwrap_or_else(|| display_text.chars().count());
+                        let cur_x = rx + 8 + (cur_idx as i32) * 16;
+                        draw_rect(
                             &mut buffer,
                             stride,
                             h_usize,
-                            lbox.rect.x + 8,
-                            lbox.rect.y + 10,
-                            text,
-                            0xFFE4E4E7,
+                            cur_x,
+                            ry + 8,
                             2,
+                            20,
+                            0xFFFFFFFF, // white cursor
                         );
                     }
                 }
                 _ => {}
             }
+        }
+
+        // Render scrollbar if content exceeds viewport
+        if self.content_height > self.height as i32 {
+            let track_h = self.height as i32;
+            let thumb_h =
+                ((track_h as f32 * track_h as f32) / self.content_height as f32).max(24.0) as i32;
+            let max_scroll = (self.content_height - track_h + 20).max(1);
+            let thumb_y =
+                ((self.scroll_y as f32 / max_scroll as f32) * (track_h - thumb_h) as f32) as i32;
+
+            draw_rect(
+                &mut buffer,
+                stride,
+                h_usize,
+                self.width as i32 - 8,
+                0,
+                8,
+                track_h,
+                0xFF27272A,
+            );
+            draw_rect(
+                &mut buffer,
+                stride,
+                h_usize,
+                self.width as i32 - 7,
+                thumb_y,
+                6,
+                thumb_h,
+                0xFF71717A, // Zinc-500
+            );
         }
 
         self.render_count += 1;
@@ -490,24 +649,325 @@ impl<D: UiDispatcher> NativeApp<D> {
 
     pub fn handle_click(&mut self) {
         let (mx, my) = self.cursor_pos;
-        let mut clicked_id = None;
+        let cx = mx + self.scroll_x;
+        let cy = my + self.scroll_y;
+
+        let mut clicked_button = None;
+        let mut clicked_input = None;
 
         for lbox in &self.layout_boxes {
-            if lbox.tag == "button" && lbox.rect.contains(mx, my) {
-                if let Some(ref id) = lbox.id {
-                    clicked_id = Some(id.clone());
+            if lbox.rect.contains(cx, cy) {
+                if lbox.tag == "button" {
+                    if let Some(ref id) = lbox.id {
+                        clicked_button = Some(id.clone());
+                    } else if let Some(ref on_click) = lbox.on_click {
+                        clicked_button = Some(on_click.clone());
+                    }
                     break;
-                } else if let Some(ref on_click) = lbox.on_click {
-                    clicked_id = Some(on_click.clone());
+                } else if lbox.tag == "input" {
+                    clicked_input = Some(lbox.clone());
                     break;
                 }
             }
         }
 
-        if let Some(button_id) = clicked_id {
+        if let Some(button_id) = clicked_button {
             self.dispatcher.dispatch_click(&button_id);
             self.render();
+        } else if let Some(lbox) = clicked_input {
+            if let Some(ref id) = lbox.id {
+                self.focused_id = Some(id.clone());
+                let rel_x = cx - (lbox.rect.x + 8);
+                let char_idx = (rel_x.max(0) / 16) as usize;
+
+                let st = self.ensure_input_state(id, lbox.text.as_deref().unwrap_or(""));
+                st.cursor = char_idx.min(st.char_len());
+                st.selection_anchor = None;
+            }
+            self.render();
+        } else {
+            if self.focused_id.is_some() {
+                self.focused_id = None;
+                self.render();
+            }
         }
+    }
+
+    pub fn handle_key_input(&mut self, logical_key: &Key, typed_text: Option<&str>) {
+        if let Some(ref focused_id) = self.focused_id.clone() {
+            let lbox = self
+                .layout_boxes
+                .iter()
+                .find(|b| b.id.as_deref() == Some(focused_id))
+                .cloned();
+
+            let initial = lbox
+                .as_ref()
+                .and_then(|b| b.text.as_deref())
+                .unwrap_or_default();
+            let on_change = lbox.as_ref().and_then(|b| b.on_change.clone());
+            let on_key = lbox.as_ref().and_then(|b| b.on_key.clone());
+
+            let mut value_changed = false;
+            let mut key_name = String::new();
+
+            if self.ctrl_pressed {
+                match logical_key {
+                    Key::Character(s) if s.eq_ignore_ascii_case("a") => {
+                        let st = self.ensure_input_state(focused_id, initial);
+                        st.select_all();
+                        self.render();
+                        return;
+                    }
+                    Key::Character(s) if s.eq_ignore_ascii_case("c") => {
+                        let st = self.ensure_input_state(focused_id, initial);
+                        if let Some(copied) = st.copy() {
+                            self.clipboard = copied;
+                        }
+                        return;
+                    }
+                    Key::Character(s) if s.eq_ignore_ascii_case("x") => {
+                        let st = self.ensure_input_state(focused_id, initial);
+                        if let Some(cut_text) = st.cut() {
+                            self.clipboard = cut_text;
+                            value_changed = true;
+                        }
+                    }
+                    Key::Character(s) if s.eq_ignore_ascii_case("v") => {
+                        if !self.clipboard.is_empty() {
+                            let clip = self.clipboard.clone();
+                            let st = self.ensure_input_state(focused_id, initial);
+                            st.paste(&clip);
+                            value_changed = true;
+                        }
+                    }
+                    _ => {}
+                }
+            } else {
+                let shift = self.shift_pressed;
+                match logical_key {
+                    Key::Named(NamedKey::ArrowLeft) => {
+                        let st = self.ensure_input_state(focused_id, initial);
+                        st.move_left(shift);
+                        key_name = "ArrowLeft".to_string();
+                    }
+                    Key::Named(NamedKey::ArrowRight) => {
+                        let st = self.ensure_input_state(focused_id, initial);
+                        st.move_right(shift);
+                        key_name = "ArrowRight".to_string();
+                    }
+                    Key::Named(NamedKey::Home) => {
+                        let st = self.ensure_input_state(focused_id, initial);
+                        st.move_home(shift);
+                        key_name = "Home".to_string();
+                    }
+                    Key::Named(NamedKey::End) => {
+                        let st = self.ensure_input_state(focused_id, initial);
+                        st.move_end(shift);
+                        key_name = "End".to_string();
+                    }
+                    Key::Named(NamedKey::Backspace) => {
+                        let st = self.ensure_input_state(focused_id, initial);
+                        value_changed = st.backspace();
+                        key_name = "Backspace".to_string();
+                    }
+                    Key::Named(NamedKey::Delete) => {
+                        let st = self.ensure_input_state(focused_id, initial);
+                        value_changed = st.delete();
+                        key_name = "Delete".to_string();
+                    }
+                    Key::Named(NamedKey::Enter) => {
+                        key_name = "Enter".to_string();
+                    }
+                    Key::Named(NamedKey::Escape) => {
+                        key_name = "Escape".to_string();
+                        self.focused_id = None;
+                    }
+                    Key::Named(NamedKey::Tab) => {
+                        key_name = "Tab".to_string();
+                        let input_ids: Vec<String> = self
+                            .layout_boxes
+                            .iter()
+                            .filter(|b| b.tag == "input" && b.id.is_some())
+                            .filter_map(|b| b.id.clone())
+                            .collect();
+                        if !input_ids.is_empty() {
+                            let curr_pos = input_ids.iter().position(|id| id == focused_id);
+                            let next_idx = match curr_pos {
+                                Some(pos) => (pos + 1) % input_ids.len(),
+                                None => 0,
+                            };
+                            self.focused_id = Some(input_ids[next_idx].clone());
+                        }
+                    }
+                    _ => {
+                        if let Some(txt) = typed_text {
+                            if !txt.chars().any(|c| c.is_control()) && !txt.is_empty() {
+                                let st = self.ensure_input_state(focused_id, initial);
+                                st.insert_str(txt);
+                                value_changed = true;
+                                key_name = txt.to_string();
+                            }
+                        } else if let Key::Character(s) = logical_key {
+                            if !s.chars().any(|c| c.is_control()) && !s.is_empty() {
+                                let st = self.ensure_input_state(focused_id, initial);
+                                st.insert_str(s.as_str());
+                                value_changed = true;
+                                key_name = s.to_string();
+                            }
+                        }
+                    }
+                }
+            }
+
+            if value_changed {
+                let new_text = self
+                    .text_inputs
+                    .get(focused_id)
+                    .map(|st| st.text.clone())
+                    .unwrap_or_default();
+                if on_change.is_some() {
+                    self.dispatcher.dispatch_change(focused_id, &new_text);
+                }
+            }
+
+            if !key_name.is_empty() {
+                let chord = if self.ctrl_pressed {
+                    format!("Ctrl+{key_name}")
+                } else {
+                    key_name
+                };
+                if on_key.is_some() {
+                    self.dispatcher.dispatch_key(&chord, Some(focused_id));
+                }
+            }
+
+            self.render();
+            return;
+        }
+
+        let mut handled_scroll = false;
+        let mut key_name = String::new();
+
+        match logical_key {
+            Key::Named(NamedKey::PageUp) => {
+                let delta = -(self.height as i32 - 40);
+                self.scroll_by(0, delta);
+                handled_scroll = true;
+                key_name = "PageUp".to_string();
+            }
+            Key::Named(NamedKey::PageDown) => {
+                let delta = self.height as i32 - 40;
+                self.scroll_by(0, delta);
+                handled_scroll = true;
+                key_name = "PageDown".to_string();
+            }
+            Key::Named(NamedKey::Home) => {
+                self.scroll_y = 0;
+                self.render();
+                handled_scroll = true;
+                key_name = "Home".to_string();
+            }
+            Key::Named(NamedKey::End) => {
+                let max_y = (self.content_height - self.height as i32 + 20).max(0);
+                self.scroll_y = max_y;
+                self.render();
+                handled_scroll = true;
+                key_name = "End".to_string();
+            }
+            Key::Named(NamedKey::ArrowUp) => {
+                self.scroll_by(0, -20);
+                handled_scroll = true;
+                key_name = "ArrowUp".to_string();
+            }
+            Key::Named(NamedKey::ArrowDown) => {
+                self.scroll_by(0, 20);
+                handled_scroll = true;
+                key_name = "ArrowDown".to_string();
+            }
+            Key::Named(NamedKey::Enter) => key_name = "Enter".to_string(),
+            Key::Named(NamedKey::Escape) => key_name = "Escape".to_string(),
+            Key::Character(s) => key_name = s.to_string(),
+            _ => {}
+        }
+
+        if !key_name.is_empty() {
+            let chord = if self.ctrl_pressed {
+                format!("Ctrl+{key_name}")
+            } else {
+                key_name
+            };
+            self.dispatcher.dispatch_key(&chord, None);
+        }
+
+        if !handled_scroll {
+            self.render();
+        }
+    }
+
+    /// Programmatically focus an input field by id.
+    pub fn focus_input(&mut self, input_id: &str) -> bool {
+        let target = self
+            .layout_boxes
+            .iter()
+            .find(|b| b.tag == "input" && b.id.as_deref() == Some(input_id))
+            .cloned();
+
+        if let Some(b) = target {
+            self.focused_id = Some(input_id.to_string());
+            let initial = b.text.as_deref().unwrap_or_default();
+            self.ensure_input_state(input_id, initial);
+            self.render();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Type text into the currently focused input.
+    pub fn type_into_focused(&mut self, text: &str) {
+        if let Some(fid) = self.focused_id.clone() {
+            let initial = self
+                .layout_boxes
+                .iter()
+                .find(|b| b.id.as_deref() == Some(&fid))
+                .and_then(|b| b.text.clone())
+                .unwrap_or_default();
+            let st = self.ensure_input_state(&fid, &initial);
+            st.insert_str(text);
+            let new_text = st.text.clone();
+            self.dispatcher.dispatch_change(&fid, &new_text);
+            self.render();
+        }
+    }
+
+    /// Focus an input by id and type text into it.
+    pub fn type_into(&mut self, input_id: &str, text: &str) -> bool {
+        if self.focus_input(input_id) {
+            self.type_into_focused(text);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Programmatically send a key (e.g. "Enter", "Backspace", "ArrowLeft").
+    pub fn send_key(&mut self, key_str: &str) {
+        let (key, text) = match key_str {
+            "Backspace" => (Key::Named(NamedKey::Backspace), None),
+            "Delete" => (Key::Named(NamedKey::Delete), None),
+            "ArrowLeft" => (Key::Named(NamedKey::ArrowLeft), None),
+            "ArrowRight" => (Key::Named(NamedKey::ArrowRight), None),
+            "Home" => (Key::Named(NamedKey::Home), None),
+            "End" => (Key::Named(NamedKey::End), None),
+            "PageUp" => (Key::Named(NamedKey::PageUp), None),
+            "PageDown" => (Key::Named(NamedKey::PageDown), None),
+            "Enter" => (Key::Named(NamedKey::Enter), None),
+            "Escape" => (Key::Named(NamedKey::Escape), None),
+            "Tab" => (Key::Named(NamedKey::Tab), None),
+            other => (Key::Character(other.into()), Some(other)),
+        };
+        self.handle_key_input(&key, text);
     }
 
     /// Programmatically dispatch a click on a button by its id.
@@ -604,6 +1064,39 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
                     win.request_redraw();
                 }
             }
+            WindowEvent::MouseWheel { delta, .. } => {
+                match delta {
+                    MouseScrollDelta::LineDelta(_dx, dy) => {
+                        self.scroll_by(0, (-dy * 30.0) as i32);
+                    }
+                    MouseScrollDelta::PixelDelta(pos) => {
+                        self.scroll_by(-pos.x as i32, -pos.y as i32);
+                    }
+                }
+                if let Some(win) = &self.window {
+                    win.request_redraw();
+                }
+            }
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.shift_pressed = modifiers.state().shift_key();
+                self.ctrl_pressed =
+                    modifiers.state().control_key() || modifiers.state().super_key();
+            }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        state: ElementState::Pressed,
+                        logical_key,
+                        text,
+                        ..
+                    },
+                ..
+            } => {
+                self.handle_key_input(&logical_key, text.as_deref());
+                if let Some(win) = &self.window {
+                    win.request_redraw();
+                }
+            }
             _ => {}
         }
     }
@@ -656,6 +1149,8 @@ mod tests {
 
     struct DummyDisp<'a> {
         val: &'a mut i32,
+        notes: &'a mut String,
+        last_key: &'a mut String,
     }
 
     impl<'a> UiDispatcher for DummyDisp<'a> {
@@ -665,14 +1160,31 @@ mod tests {
         fn dispatch_click(&mut self, _button_id: &str) {
             *self.val += 1;
         }
+        fn dispatch_change(&mut self, _element_id: &str, value: &str) {
+            *self.notes = value.to_string();
+        }
+        fn dispatch_key(&mut self, key: &str, _target_id: Option<&str>) {
+            *self.last_key = key.to_string();
+        }
     }
 
     #[test]
     fn test_dispatcher_compiles_with_lifetimes() {
         let mut x = 42;
-        let mut d = DummyDisp { val: &mut x };
+        let mut notes = String::new();
+        let mut key = String::new();
+        let mut d = DummyDisp {
+            val: &mut x,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
         d.dispatch_click("btn");
+        d.dispatch_change("inp", "text");
+        d.dispatch_key("Enter", None);
+        drop(d);
         assert_eq!(x, 43);
+        assert_eq!(notes, "text");
+        assert_eq!(key, "Enter");
     }
 
     #[test]
@@ -689,20 +1201,28 @@ mod tests {
         btn.text = Some("Increment".into());
         btn.on_click = Some("inc".into());
 
+        let mut inp = UiElement::new("input");
+        inp.id = Some("input_val".into());
+        inp.text = Some("edit me".into());
+        inp.on_change = Some("set_val".into());
+
         col.children.push(txt);
         col.children.push(btn);
+        col.children.push(inp);
 
         let mut boxes = Vec::new();
         let (w, h) = layout_element(&col, 0, 0, 300, &mut boxes);
         assert!(w > 0);
         assert!(h > 0);
-        assert_eq!(boxes.len(), 2);
+        assert_eq!(boxes.len(), 3);
         assert_eq!(boxes[0].tag, "text");
         assert_eq!(boxes[1].tag, "button");
         assert_eq!(boxes[1].id.as_deref(), Some("btn_inc"));
         assert!(boxes[1]
             .rect
             .contains(boxes[1].rect.x + 2, boxes[1].rect.y + 2));
+        assert_eq!(boxes[2].tag, "input");
+        assert_eq!(boxes[2].id.as_deref(), Some("input_val"));
     }
 
     #[test]
@@ -748,6 +1268,7 @@ mod tests {
                 children: from.children.iter().map(convert_ui_element).collect(),
                 on_click: from.on_click.clone(),
                 on_change: from.on_change.clone(),
+                on_key: from.on_key.clone(),
             }
         }
 
@@ -755,6 +1276,8 @@ mod tests {
             interp: &'a mut nudgec::eval::interpreter::Interpreter,
             app_id: usize,
             env: &'a std::rc::Rc<std::cell::RefCell<nudgec::eval::env::Env>>,
+            synthetic_note: String,
+            last_key: String,
         }
 
         impl<'a> UiDispatcher for TestDispatcher<'a> {
@@ -764,13 +1287,39 @@ mod tests {
                     .headless_apps
                     .get(self.app_id)
                     .and_then(|a| a.root.as_ref())?;
-                Some(convert_ui_element(elem))
+                let mut root = convert_ui_element(elem);
+
+                // Add an input and scrollable text items dynamically for acceptance test coverage
+                let mut inp = UiElement::new("input");
+                inp.id = Some("test_inp".to_string());
+                inp.props
+                    .insert("value".to_string(), self.synthetic_note.clone());
+                inp.on_change = Some("set_note".to_string());
+                inp.on_key = Some("handle_key".to_string());
+                root.children.push(inp);
+
+                // Add items to force overflow for scrolling test
+                for i in 0..15 {
+                    let mut extra_txt = UiElement::new("text");
+                    extra_txt.text = Some(format!("Row item {i}"));
+                    root.children.push(extra_txt);
+                }
+
+                Some(root)
             }
 
             fn dispatch_click(&mut self, button_id: &str) {
                 let _ = self
                     .interp
                     .dispatch_click_headless(self.app_id, button_id, self.env);
+            }
+
+            fn dispatch_change(&mut self, _element_id: &str, value: &str) {
+                self.synthetic_note = value.to_string();
+            }
+
+            fn dispatch_key(&mut self, key: &str, _target_id: Option<&str>) {
+                self.last_key = key.to_string();
             }
         }
 
@@ -792,7 +1341,13 @@ mod tests {
             );
 
             // Assert initial render happened
-            assert_eq!(app.render_count, 1, "initial frame should be rendered");
+            // Xvfb/CI can render an extra initial frame (DPI/scale/expose) before this
+            // point, so assert "at least one initial frame" instead of an exact count.
+            assert!(
+                app.render_count >= 1,
+                "initial frame should be rendered (got {})",
+                app.render_count
+            );
             let text_before = app
                 .layout_boxes
                 .iter()
@@ -823,6 +1378,7 @@ mod tests {
 
             // Dispatch click on 'btn_inc' through window path
             println!("[desktop-gui-test] Programmatically dispatching click to 'btn_inc'...");
+            let renders_before_click = app.render_count;
             let clicked = app.click_button("btn_inc");
             assert!(clicked, "button 'btn_inc' must be found and clicked");
             println!("[desktop-gui-test] Click event dispatched through runtime handler");
@@ -840,10 +1396,13 @@ mod tests {
             );
             println!("[desktop-gui-test] Agent state change verified: CounterApp.state.val = 1");
 
-            // Check re-render happened
-            assert_eq!(
-                app.render_count, 2,
-                "framebuffer re-render must have fired after event dispatch"
+            // Check re-render happened (relative: absolute counts differ across
+            // environments because the initial frame count varies)
+            assert!(
+                app.render_count > renders_before_click,
+                "framebuffer re-render must have fired after event dispatch (before={}, after={})",
+                renders_before_click,
+                app.render_count
             );
             let text_after = app
                 .layout_boxes
@@ -860,6 +1419,45 @@ mod tests {
                 text_after, app.render_count
             );
 
+            // 4. Test Text Input & Editing on real OS window
+            println!("[desktop-gui-test] Testing native text input editing on 'test_inp'...");
+            let focused = app.focus_input("test_inp");
+            assert!(focused, "input 'test_inp' must be focused");
+            assert_eq!(app.focused_id.as_deref(), Some("test_inp"));
+
+            app.type_into_focused("Hello Nudge");
+            assert_eq!(
+                app.dispatcher.synthetic_note, "Hello Nudge",
+                "on_change handler must receive typed text"
+            );
+
+            // Test backspace key
+            app.send_key("Backspace");
+            assert_eq!(
+                app.dispatcher.synthetic_note, "Hello Nudg",
+                "Backspace must delete last char and fire on_change"
+            );
+            println!("[desktop-gui-test] Text input editing verified successfully!");
+
+            // 5. Test Scrolling on real OS window
+            println!("[desktop-gui-test] Testing viewport scrolling on real window...");
+            assert_eq!(app.scroll_y, 0, "initial scroll_y must be 0");
+            app.scroll_by(0, 60);
+            assert_eq!(app.scroll_y, 60, "scroll_y must advance by 60");
+            println!(
+                "[desktop-gui-test] Viewport scroll verified: scroll_offset=({}, {})",
+                app.scroll_x, app.scroll_y
+            );
+
+            // 6. Test Keyboard Event Dispatch
+            println!("[desktop-gui-test] Testing keyboard event dispatch...");
+            app.send_key("Enter");
+            assert_eq!(
+                app.dispatcher.last_key, "Enter",
+                "on_key handler must receive Enter event"
+            );
+            println!("[desktop-gui-test] Keyboard event dispatch verified successfully!");
+
             println!("[desktop-gui-test] All desktop acceptance assertions passed. Exiting winit event loop.");
             event_loop.exit();
         }
@@ -868,6 +1466,8 @@ mod tests {
             interp: &mut interp,
             app_id,
             env: &env,
+            synthetic_note: String::new(),
+            last_key: String::new(),
         };
 
         run_window_with_test_runner(config, dispatcher, Some(acceptance_runner))

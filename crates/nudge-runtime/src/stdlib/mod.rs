@@ -29,6 +29,12 @@ pub fn register_all() -> HashMap<String, Value> {
     // Register workspace functions (safe, sandboxed filesystem)
     functions.extend(workspace::register());
 
+    // Register fs functions (file watching)
+    functions.extend(crate::fs_watch::register());
+
+    // Register proc functions (controlled process management)
+    functions.extend(crate::proc::register());
+
     // Register store functions (crash-safe persistent app data store)
     functions.extend(store::register());
 
@@ -62,6 +68,10 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
         io::execute(name, args)
     } else if name.starts_with("workspace.") {
         workspace::execute(name, args)
+    } else if name.starts_with("fs.") {
+        crate::fs_watch::execute(name, args)
+    } else if name.starts_with("proc.") {
+        crate::proc::execute(name, args)
     } else if name.starts_with("math.") {
         math::execute(name, args)
     } else if name.starts_with("str.") {

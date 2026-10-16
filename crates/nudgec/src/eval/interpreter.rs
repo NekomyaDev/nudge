@@ -20,6 +20,9 @@ pub struct HeadlessAppRecord {
     pub height: Option<i64>,
     pub content_expr: Expr,
     pub root: Option<nudge_runtime::ui::UiElement>,
+    pub scroll_x: i64,
+    pub scroll_y: i64,
+    pub focused_id: Option<String>,
 }
 
 /// Runtime context holding global functions, tools, tests, agent store, and active agent.
@@ -228,6 +231,9 @@ impl Interpreter {
             height,
             content_expr,
             root,
+            scroll_x: 0,
+            scroll_y: 0,
+            focused_id: None,
         });
         Ok(app_id)
     }
@@ -278,6 +284,137 @@ impl Interpreter {
             }
         }
         Ok(())
+    }
+
+    /// Dispatches a change event to an input component inside a mounted window app.
+    pub fn dispatch_change_headless(
+        &mut self,
+        app_id: usize,
+        target_id: &str,
+        new_value: &str,
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<(), String> {
+        let app = self
+            .headless_apps
+            .get(app_id)
+            .ok_or_else(|| "invalid app id".to_string())?;
+
+        let on_change = app
+            .root
+            .as_ref()
+            .and_then(|r| r.find_by_id(target_id))
+            .and_then(|e| e.on_change.clone());
+
+        if let Some(hname) = on_change {
+            let agent = app.agent.clone();
+            let prev_agent = self.active_agent.clone();
+            if agent.is_some() {
+                self.active_agent = agent.clone();
+            }
+            if let Some((fn_item, fn_agent)) = self.fns.get(&hname).cloned() {
+                self.call_user_fn_with_vals(
+                    &fn_item,
+                    fn_agent.as_deref().or(agent.as_deref()),
+                    &[NudgeVal::Str(new_value.to_string())],
+                    env,
+                )?;
+            }
+            self.active_agent = prev_agent;
+
+            // Re-render view tree from updated state
+            let content_expr = self.headless_apps[app_id].content_expr.clone();
+            let prev_agent2 = self.active_agent.clone();
+            if agent.is_some() {
+                self.active_agent = agent;
+            }
+            let new_root_val = self.eval_expr(&content_expr, env)?;
+            self.active_agent = prev_agent2;
+            if let NudgeVal::UiElement { found: true, elem } = new_root_val {
+                self.headless_apps[app_id].root = Some(*elem);
+            }
+        } else if let Some(elem) = self.headless_apps[app_id]
+            .root
+            .as_mut()
+            .and_then(|r| r.find_by_id_mut(target_id))
+        {
+            elem.text = Some(new_value.to_string());
+            elem.props
+                .insert("value".to_string(), new_value.to_string());
+        }
+        Ok(())
+    }
+
+    /// Dispatches a keyboard event to a component or window inside a mounted app.
+    pub fn dispatch_key_headless(
+        &mut self,
+        app_id: usize,
+        target_id: Option<&str>,
+        key: &str,
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<(), String> {
+        let app = self
+            .headless_apps
+            .get(app_id)
+            .ok_or_else(|| "invalid app id".to_string())?;
+
+        let on_key = target_id
+            .and_then(|tid| app.root.as_ref().and_then(|r| r.find_by_id(tid)))
+            .and_then(|e| e.on_key.clone())
+            .or_else(|| {
+                app.root.as_ref().and_then(|r| {
+                    if let Some(ref fid) = app.focused_id {
+                        r.find_by_id(fid).and_then(|e| e.on_key.clone())
+                    } else {
+                        r.on_key.clone()
+                    }
+                })
+            });
+
+        if let Some(hname) = on_key {
+            let agent = app.agent.clone();
+            let prev_agent = self.active_agent.clone();
+            if agent.is_some() {
+                self.active_agent = agent.clone();
+            }
+            if let Some((fn_item, fn_agent)) = self.fns.get(&hname).cloned() {
+                self.call_user_fn_with_vals(
+                    &fn_item,
+                    fn_agent.as_deref().or(agent.as_deref()),
+                    &[NudgeVal::Str(key.to_string())],
+                    env,
+                )?;
+            }
+            self.active_agent = prev_agent;
+
+            // Re-render view tree from updated state
+            let content_expr = self.headless_apps[app_id].content_expr.clone();
+            let prev_agent2 = self.active_agent.clone();
+            if agent.is_some() {
+                self.active_agent = agent;
+            }
+            let new_root_val = self.eval_expr(&content_expr, env)?;
+            self.active_agent = prev_agent2;
+            if let NudgeVal::UiElement { found: true, elem } = new_root_val {
+                self.headless_apps[app_id].root = Some(*elem);
+            }
+        }
+        Ok(())
+    }
+
+    /// Dispatches a scroll event updating viewport offset.
+    pub fn scroll_headless(
+        &mut self,
+        app_id: usize,
+        dx: i64,
+        dy: i64,
+    ) -> Result<(i64, i64), String> {
+        let app = self
+            .headless_apps
+            .get_mut(app_id)
+            .ok_or_else(|| "invalid app id".to_string())?;
+        app.scroll_x = (app.scroll_x + dx).max(0);
+        app.scroll_y = (app.scroll_y + dy).max(0);
+        Ok((app.scroll_x, app.scroll_y))
     }
 
     /// Evaluates a single statement.
@@ -1183,6 +1320,15 @@ impl Interpreter {
                             },
                         };
                         elem.on_click = Some(hname);
+                    } else if k == "on_key" {
+                        let hname = match &v_expr.kind {
+                            ExprKind::Ident(s) => s.clone(),
+                            _ => match self.eval_expr(v_expr, env)? {
+                                NudgeVal::Str(s) => s,
+                                other => other.to_string(),
+                            },
+                        };
+                        elem.on_key = Some(hname);
                     } else {
                         let v = self.eval_expr(v_expr, env)?;
                         elem.props.insert(k.clone(), v.to_string());
@@ -1196,6 +1342,15 @@ impl Interpreter {
 
             if name == "input" {
                 let mut elem = nudge_runtime::ui::UiElement::new("input");
+                if !args.is_empty() {
+                    let val = self.eval_expr(&args[0], env)?;
+                    let s = match val {
+                        NudgeVal::Str(s) => s,
+                        other => other.to_string(),
+                    };
+                    elem.text = Some(s.clone());
+                    elem.props.insert("value".to_string(), s);
+                }
                 for (k, v_expr) in kwargs {
                     if k == "id" {
                         let v = self.eval_expr(v_expr, env)?;
@@ -1212,6 +1367,23 @@ impl Interpreter {
                             },
                         };
                         elem.on_change = Some(hname);
+                    } else if k == "on_key" {
+                        let hname = match &v_expr.kind {
+                            ExprKind::Ident(s) => s.clone(),
+                            _ => match self.eval_expr(v_expr, env)? {
+                                NudgeVal::Str(s) => s,
+                                other => other.to_string(),
+                            },
+                        };
+                        elem.on_key = Some(hname);
+                    } else if k == "value" {
+                        let v = self.eval_expr(v_expr, env)?;
+                        let s = match v {
+                            NudgeVal::Str(s) => s,
+                            other => other.to_string(),
+                        };
+                        elem.text = Some(s.clone());
+                        elem.props.insert("value".to_string(), s);
                     } else {
                         let v = self.eval_expr(v_expr, env)?;
                         elem.props.insert(k.clone(), v.to_string());
@@ -1296,6 +1468,24 @@ impl Interpreter {
                                     let _ = self.interp.dispatch_click_headless(
                                         self.app_id,
                                         button_id,
+                                        self.env,
+                                    );
+                                }
+
+                                fn dispatch_change(&mut self, element_id: &str, value: &str) {
+                                    let _ = self.interp.dispatch_change_headless(
+                                        self.app_id,
+                                        element_id,
+                                        value,
+                                        self.env,
+                                    );
+                                }
+
+                                fn dispatch_key(&mut self, key: &str, target_id: Option<&str>) {
+                                    let _ = self.interp.dispatch_key_headless(
+                                        self.app_id,
+                                        target_id,
+                                        key,
                                         self.env,
                                     );
                                 }
@@ -1386,6 +1576,78 @@ impl Interpreter {
                         self.dispatch_click_headless(app_id, &target_id, env)?;
                         return Ok(NudgeVal::Unit);
                     }
+                    if method_name == "dispatch_change" {
+                        if args.len() < 2 {
+                            return Err("'dispatch_change' takes 2 arguments".into());
+                        }
+                        let target_id = match self.eval_expr(&args[0], env)? {
+                            NudgeVal::Str(s) => s,
+                            other => other.to_string(),
+                        };
+                        let new_val = match self.eval_expr(&args[1], env)? {
+                            NudgeVal::Str(s) => s,
+                            other => other.to_string(),
+                        };
+                        self.dispatch_change_headless(app_id, &target_id, &new_val, env)?;
+                        return Ok(NudgeVal::Unit);
+                    }
+                    if method_name == "dispatch_key" {
+                        if args.is_empty() {
+                            return Err("'dispatch_key' takes at least 1 argument".into());
+                        }
+                        let (target_id, key) = if args.len() == 1 {
+                            let key_str = match self.eval_expr(&args[0], env)? {
+                                NudgeVal::Str(s) => s,
+                                other => other.to_string(),
+                            };
+                            (None, key_str)
+                        } else {
+                            let tid = match self.eval_expr(&args[0], env)? {
+                                NudgeVal::Str(s) => s,
+                                other => other.to_string(),
+                            };
+                            let key_str = match self.eval_expr(&args[1], env)? {
+                                NudgeVal::Str(s) => s,
+                                other => other.to_string(),
+                            };
+                            (Some(tid), key_str)
+                        };
+                        self.dispatch_key_headless(app_id, target_id.as_deref(), &key, env)?;
+                        return Ok(NudgeVal::Unit);
+                    }
+                    if method_name == "scroll" {
+                        let (dx, dy) = if args.len() == 1 {
+                            let dy = match self.eval_expr(&args[0], env)? {
+                                NudgeVal::Int(i) => i,
+                                other => other.to_string().parse().unwrap_or(0),
+                            };
+                            (0, dy)
+                        } else if args.len() >= 2 {
+                            let dx = match self.eval_expr(&args[0], env)? {
+                                NudgeVal::Int(i) => i,
+                                other => other.to_string().parse().unwrap_or(0),
+                            };
+                            let dy = match self.eval_expr(&args[1], env)? {
+                                NudgeVal::Int(i) => i,
+                                other => other.to_string().parse().unwrap_or(0),
+                            };
+                            (dx, dy)
+                        } else {
+                            (0, 0)
+                        };
+                        self.scroll_headless(app_id, dx, dy)?;
+                        return Ok(NudgeVal::Unit);
+                    }
+                    if method_name == "scroll_offset" {
+                        let app = self
+                            .headless_apps
+                            .get(app_id)
+                            .ok_or_else(|| "invalid app id".to_string())?;
+                        return Ok(NudgeVal::List(vec![
+                            NudgeVal::Int(app.scroll_x),
+                            NudgeVal::Int(app.scroll_y),
+                        ]));
+                    }
                 }
                 NudgeVal::UiElement { found, ref elem } => {
                     if method_name == "exists" {
@@ -1394,6 +1656,17 @@ impl Interpreter {
                     if method_name == "get_text" || method_name == "text" {
                         return Ok(NudgeVal::Str(if found {
                             elem.get_text()
+                        } else {
+                            String::new()
+                        }));
+                    }
+                    if method_name == "value" {
+                        return Ok(NudgeVal::Str(if found {
+                            elem.props
+                                .get("value")
+                                .cloned()
+                                .or_else(|| elem.text.clone())
+                                .unwrap_or_default()
                         } else {
                             String::new()
                         }));
@@ -1461,6 +1734,44 @@ impl Interpreter {
         if let Ok(val) = &result {
             // `fn.return` NTF record (parity with the Python runtime's
             // `@effectful` wrapper — every fn return is one record)
+            emit_fn_return(fn_name, val)?;
+        }
+        result
+    }
+
+    fn call_user_fn_with_vals(
+        &mut self,
+        fn_item: &Item,
+        agent_name: Option<&str>,
+        args: &[NudgeVal],
+        _env: &Rc<RefCell<Env>>,
+    ) -> Result<NudgeVal, String> {
+        let (fn_name, params, body) = match fn_item {
+            Item::Fn {
+                name, params, body, ..
+            } => (name.as_str(), params, body),
+            _ => return Err("called item is not a function".into()),
+        };
+
+        let child_env = Rc::new(RefCell::new(Env::new()));
+
+        for (i, p) in params.iter().enumerate() {
+            if let Some(val) = args.get(i) {
+                child_env.borrow_mut().define(p.name.clone(), val.clone());
+            } else {
+                return Err(format!("missing argument for parameter '{}'", p.name));
+            }
+        }
+
+        let prev_agent = self.active_agent.clone();
+        if agent_name.is_some() {
+            self.active_agent = agent_name.map(|s| s.to_string());
+        }
+
+        let result = self.eval_body(body, &child_env);
+
+        self.active_agent = prev_agent;
+        if let Ok(val) = &result {
             emit_fn_return(fn_name, val)?;
         }
         result
@@ -4823,6 +5134,77 @@ data: [DONE]\n\n";
         assert!(
             err.contains("TaskCancelled") || err.contains("E-task-0001"),
             "expected TaskCancelled error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_headless_interactive_editing_scrolling_and_keys() {
+        let _cleanup = EnvReset::set("NUDGE_UI_HEADLESS", "1");
+
+        let src = r#"
+            view EditorView(text_val: string, key_val: string) -> View {
+                column(padding = 16, gap = 8) [
+                    input("initial", id = "my_input", on_change = on_text_changed, on_key = on_key_pressed),
+                    text("Current: " + text_val),
+                    text("LastKey: " + key_val)
+                ]
+            }
+
+            agent EditorApp {
+                state {
+                    text_val: string = "initial"
+                    key_val: string = "none"
+                }
+                fn on_text_changed(new_val: string) uses UI {
+                    state.text_val = new_val
+                }
+                fn on_key_pressed(key: string) uses UI {
+                    state.key_val = key
+                }
+                window EditorWindow {
+                    title: "Interactive Editor",
+                    width: 400,
+                    height: 300,
+                    content: EditorView(state.text_val, state.key_val)
+                }
+            }
+
+            test "interactive editing scrolling and key handling" {
+                let app = EditorApp.EditorWindow.mount_headless()
+                assert app.find("my_input").exists()
+                assert app.find_text("Current: initial").exists()
+
+                // 1. Text input editing: on_change fires, state updates, view re-renders
+                app.dispatch_change("my_input", "edited text")
+                assert app.find_text("Current: edited text").exists()
+                assert EditorApp.state.text_val == "edited text"
+
+                // 2. Keyboard event: on_key fires, state updates, view re-renders
+                app.dispatch_key("my_input", "Enter")
+                assert app.find_text("LastKey: Enter").exists()
+                assert EditorApp.state.key_val == "Enter"
+
+                // 3. Viewport scrolling
+                assert app.scroll_offset() == [0, 0]
+                app.scroll(0, 150)
+                assert app.scroll_offset() == [0, 150]
+                app.scroll(25, -50)
+                assert app.scroll_offset() == [25, 100]
+            }
+        "#;
+        let tokens = lex(src).expect("lex failed");
+        let items = parse(tokens).expect("parse failed");
+        let mut interp = Interpreter::new();
+        interp.load_items(&items).expect("load_items failed");
+        interp.run_all_tests().expect("test execution failed");
+
+        assert_eq!(
+            interp.agent_store.get_field("EditorApp", "text_val"),
+            Ok(NudgeVal::Str("edited text".to_string()))
+        );
+        assert_eq!(
+            interp.agent_store.get_field("EditorApp", "key_val"),
+            Ok(NudgeVal::Str("Enter".to_string()))
         );
     }
 }

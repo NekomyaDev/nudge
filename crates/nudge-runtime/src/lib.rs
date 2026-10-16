@@ -1,10 +1,12 @@
 pub mod auth;
 #[cfg(feature = "native-gui")]
 pub mod font8x8;
+pub mod fs_watch;
 pub mod grants;
 pub mod host_tool;
 pub mod json;
 pub mod mcp;
+pub mod proc;
 pub mod provider;
 pub mod redact;
 pub mod stdlib;

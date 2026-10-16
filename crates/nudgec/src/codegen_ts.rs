@@ -1480,6 +1480,10 @@ mod tests {
 
     #[test]
     fn ts_budget_walls_match_python_semantics() {
+        // Serialize with the other node-spawning TS tests. Without this lock the ~51
+        // child node processes race the parallel node tests; under CI load a child
+        // fails and trips the "per-call wall must not fire" assert (a recurring flake).
+        let _nl = NODE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         use std::process::Command;
         if Command::new("node").arg("--version").output().is_err() {
             return;

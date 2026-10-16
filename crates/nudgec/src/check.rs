@@ -235,7 +235,7 @@ fn elem_of(t: &Ty) -> Ty {
 
 // ── effect inference (design §3.2, v1.4) ──────────────────────────
 
-const KNOWN_EFFECTS: [&str; 10] = [
+const KNOWN_EFFECTS: [&str; 12] = [
     "LLM",
     "Tool",
     "IO",
@@ -246,6 +246,8 @@ const KNOWN_EFFECTS: [&str; 10] = [
     "Store",
     "UI",
     "Auth",
+    "FsWatch",
+    "Process",
 ];
 
 fn is_known_effect(eff: &str) -> bool {
@@ -270,6 +272,12 @@ fn builtin_record_ty(name: &str) -> Option<Ty> {
         ))
     };
     match name {
+        "FsEvent" => r(vec![("kind", Ty::Str), ("path", Ty::Str)]),
+        "ProcessOutput" | "ProcResult" => r(vec![
+            ("code", Ty::Int),
+            ("stdout", Ty::Str),
+            ("stderr", Ty::Str),
+        ]),
         "Observation" => r(vec![
             ("app", Ty::Str),
             ("state_id", Ty::Str),
@@ -431,6 +439,10 @@ fn direct_effects(
                             }
                         } else if name.starts_with("store.") {
                             effects.insert("Store".into());
+                        } else if name.starts_with("fs.") {
+                            effects.insert("FsWatch".into());
+                        } else if name.starts_with("proc.") {
+                            effects.insert("Process".into());
                         } else if name.starts_with("task.") {
                             // Task lifecycle primitives are standard runtime primitives requiring no new effects
                         } else if name.ends_with(".open")
@@ -618,6 +630,8 @@ fn expr_has_effect_call(
                         || n.starts_with("io.")
                         || n.starts_with("workspace.")
                         || n.starts_with("store.")
+                        || n.starts_with("fs.")
+                        || n.starts_with("proc.")
                 })
                 .unwrap_or(false);
             // a call to a fn whose INFERRED effects are non-empty (directly
@@ -1614,6 +1628,35 @@ fn check_expr_pos(
                             "write" | "append" | "delete" => return Ty::None_,
                             "exists" => return Ty::Bool,
                             "list" => return Ty::List(Box::new(Ty::Str)),
+                            _ => {}
+                        }
+                    } else if prefix == "fs" {
+                        match name.as_str() {
+                            "watch" => {
+                                let ev_ty = builtin_record_ty("FsEvent").unwrap_or_else(|| {
+                                    Ty::Record(vec![
+                                        ("kind".to_string(), Ty::Str),
+                                        ("path".to_string(), Ty::Str),
+                                    ])
+                                });
+                                return Ty::List(Box::new(ev_ty));
+                            }
+                            "changed" => return Ty::Bool,
+                            _ => {}
+                        }
+                    } else if prefix == "proc" {
+                        match name.as_str() {
+                            "run" | "await" | "wait" => {
+                                return builtin_record_ty("ProcessOutput").unwrap_or_else(|| {
+                                    Ty::Record(vec![
+                                        ("code".to_string(), Ty::Int),
+                                        ("stdout".to_string(), Ty::Str),
+                                        ("stderr".to_string(), Ty::Str),
+                                    ])
+                                });
+                            }
+                            "spawn" => return Ty::Str,
+                            "kill" | "terminate" | "alive" | "is_alive" => return Ty::Bool,
                             _ => {}
                         }
                     } else if prefix == "task" {
@@ -2732,7 +2775,7 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                     errs.push(CheckError {
                         span: None,
                         code: "E0101",
-                        msg: format!("unknown effect '{d}' in fn '{name}' (known: LLM, Tool, IO, Decision, Computer, Workspace, WorkspaceDelete, Store, UI, Auth)"),
+                        msg: format!("unknown effect '{d}' in fn '{name}' (known: LLM, Tool, IO, Decision, Computer, Workspace, WorkspaceDelete, Store, UI, Auth, FsWatch, Process)"),
                     });
                 }
             }
