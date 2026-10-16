@@ -495,11 +495,58 @@ fn emit_body(
                         ),
                         // one nesting level is the documented v1 surface
                         StmtKind::ForAll { .. } => "// error: nested for_all (E0805)".to_string(),
-                        StmtKind::For { .. } => {
-                            "// pack1 codegen not yet lowered: for loop".to_string()
+                        StmtKind::For {
+                            var,
+                            idx_var,
+                            coll,
+                            body,
+                        } => {
+                            let header = match idx_var {
+                                Some(idx) => format!(
+                                    "for (const [{var}, {idx}] of {}.map((_v, _i) => [_v, _i])) {{",
+                                    ts(coll, aliases, sigs)
+                                ),
+                                None => {
+                                    format!("for (const {var} of {}) {{", ts(coll, aliases, sigs))
+                                }
+                            };
+                            let mut s = header;
+                            for l in emit_body(body, aliases, sigs, agent, prop_id)
+                                .trim_end()
+                                .lines()
+                            {
+                                s.push_str("\n    ");
+                                s.push_str(l);
+                            }
+                            s.push_str("\n    }");
+                            s
                         }
-                        StmtKind::If { .. } => {
-                            "// pack1 codegen not yet lowered: if statement".to_string()
+                        StmtKind::If {
+                            cond,
+                            then_body,
+                            else_body,
+                        } => {
+                            let mut s = format!("if ({}) {{", ts(cond, aliases, sigs));
+                            for l in emit_body(then_body, aliases, sigs, agent, prop_id)
+                                .trim_end()
+                                .lines()
+                            {
+                                s.push_str("\n    ");
+                                s.push_str(l);
+                            }
+                            s.push_str("\n    }");
+                            if let Some(eb) = else_body {
+                                s.push_str(" else {");
+                                for l in emit_body(eb, aliases, sigs, agent, prop_id)
+                                    .trim_end()
+                                    .lines()
+                                {
+                                    s.push_str("\n    ");
+                                    s.push_str(l);
+                                }
+                                s.push_str("\n    }");
+                            }
+                            s
                         }
                     };
                     inner.push_str("    ");
@@ -510,8 +557,57 @@ fn emit_body(
                     "rt.forAll(\"{gen}\", [{arg_list}], ({var}) => {{\n{inner}    }}, \"{var}\");"
                 )
             }
-            StmtKind::For { .. } => "// pack1 codegen not yet lowered: for loop".to_string(),
-            StmtKind::If { .. } => "// pack1 codegen not yet lowered: if statement".to_string(),
+            StmtKind::For {
+                var,
+                idx_var,
+                coll,
+                body,
+            } => {
+                let header = match idx_var {
+                    Some(idx) => format!(
+                        "for (const [{var}, {idx}] of {}.map((_v, _i) => [_v, _i])) {{",
+                        ts(coll, aliases, sigs)
+                    ),
+                    None => format!("for (const {var} of {}) {{", ts(coll, aliases, sigs)),
+                };
+                let mut s = header;
+                for l in emit_body(body, aliases, sigs, agent, prop_id)
+                    .trim_end()
+                    .lines()
+                {
+                    s.push_str("\n  ");
+                    s.push_str(l);
+                }
+                s.push_str("\n  }");
+                s
+            }
+            StmtKind::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
+                let mut s = format!("if ({}) {{", ts(cond, aliases, sigs));
+                for l in emit_body(then_body, aliases, sigs, agent, prop_id)
+                    .trim_end()
+                    .lines()
+                {
+                    s.push_str("\n  ");
+                    s.push_str(l);
+                }
+                s.push_str("\n  }");
+                if let Some(eb) = else_body {
+                    s.push_str(" else {");
+                    for l in emit_body(eb, aliases, sigs, agent, prop_id)
+                        .trim_end()
+                        .lines()
+                    {
+                        s.push_str("\n  ");
+                        s.push_str(l);
+                    }
+                    s.push_str("\n  }");
+                }
+                s
+            }
         };
         out.push_str("  ");
         out.push_str(&line);

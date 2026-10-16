@@ -305,9 +305,41 @@ fn emit_body(body: &[Stmt], aliases: &HashSet<String>, agent: Option<&str>) -> S
             StmtKind::ForAll { .. } => {
                 "# error: for_all outside a test block (E0801)\n    pass".to_string()
             }
-            StmtKind::For { .. } => "# error: for loop not in codegen subset\n    pass".to_string(),
-            StmtKind::If { .. } => {
-                "# error: statement if not in codegen subset\n    pass".to_string()
+            StmtKind::For {
+                var,
+                idx_var,
+                coll,
+                body,
+            } => {
+                let header = match idx_var {
+                    Some(idx) => format!("for {idx}, {var} in enumerate({}):", py(coll, aliases)),
+                    None => format!("for {var} in {}:", py(coll, aliases)),
+                };
+                let mut s = header;
+                for l in emit_body(body, aliases, agent).trim_end().lines() {
+                    s.push_str("\n    ");
+                    s.push_str(l);
+                }
+                s
+            }
+            StmtKind::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
+                let mut s = format!("if {}:", py(cond, aliases));
+                for l in emit_body(then_body, aliases, agent).trim_end().lines() {
+                    s.push_str("\n    ");
+                    s.push_str(l);
+                }
+                if let Some(eb) = else_body {
+                    s.push_str("\n    else:");
+                    for l in emit_body(eb, aliases, agent).trim_end().lines() {
+                        s.push_str("\n    ");
+                        s.push_str(l);
+                    }
+                }
+                s
             }
         };
         out.push_str("    ");
