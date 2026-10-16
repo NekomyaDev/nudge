@@ -77,16 +77,16 @@ test("validateOutput: bounds, uri format, and additionalProperties schema", () =
   assert.equal(validateOutput(dictSchema, { a: "wrong" }).length, 1);
 });
 
-test("replayed llm output violating the schema raises ReplayMismatch", () => {
+test("replayed llm output violating the schema raises ReplayMismatch", async () => {
   const tmp = tracePath([
     { kind: "llm.call", output: { answer: "ok", confidence: 0.9 } },
     { kind: "llm.call", output: { answer: 7, confidence: "high" } },
   ]);
   process.env.NUDGE_REPLAY = tmp;
   try {
-    const out = llmCall({ prompt: "p", schema: SCHEMA });
+    const out = await llmCall({ prompt: "p", schema: SCHEMA });
     assert.deepEqual(out, { answer: "ok", confidence: 0.9 });
-    assert.throws(
+    await assert.rejects(
       () => llmCall({ prompt: "p", schema: SCHEMA }),
       /ReplayMismatch: recorded llm output violates the declared schema/
     );
@@ -363,7 +363,7 @@ test("predictBatch: one valen subprocess for N states, per-state records, order 
   }
 });
 
-test("route: picks arm and attaches route label to trace record", () => {
+test("route: picks arm and attaches route label to trace record", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nudge_route_"));
   const traceFile = path.join(dir, "trace.jsonl");
   const prevTrace = process.env.NUDGE_TRACE;
@@ -374,7 +374,7 @@ test("route: picks arm and attaches route label to trace record", () => {
       ["strong", () => "m-strong", null]
     );
     assert.equal(chosenModel, "m-cheap");
-    llmCall({ prompt: "hello", model: chosenModel });
+    await llmCall({ prompt: "hello", model: chosenModel });
     const recs = fs.readFileSync(traceFile, "utf8").trim().split("\n").map(JSON.parse);
     assert.equal(recs.length, 1);
     assert.equal(recs[0].model, "m-cheap");
