@@ -8,7 +8,94 @@
 //! scheduling, and replay-driver tests — emitted as warning comments.
 
 use crate::ast::*;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+
+// The set of functions that (transitively) reach an `llm` call and must therefore
+// be `async` (real providers are async HTTP). Consulted by `ts()` to emit `await`
+// at calls and by the function emitter to emit `async function`. Kept in a
+// thread-local so the recursive `ts()`/`emit_body()` don't need a new parameter.
+thread_local! {
+    static ASYNC_FNS: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+}
+fn is_async_fn(name: &str) -> bool {
+    ASYNC_FNS.with(|s| s.borrow().contains(name))
+}
+
+/// Does the emitted text call `name(` (a top-level call, not a method/property)?
+fn calls_fn(emitted: &str, name: &str) -> bool {
+    let pat = format!("{name}(");
+    let bytes = emitted.as_bytes();
+    let mut idx = 0;
+    while let Some(rel) = emitted[idx..].find(&pat) {
+        let abs = idx + rel;
+        let prev_ok = abs == 0 || {
+            let b = bytes[abs - 1];
+            !(b.is_ascii_alphanumeric() || b == b'_' || b == b'.')
+        };
+        if prev_ok {
+            return true;
+        }
+        idx = abs + 1;
+    }
+    false
+}
+
+fn collect_bodies(items: &[Item], out: &mut Vec<(String, Vec<Stmt>)>) {
+    for item in items {
+        match item {
+            Item::Fn { name, body, .. } | Item::View { name, body, .. } => {
+                out.push((name.clone(), body.clone()));
+            }
+            Item::Agent { fns, .. } => collect_bodies(fns, out),
+            _ => {}
+        }
+    }
+}
+
+/// Least fixed point: a function is async if its body contains an llm call OR it
+/// calls an already-async user function. UI helpers/tools stay synchronous.
+fn compute_async_fns(
+    items: &[Item],
+    aliases: &HashSet<String>,
+    sigs: &HashMap<String, Vec<String>>,
+) -> HashSet<String> {
+    let mut bodies = Vec::new();
+    collect_bodies(items, &mut bodies);
+    // Reset the thread-local so this detection pass emits calls WITHOUT await.
+    ASYNC_FNS.with(|s| *s.borrow_mut() = HashSet::new());
+    // Emit each body once (ASYNC_FNS empty, so calls are not awaited yet) and
+    // inspect the text — reuses the emitter instead of an AST walker.
+    let emitted: Vec<(String, String)> = bodies
+        .iter()
+        .map(|(n, b)| (n.clone(), emit_body(b, aliases, sigs, None, &mut 0)))
+        .collect();
+    let mut async_fns: HashSet<String> = HashSet::new();
+    for (n, e) in &emitted {
+        if e.contains("rt.llmCall(") || e.contains("rt.llmStream(") {
+            async_fns.insert(n.clone());
+        }
+    }
+    loop {
+        let mut changed = false;
+        for (n, e) in &emitted {
+            if async_fns.contains(n) {
+                continue;
+            }
+            for a in &async_fns {
+                if calls_fn(e, a) {
+                    async_fns.insert(n.clone());
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    async_fns
+}
 
 pub fn emit_ts(items: &[Item]) -> String {
     let aliases: HashSet<String> = items
@@ -62,6 +149,9 @@ pub fn emit_ts(items: &[Item]) -> String {
             _ => vec![],
         })
         .collect();
+    // Compute which functions must be async (those transitively reaching an llm
+    // call), then publish it for ts()/emit_body to consult during emission.
+    ASYNC_FNS.with(|s| *s.borrow_mut() = compute_async_fns(items, &aliases, &sigs));
     // test slugs can collide ("a b" vs "a_b") — suffix duplicates
     let mut test_slugs: HashMap<String, usize> = HashMap::new();
     for item in items {
@@ -85,10 +175,20 @@ pub fn emit_ts(items: &[Item]) -> String {
                     .map(|p| format!("{}: {}", p.name, ty_ts(&p.ty, &aliases)))
                     .collect::<Vec<_>>()
                     .join(", ");
-                out.push_str(&format!(
-                    "function {name}({ps}): {} {{\n",
-                    ty_ts(ret, &aliases)
-                ));
+                let _kw = if is_async_fn(name) {
+                    "async function"
+                } else {
+                    "function"
+                };
+                let _ret = {
+                    let r = ty_ts(ret, &aliases);
+                    if is_async_fn(name) {
+                        format!("Promise<{r}>")
+                    } else {
+                        r
+                    }
+                };
+                out.push_str(&format!("{_kw} {name}({ps}): {_ret} {{\n"));
                 out.push_str(&emit_body(body, &aliases, &sigs, None, &mut 0));
                 out.push('}');
                 if name == "main" {
@@ -166,7 +266,12 @@ pub fn emit_ts(items: &[Item]) -> String {
                             } else {
                                 format!("  // effects: {}", effects.join(", "))
                             };
-                            out.push_str(&format!("\n\nfunction {fn_name}({ps}) {{{fx}\n"));
+                            let _akw = if is_async_fn(fn_name) {
+                                "async function"
+                            } else {
+                                "function"
+                            };
+                            out.push_str(&format!("\n\n{_akw} {fn_name}({ps}) {{{fx}\n"));
                             let bound = crate::codegen::bind_state(body, name);
                             out.push_str(&emit_body(
                                 &bound,
@@ -191,7 +296,17 @@ pub fn emit_ts(items: &[Item]) -> String {
                                 .map(|p| format!("{}: {}", p.name, ty_ts(&p.ty, &aliases)))
                                 .collect::<Vec<_>>()
                                 .join(", ");
-                            out.push_str(&format!("\n\nfunction {view_name}({ps}): any {{\n"));
+                            let _vkw = if is_async_fn(view_name) {
+                                "async function"
+                            } else {
+                                "function"
+                            };
+                            let _vret = if is_async_fn(view_name) {
+                                "Promise<any>"
+                            } else {
+                                "any"
+                            };
+                            out.push_str(&format!("\n\n{_vkw} {view_name}({ps}): {_vret} {{\n"));
                             let bound = crate::codegen::bind_state(body, name);
                             let mut prop_id = 0;
                             out.push_str(&emit_body(
@@ -271,7 +386,7 @@ pub fn emit_ts(items: &[Item]) -> String {
         }
     }
     if has_main {
-        out.push_str("\n\nconst _result = main();\nif (_result !== undefined && _result !== null) console.log(_result);\n");
+        out.push_str("\n\nconst _result = await main();\nif (_result !== undefined && _result !== null) console.log(_result);\n");
     }
     if !out.ends_with('\n') {
         out.push('\n');
@@ -613,7 +728,18 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
                 ExprKind::Ident(n) if matches!(n.as_str(), "replay" | "python" | "mcp" | "zip") => {
                     format!("rt.{n}({})", parts.join(", "))
                 }
-                _ => format!("{}({})", ts(func, aliases, sigs), parts.join(", ")),
+                _ => {
+                    let callee_async = match &func.as_ref().kind {
+                        ExprKind::Ident(n) => is_async_fn(n),
+                        _ => false,
+                    };
+                    let call = format!("{}({})", ts(func, aliases, sigs), parts.join(", "));
+                    if callee_async {
+                        format!("await {call}")
+                    } else {
+                        call
+                    }
+                }
             }
         }
         ExprKind::Field { obj, name } => format!("{}.{name}", ts(obj, aliases, sigs)),
@@ -857,7 +983,7 @@ fn llm_ts(
     if repair {
         parts.push("repair: true".into());
     }
-    format!("rt.llmCall({{{}}})", parts.join(", "))
+    format!("await rt.llmCall({{{}}})", parts.join(", "))
 }
 
 /// `test "run stays within budget"` → `run_stays_within_budget`.
@@ -1205,8 +1331,16 @@ pub(crate) mod tests {
     /// lets node run the output without a TS toolchain). Dependency-free:
     /// scans for `: <SimpleTy>` followed by one of `, ) { = ; <space>`.
     pub(super) fn strip_ts(code: &str) -> String {
-        const TYS: [&str; 8] = [
+        const TYS: [&str; 16] = [
             "Record<string, any>",
+            "Promise<Record<string, any>>",
+            "Promise<any[]>",
+            "Promise<string>",
+            "Promise<number>",
+            "Promise<boolean>",
+            "Promise<null>",
+            "Promise<any>",
+            "Promise<void>",
             "string",
             "number",
             "boolean",
@@ -1247,8 +1381,11 @@ pub(crate) mod tests {
             out.contains("import * as rt from \"./nudge_runtime.ts\";"),
             "got:\n{out}"
         );
-        assert!(out.contains("function main(): string {"), "got:\n{out}");
-        assert!(out.contains("return rt.llmCall({prompt: \"Say hello to the Nudge language in one short sentence.\", model: \"anthropic:sonnet-4.6\", budget: rt.USD(\"0.01\")});"), "got:\n{out}");
+        assert!(
+            out.contains("async function main(): Promise<string> {"),
+            "got:\n{out}"
+        );
+        assert!(out.contains("return await rt.llmCall({prompt: \"Say hello to the Nudge language in one short sentence.\", model: \"anthropic:sonnet-4.6\", budget: rt.USD(\"0.01\")});"), "got:\n{out}");
     }
 
     #[test]
@@ -1266,7 +1403,7 @@ pub(crate) mod tests {
         );
         assert!(out.contains("return rt.merge(a, a);"), "got:\n{out}");
         assert!(
-            out.contains("function f(q: string): any[] {"),
+            out.contains("async function f(q: string): Promise<any[]> {"),
             "got:\n{out}"
         );
         assert_eq!(
@@ -1290,7 +1427,7 @@ pub(crate) mod tests {
         let src2 = "fn f() -> string uses LLM { stream let t: string = llm\"\"\"x\"\"\" with { model: \"m\" }\n    t }";
         let out2 = gen_ts(src2);
         assert!(
-            out2.contains("const t = rt.llmStream({prompt: \"x\", model: \"m\"});"),
+            out2.contains("const t = await rt.llmStream({prompt: \"x\", model: \"m\"});"),
             "got:\n{out2}"
         );
     }

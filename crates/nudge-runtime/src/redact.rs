@@ -322,18 +322,13 @@ impl Redactor {
     }
 }
 
-static CACHED_REDACTOR: LazyLock<RwLock<Option<(u64, Redactor, std::time::Instant)>>> =
+static CACHED_REDACTOR: LazyLock<RwLock<Option<(u64, Redactor)>>> =
     LazyLock::new(|| RwLock::new(None));
 
 /// Serializes process-env access in the redactor. `std::env::set_var` and
 /// `std::env::vars` must not run concurrently (UB), so every env read here and
 /// every env mutation in the tests share this lock.
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-/// Minimum interval between env-generation recomputes. Reading the env is a
-/// data-race hazard against `set_var`, so we amortize it (at most ~4x/sec) rather
-/// than scanning on every trace record.
-const ENV_GEN_REFRESH: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// A lightweight fingerprint of the secret-bearing environment variables (the
 /// names and values that look like credentials). Used to auto-refresh the cached
@@ -374,29 +369,15 @@ pub fn reset_redactor_cache() {
 /// Execute a closure with a borrowed reference to the process-wide cached Redactor.
 ///
 /// The Redactor is cached for performance (regexes are compiled once, not per
-/// record), but it AUTO-REFRESHES when the secret-bearing environment changes:
-/// a lightweight env fingerprint is checked before reuse, so a secret added
-/// after the first record is still redacted (no explicit reset needed).
+/// record), but it AUTO-REFRESHES when the secret-bearing environment changes: a
+/// lightweight env fingerprint is compared before reuse, so a secret added after
+/// the first record is still redacted (no explicit reset needed). Env access is
+/// serialized under ENV_LOCK (safe against concurrent `set_var`).
 pub fn with_cached_redactor<R, F: FnOnce(&Redactor) -> R>(f: F) -> R {
-    // Throttle: only recompute the env fingerprint every ENV_GEN_REFRESH. This
-    // keeps the auto-refresh (a secret added later is picked up within ~250ms)
-    // while avoiding a per-record env scan (which races with set_var and costs
-    // time). The cached generation is reused until the throttle elapses.
-    let now = std::time::Instant::now();
-    let gen = {
-        let cached = CACHED_REDACTOR.read().unwrap_or_else(|e| e.into_inner());
-        match *cached {
-            Some((g, _, last)) if now.duration_since(last) < ENV_GEN_REFRESH => Some(g),
-            _ => None,
-        }
-    };
-    let gen = match gen {
-        Some(g) => g,
-        None => secret_env_generation(),
-    };
+    let gen = secret_env_generation();
     {
         let lock = CACHED_REDACTOR.read().unwrap_or_else(|e| e.into_inner());
-        if let Some((cached_gen, ref r, _)) = *lock {
+        if let Some((cached_gen, ref r)) = *lock {
             if cached_gen == gen {
                 return f(r);
             }
@@ -404,11 +385,11 @@ pub fn with_cached_redactor<R, F: FnOnce(&Redactor) -> R>(f: F) -> R {
     }
     let mut lock = CACHED_REDACTOR.write().unwrap_or_else(|e| e.into_inner());
     let stale = match *lock {
-        Some((g, _, _)) => g != gen,
+        Some((g, _)) => g != gen,
         None => true,
     };
     if stale {
-        *lock = Some((gen, Redactor::from_env(), now));
+        *lock = Some((gen, Redactor::from_env()));
     }
     f(&lock.as_ref().unwrap().1)
 }
@@ -599,26 +580,28 @@ mod tests {
         // Warm the cache with an unrelated env secret so a Redactor is built.
         {
             let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            std::env::set_var("NUDGE_EARLY_KEY", "sk-early-aaaaaaaaaaaa");
+            std::env::set_var("NUDGE_EARLY_KEY", "earlykey1234567890");
         }
         reset_redactor_cache();
         let mut warm = serde_json::Map::new();
-        warm.insert("output".into(), json!("warm sk-early-aaaaaaaaaaaa"));
+        warm.insert("output".into(), json!("warm earlykey1234567890"));
         redact_record_fields(&mut warm);
         assert!(warm["output"].as_str().unwrap().contains("REDACTED"));
 
-        // Add a NEW secret after the cache is warm, past the throttle window.
-        std::thread::sleep(ENV_GEN_REFRESH + std::time::Duration::from_millis(50));
+        // Add a NEW secret after the cache is warm. Auto-refresh picks it up
+        // immediately (no explicit reset, no throttle delay). Use a NON-format
+        // value so only the env-secret detector (not the sk-/Bearer regexes) can
+        // catch it — this exercises the auto-refresh path specifically.
         {
             let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            std::env::set_var("NUDGE_LATE_KEY", "sk-late-bbbbbbbbbbbbbb");
+            std::env::set_var("NUDGE_LATE_KEY", "latekey1234567890");
         }
         let mut late = serde_json::Map::new();
-        late.insert("output".into(), json!("late sk-late-bbbbbbbbbbbbbb"));
+        late.insert("output".into(), json!("late latekey1234567890"));
         redact_record_fields(&mut late);
         let out = late["output"].as_str().unwrap();
         assert!(
-            !out.contains("sk-late-bbbbbbbbbbbbbb"),
+            !out.contains("latekey1234567890"),
             "auto-refresh should redact a secret added after the cache warmed: {out}"
         );
 

@@ -427,7 +427,97 @@ export function applyOutputGuards(value) {
   return [walk(value), applied];
 }
 
-export function llmCall(opts) {
+// Real model providers (parity with the python runtime's _PROVIDER_BASE_URLS /
+// _PROVIDER_KEY_ENVS). Gemini speaks the OpenAI-compatible shape at its
+// /v1beta/openai endpoint; Anthropic uses its own Messages API.
+const _PROVIDER_BASE_URLS = {
+  openai: "https://api.openai.com/v1",
+  gemini: "https://generativelanguage.googleapis.com/v1beta/openai",
+  groq: "https://api.groq.com/openai/v1",
+  mimo: "https://token-plan-sgp.xiaomimimo.com/v1",
+  ollama: "http://localhost:11434/v1",
+  mistral: "https://api.mistral.ai/v1",
+  anthropic: "https://api.anthropic.com",
+};
+const _PROVIDER_KEY_ENVS = {
+  openai: "OPENAI_API_KEY", gemini: "GEMINI_API_KEY", groq: "GROQ_API_KEY",
+  mimo: "MIMO_API_KEY", mistral: "MISTRAL_API_KEY", anthropic: "ANTHROPIC_API_KEY", ollama: null,
+};
+function _splitModel(model) {
+  if (model && model.includes(":")) {
+    const [prefix, ...rest] = model.split(":");
+    if (prefix in _PROVIDER_BASE_URLS) return [prefix, rest.join(":")];
+  }
+  return [null, model];
+}
+function _realProviderFor(model) {
+  const env = process.env.NUDGE_PROVIDER;
+  if (env === "fake") return null;
+  const [prefix, bare] = _splitModel(model);
+  if (prefix) return [prefix, bare];
+  if (!env) return null;
+  if (!(env in _PROVIDER_BASE_URLS)) {
+    throw new Error(`unknown NUDGE_PROVIDER '${env}' (openai | gemini | groq | mimo | mistral | anthropic | ollama | fake)`);
+  }
+  return [env, bare];
+}
+function _transientAttempts() {
+  const n = parseInt(process.env.NUDGE_RETRY_TRANSIENT ?? "3", 10);
+  return Number.isFinite(n) && n >= 0 ? n : 3;
+}
+async function _sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+// One real HTTP model call (OpenAI-compatible /chat/completions or Anthropic
+// /v1/messages). Transient 429/5xx back off and retry (parity with python
+// _urlopen_retry). Returns { text, in, out }.
+async function _realProviderCall(provider, bareModel, prompt) {
+  const base = process.env.NUDGE_BASE_URL || _PROVIDER_BASE_URLS[provider];
+  const keyEnv = _PROVIDER_KEY_ENVS[provider];
+  const key = process.env.NUDGE_API_KEY || (keyEnv ? process.env[keyEnv] || "" : "");
+  const attempts = _transientAttempts();
+  const anthropic = provider === "anthropic";
+  const url = anthropic ? `${base.replace(/\/$/, "")}/v1/messages` : `${base.replace(/\/$/, "")}/chat/completions`;
+  const headers = { "Content-Type": "application/json" };
+  if (anthropic) { headers["x-api-key"] = key; headers["anthropic-version"] = "2023-06-01"; }
+  else { headers["Authorization"] = `Bearer ${key}`; headers["User-Agent"] = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"; }
+  const body = anthropic
+    ? { model: bareModel, max_tokens: 4096, messages: [{ role: "user", content: String(prompt) }] }
+    : { model: bareModel, messages: [{ role: "user", content: String(prompt) }] };
+  let lastErr = null;
+  for (let attempt = 0; attempt <= attempts; attempt++) {
+    try {
+      const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+      if (!resp.ok) {
+        const detail = (await resp.text()).slice(0, 500);
+        lastErr = new Error(`${provider} provider HTTP ${resp.status}: ${detail}`);
+        if ((resp.status === 429 || resp.status >= 500) && attempt < attempts) {
+          const b = parseFloat(process.env.NUDGE_BACKOFF_BASE ?? "5.0");
+          await _sleep((Number.isFinite(b) ? b : 5.0) * Math.pow(5, attempt));
+          continue;
+        }
+        throw lastErr;
+      }
+      const data = await resp.json();
+      let text, inTok, outTok;
+      if (anthropic) {
+        text = (data.content || []).filter((b) => b.type === "text").map((b) => b.text || "").join("");
+        inTok = (data.usage && data.usage.input_tokens) || 0; outTok = (data.usage && data.usage.output_tokens) || 0;
+      } else {
+        text = data.choices && data.choices[0] && data.choices[0].message ? data.choices[0].message.content : null;
+        if (text == null) throw new Error(`${provider} provider returned an unexpected payload: ${JSON.stringify(data).slice(0, 500)}`);
+        inTok = (data.usage && data.usage.prompt_tokens) || 0; outTok = (data.usage && data.usage.completion_tokens) || 0;
+      }
+      return { text, in: inTok, out: outTok };
+    } catch (e) {
+      if (e && e.message && /provider HTTP|unreachable|unexpected payload/.test(e.message)) throw e;
+      lastErr = new Error(`${provider} provider unreachable: ${e && e.message ? e.message : e}`);
+      if (attempt >= attempts) throw lastErr;
+    }
+  }
+  throw lastErr;
+}
+
+export async function llmCall(opts) {
   const { prompt, model = null, schema: sch = null, budget = null } = opts;
   if (process.env.NUDGE_REPLAY) {
     const outs = _replayLlmRecords();
@@ -450,14 +540,16 @@ export function llmCall(opts) {
     // replayed calls are not traced or charged (parity with the python runtime)
     return recorded;
   }
-  // v1.1a: real providers are Python-only for now (OpenAI-compatible
-  // adapter ships in nudge_runtime; the TS adapter lands with async codegen)
-  const prefix = model && model.includes(":") ? model.split(":")[0] : null;
-  if ((process.env.NUDGE_PROVIDER && process.env.NUDGE_PROVIDER !== "fake") ||
-      (prefix && ["openai", "gemini", "groq", "ollama"].includes(prefix))) {
-    throw new Error("nudge_runtime.ts: real providers run on the Python runtime at v1.1a — compile with `nudgec build` for provider access");
+  // Real providers (async HTTP) vs the deterministic fake provider.
+  const real = _realProviderFor(model);
+  let raw, realTokens = null, providerName = "fake";
+  if (real) {
+    providerName = real[0];
+    const r = await _realProviderCall(real[0], real[1], prompt);
+    raw = r.text; realTokens = r;
+  } else {
+    raw = sch ? _synth(sch) : `[fake:${model}] ${prompt}`;
   }
-  const raw = sch ? _synth(sch) : `[fake:${model}] ${prompt}`;
   const [out, guardApplied] = applyOutputGuards(raw);
   // frozen v1 trace schema (design §6.1): the same field set the python
   // runtime emits — `nudgec trace-check` validates these as required
@@ -469,14 +561,11 @@ export function llmCall(opts) {
     output: out,
     // additive replay identity (P0)
     request_hash: llmRequestHash(model, prompt, sch),
-    tokens: {
-      in: String(prompt).split(/\s+/).filter(Boolean).length,
-      out: String(out).split(/\s+/).filter(Boolean).length,
-    },
-    cost_usd: FAKE_CALL_COST,
+    tokens: realTokens ? { in: String(realTokens.in), out: String(realTokens.out) } : { in: String(prompt).split(/\s+/).filter(Boolean).length, out: String(out).split(/\s+/).filter(Boolean).length },
+    cost_usd: realTokens ? 0 : FAKE_CALL_COST,
     repair_round: 0,
     outcome: "ok",
-    provider: "fake",
+    provider: providerName,
   };
   const routeLabel = _takeRouteLabel();
   if (routeLabel !== null) record.route = routeLabel;
@@ -505,18 +594,21 @@ function _replayToolRecords() {
   return _replayToolCache;
 }
 
-export function llmStream(opts) {
+export async function llmStream(opts) {
   const { prompt, model = null, schema: sch = null, budget = null, chunkSize = 14 } = opts;
   // replay consumes the recorded final value, like the python runtime (§6.2)
   if (process.env.NUDGE_REPLAY) {
-    return llmCall(opts);
+    return await llmCall(opts);
   }
-  const prefix = model && model.includes(":") ? model.split(":")[0] : null;
-  if ((process.env.NUDGE_PROVIDER && process.env.NUDGE_PROVIDER !== "fake") ||
-      (prefix && ["openai", "gemini", "groq", "mimo", "mistral", "anthropic", "ollama"].includes(prefix))) {
-    throw new Error("nudge_runtime.ts: real providers run on the Python runtime — compile with `nudgec build` for provider access");
+  const real = _realProviderFor(model);
+  let out, realTokens = null, providerName = "fake";
+  if (real) {
+    providerName = real[0];
+    const r = await _realProviderCall(real[0], real[1], prompt);
+    out = r.text; realTokens = r;
+  } else {
+    out = sch ? _synth(sch) : `[fake:${model}] ${prompt}`;
   }
-  const out = sch ? _synth(sch) : `[fake:${model}] ${prompt}`;
   // fake-provider parity with python's llm_stream: deterministic chunking,
   // additive streamed/chunks trace fields. Streamed prefix validation and
   // the repair loop stay Python-side for now.
@@ -530,14 +622,11 @@ export function llmStream(opts) {
     output: out,
     // additive replay identity (P0)
     request_hash: llmRequestHash(model, prompt, sch),
-    tokens: {
-      in: String(prompt).split(/\s+/).filter(Boolean).length,
-      out: String(out).split(/\s+/).filter(Boolean).length,
-    },
-    cost_usd: FAKE_CALL_COST,
+    tokens: realTokens ? { in: String(realTokens.in), out: String(realTokens.out) } : { in: String(prompt).split(/\s+/).filter(Boolean).length, out: String(out).split(/\s+/).filter(Boolean).length },
+    cost_usd: realTokens ? 0 : FAKE_CALL_COST,
     repair_round: 0,
     outcome: "ok",
-    provider: "fake",
+    provider: providerName,
     streamed: true,
     chunks,
   };
