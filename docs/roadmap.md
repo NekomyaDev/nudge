@@ -122,23 +122,26 @@ Agent frameworks are libraries; **Nudge is the language + runtime**.
 
 ## Open language/runtime needs (Studio-oriented)
 
-Identified as language/runtime work (distinct from building the Studio app
-itself in `.ndg`, which stays a separate effort). Current `Local UI` ships
-headless trees + a native window with buttons/text/column/row, but these are
-still open:
+Language/runtime work (distinct from building the Studio app itself in `.ndg`,
+which stays a separate effort). **All five items below are now SHIPPED** (see
+commit refs), with the residual polish noted per item.
 
-- **Native text input & editing** — a real editor surface: cursor movement,
-  selection, multi-line editing, undo/redo; `input(...)` today is single-line
-  value state, not an editor.
-- **Scrolling** — viewport scrolling in `view`/`window` (overflow + scroll state),
-  needed for any real panel.
-- **Keyboard events** — key chords / shortcuts and text-entry events routed to
-  `handle` handlers (beyond button clicks); IME-safe text input.
-- **File watching** — a typed effect for filesystem events (watch a workspace
-  path, react to changes) for live/reload and tooling workflows.
-- **Controlled process management** — spawn/await/signal child processes with
-  the same effect + grants discipline (bounded lifecycle, no orphan, kill on
-  cancel), for build/test runners and language servers.
+- **Native text input & editing** — SHIPPED (`7c25d6d`, UI feature): editable
+  text buffer with cursor + selection, backspace/delete, multi-line editing,
+  reachable from headless dispatch AND the native window key path. Residual
+  polish: undo/redo, IME-safe composition.
+- **Scrolling** — SHIPPED (`7c25d6d`): viewport scroll offset + clamping on
+  `view`/`window`, headless-testable and wired to the native window.
+- **Keyboard events** — SHIPPED (`7c25d6d`): `on_key` / text-entry events routed
+  to `handle` handlers under the `UI` effect (native + headless). Residual:
+  full key-chord/shortcut surface.
+- **File watching** — SHIPPED (`159ba0f`): typed `FsWatch` effect, `fs.watch`
+  bounded + workspace-confined (path escape denied), timeout-bounded (no hang),
+  returns change events (undeclared use -> E0301).
+- **Controlled process management** — SHIPPED (`159ba0f`): typed `Process`
+  effect, `proc.run`/await/kill/alive with bounded lifecycle (E0921), NO orphans
+  (reap on task exit/cancel), kill-on-cancel, and fail-closed process grants
+  (`NUDGE_PROCESS_GRANTS`, default deny, E0920; workspace confinement E0922).
 
 ## Horizon (authority plays, date-free)
 
