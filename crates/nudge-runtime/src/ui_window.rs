@@ -1240,7 +1240,9 @@ mod tests {
         d.dispatch_click("btn");
         d.dispatch_change("inp", "text");
         d.dispatch_key("Enter", None);
-        drop(d);
+        // NLL ends d's &mut borrows at its last use, so x/notes/key are readable
+        // here; an explicit drop(d) would trip clippy's drop_non_drop (DummyDisp
+        // has no Drop impl).
         assert_eq!(x, 43);
         assert_eq!(notes, "text");
         assert_eq!(key, "Enter");
