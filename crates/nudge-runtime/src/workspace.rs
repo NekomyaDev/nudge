@@ -343,6 +343,25 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 }
             }
 
+            // Defense-in-depth against a PARENT-directory symlink swap: re-check
+            // that the canonicalized parent still resolves under the workspace
+            // root right before opening (the O_NOFOLLOW on open only covers the
+            // final component). A full fd-based openat2 resolution is the robust
+            // fix; this narrows the race window.
+            if let Some(parent) = safe_path.parent() {
+                if let Ok(canon_parent) = parent.canonicalize() {
+                    let root = get_workspace_root()
+                        .canonicalize()
+                        .unwrap_or_else(|_| get_workspace_root());
+                    if !canon_parent.starts_with(&root) {
+                        return Err(format!(
+                            "workspace.append: parent symlink escape denied for '{}'",
+                            path_str
+                        ));
+                    }
+                }
+            }
+
             let mut opts = fs::OpenOptions::new();
             opts.create(true).append(true);
             #[cfg(unix)]

@@ -318,7 +318,36 @@ impl Redactor {
     }
 }
 
-static CACHED_REDACTOR: LazyLock<RwLock<Option<Redactor>>> = LazyLock::new(|| RwLock::new(None));
+static CACHED_REDACTOR: LazyLock<RwLock<Option<(u64, Redactor)>>> =
+    LazyLock::new(|| RwLock::new(None));
+
+/// A lightweight fingerprint of the secret-bearing environment variables (names
+/// + values that look like credentials). Used to auto-refresh the cached
+/// Redactor when a secret appears/changes in the env WITHOUT rescanning regexes
+/// on every record — this is a cheap env scan + hash, far cheaper than
+/// `Redactor::from_env()`.
+fn secret_env_generation() -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let mut pairs: Vec<(String, String)> = std::env::vars()
+        .filter(|(k, _)| {
+            let u = k.to_ascii_uppercase();
+            u.contains("KEY")
+                || u.contains("SECRET")
+                || u.contains("TOKEN")
+                || u.contains("AUTH")
+                || u.contains("API")
+                || u.contains("PASS")
+                || u.contains("CRED")
+        })
+        .collect();
+    pairs.sort();
+    for (k, v) in pairs {
+        k.hash(&mut h);
+        v.hash(&mut h);
+    }
+    h.finish()
+}
 
 /// Reset or invalidate the global redactor cache (useful when environment variables change, e.g. in tests).
 pub fn reset_redactor_cache() {
@@ -329,22 +358,30 @@ pub fn reset_redactor_cache() {
 
 /// Execute a closure with a borrowed reference to the process-wide cached Redactor.
 ///
-/// The Redactor is initialized once from the ambient environment on first trace record redaction.
-/// Environment variable changes after the first trace record are not picked up automatically;
-/// call `reset_redactor_cache()` to force a reload from the current environment.
+/// The Redactor is cached for performance (regexes are compiled once, not per
+/// record), but it AUTO-REFRESHES when the secret-bearing environment changes:
+/// a lightweight env fingerprint is checked before reuse, so a secret added
+/// after the first record is still redacted (no explicit reset needed).
 pub fn with_cached_redactor<R, F: FnOnce(&Redactor) -> R>(f: F) -> R {
+    let gen = secret_env_generation();
     {
         if let Ok(lock) = CACHED_REDACTOR.read() {
-            if let Some(ref r) = *lock {
-                return f(r);
+            if let Some((cached_gen, ref r)) = *lock {
+                if cached_gen == gen {
+                    return f(r);
+                }
             }
         }
     }
     let mut lock = CACHED_REDACTOR.write().unwrap_or_else(|e| e.into_inner());
-    if lock.is_none() {
-        *lock = Some(Redactor::from_env());
+    let stale = match *lock {
+        Some((g, _)) => g != gen,
+        None => true,
+    };
+    if stale {
+        *lock = Some((gen, Redactor::from_env()));
     }
-    f(lock.as_ref().unwrap())
+    f(lock.as_ref().unwrap().1)
 }
 
 /// Redact fields of a trace record in place, preserving request_hash, v, seq, and kind.
