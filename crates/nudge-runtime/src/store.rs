@@ -211,6 +211,11 @@ impl Store {
                     e
                 )
             })?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+            }
         }
 
         // Crash-safe atomic write: temp sibling + fsync + rename
@@ -230,7 +235,14 @@ impl Store {
         );
         let temp_path = self.path.with_file_name(temp_name);
 
-        let mut file = fs::File::create(&temp_path).map_err(|e| {
+        let mut opts = fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut file = opts.open(&temp_path).map_err(|e| {
             format!(
                 "store: cannot create temp file '{}': {}",
                 temp_path.display(),
@@ -274,6 +286,12 @@ impl Store {
                 self.path.display(),
                 e
             ));
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&self.path, fs::Permissions::from_mode(0o600));
         }
 
         Ok(())
@@ -459,6 +477,40 @@ mod tests {
             vec![Value::String("enabled".into()), Value::Bool(false)],
         );
         assert_eq!(res.unwrap(), Value::Bool(true));
+
+        teardown(&dir);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_store_flush_sets_secure_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = crate::workspace::WS_TEST_LOCK.lock().unwrap();
+        let dir = setup_temp_workspace("perms");
+
+        let res = execute(
+            "store.set",
+            vec![Value::String("secret".into()), Value::String("val".into())],
+        );
+        assert!(res.is_ok(), "set failed: {:?}", res);
+
+        let parent = dir.join(".nudge");
+        let parent_meta = fs::metadata(&parent).expect("parent metadata");
+        let parent_mode = parent_meta.permissions().mode() & 0o777;
+        assert_eq!(
+            parent_mode, 0o700,
+            "expected .nudge dir to be 0o700, got {:o}",
+            parent_mode
+        );
+
+        let store_file = parent.join("store.json");
+        let file_meta = fs::metadata(&store_file).expect("file metadata");
+        let file_mode = file_meta.permissions().mode() & 0o777;
+        assert_eq!(
+            file_mode, 0o600,
+            "expected store.json to be 0o600, got {:o}",
+            file_mode
+        );
 
         teardown(&dir);
     }

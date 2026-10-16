@@ -1192,7 +1192,7 @@ impl Interpreter {
             StmtKind::Assert(expr) => {
                 let val = self.eval_expr(expr, env)?;
                 if !val.is_truthy() {
-                    return Err(format!("assertion failed: {expr:?} evaluated to {val}"));
+                    return Err(format!("assertion failed: {expr} evaluated to {val}"));
                 }
                 Ok(())
             }
@@ -1252,7 +1252,7 @@ impl Interpreter {
                     }
                     if idx >= limit {
                         return Err(format!(
-                            "loop iteration limit exceeded: execution halted after {limit} iterations to prevent infinite loop"
+                            "error[E0703]: loop iteration limit exceeded: execution halted after {limit} iterations to prevent infinite loop"
                         ));
                     }
                     let child_env = Rc::new(RefCell::new(Env::new_child(Rc::clone(env))));
@@ -1492,43 +1492,7 @@ impl Interpreter {
                     NudgeVal::AgentState {
                         name: agent_name, ..
                     } => self.agent_store.get_field(&agent_name, name),
-                    NudgeVal::UiElement {
-                        found: true,
-                        ref elem,
-                    } => match name.as_str() {
-                        "id" => Ok(elem
-                            .id
-                            .as_ref()
-                            .map(|s| NudgeVal::Str(s.clone()))
-                            .unwrap_or(NudgeVal::Unit)),
-                        "text" => Ok(NudgeVal::Str(elem.get_text())),
-                        "tag" => Ok(NudgeVal::Str(elem.tag.clone())),
-                        _ => elem
-                            .props
-                            .get(name)
-                            .map(|s| NudgeVal::Str(s.clone()))
-                            .ok_or_else(|| format!("element has no property '{name}'")),
-                    },
-                    NudgeVal::UiElement { found: false, .. } => Ok(NudgeVal::Unit),
-                    NudgeVal::Task(ref id) => {
-                        if name == "id" {
-                            Ok(NudgeVal::Str(id.clone()))
-                        } else if name == "state" || name == "status" {
-                            let st = nudge_runtime::task::task_status(id)
-                                .unwrap_or(nudge_runtime::task::TaskState::Pending);
-                            Ok(NudgeVal::Str(st.as_str().to_string()))
-                        } else {
-                            Err(format!("task has no field '{name}'"))
-                        }
-                    }
-                    NudgeVal::Map(m) => m
-                        .get(name)
-                        .cloned()
-                        .ok_or_else(|| format!("map has no key '{name}'")),
-                    other => Err(format!(
-                        "cannot access field '{name}' on type {}",
-                        other.type_name()
-                    )),
+                    other => other.get_field(name),
                 }
             }
             ExprKind::Binary { op, l, r } => self.eval_binary(op, l, r, env),
@@ -1653,7 +1617,7 @@ impl Interpreter {
                         NudgeVal::Int(i) => {
                             if i < 0 || i as usize >= items.len() {
                                 return Err(format!(
-                                    "index out of bounds: index {i} out of range for list of length {}",
+                                    "error[E0705]: index out of bounds: index {i} out of range for list of length {}",
                                     items.len()
                                 ));
                             }
@@ -2831,8 +2795,15 @@ impl Interpreter {
                 (NudgeVal::Float(a), NudgeVal::Float(b)) => Ok(NudgeVal::Float(a + b)),
                 (NudgeVal::Int(a), NudgeVal::Float(b)) => Ok(NudgeVal::Float(a as f64 + b)),
                 (NudgeVal::Float(a), NudgeVal::Int(b)) => Ok(NudgeVal::Float(a + b as f64)),
-                (NudgeVal::Str(a), NudgeVal::Str(b)) => Ok(NudgeVal::Str(format!("{a}{b}"))),
-                (NudgeVal::Str(a), b) => Ok(NudgeVal::Str(format!("{a}{b}"))),
+                (NudgeVal::Str(mut a), NudgeVal::Str(b)) => {
+                    a.push_str(&b);
+                    Ok(NudgeVal::Str(a))
+                }
+                (NudgeVal::Str(mut a), b) => {
+                    use std::fmt::Write;
+                    let _ = write!(a, "{b}");
+                    Ok(NudgeVal::Str(a))
+                }
                 (a, NudgeVal::Str(b)) => Ok(NudgeVal::Str(format!("{a}{b}"))),
                 (NudgeVal::List(mut a), NudgeVal::List(b)) => {
                     a.extend(b);
@@ -3406,7 +3377,6 @@ pub fn run_program(items: &[Item], entry: &str, args: &[NudgeVal]) -> Result<Nud
                 // Cancel running background tasks on exit so unjoined children do not hang
                 self.task.cancel();
                 nudge_runtime::proc::reap_processes_for_task(&self.task.id);
-                nudge_runtime::proc::reap_all_processes();
             }
         }
     }
@@ -3827,22 +3797,63 @@ pub(crate) mod tests {
 
     pub(crate) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-    struct EnvReset(&'static str, Option<String>);
+    thread_local! {
+        static ENV_RESET_LOCK_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        static ENV_RESET_GUARD: std::cell::RefCell<Option<std::sync::MutexGuard<'static, ()>>> = const { std::cell::RefCell::new(None) };
+    }
+
+    struct EnvResetGuard;
+
+    impl EnvResetGuard {
+        fn acquire() -> Self {
+            ENV_RESET_LOCK_DEPTH.with(|d| {
+                let cur = d.get();
+                if cur == 0 {
+                    let guard = nudge_runtime::trace::testing::TEST_STATE_LOCK
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    ENV_RESET_GUARD.with(|g| {
+                        *g.borrow_mut() = Some(guard);
+                    });
+                }
+                d.set(cur + 1);
+            });
+            Self
+        }
+    }
+
+    impl Drop for EnvResetGuard {
+        fn drop(&mut self) {
+            ENV_RESET_LOCK_DEPTH.with(|d| {
+                let cur = d.get();
+                if cur <= 1 {
+                    d.set(0);
+                    ENV_RESET_GUARD.with(|g| g.borrow_mut().take());
+                } else {
+                    d.set(cur - 1);
+                }
+            });
+        }
+    }
+
+    struct EnvReset(&'static str, Option<String>, EnvResetGuard);
     impl EnvReset {
         fn set(key: &'static str, val: &str) -> Self {
+            let guard = EnvResetGuard::acquire();
             let prev = std::env::var(key).ok();
             unsafe {
                 std::env::set_var(key, val);
             }
-            Self(key, prev)
+            Self(key, prev, guard)
         }
 
         fn remove(key: &'static str) -> Self {
+            let guard = EnvResetGuard::acquire();
             let prev = std::env::var(key).ok();
             unsafe {
                 std::env::remove_var(key);
             }
-            Self(key, prev)
+            Self(key, prev, guard)
         }
     }
     impl Drop for EnvReset {
@@ -5546,6 +5557,7 @@ data: [DONE]\n\n";
 
     #[test]
     fn test_headless_interactive_editing_scrolling_and_keys() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _cleanup = EnvReset::set("NUDGE_UI_HEADLESS", "1");
 
         let src = r#"
@@ -5969,6 +5981,7 @@ data: [DONE]\n\n";
 
     #[test]
     fn test_headless_cursor_preserved_mid_string_editing() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _cleanup = EnvReset::set("NUDGE_UI_HEADLESS", "1");
 
         let src = r#"

@@ -632,12 +632,19 @@ fn ensure_replay_loaded(path: &str, guard: &mut Option<ReplayState>) -> Result<(
     Ok(())
 }
 
+fn allow_unhashed_replay() -> bool {
+    std::env::var("NUDGE_REPLAY_ALLOW_UNHASHED")
+        .or_else(|_| std::env::var("NUDGE_REPLAY_ALLOW_LEGACY_FIFO"))
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
 /// Identity-first consumption (parity with Python's `_replay_take_llm`):
 /// serve the first unconsumed `llm.call` whose `request_hash` matches —
 /// a changed program can never consume an old answer. Traces where every
 /// record carries a `request_hash` fail loud on a signature mismatch;
-/// legacy traces (any record without one) consume in global record
-/// order. `Ok(None)` = the trace is exhausted.
+/// unhashed traces fail closed unless NUDGE_REPLAY_ALLOW_UNHASHED=1.
+/// `Ok(None)` = the trace is exhausted.
 pub fn replay_take_llm(hash: &str) -> Result<Option<Value>, String> {
     let path = replay_path()
         .unwrap_or_default()
@@ -649,41 +656,50 @@ pub fn replay_take_llm(hash: &str) -> Result<Option<Value>, String> {
     let mut guard = REPLAY.lock().map_err(|_| "llm replay lock poisoned")?;
     ensure_replay_loaded(&path, &mut guard)?;
     let st = guard.as_mut().unwrap();
-    if !st.records.is_empty() && st.records.iter().all(|r| r.get("request_hash").is_some()) {
-        let match_idx = st
-            .records
-            .iter()
-            .enumerate()
-            .find(|(i, r)| {
-                !st.consumed[*i] && r.get("request_hash").and_then(Value::as_str) == Some(hash)
-            })
-            .map(|(i, _)| i);
-        return match match_idx {
-            Some(i) => {
-                st.consumed[i] = true;
-                Ok(Some(st.records[i].clone()))
-            }
-            None => {
-                if st.consumed.iter().any(|c| !c) {
-                    Err(format!(
-                        "ReplayMismatch: replay signature mismatch: no recorded llm.call matches \
-                         this prompt/model/schema (request_hash {hash}) — the program changed its \
-                         LLM calls"
-                    ))
-                } else {
-                    Ok(None) // everything consumed — exhaustion at the caller
+    if !st.records.is_empty() {
+        if st.records.iter().all(|r| r.get("request_hash").is_some()) {
+            let match_idx = st
+                .records
+                .iter()
+                .enumerate()
+                .find(|(i, r)| {
+                    !st.consumed[*i] && r.get("request_hash").and_then(Value::as_str) == Some(hash)
+                })
+                .map(|(i, _)| i);
+            return match match_idx {
+                Some(i) => {
+                    st.consumed[i] = true;
+                    Ok(Some(st.records[i].clone()))
                 }
+                None => {
+                    if st.consumed.iter().any(|c| !c) {
+                        Err(format!(
+                            "ReplayMismatch: replay signature mismatch: no recorded llm.call matches \
+                             this prompt/model/schema (request_hash {hash}) — the program changed its \
+                             LLM calls"
+                        ))
+                    } else {
+                        Ok(None) // everything consumed — exhaustion at the caller
+                    }
+                }
+            };
+        } else if !allow_unhashed_replay() {
+            return Err(
+                "ReplayMismatch: replay trace contains records without request_hash (unvalidated FIFO replay rejected; set NUDGE_REPLAY_ALLOW_UNHASHED=1 to override)"
+                    .to_string(),
+            );
+        } else {
+            // legacy trace (records without request_hash): opt-in global record order
+            if st.order_idx < st.records.len() {
+                let rec = st.records[st.order_idx].clone();
+                st.order_idx += 1;
+                return Ok(Some(rec));
+            } else {
+                return Ok(None);
             }
-        };
+        }
     }
-    // legacy trace (records without request_hash): global record order
-    if st.order_idx < st.records.len() {
-        let rec = st.records[st.order_idx].clone();
-        st.order_idx += 1;
-        Ok(Some(rec))
-    } else {
-        Ok(None)
-    }
+    Ok(None)
 }
 
 /// Deterministic tool replay: serve the recorded `output` for a matching
@@ -714,59 +730,70 @@ pub fn tool_call_replay(
 
     let hash = tool_request_hash(tool, server, input);
 
-    if !st.tool_records.is_empty()
-        && st
+    if !st.tool_records.is_empty() {
+        if st
             .tool_records
             .iter()
             .all(|r| r.get("request_hash").is_some())
-    {
-        let match_idx = st
-            .tool_records
-            .iter()
-            .enumerate()
-            .find(|(i, r)| {
-                !st.tool_consumed[*i]
-                    && r.get("request_hash").and_then(Value::as_str) == Some(&hash)
-            })
-            .map(|(i, _)| i);
-        return match match_idx {
-            Some(i) => {
-                st.tool_consumed[i] = true;
-                let output = st.tool_records[i]
-                    .get("output")
-                    .cloned()
-                    .unwrap_or(Value::Null);
-                Ok(Some(output))
-            }
-            None => {
-                if st.tool_consumed.iter().any(|c| !c) {
-                    Err(format!(
-                        "ReplayMismatch: replay signature mismatch: no recorded tool.call for \
-                         '{tool}' matches this server/arguments (request_hash {hash}) — the \
-                         program changed its tool calls"
-                    ))
-                } else {
-                    let n = st.tool_records.len();
-                    Err(format!(
-                        "ReplayMismatch: program made more tool calls than the trace holds ({n} records)"
-                    ))
+        {
+            let match_idx = st
+                .tool_records
+                .iter()
+                .enumerate()
+                .find(|(i, r)| {
+                    !st.tool_consumed[*i]
+                        && r.get("request_hash").and_then(Value::as_str) == Some(&hash)
+                })
+                .map(|(i, _)| i);
+            return match match_idx {
+                Some(i) => {
+                    st.tool_consumed[i] = true;
+                    let output = st.tool_records[i]
+                        .get("output")
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    Ok(Some(output))
                 }
+                None => {
+                    if st.tool_consumed.iter().any(|c| !c) {
+                        Err(format!(
+                            "ReplayMismatch: replay signature mismatch: no recorded tool.call for \
+                             '{tool}' matches this server/arguments (request_hash {hash}) — the \
+                             program changed its tool calls"
+                        ))
+                    } else {
+                        let n = st.tool_records.len();
+                        Err(format!(
+                            "ReplayMismatch: program made more tool calls than the trace holds ({n} records)"
+                        ))
+                    }
+                }
+            };
+        } else if !allow_unhashed_replay() {
+            return Err(
+                "ReplayMismatch: replay trace contains tool records without request_hash (unvalidated FIFO replay rejected; set NUDGE_REPLAY_ALLOW_UNHASHED=1 to override)"
+                    .to_string(),
+            );
+        } else {
+            // legacy trace (records without request_hash): opt-in global record order
+            if st.tool_order_idx < st.tool_records.len() {
+                let rec = &st.tool_records[st.tool_order_idx];
+                st.tool_order_idx += 1;
+                let output = rec.get("output").cloned().unwrap_or(Value::Null);
+                return Ok(Some(output));
+            } else {
+                let n = st.tool_records.len();
+                return Err(format!(
+                    "ReplayMismatch: program made more tool calls than the trace holds ({n} records)"
+                ));
             }
-        };
+        }
     }
 
-    // legacy trace (records without request_hash): global record order
-    if st.tool_order_idx < st.tool_records.len() {
-        let rec = &st.tool_records[st.tool_order_idx];
-        st.tool_order_idx += 1;
-        let output = rec.get("output").cloned().unwrap_or(Value::Null);
-        Ok(Some(output))
-    } else {
-        let n = st.tool_records.len();
-        Err(format!(
-            "ReplayMismatch: program made more tool calls than the trace holds ({n} records)"
-        ))
-    }
+    let n = st.tool_records.len();
+    Err(format!(
+        "ReplayMismatch: program made more tool calls than the trace holds ({n} records)"
+    ))
 }
 
 // ── the LLM bridge: one traced (or replayed) model call ─────────────
@@ -954,7 +981,13 @@ mod tests {
     }
 
     fn tmp(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("nudge-trace-{name}-{}.jsonl", std::process::id()))
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let uid = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "nudge-trace-{name}-{}_{}.jsonl",
+            std::process::id(),
+            uid
+        ))
     }
 
     #[test]
@@ -1169,6 +1202,39 @@ mod tests {
     }
 
     #[test]
+    fn unhashed_records_without_opt_in_fails_closed() {
+        let _g = guard();
+        let path = tmp("unhashed-deny");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"v\": 1, \"seq\": 1, \"kind\": \"llm.call\", \"model\": \"default\",",
+                "\"params\": {\"temperature\": 0}, \"input\": \"one\", \"output\": \"first\",",
+                "\"tokens\": {\"in\": 1, \"out\": 1}, \"cost_usd\": 0.001, \"repair_round\": 0,",
+                "\"outcome\": \"ok\", \"provider\": \"fake\"}\n",
+            ),
+        )
+        .unwrap();
+        std::env::remove_var("NUDGE_REPLAY_ALLOW_UNHASHED");
+        let _scope = testing::scope(None, Some(path.clone()));
+        let req = LlmBridgeRequest {
+            prompt: "one",
+            model: None,
+            default_model: "fake:default",
+            schema_text: None,
+            schema_json: None,
+            temperature: 0.7,
+            budget_usd: None,
+        };
+        let err = llm_call(&req).unwrap_err().to_string();
+        assert!(
+            err.contains("ReplayMismatch") && err.contains("request_hash"),
+            "expected fail closed without request_hash, got: {err}"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn legacy_records_without_request_hash_replay_in_order() {
         let _g = guard();
         let path = tmp("legacy");
@@ -1186,6 +1252,7 @@ mod tests {
             ),
         )
         .unwrap();
+        std::env::set_var("NUDGE_REPLAY_ALLOW_UNHASHED", "1");
         let _scope = testing::scope(None, Some(path.clone()));
         fn req<'a>(p: &'a str) -> LlmBridgeRequest<'a> {
             LlmBridgeRequest {
@@ -1208,6 +1275,7 @@ mod tests {
             Value::String("second".to_string())
         );
         assert!(llm_call(&req("three")).is_err());
+        std::env::remove_var("NUDGE_REPLAY_ALLOW_UNHASHED");
         let _ = std::fs::remove_file(&path);
     }
 
@@ -1499,6 +1567,25 @@ mod tests {
     }
 
     #[test]
+    fn unhashed_tool_records_without_opt_in_fails_closed() {
+        let _g = guard();
+        let path = tmp("unhashed-tool-deny");
+        std::fs::write(
+            &path,
+            "{\"v\": 1, \"seq\": 1, \"kind\": \"tool.call\", \"tool\": \"search\", \"input\": \"one\", \"output\": \"res1\"}\n",
+        )
+        .unwrap();
+        std::env::remove_var("NUDGE_REPLAY_ALLOW_UNHASHED");
+        let _scope = testing::scope(None, Some(path.clone()));
+        let err = tool_call_replay("search", None, &json!("different")).unwrap_err();
+        assert!(
+            err.contains("ReplayMismatch") && err.contains("request_hash"),
+            "expected tool replay to fail closed without request_hash, got: {err}"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn legacy_tool_records_without_request_hash_replay_in_order() {
         let _g = guard();
         let path = tmp("legacy-tool");
@@ -1511,6 +1598,7 @@ mod tests {
         )
         .unwrap();
 
+        std::env::set_var("NUDGE_REPLAY_ALLOW_UNHASHED", "1");
         let _scope = testing::scope(None, Some(path.clone()));
         assert_eq!(
             tool_call_replay("search", None, &json!("different")).unwrap(),
@@ -1522,6 +1610,7 @@ mod tests {
         );
         let err = tool_call_replay("search", None, &json!("three")).unwrap_err();
         assert!(err.contains("more tool calls than the trace holds (2 records)"));
+        std::env::remove_var("NUDGE_REPLAY_ALLOW_UNHASHED");
         let _ = std::fs::remove_file(&path);
     }
 
@@ -1691,6 +1780,7 @@ mod tests {
         fn set(key: &'static str, val: &str) -> Self {
             let prev = std::env::var(key).ok();
             std::env::set_var(key, val);
+            crate::redact::reset_redactor_cache();
             Self { key, prev }
         }
     }
@@ -1701,6 +1791,7 @@ mod tests {
                 Some(v) => std::env::set_var(self.key, v),
                 None => std::env::remove_var(self.key),
             }
+            crate::redact::reset_redactor_cache();
         }
     }
 

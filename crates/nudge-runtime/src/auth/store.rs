@@ -101,10 +101,24 @@ impl CredentialStore {
             format!("error[E-auth-0405]: failed to serialize credential store: {e}")
         })?;
 
-        // Write atomically via temporary file
+        // Write atomically via temporary file (creating directly with 0o600 on Unix)
         let tmp_path = path.with_extension(format!("tmp.{}", std::process::id()));
-        std::fs::write(&tmp_path, json)
-            .map_err(|e| format!("error[E-auth-0405]: failed to write credentials: {e}"))?;
+        let write_res = (|| -> std::io::Result<()> {
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.mode(0o600);
+            }
+            use std::io::Write;
+            let mut file = opts.open(&tmp_path)?;
+            file.write_all(json.as_bytes())?;
+            file.flush()?;
+            file.sync_all()?;
+            Ok(())
+        })();
+        write_res.map_err(|e| format!("error[E-auth-0405]: failed to write credentials: {e}"))?;
 
         #[cfg(unix)]
         {

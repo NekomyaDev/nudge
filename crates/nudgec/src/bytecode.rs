@@ -306,8 +306,7 @@ impl<'a> Compiler<'a> {
             }
             StmtKind::Assert(expr) => {
                 self.compile_expr(expr)?;
-                // Preserve the exact debug representation matching interpreter.rs
-                self.chunk.emit(Op::Assert(format!("{expr:?}")));
+                self.chunk.emit(Op::Assert(format!("{expr}")));
                 Ok(())
             }
             StmtKind::StateWrite { .. } => {
@@ -765,6 +764,11 @@ impl<'a> Compiler<'a> {
                     || name.starts_with("fs.")
                     || name.starts_with("proc.")
                     || name.starts_with("ui.")
+                    || name.starts_with("math.")
+                    || name.starts_with("string.")
+                    || name.starts_with("str.")
+                    || name.starts_with("env.")
+                    || name.starts_with("time.")
                     || name.ends_with(".open")
                     || name.ends_with(".mount_headless")
                     || name.ends_with(".dispatch_click")
@@ -983,6 +987,11 @@ fn check_expr_effects(expr: &Expr, tool_names: &[String]) -> Result<(), String> 
                     || name.starts_with("fs.")
                     || name.starts_with("proc.")
                     || name.starts_with("ui.")
+                    || name.starts_with("math.")
+                    || name.starts_with("string.")
+                    || name.starts_with("str.")
+                    || name.starts_with("env.")
+                    || name.starts_with("time.")
                     || name.ends_with(".open")
                     || name.ends_with(".mount_headless")
                     || name.ends_with(".dispatch_click")

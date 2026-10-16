@@ -1,7 +1,7 @@
 use regex::Regex;
 use serde_json::Value;
 use std::path::Path;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, RwLock};
 
 static PEM_KEY_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----")
@@ -71,7 +71,12 @@ pub fn is_env_redact_disabled() -> bool {
 
 fn matches_env_secret_name(name: &str) -> bool {
     let upper = name.to_ascii_uppercase();
-    if upper.starts_with("NUDGE_") {
+    if upper.starts_with("NUDGE_")
+        && !upper.contains("KEY")
+        && !upper.contains("SECRET")
+        && !upper.contains("TOKEN")
+        && !upper.contains("AUTH")
+    {
         return false;
     }
     upper.ends_with("_KEY")
@@ -146,6 +151,7 @@ fn load_custom_patterns() -> Vec<Regex> {
 }
 
 /// Redaction engine configured from environment and defaults.
+#[derive(Clone, Debug)]
 pub struct Redactor {
     pub env_secrets: Vec<(String, String)>,
     pub extra_keys: Vec<String>,
@@ -312,22 +318,52 @@ impl Redactor {
     }
 }
 
+static CACHED_REDACTOR: LazyLock<RwLock<Option<Redactor>>> = LazyLock::new(|| RwLock::new(None));
+
+/// Reset or invalidate the global redactor cache (useful when environment variables change, e.g. in tests).
+pub fn reset_redactor_cache() {
+    if let Ok(mut lock) = CACHED_REDACTOR.write() {
+        *lock = None;
+    }
+}
+
+/// Execute a closure with a borrowed reference to the process-wide cached Redactor.
+///
+/// The Redactor is initialized once from the ambient environment on first trace record redaction.
+/// Environment variable changes after the first trace record are not picked up automatically;
+/// call `reset_redactor_cache()` to force a reload from the current environment.
+pub fn with_cached_redactor<R, F: FnOnce(&Redactor) -> R>(f: F) -> R {
+    {
+        if let Ok(lock) = CACHED_REDACTOR.read() {
+            if let Some(ref r) = *lock {
+                return f(r);
+            }
+        }
+    }
+    let mut lock = CACHED_REDACTOR.write().unwrap_or_else(|e| e.into_inner());
+    if lock.is_none() {
+        *lock = Some(Redactor::from_env());
+    }
+    f(lock.as_ref().unwrap())
+}
+
 /// Redact fields of a trace record in place, preserving request_hash, v, seq, and kind.
 pub fn redact_record_fields(fields: &mut serde_json::Map<String, Value>) {
     if is_redact_disabled() {
         return;
     }
-    let redactor = Redactor::from_env();
-    for (key, val) in fields.iter_mut() {
-        if key == "request_hash" || key == "v" || key == "seq" || key == "kind" {
-            continue;
+    with_cached_redactor(|redactor| {
+        for (key, val) in fields.iter_mut() {
+            if key == "request_hash" || key == "v" || key == "seq" || key == "kind" {
+                continue;
+            }
+            if redactor.is_structural_key(key) {
+                *val = Value::String("[REDACTED]".to_string());
+            } else {
+                redactor.redact_value(val);
+            }
         }
-        if redactor.is_structural_key(key) {
-            *val = Value::String("[REDACTED]".to_string());
-        } else {
-            redactor.redact_value(val);
-        }
-    }
+    });
 }
 
 #[cfg(test)]
@@ -488,6 +524,60 @@ mod tests {
         assert_eq!(
             redactor.redact_string(t),
             "Internal project id [REDACTED] must not leak"
+        );
+    }
+
+    #[test]
+    fn test_nudge_api_key_env_var_is_redacted_in_trace_record() {
+        use serde_json::json;
+        let key_name = "NUDGE_API_KEY";
+        let secret_val = "sk-secret-test-value-12345";
+        std::env::set_var(key_name, secret_val);
+        reset_redactor_cache();
+
+        let mut record = serde_json::Map::new();
+        record.insert("v".into(), json!(1));
+        record.insert("seq".into(), json!(1));
+        record.insert("kind".into(), json!("tool.call"));
+        record.insert("request_hash".into(), json!("sha256:dummy"));
+        record.insert(
+            "output".into(),
+            json!(format!("Response using {secret_val} successfully")),
+        );
+
+        redact_record_fields(&mut record);
+
+        std::env::remove_var(key_name);
+        reset_redactor_cache();
+
+        let out = record.get("output").and_then(Value::as_str).unwrap();
+        assert!(
+            !out.contains(secret_val),
+            "trace output should not contain raw secret value: {out}"
+        );
+        assert!(
+            out.contains("[REDACTED:ENV:NUDGE_API_KEY]"),
+            "expected [REDACTED:ENV:NUDGE_API_KEY] in output: {out}"
+        );
+    }
+
+    #[test]
+    fn test_redactor_cache_avoids_recompilation() {
+        use serde_json::json;
+        reset_redactor_cache();
+        let start = std::time::Instant::now();
+        for _ in 0..1000 {
+            let mut record = serde_json::Map::new();
+            record.insert("kind".into(), json!("llm.call"));
+            record.insert("output".into(), json!("normal text without secrets"));
+            redact_record_fields(&mut record);
+        }
+        let elapsed = start.elapsed();
+        // 1000 cached record redactions should complete within a few milliseconds
+        assert!(
+            elapsed.as_millis() < 500,
+            "1000 cached trace redactions took too long: {:?}",
+            elapsed
         );
     }
 }

@@ -17,28 +17,81 @@ use crate::provider::copilot::CopilotProvider;
 #[cfg(feature = "live-provider")]
 use crate::provider::{LlmRequest, Provider};
 
-fn get_test_lock() -> std::sync::MutexGuard<'static, ()> {
-    crate::provider::tests::ENV_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
+thread_local! {
+    static AUTH_TEST_LOCK_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static AUTH_TEST_GUARD: std::cell::RefCell<Option<std::sync::MutexGuard<'static, ()>>> = const { std::cell::RefCell::new(None) };
+}
+
+pub(crate) struct AuthTestLockGuard;
+
+impl AuthTestLockGuard {
+    fn acquire() -> Self {
+        AUTH_TEST_LOCK_DEPTH.with(|d| {
+            let cur = d.get();
+            if cur == 0 {
+                let guard = crate::trace::testing::TEST_STATE_LOCK
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                AUTH_TEST_GUARD.with(|g| {
+                    *g.borrow_mut() = Some(guard);
+                });
+            }
+            d.set(cur + 1);
+        });
+        Self
+    }
+}
+
+impl Drop for AuthTestLockGuard {
+    fn drop(&mut self) {
+        AUTH_TEST_LOCK_DEPTH.with(|d| {
+            let cur = d.get();
+            if cur <= 1 {
+                d.set(0);
+                AUTH_TEST_GUARD.with(|g| g.borrow_mut().take());
+            } else {
+                d.set(cur - 1);
+            }
+        });
+    }
+}
+
+fn get_test_lock() -> AuthTestLockGuard {
+    AuthTestLockGuard::acquire()
+}
+
+fn test_uid() -> u64 {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 struct EnvGuard {
     key: &'static str,
     original: Option<String>,
+    _lock: AuthTestLockGuard,
 }
 
 impl EnvGuard {
     fn set(key: &'static str, val: &str) -> Self {
+        let lock = AuthTestLockGuard::acquire();
         let original = std::env::var(key).ok();
         std::env::set_var(key, val);
-        Self { key, original }
+        Self {
+            key,
+            original,
+            _lock: lock,
+        }
     }
 
     fn unset(key: &'static str) -> Self {
+        let lock = AuthTestLockGuard::acquire();
         let original = std::env::var(key).ok();
         std::env::remove_var(key);
-        Self { key, original }
+        Self {
+            key,
+            original,
+            _lock: lock,
+        }
     }
 }
 
@@ -55,7 +108,11 @@ impl Drop for EnvGuard {
 #[test]
 fn test_auth_store_roundtrip_and_file_mode() {
     let _lock = get_test_lock();
-    let temp_dir = std::env::temp_dir().join(format!("nudge_test_store_{}", std::process::id()));
+    let temp_dir = std::env::temp_dir().join(format!(
+        "nudge_test_store_{}_{}",
+        std::process::id(),
+        test_uid()
+    ));
     let _ = std::fs::remove_dir_all(&temp_dir);
     let store_path = temp_dir.join("credentials.json");
 
@@ -119,7 +176,11 @@ fn test_auth_store_roundtrip_and_file_mode() {
 #[test]
 fn test_auth_store_corrupted_file_trips_e_auth_0405() {
     let _lock = get_test_lock();
-    let temp_dir = std::env::temp_dir().join(format!("nudge_test_corrupt_{}", std::process::id()));
+    let temp_dir = std::env::temp_dir().join(format!(
+        "nudge_test_corrupt_{}_{}",
+        std::process::id(),
+        test_uid()
+    ));
     let _ = std::fs::remove_dir_all(&temp_dir);
     std::fs::create_dir_all(&temp_dir).unwrap();
     let store_path = temp_dir.join("credentials.json");
@@ -217,8 +278,11 @@ fn test_in_process_rfc8628_device_flow_with_mock_server() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock port");
     let port = listener.local_addr().unwrap().port();
 
-    let temp_dir =
-        std::env::temp_dir().join(format!("nudge_test_device_flow_{}", std::process::id()));
+    let temp_dir = std::env::temp_dir().join(format!(
+        "nudge_test_device_flow_{}_{}",
+        std::process::id(),
+        test_uid()
+    ));
     let _ = std::fs::remove_dir_all(&temp_dir);
     let store_file = temp_dir.join("credentials.json");
 
@@ -534,7 +598,11 @@ fn test_loopback_oauth_flow_with_mock_token_server() {
     let token_listener = TcpListener::bind("127.0.0.1:0").expect("bind mock token port");
     let token_port = token_listener.local_addr().unwrap().port();
 
-    let temp_dir = std::env::temp_dir().join(format!("nudge_loopback_test_{}", std::process::id()));
+    let temp_dir = std::env::temp_dir().join(format!(
+        "nudge_loopback_test_{}_{}",
+        std::process::id(),
+        test_uid()
+    ));
     let _ = std::fs::remove_dir_all(&temp_dir);
     let store_path = temp_dir.join("credentials.json");
     let _guard_store = EnvGuard::set("NUDGE_CREDENTIALS_PATH", store_path.to_str().unwrap());
@@ -723,7 +791,11 @@ fn test_loopback_oauth_refresh_flow() {
     let token_listener = TcpListener::bind("127.0.0.1:0").expect("bind refresh token port");
     let token_port = token_listener.local_addr().unwrap().port();
 
-    let temp_dir = std::env::temp_dir().join(format!("nudge_refresh_test_{}", std::process::id()));
+    let temp_dir = std::env::temp_dir().join(format!(
+        "nudge_refresh_test_{}_{}",
+        std::process::id(),
+        test_uid()
+    ));
     let _ = std::fs::remove_dir_all(&temp_dir);
     let store_path = temp_dir.join("credentials.json");
     let _guard_store = EnvGuard::set("NUDGE_CREDENTIALS_PATH", store_path.to_str().unwrap());
@@ -794,8 +866,9 @@ fn test_antigravity_provider_reads_only_nudge_store_not_jcode() {
     let _lock = get_test_lock();
 
     let temp_dir = std::env::temp_dir().join(format!(
-        "nudge_antigravity_store_test_{}",
-        std::process::id()
+        "nudge_antigravity_store_test_{}_{}",
+        std::process::id(),
+        test_uid()
     ));
     let _ = std::fs::remove_dir_all(&temp_dir);
     let jcode_dir = temp_dir.join(".jcode");

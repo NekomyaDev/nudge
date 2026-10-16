@@ -315,18 +315,54 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 Value::String(s) => s.clone(),
                 _ => return Err("workspace.append: content must be a string".to_string()),
             };
+
+            let raw_path = get_workspace_root().join(&path_str);
+            if let Ok(meta) = raw_path.symlink_metadata() {
+                if meta.file_type().is_symlink() {
+                    return Err(format!(
+                        "workspace.append: symlink escape denied for '{}'",
+                        path_str
+                    ));
+                }
+            }
+
             let safe_path = resolve_and_validate_path(&path_str)?;
             if let Some(parent) = safe_path.parent() {
                 fs::create_dir_all(parent).map_err(|e| {
                     format!("workspace.append: cannot create parent directory: {}", e)
                 })?;
             }
-            match fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&safe_path)
+
+            // Verify path is not a symlink prior to opening
+            if let Ok(meta) = safe_path.symlink_metadata() {
+                if meta.file_type().is_symlink() {
+                    return Err(format!(
+                        "workspace.append: symlink escape denied for '{}'",
+                        path_str
+                    ));
+                }
+            }
+
+            let mut opts = fs::OpenOptions::new();
+            opts.create(true).append(true);
+            #[cfg(unix)]
             {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.custom_flags(libc::O_NOFOLLOW);
+            }
+
+            match opts.open(&safe_path) {
                 Ok(mut file) => {
+                    let meta = safe_path.symlink_metadata().map_err(|e| {
+                        format!("workspace.append: cannot inspect '{}': {}", path_str, e)
+                    })?;
+                    if meta.file_type().is_symlink() {
+                        return Err(format!(
+                            "workspace.append: symlink escape denied for '{}'",
+                            path_str
+                        ));
+                    }
+
                     file.write_all(content.as_bytes()).map_err(|e| {
                         format!("workspace.append: cannot append to '{}': {}", path_str, e)
                     })?;
@@ -582,6 +618,35 @@ mod tests {
             msg.contains("escape denied") || msg.contains("symlink"),
             "unexpected error: {}",
             msg
+        );
+
+        teardown(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_append_symlink_denied() {
+        let _guard = WS_TEST_LOCK.lock().unwrap();
+        let dir = setup_temp_workspace("append_sym");
+
+        let target = dir.join("target.txt");
+        fs::write(&target, "initial").unwrap();
+
+        let sym = dir.join("link_to_target.txt");
+        std::os::unix::fs::symlink(&target, &sym).unwrap();
+
+        let res = execute(
+            "workspace.append",
+            vec![
+                Value::String("link_to_target.txt".to_string()),
+                Value::String(" appended".to_string()),
+            ],
+        );
+        assert!(res.is_err(), "expected append through symlink to be denied");
+        let msg = res.unwrap_err();
+        assert!(
+            msg.contains("symlink") || msg.contains("cannot open"),
+            "expected symlink denial message, got: {msg}"
         );
 
         teardown(&dir);

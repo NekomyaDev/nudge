@@ -155,6 +155,13 @@ pub fn check_process_grants(cmd: &str, args: &[String]) -> Result<(), String> {
                             if allows_all {
                                 return Ok(());
                             }
+                            // When a grant rule specifies arguments (not "*"), an empty argument
+                            // list must not bypass the grant policy.
+                            if args.is_empty() {
+                                return Err(format!(
+                                    "error[E0920]: process '{cmd}' with arguments is not granted by NUDGE_PROCESS_GRANTS"
+                                ));
+                            }
                             // Otherwise check if args match the glob rules
                             let all_match = args.iter().all(|arg| {
                                 rules.iter().any(|r| {
@@ -732,6 +739,26 @@ mod tests {
         } else {
             panic!("expected Value::Map");
         }
+    }
+
+    #[test]
+    fn test_proc_run_empty_args_denied_when_grant_requires_specific_args() {
+        let _guard = EnvGuard::set(r#"{"git": ["status"]}"#);
+
+        let res = execute(
+            "proc.run",
+            vec![Value::String("git".to_string()), Value::List(vec![])],
+        );
+
+        assert!(
+            res.is_err(),
+            "expected proc.run with empty args to be denied"
+        );
+        let err = res.unwrap_err();
+        assert!(
+            err.contains("error[E0920]") && err.contains("with arguments is not granted"),
+            "expected E0920 argument denial, got: {err}"
+        );
     }
 
     #[test]

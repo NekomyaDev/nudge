@@ -141,7 +141,10 @@ fn e2e(name: &str) -> Option<E2e> {
         return None;
     }
     // unique dir per test: `cargo test` runs them in parallel threads
-    let dir = std::env::temp_dir().join(format!("nudge_e2e_{}_{}", std::process::id(), name));
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let uid = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir =
+        std::env::temp_dir().join(format!("nudge_e2e_{}_{}_{}", std::process::id(), name, uid));
     std::fs::create_dir_all(&dir).unwrap();
     Some(E2e { dir, runtime })
 }

@@ -258,8 +258,14 @@ mod tests {
     use std::io::Write;
 
     fn setup_temp_workspace(suffix: &str) -> PathBuf {
-        let temp_dir =
-            std::env::temp_dir().join(format!("nudge_fswatch_{}_{}", suffix, std::process::id()));
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let uid = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "nudge_fswatch_{}_{}_{}",
+            suffix,
+            std::process::id(),
+            uid
+        ));
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).unwrap();
         std::env::set_var("NUDGE_WORKSPACE_DIR", &temp_dir);

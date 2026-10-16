@@ -148,18 +148,23 @@ impl Parser {
     }
 
     fn ident(&mut self) -> PResult<String> {
-        match self.peek().clone() {
+        match self.peek() {
             Tok::Ident(s) => {
+                let s = s.clone();
                 self.bump();
                 Ok(s)
             }
-            other => self.err(format!("expected identifier, found {other:?}")),
+            other => {
+                let other = format!("{other:?}");
+                self.err(format!("expected identifier, found {other}"))
+            }
         }
     }
 
     fn field_ident(&mut self) -> PResult<String> {
-        match self.peek().clone() {
+        match self.peek() {
             Tok::Ident(s) => {
+                let s = s.clone();
                 self.bump();
                 Ok(s)
             }
@@ -175,7 +180,10 @@ impl Parser {
                 self.bump();
                 Ok("type".to_string())
             }
-            other => self.err(format!("expected identifier, found {other:?}")),
+            other => {
+                let other = format!("{other:?}");
+                self.err(format!("expected identifier, found {other}"))
+            }
         }
     }
 
@@ -189,20 +197,23 @@ impl Parser {
     }
 
     fn parse_item(&mut self) -> PResult<Item> {
-        match self.peek().clone() {
+        match self.peek() {
             Tok::Type => self.parse_type_alias(),
             Tok::Fn => self.parse_fn(),
             Tok::Tool => self.parse_tool(),
             Tok::Test => self.parse_test(),
             Tok::Agent => self.parse_agent(),
-            Tok::Ident(ref s) if s == "view" => self.parse_view(),
-            Tok::Ident(ref s) if s == "window" => self.parse_window(),
-            Tok::Ident(ref s) if s == "handle" => self.parse_handle(),
-            Tok::Ident(ref s) if s == "auth" => self.parse_auth(),
-            Tok::Ident(ref s) if s == "account" => self.parse_account(),
-            other => self.err(format!(
-                "expected item (type/fn/tool/test/view/window), found {other:?}"
-            )),
+            Tok::Ident(s) if s == "view" => self.parse_view(),
+            Tok::Ident(s) if s == "window" => self.parse_window(),
+            Tok::Ident(s) if s == "handle" => self.parse_handle(),
+            Tok::Ident(s) if s == "auth" => self.parse_auth(),
+            Tok::Ident(s) if s == "account" => self.parse_account(),
+            other => {
+                let other = format!("{other:?}");
+                self.err(format!(
+                    "expected item (type/fn/tool/test/view/window), found {other}"
+                ))
+            }
         }
     }
 
@@ -296,12 +307,16 @@ impl Parser {
 
     fn parse_test(&mut self) -> PResult<Item> {
         self.bump(); // test
-        let name = match self.peek().clone() {
+        let name = match self.peek() {
             Tok::Str(s) => {
+                let s = s.clone();
                 self.bump();
                 s
             }
-            other => return self.err(format!("expected test name string, found {other:?}")),
+            other => {
+                let other = format!("{other:?}");
+                return self.err(format!("expected test name string, found {other}"));
+            }
         };
         let body = self.parse_block()?;
         Ok(Item::Test { name, body })
@@ -498,7 +513,7 @@ impl Parser {
 
     fn parse_stmt(&mut self) -> PResult<Stmt> {
         let start = self.pos();
-        match self.peek().clone() {
+        match self.peek() {
             Tok::Let => {
                 self.bump();
                 let mutable = if self.eat(&Tok::Mut) {
@@ -598,12 +613,13 @@ impl Parser {
                 self.bump();
                 let var = self.ident()?;
                 self.expect(&Tok::In, "'in' after for_all variable")?;
-                match self.peek().clone() {
+                match self.peek() {
                     Tok::Ident(g) if g == "gen" => {
                         self.bump();
                     }
                     other => {
-                        return self.err(format!("expected `gen` after 'in', found {other:?}"))
+                        let other = format!("{other:?}");
+                        return self.err(format!("expected `gen` after 'in', found {other}"));
                     }
                 }
                 self.expect(&Tok::Dot, "'.' after gen")?;
@@ -673,8 +689,9 @@ impl Parser {
 
     // ── types ───────────────────────────────────────────────────────
     fn parse_type(&mut self) -> PResult<TypeExpr> {
-        let mut ty = match self.peek().clone() {
+        let mut ty = match self.peek() {
             Tok::Ident(name) => {
+                let name = name.clone();
                 self.bump();
                 if self.eat(&Tok::LBracket) {
                     let g = self.enter()?;
@@ -717,7 +734,10 @@ impl Parser {
                 self.expect(&Tok::RParen, "unit type '()'")?;
                 TypeExpr::Named("()".into())
             }
-            other => return self.err(format!("expected type, found {other:?}")),
+            other => {
+                let other = format!("{other:?}");
+                return self.err(format!("expected type, found {other}"));
+            }
         };
         // refinement: @name(args)
         if self.eat(&Tok::At) {
@@ -954,7 +974,7 @@ impl Parser {
     fn parse_postfix(&mut self) -> PResult<Expr> {
         let mut e = self.parse_primary()?;
         loop {
-            match self.peek().clone() {
+            match self.peek() {
                 Tok::Dot => {
                     self.bump();
                     let name = self.field_ident()?;
@@ -1059,7 +1079,8 @@ impl Parser {
         let mut args = Vec::new();
         let mut kwargs = Vec::new();
         while !self.at(&Tok::RParen) {
-            if let (Tok::Ident(name), Tok::Assign) = (self.peek().clone(), self.peek2().clone()) {
+            if let (Tok::Ident(name), Tok::Assign) = (self.peek(), self.peek2()) {
+                let name = name.clone();
                 self.bump();
                 self.bump();
                 kwargs.push((name, self.parse_expr()?));
@@ -1123,7 +1144,7 @@ impl Parser {
     }
 
     fn parse_primary(&mut self) -> PResult<Expr> {
-        match self.peek().clone() {
+        match self.peek() {
             Tok::If => self.parse_if(),
             Tok::LBrace => {
                 let start = self.pos();
@@ -1142,23 +1163,26 @@ impl Parser {
                 Ok(self.ex_from(start, ExprKind::RecordLit(fields)))
             }
             Tok::Int(v) => {
+                let v = *v;
                 let start = self.pos();
                 self.bump();
                 Ok(self.ex_from(start, ExprKind::Int(v)))
             }
             Tok::Float(v) => {
+                let v = *v;
                 let start = self.pos();
                 self.bump();
                 Ok(self.ex_from(start, ExprKind::Float(v)))
             }
             Tok::Str(s) => {
+                let s = s.clone();
                 let start = self.pos();
                 self.bump();
                 Ok(self.ex_from(start, ExprKind::Str(s)))
             }
             Tok::Money(v, u) => {
+                let (v, u) = (*v, u.clone());
                 let start = self.pos();
-                let (v, u) = (v, u.clone());
                 self.bump();
                 Ok(self.ex_from(start, ExprKind::Money(v, u)))
             }
@@ -1215,35 +1239,40 @@ impl Parser {
                 while !self.at(&Tok::RBrace) {
                     let name = self.ident()?;
                     self.expect(&Tok::Colon, "':' after question name")?;
-                    let prompt = match self.peek().clone() {
+                    let prompt = match self.peek() {
                         Tok::Str(p) => {
+                            let p = p.clone();
                             self.bump();
                             p
                         }
                         other => {
+                            let other = format!("{other:?}");
                             return self
-                                .err(format!("expected question prompt string, found {other:?}"))
+                                .err(format!("expected question prompt string, found {other}"));
                         }
                     };
                     let q = if self.eat(&Tok::Ident("choose".into())) {
                         self.expect(&Tok::LBracket, "'[' after choose")?;
                         let mut options = Vec::new();
                         while !self.at(&Tok::RBracket) {
-                            match self.peek().clone() {
+                            match self.peek() {
                                 // bare identifier or string — both are
                                 // labels (`choose [billing, "billing eu"]`)
                                 Tok::Ident(o) => {
+                                    let o = o.clone();
                                     self.bump();
                                     options.push(o);
                                 }
                                 Tok::Str(o) => {
+                                    let o = o.clone();
                                     self.bump();
                                     options.push(o);
                                 }
                                 other => {
+                                    let other = format!("{other:?}");
                                     return self.err(format!(
-                                        "expected option label in choose list, found {other:?}"
-                                    ))
+                                        "expected option label in choose list, found {other}"
+                                    ));
                                 }
                             }
                             if !self.eat(&Tok::Comma) {
@@ -1260,19 +1289,22 @@ impl Parser {
                         self.expect(&Tok::LBracket, "'[' after score")?;
                         let mut levels = Vec::new();
                         while !self.at(&Tok::RBracket) {
-                            match self.peek().clone() {
+                            match self.peek() {
                                 Tok::Ident(l) => {
+                                    let l = l.clone();
                                     self.bump();
                                     levels.push(l);
                                 }
                                 Tok::Str(l) => {
+                                    let l = l.clone();
                                     self.bump();
                                     levels.push(l);
                                 }
                                 other => {
+                                    let other = format!("{other:?}");
                                     return self.err(format!(
-                                        "expected rubric level in score list, found {other:?}"
-                                    ))
+                                        "expected rubric level in score list, found {other}"
+                                    ));
                                 }
                             }
                             if !self.eat(&Tok::Comma) {
@@ -1368,6 +1400,7 @@ impl Parser {
                 Ok(self.ex_from(start, ExprKind::Ident("state".into())))
             }
             Tok::Ident(name) => {
+                let name = name.clone();
                 let start = self.pos();
                 self.bump();
                 Ok(self.ex_from(start, ExprKind::Ident(name)))
@@ -1394,6 +1427,7 @@ impl Parser {
                 Ok(e)
             }
             Tok::Prompt(body) => {
+                let body = body.clone();
                 let start = self.pos();
                 self.bump();
                 let prompt = self.ex_from(
@@ -1444,7 +1478,7 @@ impl Parser {
             Tok::Par => {
                 let start = self.pos();
                 self.bump();
-                match self.peek().clone() {
+                match self.peek() {
                     Tok::Map => {
                         self.bump();
                         let (coll, kwargs) = if self.at(&Tok::LParen) {
@@ -1488,10 +1522,16 @@ impl Parser {
                             _ => self.err("par race expects a list of callables"),
                         }
                     }
-                    other => self.err(format!("expected map/all/race after par, found {other:?}")),
+                    other => {
+                        let other = format!("{other:?}");
+                        self.err(format!("expected map/all/race after par, found {other}"))
+                    }
                 }
             }
-            other => self.err(format!("unexpected token {other:?}")),
+            other => {
+                let other = format!("{other:?}");
+                self.err(format!("unexpected token {other}"))
+            }
         }
     }
 }

@@ -72,6 +72,27 @@ pub enum BinOp {
     Not, // unary only
 }
 
+impl fmt::Display for BinOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BinOp::Add => write!(f, "+"),
+            BinOp::Sub => write!(f, "-"),
+            BinOp::Mul => write!(f, "*"),
+            BinOp::Div => write!(f, "/"),
+            BinOp::Mod => write!(f, "%"),
+            BinOp::Eq => write!(f, "=="),
+            BinOp::NotEq => write!(f, "!="),
+            BinOp::Lt => write!(f, "<"),
+            BinOp::LtEq => write!(f, "<="),
+            BinOp::Gt => write!(f, ">"),
+            BinOp::GtEq => write!(f, ">="),
+            BinOp::And => write!(f, "and"),
+            BinOp::Or => write!(f, "or"),
+            BinOp::Not => write!(f, "not"),
+        }
+    }
+}
+
 /// One question inside a `decide { ... }` block (v1.4 "Decision"):
 /// a choice over named options, a yes/no probability (noul), or an
 /// ordinal rubric score — the JEV-family question kinds.
@@ -210,6 +231,118 @@ pub enum ExprKind {
 pub struct Expr {
     pub kind: ExprKind,
     pub span: Span,
+}
+
+impl fmt::Display for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.kind)
+    }
+}
+
+impl fmt::Display for ExprKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExprKind::Int(v) => write!(f, "{v}"),
+            ExprKind::Float(v) => write!(f, "{v}"),
+            ExprKind::Str(s) => write!(f, "\"{s}\""),
+            ExprKind::Money(v, unit) => write!(f, "{v} {unit}"),
+            ExprKind::Bool(b) => write!(f, "{b}"),
+            ExprKind::None => write!(f, "none"),
+            ExprKind::Ident(name) => write!(f, "{name}"),
+            ExprKind::ListLit(items) => {
+                write!(f, "[")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{item}")?;
+                }
+                write!(f, "]")
+            }
+            ExprKind::Prompt { body, .. } => write!(f, "\"\"\"{body}\"\"\""),
+            ExprKind::LlmCall { prompt, .. } => write!(f, "llm({prompt})"),
+            ExprKind::Call { func, args, kwargs } => {
+                write!(f, "{func}(")?;
+                let mut first = true;
+                for a in args {
+                    if !first {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{a}")?;
+                    first = false;
+                }
+                for (k, v) in kwargs {
+                    if !first {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{k} = {v}")?;
+                    first = false;
+                }
+                write!(f, ")")
+            }
+            ExprKind::Field { obj, name } => write!(f, "{obj}.{name}"),
+            ExprKind::Binary { op, l, r } => write!(f, "{l} {op} {r}"),
+            ExprKind::Unary { op, x } => match op {
+                BinOp::Sub => write!(f, "-{x}"),
+                BinOp::Not => write!(f, "not {x}"),
+                _ => write!(f, "{op} {x}"),
+            },
+            ExprKind::ParMap { coll, body, .. } => write!(f, "par map ({coll}) -> {body}"),
+            ExprKind::ParAll(items) => {
+                write!(f, "par all [")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{item}")?;
+                }
+                write!(f, "]")
+            }
+            ExprKind::ParRace(items) => {
+                write!(f, "par race [")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{item}")?;
+                }
+                write!(f, "]")
+            }
+            ExprKind::Merge { l, r } => write!(f, "{l} | merge {r}"),
+            ExprKind::Route { .. } => write!(f, "route {{ ... }}"),
+            ExprKind::DecideCall { .. } => write!(f, "decide {{ ... }}"),
+            ExprKind::ComputerCall { method, args, .. } => {
+                write!(f, "computer.{method}(")?;
+                for (i, a) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{a}")?;
+                }
+                write!(f, ")")
+            }
+            ExprKind::RecordLit(fields) => {
+                write!(f, "{{")?;
+                for (i, (k, v)) in fields.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{k}: {v}")?;
+                }
+                write!(f, "}}")
+            }
+            ExprKind::Index { obj, idx } => write!(f, "{obj}[{idx}]"),
+            ExprKind::If { cond, then, else_ } => {
+                write!(f, "if {cond} {{ {then} }}")?;
+                if let Some(el) = else_ {
+                    write!(f, " else {{ {el} }}")?;
+                }
+                Ok(())
+            }
+            ExprKind::Spawn(body) => write!(f, "spawn {body}"),
+            ExprKind::Block(_) => write!(f, "{{ ... }}"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

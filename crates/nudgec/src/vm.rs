@@ -232,8 +232,9 @@ impl<'a> VM<'a> {
                         (NudgeVal::Float(a), NudgeVal::Int(b)) => {
                             self.stack.push(NudgeVal::Float(a + b as f64))
                         }
-                        (NudgeVal::Str(a), NudgeVal::Str(b)) => {
-                            self.stack.push(NudgeVal::Str(format!("{a}{b}")))
+                        (NudgeVal::Str(mut a), NudgeVal::Str(b)) => {
+                            a.push_str(&b);
+                            self.stack.push(NudgeVal::Str(a));
                         }
                         (NudgeVal::List(mut a), NudgeVal::List(b)) => {
                             a.extend(b);
@@ -489,21 +490,8 @@ impl<'a> VM<'a> {
                 }
                 Op::Field(name) => {
                     let obj = self.stack.pop().ok_or("stack underflow")?;
-                    match obj {
-                        NudgeVal::Map(m) => {
-                            let val = m
-                                .get(name)
-                                .cloned()
-                                .ok_or_else(|| format!("map has no key '{name}'"))?;
-                            self.stack.push(val);
-                        }
-                        other => {
-                            return Err(format!(
-                                "cannot access field '{name}' on type {}",
-                                other.type_name()
-                            ))
-                        }
-                    }
+                    let val = obj.get_field(name)?;
+                    self.stack.push(val);
                 }
                 Op::Index => {
                     let idx = self.stack.pop().ok_or("stack underflow")?;
@@ -513,7 +501,7 @@ impl<'a> VM<'a> {
                             NudgeVal::Int(i) => {
                                 if i < 0 || i as usize >= items.len() {
                                     return Err(format!(
-                                        "index out of bounds: index {i} out of range for list of length {}",
+                                        "error[E0705]: index out of bounds: index {i} out of range for list of length {}",
                                         items.len()
                                     ));
                                 }
@@ -584,7 +572,7 @@ impl<'a> VM<'a> {
                             .unwrap_or(10_000);
                         if *count >= limit as i64 {
                             return Err(format!(
-                                "loop iteration limit exceeded: execution halted after {limit} iterations to prevent infinite loop"
+                                "error[E0703]: loop iteration limit exceeded: execution halted after {limit} iterations to prevent infinite loop"
                             ));
                         }
                     }
@@ -641,7 +629,7 @@ impl<'a> VM<'a> {
                 }
                 Op::Call(fn_idx, argc) => {
                     if self.frames.len() >= MAX_CALL_FRAMES {
-                        return Err("call stack overflow".into());
+                        return Err("call stack overflow: recursion limit exceeded".into());
                     }
                     let callee = &self.program.functions[*fn_idx as usize];
                     let new_base = self.stack.len() - *argc;
@@ -703,13 +691,6 @@ impl<'a> VM<'a> {
 
 /// Executes a compiled `Program` starting at `entry` with `args`.
 pub fn run(program: &Program, entry: &str, args: &[NudgeVal]) -> Result<NudgeVal, String> {
-    struct VmExitGuard;
-    impl Drop for VmExitGuard {
-        fn drop(&mut self) {
-            nudge_runtime::proc::reap_all_processes();
-        }
-    }
-    let _guard = VmExitGuard;
     let mut noop = |req: DelegateRequest<'_>| -> Result<NudgeVal, String> {
         match req {
             DelegateRequest::Call(name, _) => Err(format!(
@@ -732,13 +713,6 @@ pub fn run_with_delegate(
     args: &[NudgeVal],
     delegate: &mut DelegateHook<'_>,
 ) -> Result<NudgeVal, String> {
-    struct VmExitGuard;
-    impl Drop for VmExitGuard {
-        fn drop(&mut self) {
-            nudge_runtime::proc::reap_all_processes();
-        }
-    }
-    let _guard = VmExitGuard;
     let mut vm = VM::new(program);
     vm.execute(entry, args, delegate)
 }
@@ -2438,13 +2412,13 @@ mod tests {
         let err_interp = run_program(&items, "main", &[]).unwrap_err();
         assert_eq!(
             err_interp,
-            "index out of bounds: index 5 out of range for list of length 2"
+            "error[E0705]: index out of bounds: index 5 out of range for list of length 2"
         );
         let prog = compile(&items).unwrap();
         let err_vm = run(&prog, "main", &[]).unwrap_err();
         assert_eq!(
             err_vm,
-            "index out of bounds: index 5 out of range for list of length 2"
+            "error[E0705]: index out of bounds: index 5 out of range for list of length 2"
         );
 
         let _guard2 = EnvVarGuard::set("NUDGE_MAX_LOOP_ITERATIONS", "2");
@@ -2461,13 +2435,13 @@ mod tests {
         let err_interp = run_program(&items_limit, "main", &[]).unwrap_err();
         assert_eq!(
             err_interp,
-            "loop iteration limit exceeded: execution halted after 2 iterations to prevent infinite loop"
+            "error[E0703]: loop iteration limit exceeded: execution halted after 2 iterations to prevent infinite loop"
         );
         let prog_limit = compile(&items_limit).unwrap();
         let err_vm = run(&prog_limit, "main", &[]).unwrap_err();
         assert_eq!(
             err_vm,
-            "loop iteration limit exceeded: execution halted after 2 iterations to prevent infinite loop"
+            "error[E0703]: loop iteration limit exceeded: execution halted after 2 iterations to prevent infinite loop"
         );
     }
 
@@ -2722,5 +2696,60 @@ mod tests {
             run_program(&items, "main", &[]).unwrap(),
             NudgeVal::Str("silver".into())
         );
+    }
+
+    #[test]
+    fn test_vm_task_field_access() {
+        let src = r#"
+            fn get_id(t: task) -> string {
+                t.id
+            }
+        "#;
+        let items = parse_src(src);
+        let program = compile(&items).expect("compilation to bytecode failed");
+        let task_val = NudgeVal::Task("task-xyz-123".to_string());
+        let res = run(&program, "get_id", std::slice::from_ref(&task_val))
+            .expect("VM should succeed accessing task.id");
+        assert_eq!(res, NudgeVal::Str("task-xyz-123".to_string()));
+
+        let interp_res = run_program(&items, "get_id", std::slice::from_ref(&task_val));
+        assert_eq!(interp_res, Ok(NudgeVal::Str("task-xyz-123".to_string())));
+    }
+
+    #[test]
+    fn test_bytecode_delegates_math_abs_and_runs_in_vm() {
+        let src = r#"
+            fn main() -> int {
+                math.abs(-3)
+            }
+        "#;
+        let items = parse_src(src);
+        // Verify bytecode compilation succeeds (doesn't fail with "not in bytecode subset")
+        let program = crate::bytecode::compile_with_entry(&items, "main")
+            .expect("math.abs(-3) must compile to bytecode");
+        // Verify execution in VM with delegation
+        let mut interp = crate::eval::interpreter::Interpreter::new();
+        interp.load_items(&items).unwrap();
+        let mut delegate = |req: DelegateRequest<'_>| -> Result<NudgeVal, String> {
+            match req {
+                DelegateRequest::Call(callee, callee_args) => {
+                    interp.invoke_fn(callee, &callee_args)
+                }
+                DelegateRequest::Expr(expr, locals) => {
+                    let child_env =
+                        std::rc::Rc::new(std::cell::RefCell::new(crate::eval::env::Env::new()));
+                    for (k, v) in locals {
+                        child_env.borrow_mut().define(k.clone(), v.clone());
+                    }
+                    interp.eval_expr(expr, &child_env)
+                }
+            }
+        };
+        let res = run_with_delegate(&program, "main", &[], &mut delegate)
+            .expect("math.abs(-3) must run correctly in the VM");
+        assert_eq!(res, NudgeVal::Int(3));
+
+        let prog_res = run_program(&items, "main", &[]).expect("run_program should succeed");
+        assert_eq!(prog_res, NudgeVal::Int(3));
     }
 }

@@ -29,7 +29,10 @@ mod tests {
 
     #[test]
     fn test_io_delete_dir_and_list_dir_sorted() {
-        let temp_dir = std::env::temp_dir().join(format!("nudge_io_test_{}", std::process::id()));
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let uid = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let temp_dir =
+            std::env::temp_dir().join(format!("nudge_io_test_{}_{}", std::process::id(), uid));
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
         let f2 = temp_dir.join("b.txt");

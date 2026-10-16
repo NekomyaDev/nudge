@@ -75,6 +75,46 @@ impl NudgeVal {
             (a, b) => a == b,
         }
     }
+
+    /// Resolves a field on a value (Map, Task, UiElement).
+    pub fn get_field(&self, name: &str) -> Result<NudgeVal, String> {
+        match self {
+            NudgeVal::Map(m) => m
+                .get(name)
+                .cloned()
+                .ok_or_else(|| format!("map has no key '{name}'")),
+            NudgeVal::Task(id) => {
+                if name == "id" {
+                    Ok(NudgeVal::Str(id.clone()))
+                } else if name == "state" || name == "status" {
+                    let st = nudge_runtime::task::task_status(id)
+                        .unwrap_or(nudge_runtime::task::TaskState::Pending);
+                    Ok(NudgeVal::Str(st.as_str().to_string()))
+                } else {
+                    Err(format!("task has no field '{name}'"))
+                }
+            }
+            NudgeVal::UiElement { found: true, elem } => match name {
+                "id" => Ok(elem
+                    .id
+                    .as_ref()
+                    .map(|s| NudgeVal::Str(s.clone()))
+                    .unwrap_or(NudgeVal::Unit)),
+                "text" => Ok(NudgeVal::Str(elem.get_text())),
+                "tag" => Ok(NudgeVal::Str(elem.tag.clone())),
+                _ => elem
+                    .props
+                    .get(name)
+                    .map(|s| NudgeVal::Str(s.clone()))
+                    .ok_or_else(|| format!("element has no property '{name}'")),
+            },
+            NudgeVal::UiElement { found: false, .. } => Ok(NudgeVal::Unit),
+            other => Err(format!(
+                "cannot access field '{name}' on type {}",
+                other.type_name()
+            )),
+        }
+    }
 }
 
 impl fmt::Display for NudgeVal {

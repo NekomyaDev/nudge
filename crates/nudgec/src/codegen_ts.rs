@@ -1183,13 +1183,17 @@ function input(...args: any[]): any {
 
 // ── tests ────────────────────────────────────────────────────────────
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::Mutex;
 
     /// Serialize tests that spawn `node` — parallel node spawns contend on OS
     /// resources and caused rare flakes under a loaded test harness.
-    static NODE_LOCK: Mutex<()> = Mutex::new(());
+    pub(crate) static NODE_LOCK: Mutex<()> = Mutex::new(());
+    pub(crate) fn test_uid() -> u64 {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
     use crate::lexer::lex;
     use crate::parser::parse;
 
@@ -1366,7 +1370,11 @@ mod tests {
         if !runtime.exists() {
             return;
         }
-        let dir = std::env::temp_dir().join(format!("nudge_tsagent_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "nudge_tsagent_{}_{}",
+            std::process::id(),
+            test_uid()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         let src = "agent A {\n    state {\n        notes: [string] = [],\n        round: int = 0,\n    }\n    fn step() -> int {\n        state.notes += [\"a\"]\n        state.round += 1\n        state.notes += [\"b\"]\n        state.round += 1\n        state.round\n    }\n    fn main() -> int {\n        step()\n    }\n}";
         let emitted = strip_ts(&gen_ts(src)).replace("./nudge_runtime.ts", "./nudge_runtime.mjs");
@@ -1440,7 +1448,8 @@ mod tests {
         if !runtime.exists() {
             return;
         }
-        let dir = std::env::temp_dir().join(format!("nudge_tse2e_{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("nudge_tse2e_{}_{}", std::process::id(), test_uid()));
         std::fs::create_dir_all(&dir).unwrap();
         // the emitted .ts is annotation-stripped so plain node can run it;
         // the runtime ships plain JS and only needs the rename
@@ -1492,7 +1501,11 @@ mod tests {
         if !runtime.exists() {
             return;
         }
-        let dir = std::env::temp_dir().join(format!("nudge_tsbudget_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "nudge_tsbudget_{}_{}",
+            std::process::id(),
+            test_uid()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         let rt_src = std::fs::read_to_string(runtime.join("nudge_runtime.ts")).unwrap();
         std::fs::write(dir.join("nudge_runtime.mjs"), rt_src).unwrap();
@@ -1540,7 +1553,8 @@ mod tests {
         if !runtime.exists() {
             return;
         }
-        let dir = std::env::temp_dir().join(format!("nudge_tsui_{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("nudge_tsui_{}_{}", std::process::id(), test_uid()));
         std::fs::create_dir_all(&dir).unwrap();
 
         let src = r#"
@@ -1612,6 +1626,7 @@ mod tests {
 
 #[cfg(test)]
 mod computer_tests {
+    use super::tests::{test_uid, NODE_LOCK};
     use super::*;
     use crate::lexer::lex;
     use crate::parser::parse;
@@ -1648,6 +1663,7 @@ mod computer_tests {
 
     #[test]
     fn ts_computer_program_runs_under_node() {
+        let _nl = NODE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Nudge source → TS codegen → node → fake desktop: the full chain
         // CI runs; without it an invalid lowering ships green.
         use std::process::Command;
@@ -1658,7 +1674,11 @@ mod computer_tests {
         if !runtime.exists() {
             return;
         }
-        let dir = std::env::temp_dir().join(format!("nudge_tscomputer_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "nudge_tscomputer_{}_{}",
+            std::process::id(),
+            test_uid()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         let src = "fn main(app: string) -> bool uses Computer { let obs = computer.observe(app, allow = [app], screenshot = true)\n    let r = computer.click(1, allow = [app])\n    let p = computer.paste(\"hi\", allow = [app])\n    r.ok }";
         let emitted = super::tests::strip_ts(&gen_ts(src))
