@@ -95,6 +95,36 @@ test("replayed llm output violating the schema raises ReplayMismatch", async () 
   }
 });
 
+test("real provider: retries transient 5xx then succeeds; fails fast on 4xx", async () => {
+  const origFetch = globalThis.fetch;
+  const saved = {};
+  for (const k of ["NUDGE_PROVIDER", "NUDGE_API_KEY", "NUDGE_BACKOFF_BASE"]) saved[k] = process.env[k];
+  process.env.NUDGE_PROVIDER = "openai";
+  process.env.NUDGE_API_KEY = "sk-test";
+  process.env.NUDGE_BACKOFF_BASE = "0"; // no wait between retries in tests
+  try {
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      if (calls === 1) return { ok: false, status: 500, text: async () => "boom" };
+      return { ok: true, json: async () => ({ choices: [{ message: { content: "retried-ok" } }], usage: {} }) };
+    };
+    const out1 = await llmCall({ prompt: "p", model: "openai:gpt" });
+    assert.equal(out1, "retried-ok");
+    assert.equal(calls, 2, "5xx should retry");
+
+    calls = 0;
+    globalThis.fetch = async () => { calls++; return { ok: false, status: 400, text: async () => "bad req" }; };
+    await assert.rejects(() => llmCall({ prompt: "p", model: "openai:gpt" }), /provider HTTP 400/);
+    assert.equal(calls, 1, "4xx must not retry");
+  } finally {
+    globalThis.fetch = origFetch;
+    for (const k of Object.keys(saved)) {
+      if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
+    }
+  }
+});
+
 test("tool replay exhaustion raises ReplayMismatch (not a silent [])", () => {
   const tmp = tracePath([{ kind: "tool.call", tool: "find", input: [], output: [] }]);
   process.env.NUDGE_REPLAY = tmp;
