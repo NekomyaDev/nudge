@@ -239,6 +239,25 @@ fn update_workspace_file(path: string, new_content: string) -> bool uses Workspa
 - **Separation of Deletion Authority:** deleting files or directories requires the dedicated `WorkspaceDelete` effect (`uses WorkspaceDelete`), preventing general write routines from deleting directories.
 - **Persistent Key-Value Store (`store.*`):** strongly typed storage saved to `<workspace>/.nudge/store.json` (or `NUDGE_STORE_PATH`). Unlike ephemeral run checkpoints, this data store persists across distinct executions and reboots.
 
+### Process & File Watching
+
+Build agents that drive build/test runners, language servers, and live-reload tooling — with the same effect + grants discipline as everything else:
+
+```nudge
+fn watch_and_rebuild() -> bool uses FsWatch, Process {
+    // 1. Bounded, workspace-confined file watching (no indefinite hang)
+    let changes = fs.watch("src", 5000)          // dir/path + timeout (ms)
+
+    // 2. Controlled child process: program and args SEPARATELY (never a shell)
+    let handle = proc.spawn("cargo", ["build", "--quiet"], 60000)
+    let out = proc.await(handle)
+    proc.alive(handle) == false
+}
+```
+
+- **File Watching (`fs.watch`, `FsWatch` effect):** watch a workspace path for change events, bounded by a timeout (it never hangs indefinitely) and confined to the workspace root (escapes denied). Undeclared use is typed away (`E0301`).
+- **Controlled Processes (`proc.*`, `Process` effect):** `proc.spawn(cmd, argv, timeout_ms)` / `proc.run(...)` (spawn + await) / `proc.await` / `proc.kill` / `proc.alive`. `cmd` and its `argv` are passed **separately** and executed without a shell (no shell-injection surface). Lifecycle is bounded (`E0921`) with **no orphan processes** (children are reaped on task exit or cancel) and kill-on-cancel. Executing anything is **fail-closed**: denied by default unless authorized by `NUDGE_PROCESS_GRANTS` (`E0920`, workspace confinement `E0922`).
+
 ### Local UI
 
 Build native human-in-the-loop interfaces, approval stations, and interactive inspection panels directly in Nudge:

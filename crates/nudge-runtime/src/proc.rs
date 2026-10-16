@@ -300,7 +300,18 @@ fn spawn_child(cmd: &str, argv: &[String], timeout: Duration) -> Result<Value, S
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("process spawn failed for '{cmd}': {e}"))?;
+        .map_err(|e| {
+            // A whole command line passed as `cmd` (e.g. "echo hi") is a common
+            // misuse: it looks for a program literally named "echo hi". Give the
+            // fix instead of a bare spawn error.
+            if cmd.split_whitespace().count() > 1 && argv.is_empty() {
+                format!(
+                    "process spawn failed for '{cmd}': {e} (hint: proc.* takes the program and its args separately — e.g. proc.run(\"echo\", [\"hi\"]), not proc.run(\"{cmd}\"))"
+                )
+            } else {
+                format!("process spawn failed for '{cmd}': {e}")
+            }
+        })?;
 
     let mut stdout_pipe = child.stdout.take();
     let mut stderr_pipe = child.stderr.take();
