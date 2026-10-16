@@ -1,9 +1,9 @@
 # Architectural Decision Memo: Trace Redaction and Native Window Backend
 
-**Target Repository:** `/home/neko/Belgeler/ZCode-AI-Calisma-Alani/nudge`  
-**Base Commit:** `565f6df` (HEAD)  
-**Status:** Approved & Implemented (DECISION 1 = `a3e36e4`, DECISION 2 = `6363e3d`)  
-**Author:** Nudge Design Agent  
+**Target Repository:** `/home/neko/Belgeler/ZCode-AI-Calisma-Alani/nudge`
+**Base Commit:** `565f6df` (HEAD)
+**Status:** Approved & Implemented (DECISION 1 = `a3e36e4`, DECISION 2 = `6363e3d`)
+**Author:** Nudge Design Agent
 
 ---
 

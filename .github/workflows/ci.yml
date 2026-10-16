@@ -95,4 +95,3 @@ jobs:
         # Builds the window runtime behind `native-gui` and drives a REAL OS window:
         # create window -> dispatch click -> agent state changes -> re-render.
         run: bash scripts/gui_acceptance.sh
-
