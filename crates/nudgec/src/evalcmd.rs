@@ -12,7 +12,15 @@ import importlib.util, json, sys
 spec = importlib.util.spec_from_file_location("nudge_mod", "__MODULE__")
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
-rows = [json.loads(l) for l in open("__DATASET__", encoding="utf-8") if l.strip()]
+rows = []
+with open("__DATASET__", encoding="utf-8") as _df:
+    for _ln, _line in enumerate(_df, 1):
+        if not _line.strip():
+            continue
+        try:
+            rows.append(json.loads(_line))
+        except json.JSONDecodeError as _e:
+            raise SystemExit(f"dataset line {_ln}: invalid JSON: {_e}") from _e
 fn_name = "__FN__"
 path = "__PATH__"
 out_path = "__OUT__"
