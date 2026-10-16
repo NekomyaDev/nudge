@@ -231,7 +231,17 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                     if *count < 0 {
                         return Err("str.repeat: count must be non-negative".to_string());
                     }
-                    Ok(Value::String(s.repeat(*count as usize)))
+                    let count_usize = usize::try_from(*count)
+                        .map_err(|_| "str.repeat: count too large".to_string())?;
+                    if s.len()
+                        .checked_mul(count_usize)
+                        .is_none_or(|sz| sz > 64 * 1024 * 1024)
+                    {
+                        return Err(
+                            "str.repeat: result exceeds maximum allowed size (64MB)".to_string()
+                        );
+                    }
+                    Ok(Value::String(s.repeat(count_usize)))
                 }
                 _ => Err(
                     "str.repeat: first argument must be a string, second an integer".to_string(),

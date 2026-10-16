@@ -171,8 +171,11 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 Value::Float(v) => *v,
                 _ => return Err("time.sleep: argument must be a number (int or float)".to_string()),
             };
-            if ms < 0.0 {
-                return Err("time.sleep: duration cannot be negative".to_string());
+            if !ms.is_finite() || ms < 0.0 || (ms / 1000.0) > (u64::MAX as f64) {
+                return Err(
+                    "time.sleep: duration must be finite, non-negative, and fit in u64 seconds"
+                        .to_string(),
+                );
             }
             let duration = Duration::from_secs_f64(ms / 1000.0);
             thread::sleep(duration);

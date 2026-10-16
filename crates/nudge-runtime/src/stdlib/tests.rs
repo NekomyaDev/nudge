@@ -83,6 +83,9 @@ mod tests {
 
         let result = stdlib::math::execute("math.abs", vec![Value::Float(-3.15)]);
         assert_eq!(result.unwrap(), Value::Float(3.15));
+
+        let result = stdlib::math::execute("math.abs", vec![Value::Int(i64::MIN)]);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -147,6 +150,15 @@ mod tests {
             ],
         );
         assert_eq!(result.unwrap(), Value::Int(2));
+
+        let multibyte = stdlib::string::execute(
+            "str.index_of",
+            vec![
+                Value::String("🦀x".to_string()),
+                Value::String("x".to_string()),
+            ],
+        );
+        assert_eq!(multibyte.unwrap(), Value::Int(1));
 
         let not_found = stdlib::string::execute(
             "str.index_of",
@@ -310,6 +322,20 @@ mod tests {
             ],
         );
         assert_eq!(right.unwrap(), Value::String("hello".to_string()));
+    }
+
+    #[test]
+    fn test_str_repeat_huge() {
+        let result = crate::stdlib::string::execute(
+            "str.repeat",
+            vec![Value::String("a".to_string()), Value::Int(i64::MAX)],
+        );
+        assert!(result.is_err());
+        let result2 = crate::stdlib::string::execute(
+            "str.repeat",
+            vec![Value::String("abc".to_string()), Value::Int(30_000_000)],
+        );
+        assert!(result2.is_err());
     }
 
     #[test]
@@ -813,6 +839,14 @@ mod computer_tests {
         assert_eq!(res.unwrap(), Value::None);
         let elapsed = start.elapsed();
         assert!(elapsed >= std::time::Duration::from_millis(5));
+
+        assert!(crate::stdlib::time::execute("time.sleep", vec![Value::Float(f64::NAN)]).is_err());
+        assert!(
+            crate::stdlib::time::execute("time.sleep", vec![Value::Float(f64::INFINITY)]).is_err()
+        );
+        assert!(crate::stdlib::time::execute("time.sleep", vec![Value::Float(1.0 / 0.0)]).is_err());
+        assert!(crate::stdlib::time::execute("time.sleep", vec![Value::Float(-1.0)]).is_err());
+        assert!(crate::stdlib::time::execute("time.sleep", vec![Value::Float(f64::MAX)]).is_err());
     }
 
     #[test]

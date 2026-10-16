@@ -113,6 +113,12 @@ impl TextInputState {
         self.text.chars().count()
     }
 
+    pub fn set_text(&mut self, text: impl Into<String>) {
+        self.text = text.into();
+        self.cursor = self.cursor.min(self.char_len());
+        self.selection_anchor = None;
+    }
+
     pub fn has_selection(&self) -> bool {
         match self.selection_anchor {
             Some(anchor) => anchor != self.cursor,
@@ -284,7 +290,7 @@ impl TextInputState {
             if c == '\n' {
                 line += 1;
                 col = 0;
-            } else {
+            } else if c != '\r' {
                 col += 1;
             }
         }
@@ -297,10 +303,12 @@ impl TextInputState {
         let mut idx = 0;
         for c in self.text.chars() {
             if curr_line == target_line {
-                if c == '\n' || curr_col == target_col {
+                if c == '\n' || c == '\r' || curr_col == target_col {
                     return idx;
                 }
-                curr_col += 1;
+                if c != '\r' {
+                    curr_col += 1;
+                }
             } else if c == '\n' {
                 curr_line += 1;
                 curr_col = 0;
@@ -318,7 +326,7 @@ impl TextInputState {
         self.text
             .split('\n')
             .nth(line_idx)
-            .map(|l| l.chars().count())
+            .map(|l| l.trim_end_matches('\r').chars().count())
             .unwrap_or(0)
     }
 
@@ -583,6 +591,23 @@ impl HeadlessMount {
                 .insert(id.to_string(), TextInputState::new(initial));
         }
         self.text_inputs.get_mut(id).unwrap()
+    }
+
+    /// Dispatch change event to an input element and return (handler_name, new_text).
+    pub fn dispatch_change(&mut self, id: &str, new_value: &str) -> (Option<String>, String) {
+        self.focus(id);
+        let state = self.ensure_input_state(id);
+        state.set_text(new_value);
+        let new_val = state.text.clone();
+
+        let handler = if let Some(elem) = self.find_mut(id) {
+            elem.text = Some(new_val.clone());
+            elem.props.insert("value".to_string(), new_val.clone());
+            elem.on_change.clone()
+        } else {
+            None
+        };
+        (handler, new_val)
     }
 
     /// Type text into an input element and return (handler_name, new_text) if on_change exists.
@@ -963,5 +988,85 @@ mod tests {
         assert_eq!(mount.scroll_x, max_x);
         mount.scroll(-1000, 0);
         assert_eq!(mount.scroll_x, 0);
+    }
+
+    #[test]
+    fn test_crlf_column_drift_and_line_lengths() {
+        let input = TextInputState::new("line0\r\nline1\r\nline2");
+        assert_eq!(input.lines_count(), 3);
+        assert_eq!(input.line_len(0), 5);
+        assert_eq!(input.line_len(1), 5);
+        assert_eq!(input.line_len(2), 5);
+
+        // Column counting ignores \r
+        assert_eq!(input.line_and_col_of(0), (0, 0));
+        assert_eq!(input.line_and_col_of(5), (0, 5));
+        assert_eq!(input.line_and_col_of(6), (0, 5));
+        assert_eq!(input.line_and_col_of(7), (1, 0));
+        assert_eq!(input.line_and_col_of(9), (1, 2));
+
+        // char_idx_for_line_col ignores \r
+        assert_eq!(input.char_idx_for_line_col(0, 5), 5);
+        assert_eq!(input.char_idx_for_line_col(1, 0), 7);
+        assert_eq!(input.char_idx_for_line_col(1, 2), 9);
+    }
+
+    #[test]
+    fn test_set_text_preserves_cursor_and_clears_selection() {
+        let mut input = TextInputState::new("hello world");
+        input.cursor = 5;
+        input.selection_anchor = Some(2);
+
+        // Setting new text preserves mid-cursor if within new length
+        input.set_text("hello brave world");
+        assert_eq!(input.cursor, 5);
+        assert_eq!(input.selection_anchor, None);
+
+        // Setting shorter text clamps cursor to new length
+        input.set_text("hi");
+        assert_eq!(input.cursor, 2);
+        assert_eq!(input.selection_anchor, None);
+    }
+
+    #[test]
+    fn test_headless_mount_dispatch_change_preserves_mid_cursor() {
+        let mut col = UiElement::new("column");
+        let mut inp = UiElement::new("input");
+        inp.id = Some("test_inp".to_string());
+        inp.props.insert("value".to_string(), "hello".to_string());
+        col.children.push(inp);
+
+        let mut mount = HeadlessMount::new("App", Some(col));
+        let st = mount.ensure_input_state("test_inp");
+        st.cursor = 2; // Mid-string cursor between 'e' and 'l'
+
+        mount.dispatch_change("test_inp", "heXYZllo");
+        let st_after = mount.ensure_input_state("test_inp");
+        assert_eq!(st_after.cursor, 2, "cursor must be preserved on change");
+        assert_eq!(st_after.text, "heXYZllo");
+        assert_eq!(st_after.selection_anchor, None);
+    }
+
+    #[test]
+    fn test_multiline_selection_line_and_col_mapping() {
+        let mut input = TextInputState::new("line0\nline1\nline2");
+        assert_eq!(input.line_and_col_of(6), (1, 0));
+        assert_eq!(input.line_and_col_of(8), (1, 2));
+        assert_eq!(input.line_and_col_of(11), (1, 5));
+        assert_eq!(input.line_and_col_of(14), (2, 2));
+
+        // Select within line 1
+        input.cursor = 9;
+        input.selection_anchor = Some(7);
+        let (start, end) = input.selection_range().unwrap();
+        assert_eq!(input.line_and_col_of(start), (1, 1));
+        assert_eq!(input.line_and_col_of(end), (1, 3));
+
+        // Select across lines: line 0 to line 2
+        input.cursor = 14;
+        input.selection_anchor = Some(2);
+        let (start2, end2) = input.selection_range().unwrap();
+        assert_eq!(input.line_and_col_of(start2), (0, 2));
+        assert_eq!(input.line_and_col_of(end2), (2, 2));
     }
 }

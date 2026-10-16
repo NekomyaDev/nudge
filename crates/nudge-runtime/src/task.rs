@@ -158,7 +158,10 @@ impl TaskToken {
             budget_reserved: Arc::new(Mutex::new(0.0)),
             result: Arc::new((Mutex::new(None), Condvar::new())),
         };
-        self.children.lock().unwrap().push(child.clone());
+        self.children
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(child.clone());
         child
     }
 
@@ -178,14 +181,17 @@ impl TaskToken {
             budget_reserved: Arc::new(Mutex::new(0.0)),
             result: Arc::new((Mutex::new(None), Condvar::new())),
         };
-        self.children.lock().unwrap().push(child.clone());
+        self.children
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(child.clone());
         child
     }
 
     /// Check if this task or any of its ancestors is cancelled.
     pub fn is_cancelled(&self) -> bool {
         {
-            let st = self.state.lock().unwrap();
+            let st = self.state.lock().unwrap_or_else(|e| e.into_inner());
             if *st == TaskState::Cancelled {
                 return true;
             }
@@ -198,7 +204,7 @@ impl TaskToken {
         }
         if let Some(parent) = &self.parent {
             if parent.is_cancelled() {
-                let mut st = self.state.lock().unwrap();
+                let mut st = self.state.lock().unwrap_or_else(|e| e.into_inner());
                 if st.is_terminal() {
                     return false;
                 }
@@ -215,9 +221,13 @@ impl TaskToken {
     /// Cancel this task and propagate cancellation to all subtasks.
     pub fn cancel(&self) {
         {
-            let mut st = self.state.lock().unwrap();
+            let mut st = self.state.lock().unwrap_or_else(|e| e.into_inner());
             if st.is_terminal() {
-                let kids = self.children.lock().unwrap().clone();
+                let kids = self
+                    .children
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone();
                 for kid in kids {
                     kid.cancel();
                 }
@@ -229,41 +239,46 @@ impl TaskToken {
         self.release_budget();
         {
             let (lock, cvar) = &*self.result;
-            let mut r = lock.lock().unwrap();
+            let mut r = lock.lock().unwrap_or_else(|e| e.into_inner());
             if r.is_none() {
                 *r = Some(Err("error[E-task-0001]: TaskCancelled".to_string()));
             }
             cvar.notify_all();
         }
-        let kids = self.children.lock().unwrap().clone();
+        let kids = self
+            .children
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         for kid in kids {
             kid.cancel();
         }
         crate::proc::reap_cancelled_processes();
+        crate::proc::reap_processes_for_task(&self.id);
     }
 
     /// Current lifecycle state.
     pub fn state(&self) -> TaskState {
         if self.is_cancelled() {
-            let mut st = self.state.lock().unwrap();
+            let mut st = self.state.lock().unwrap_or_else(|e| e.into_inner());
             if !st.is_terminal() {
                 *st = TaskState::Cancelled;
             }
             return TaskState::Cancelled;
         }
-        *self.state.lock().unwrap()
+        *self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Update the lifecycle state (terminal states cannot be overwritten).
     pub fn set_state(&self, new_state: TaskState) {
-        let mut st = self.state.lock().unwrap();
+        let mut st = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if st.is_terminal() {
             return;
         }
         *st = new_state;
         if new_state.is_terminal() {
             let (lock, cvar) = &*self.result;
-            let mut r = lock.lock().unwrap();
+            let mut r = lock.lock().unwrap_or_else(|e| e.into_inner());
             if r.is_none() {
                 *r = match new_state {
                     TaskState::Completed => Some(Ok(serde_json::Value::Null)),
@@ -275,6 +290,7 @@ impl TaskToken {
                 };
             }
             cvar.notify_all();
+            crate::proc::reap_processes_for_task(&self.id);
         }
         if new_state == TaskState::Cancelled {
             drop(st);
@@ -285,9 +301,9 @@ impl TaskToken {
     /// Record task outcome.
     pub fn set_result(&self, res: Result<serde_json::Value, String>) {
         let (lock, cvar) = &*self.result;
-        let mut r = lock.lock().unwrap();
+        let mut r = lock.lock().unwrap_or_else(|e| e.into_inner());
         {
-            let mut st = self.state.lock().unwrap();
+            let mut st = self.state.lock().unwrap_or_else(|e| e.into_inner());
             let is_cancelled = *st == TaskState::Cancelled
                 || self.cancelled.load(Ordering::SeqCst)
                 || self
@@ -303,6 +319,7 @@ impl TaskToken {
                     *r = Some(Err("error[E-task-0001]: TaskCancelled".to_string()));
                 }
                 cvar.notify_all();
+                crate::proc::reap_processes_for_task(&self.id);
                 return;
             }
             if !st.is_terminal() {
@@ -313,6 +330,9 @@ impl TaskToken {
                     }
                     Err(_) => TaskState::Failed,
                 };
+                if st.is_terminal() {
+                    crate::proc::reap_processes_for_task(&self.id);
+                }
             }
         }
         *r = Some(res);
@@ -322,15 +342,15 @@ impl TaskToken {
     /// Retrieve recorded task outcome.
     pub fn get_result(&self) -> Option<Result<serde_json::Value, String>> {
         let (lock, _) = &*self.result;
-        lock.lock().unwrap().clone()
+        lock.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Join task synchronously, blocking until completion, failure, or cancellation.
     pub fn join(&self) -> Result<serde_json::Value, String> {
         let (lock, cvar) = &*self.result;
-        let mut guard = lock.lock().unwrap();
+        let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
         while guard.is_none() {
-            guard = cvar.wait(guard).unwrap();
+            guard = cvar.wait(guard).unwrap_or_else(|e| e.into_inner());
         }
         match guard.as_ref().unwrap() {
             Ok(val) => Ok(val.clone()),
@@ -349,11 +369,17 @@ impl TaskToken {
     /// Block until this task is cancelled or terminal (e.g. for deterministic synchronization).
     pub fn wait_cancelled(&self) {
         let (lock, cvar) = &*self.result;
-        let mut guard = lock.lock().unwrap();
-        while !self.is_cancelled() && !self.state.lock().unwrap().is_terminal() {
+        let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+        while !self.is_cancelled()
+            && !self
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_terminal()
+        {
             let (next_guard, timeout_res) = cvar
                 .wait_timeout(guard, std::time::Duration::from_secs(5))
-                .unwrap();
+                .unwrap_or_else(|e| e.into_inner());
             guard = next_guard;
             if timeout_res.timed_out() {
                 break;
@@ -363,19 +389,28 @@ impl TaskToken {
 
     /// Add to this task's held budget reservation.
     pub fn add_reservation(&self, amount: f64) {
-        let mut r = self.budget_reserved.lock().unwrap();
+        let mut r = self
+            .budget_reserved
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         *r += amount;
     }
 
     /// Deduct from this task's held budget reservation.
     pub fn sub_reservation(&self, amount: f64) {
-        let mut r = self.budget_reserved.lock().unwrap();
+        let mut r = self
+            .budget_reserved
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         *r = (*r - amount).max(0.0);
     }
 
     /// Release all budget reservations held by this task.
     pub fn release_budget(&self) {
-        let mut r = self.budget_reserved.lock().unwrap();
+        let mut r = self
+            .budget_reserved
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let amount = *r;
         *r = 0.0;
         drop(r);
@@ -419,7 +454,7 @@ pub fn budget_reserve(amount: f64) -> Result<(), String> {
         }
     }
     if let Some(limit) = budget_limit() {
-        let mut tracker = BUDGET_TRACKER.lock().unwrap();
+        let mut tracker = BUDGET_TRACKER.lock().unwrap_or_else(|e| e.into_inner());
         if is_current_cancelled() {
             return Err("error[E-task-0001]: TaskCancelled".to_string());
         }
@@ -448,7 +483,7 @@ pub fn budget_reserve(amount: f64) -> Result<(), String> {
 
 fn budget_release_internal(amount: f64) {
     if let Some(_limit) = budget_limit() {
-        let mut tracker = BUDGET_TRACKER.lock().unwrap();
+        let mut tracker = BUDGET_TRACKER.lock().unwrap_or_else(|e| e.into_inner());
         tracker.reserved = (tracker.reserved - amount).max(0.0);
     }
 }
@@ -464,7 +499,7 @@ pub fn budget_release(amount: f64) {
 /// Charge spent budget capacity.
 pub fn budget_charge(amount: f64) -> Result<(), String> {
     if let Some(limit) = budget_limit() {
-        let mut tracker = BUDGET_TRACKER.lock().unwrap();
+        let mut tracker = BUDGET_TRACKER.lock().unwrap_or_else(|e| e.into_inner());
         tracker.spent += amount;
         if tracker.spent > limit + 1e-9 {
             return Err(format!(
@@ -478,14 +513,14 @@ pub fn budget_charge(amount: f64) -> Result<(), String> {
 
 /// Reset budget tracking (for test isolation).
 pub fn budget_reset() {
-    let mut tracker = BUDGET_TRACKER.lock().unwrap();
+    let mut tracker = BUDGET_TRACKER.lock().unwrap_or_else(|e| e.into_inner());
     tracker.spent = 0.0;
     tracker.reserved = 0.0;
 }
 
 /// Query budget status (spent, reserved, limit).
 pub fn budget_status() -> (f64, f64, Option<f64>) {
-    let tracker = BUDGET_TRACKER.lock().unwrap();
+    let tracker = BUDGET_TRACKER.lock().unwrap_or_else(|e| e.into_inner());
     (tracker.spent, tracker.reserved, budget_limit())
 }
 
@@ -497,7 +532,7 @@ fn with_registry<F, R>(f: F) -> R
 where
     F: FnOnce(&mut HashMap<String, TaskToken>) -> R,
 {
-    let mut lock = TASK_REGISTRY.lock().unwrap();
+    let mut lock = TASK_REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
     if lock.is_none() {
         *lock = Some(HashMap::new());
     }
@@ -507,8 +542,25 @@ where
 /// Register a task token in the global registry.
 pub fn task_register(token: TaskToken) {
     with_registry(|reg| {
+        if reg.len() >= 256 {
+            reg.retain(|_, t| !t.state().is_terminal());
+        }
         reg.insert(token.id.as_str().to_string(), token);
     });
+}
+
+/// Unregister a task token from the global registry by ID.
+pub fn task_unregister(id: &str) -> Option<TaskToken> {
+    with_registry(|reg| reg.remove(id))
+}
+
+/// Prune all tasks from the registry that have reached a terminal state.
+pub fn task_prune_finished() -> usize {
+    with_registry(|reg| {
+        let initial = reg.len();
+        reg.retain(|_, t| !t.state().is_terminal());
+        initial - reg.len()
+    })
 }
 
 /// Spawn a child task under the active task (or root).
@@ -517,7 +569,11 @@ pub fn task_spawn(name: Option<&str>) -> TaskToken {
     let child = if let Some(n) = name {
         parent.child_named(n)
     } else {
-        let count = parent.children.lock().unwrap().len();
+        let count = parent
+            .children
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len();
         parent.child(count)
     };
     task_register(child.clone());
@@ -573,11 +629,27 @@ pub fn task_wait_cancelled(id: Option<&str>) {
     }
 }
 
+const MAX_FINISHED_TASKS: usize = 16;
+
 /// Join a task by ID.
 pub fn task_join(id: &str) -> Result<serde_json::Value, String> {
     let token = task_lookup(id)
         .ok_or_else(|| format!("error[E-task-0003]: InvalidTaskHandle: task '{id}' not found"))?;
-    token.join()
+    let res = token.join();
+    // Prune excess finished tasks so registry does not grow unboundedly
+    with_registry(|reg| {
+        let finished: Vec<String> = reg
+            .iter()
+            .filter(|(tid, t)| tid.as_str() != id && t.state().is_terminal())
+            .map(|(tid, _)| tid.clone())
+            .collect();
+        if finished.len() >= MAX_FINISHED_TASKS {
+            for old_id in &finished[..finished.len() - (MAX_FINISHED_TASKS - 1)] {
+                reg.remove(old_id);
+            }
+        }
+    });
+    res
 }
 
 /// Clear the task registry and budget state.
@@ -985,5 +1057,79 @@ mod tests {
         unsafe {
             std::env::remove_var("NUDGE_BUDGET");
         }
+    }
+
+    #[test]
+    fn test_task_registry_does_not_grow_unboundedly_after_join() {
+        let _lock = TASK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        task_reset();
+        assert_eq!(task_registry_count(), 0);
+
+        for i in 0..100 {
+            let t = task_spawn(None);
+            t.set_result(Ok(serde_json::json!(i)));
+            let res = task_join(t.id.as_str()).expect("task_join should succeed");
+            assert_eq!(res, serde_json::json!(i));
+            assert!(
+                task_registry_count() <= MAX_FINISHED_TASKS + 1,
+                "task registry must not leak joined tasks unboundedly (iteration {i}, count was {})",
+                task_registry_count()
+            );
+        }
+
+        task_prune_finished();
+        assert_eq!(task_registry_count(), 0);
+        task_reset();
+    }
+
+    #[test]
+    fn test_task_unregister_and_prune() {
+        let _lock = TASK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        task_reset();
+
+        let t1 = task_spawn(Some("t1"));
+        let t2 = task_spawn(Some("t2"));
+        let t3 = task_spawn(Some("t3"));
+        assert_eq!(task_registry_count(), 3);
+
+        // Explicit unregister
+        let removed = task_unregister(t1.id.as_str());
+        assert!(removed.is_some());
+        assert_eq!(task_registry_count(), 2);
+        assert!(task_lookup(t1.id.as_str()).is_none());
+
+        // t2 finishes
+        t2.set_state(TaskState::Completed);
+        // t3 remains running
+        t3.set_state(TaskState::Running);
+
+        // Pruning finished entries removes t2 but retains t3
+        let pruned = task_prune_finished();
+        assert_eq!(pruned, 1);
+        assert_eq!(task_registry_count(), 1);
+        assert!(task_lookup(t3.id.as_str()).is_some());
+
+        task_reset();
+    }
+
+    #[test]
+    fn test_task_mutex_poisoning_recovery() {
+        let _lock = TASK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        task_reset();
+
+        // Deliberately poison BUDGET_TRACKER mutex in a spawned thread
+        let handle = std::thread::spawn(|| {
+            let _guard = BUDGET_TRACKER.lock().unwrap_or_else(|e| e.into_inner());
+            panic!("deliberate panic to poison BUDGET_TRACKER mutex");
+        });
+        let _ = handle.join();
+
+        // Main thread should recover from poisoned mutex without panic
+        budget_reset();
+        let (spent, reserved, _) = budget_status();
+        assert_eq!(spent, 0.0);
+        assert_eq!(reserved, 0.0);
+
+        task_reset();
     }
 }

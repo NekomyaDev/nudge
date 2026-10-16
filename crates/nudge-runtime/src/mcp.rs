@@ -7,7 +7,7 @@
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 #[cfg(not(target_arch = "wasm32"))]
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 #[cfg(not(target_arch = "wasm32"))]
 use std::process::{Child, Command, Stdio};
 
@@ -250,15 +250,27 @@ impl McpSession {
             )
         })?;
 
+        if crate::task::is_current_cancelled() {
+            return Err("error[E-task-0001]: TaskCancelled".into());
+        }
+
         // Read responses until matching req_id is found
         loop {
+            if crate::task::is_current_cancelled() {
+                return Err("error[E-task-0001]: TaskCancelled".into());
+            }
+
             let mut line = String::new();
-            let bytes_read = self.reader.read_line(&mut line).map_err(|e| {
-                format!(
-                    "failed to read response from MCP server '{}': {e}",
-                    self.server_name
-                )
-            })?;
+            let max_bytes: u64 = 16 * 1024 * 1024;
+            let bytes_read = (&mut self.reader)
+                .take(max_bytes)
+                .read_line(&mut line)
+                .map_err(|e| {
+                    format!(
+                        "failed to read response from MCP server '{}': {e}",
+                        self.server_name
+                    )
+                })?;
             if bytes_read == 0 {
                 return Err(format!(
                     "MCP server '{}' closed the pipe during '{method}'",

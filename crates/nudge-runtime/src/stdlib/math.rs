@@ -120,7 +120,10 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 return Err("math.abs requires 1 argument".to_string());
             }
             match &args[0] {
-                Value::Int(v) => Ok(Value::Int(v.abs())),
+                Value::Int(v) => match v.checked_abs() {
+                    Some(val) => Ok(Value::Int(val)),
+                    None => Err("math.abs: integer overflow on i64::MIN".to_string()),
+                },
                 Value::Float(v) => Ok(Value::Float(v.abs())),
                 _ => Err("math.abs: argument must be a number".to_string()),
             }

@@ -287,7 +287,7 @@ static GLOBAL_STORE: Mutex<Option<Store>> = Mutex::new(None);
 ///
 /// Forces the next store access to reload from disk.
 pub fn reset() {
-    let mut lock = GLOBAL_STORE.lock().unwrap();
+    let mut lock = GLOBAL_STORE.lock().unwrap_or_else(|e| e.into_inner());
     *lock = None;
 }
 
@@ -296,7 +296,7 @@ where
     F: FnOnce(&mut Store) -> Result<R, String>,
 {
     let target_path = get_store_path();
-    let mut lock = GLOBAL_STORE.lock().unwrap();
+    let mut lock = GLOBAL_STORE.lock().unwrap_or_else(|e| e.into_inner());
     let needs_load = match &*lock {
         Some(s) => s.path != target_path,
         None => true,
@@ -691,5 +691,22 @@ mod tests {
         );
 
         teardown(&dir);
+    }
+
+    #[test]
+    fn test_store_mutex_poisoning_recovery() {
+        let _guard = crate::workspace::WS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        // Deliberately poison GLOBAL_STORE mutex in a background thread
+        let handle = std::thread::spawn(|| {
+            let _guard = GLOBAL_STORE.lock().unwrap_or_else(|e| e.into_inner());
+            panic!("deliberate panic to poison GLOBAL_STORE mutex");
+        });
+        let _ = handle.join();
+
+        // Calling reset() on the main thread must recover from poisoning without panicking
+        reset();
     }
 }

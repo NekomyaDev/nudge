@@ -900,4 +900,114 @@ mod tests {
         interp.load_items(&items).expect("load_items failed");
         interp.run_all_tests().expect("test execution failed");
     }
+
+    #[test]
+    fn test_str_join_both_engines_parity() {
+        let src = r#"
+            fn main() -> string {
+                str.join(["alpha", "beta", "gamma"], "::")
+            }
+        "#;
+        let items = parse_src(src);
+
+        // 1. Interpreter execution
+        let mut interp = crate::eval::interpreter::Interpreter::new();
+        interp.load_items(&items).expect("load_items");
+        let interp_res = interp.invoke_fn("main", &[]).expect("interpreter run");
+        assert_eq!(interp_res, NudgeVal::Str("alpha::beta::gamma".to_string()));
+
+        // 2. nudge-runtime stdlib execution
+        let rt_res = nudge_runtime::stdlib::execute(
+            "str.join",
+            vec![
+                nudge_runtime::value::Value::List(vec![
+                    nudge_runtime::value::Value::String("alpha".to_string()),
+                    nudge_runtime::value::Value::String("beta".to_string()),
+                    nudge_runtime::value::Value::String("gamma".to_string()),
+                ]),
+                nudge_runtime::value::Value::String("::".to_string()),
+            ],
+        )
+        .expect("runtime str.join");
+        assert_eq!(
+            rt_res,
+            nudge_runtime::value::Value::String("alpha::beta::gamma".to_string())
+        );
+
+        // Verify conversion parity
+        assert_eq!(format!("{interp_res}"), format!("{rt_res}"));
+    }
+
+    #[test]
+    fn test_str_index_of_multibyte_both_engines() {
+        let src = r#"
+            fn main() -> int {
+                str.index_of("🦀x", "x")
+            }
+        "#;
+        let items = parse_src(src);
+
+        // 1. Interpreter: char index, not byte offset (4)
+        let mut interp = crate::eval::interpreter::Interpreter::new();
+        interp.load_items(&items).expect("load_items");
+        let interp_res = interp.invoke_fn("main", &[]).expect("interpreter run");
+        assert_eq!(interp_res, NudgeVal::Int(1));
+
+        // 2. nudge-runtime stdlib: char index
+        let rt_res = nudge_runtime::stdlib::execute(
+            "str.index_of",
+            vec![
+                nudge_runtime::value::Value::String("🦀x".to_string()),
+                nudge_runtime::value::Value::String("x".to_string()),
+            ],
+        )
+        .expect("runtime str.index_of");
+        assert_eq!(rt_res, nudge_runtime::value::Value::Int(1));
+    }
+
+    #[test]
+    fn test_interpreter_deep_recursion_overflow_error() {
+        // Run on a thread with adequate native stack so the 1000 call_depth limit
+        // is reached and checked rather than premature OS thread stack exhaustion.
+        let handle = std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let src = r#"
+                    fn recurse(n: int) -> int {
+                        if n <= 0 {
+                            0
+                        } else {
+                            recurse(n - 1) + 1
+                        }
+                    }
+                    fn main() -> int {
+                        recurse(1500)
+                    }
+                "#;
+                let items = parse_src(src);
+                let mut interp = crate::eval::interpreter::Interpreter::new();
+                interp.load_items(&items).expect("load_items");
+
+                // Depth > 1000 should return Err instead of crashing with SIGSEGV
+                let res = interp.invoke_fn("main", &[]);
+                assert!(res.is_err(), "expected error on deep recursion");
+                let err = res.unwrap_err();
+                assert!(
+                    err.contains("call stack overflow: recursion limit exceeded"),
+                    "unexpected error message: {err}"
+                );
+
+                // Ensure call_depth is decremented back to 0 (no stuck counter)
+                assert_eq!(interp.call_depth, 0);
+
+                // Verify that subsequent calls succeed normally
+                let ok_res = interp
+                    .invoke_fn("recurse", &[NudgeVal::Int(10)])
+                    .expect("subsequent call");
+                assert_eq!(ok_res, NudgeVal::Int(10));
+                assert_eq!(interp.call_depth, 0);
+            })
+            .expect("spawn thread");
+        handle.join().expect("thread join");
+    }
 }

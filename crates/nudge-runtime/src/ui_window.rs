@@ -124,7 +124,11 @@ pub fn draw_char(
     color: u32,
     scale: usize,
 ) {
-    let code = (ch as usize).min(127);
+    let code = if (ch as u32) < 128 {
+        ch as usize
+    } else {
+        b'?' as usize
+    };
     let glyph = FONT_8X8_BASIC[code];
 
     for (row, &byte) in glyph.iter().enumerate() {
@@ -162,6 +166,9 @@ pub fn draw_text(
     let line_h = (10 * scale) as i32;
     let mut x = start_x;
     for ch in text.chars() {
+        if ch == '\r' {
+            continue;
+        }
         if ch == '\n' {
             x = start_x;
             y += line_h;
@@ -581,18 +588,36 @@ impl<D: UiDispatcher> NativeApp<D> {
                     // Draw selection highlight if focused and range selected
                     if is_focused {
                         if let Some((sel_start, sel_end)) = selection_opt {
-                            let sel_x = rx + 8 + (sel_start as i32) * 16;
-                            let sel_w = ((sel_end - sel_start) as i32) * 16;
-                            draw_rect(
-                                &mut buffer,
-                                stride,
-                                h_usize,
-                                sel_x,
-                                ry + 6,
-                                sel_w,
-                                24,
-                                0xFF1D4ED8, // Blue-700 selection background
-                            );
+                            if let Some(ref id) = lbox.id {
+                                if let Some(st) = self.text_inputs.get(id) {
+                                    let (start_line, start_col) = st.line_and_col_of(sel_start);
+                                    let (end_line, end_col) = st.line_and_col_of(sel_end);
+                                    for line in start_line..=end_line {
+                                        let col_start =
+                                            if line == start_line { start_col } else { 0 };
+                                        let col_end = if line == end_line {
+                                            end_col
+                                        } else {
+                                            st.line_len(line)
+                                        };
+                                        if col_end > col_start {
+                                            let sel_x = rx + 8 + (col_start as i32) * 16;
+                                            let sel_w = ((col_end - col_start) as i32) * 16;
+                                            let sel_y = ry + 6 + (line as i32) * 20;
+                                            draw_rect(
+                                                &mut buffer,
+                                                stride,
+                                                h_usize,
+                                                sel_x,
+                                                sel_y,
+                                                sel_w,
+                                                20,
+                                                0xFF1D4ED8, // Blue-700 selection background
+                                            );
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -704,9 +729,14 @@ impl<D: UiDispatcher> NativeApp<D> {
             if let Some(ref id) = lbox.id {
                 self.focused_id = Some(id.clone());
                 let rel_x = cx - (lbox.rect.x + 8);
-                let char_idx = (rel_x.max(0) / 16) as usize;
+                let rel_y = cy - (lbox.rect.y + 8);
+                let line_idx = (rel_y.max(0) / 20) as usize;
+                let col_idx = (rel_x.max(0) / 16) as usize;
 
                 let st = self.ensure_input_state(id, lbox.text.as_deref().unwrap_or(""));
+                let target_line = line_idx.min(st.lines_count().saturating_sub(1));
+                let target_col = col_idx.min(st.line_len(target_line));
+                let char_idx = st.char_idx_for_line_col(target_line, target_col);
                 st.cursor = char_idx.min(st.char_len());
                 st.selection_anchor = None;
             }
@@ -1292,6 +1322,90 @@ mod tests {
         draw_text(&mut fb, 100, 50, 10, 10, "Hi", 0xFFFFFFFF, 1);
         let non_zero_pixels = fb.iter().filter(|&&p| p == 0xFFFFFFFF).count();
         assert!(non_zero_pixels > 0, "must rasterize character glyphs");
+    }
+
+    #[test]
+    fn test_non_ascii_glyph_rendering_uses_placeholder() {
+        let mut fb_ascii = vec![0u32; 16 * 16];
+        let mut fb_non_ascii = vec![0u32; 16 * 16];
+        let mut fb_del = vec![0u32; 16 * 16];
+
+        draw_char(&mut fb_ascii, 16, 16, 0, 0, '?', 0xFFFFFFFF, 1);
+        draw_char(&mut fb_non_ascii, 16, 16, 0, 0, '🦀', 0xFFFFFFFF, 1);
+        // DEL glyph is ASCII 127
+        draw_char(&mut fb_del, 16, 16, 0, 0, 127 as char, 0xFFFFFFFF, 1);
+
+        assert_eq!(
+            fb_non_ascii, fb_ascii,
+            "non-ASCII characters should be rendered with '?' placeholder glyph"
+        );
+        assert_ne!(
+            fb_non_ascii, fb_del,
+            "non-ASCII characters must not render the DEL control glyph"
+        );
+    }
+
+    #[test]
+    fn test_multiline_click_coordinates_maps_to_line() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "Test".into(),
+                width: 400,
+                height: 300,
+            },
+            dummy,
+        );
+
+        // Set up layout boxes directly with an input at (10, 20) with multiline text
+        app.layout_boxes = vec![LayoutBox {
+            rect: Rect {
+                x: 10,
+                y: 20,
+                w: 300,
+                h: 100,
+            },
+            tag: "input".into(),
+            id: Some("multiline_input".into()),
+            text: Some("line0\nline1\nline2".into()),
+            on_click: None,
+            on_change: None,
+            on_key: None,
+        }];
+
+        // Simulate click on line 1, col 2:
+        // x: lbox.rect.x + 8 + 2 * 16 = 10 + 8 + 32 = 50
+        // y: lbox.rect.y + 8 + 1 * 20 = 20 + 8 + 20 = 48
+        app.cursor_pos = (50, 48);
+        app.handle_click();
+
+        assert_eq!(app.focused_id.as_deref(), Some("multiline_input"));
+        let st = app.text_inputs.get("multiline_input").unwrap();
+        // line 0 is "line0\n" (len 6), line 1 col 2 is char index 6 + 2 = 8 ('n')
+        assert_eq!(
+            st.cursor, 8,
+            "click on line 1 must map to char index on line 1"
+        );
+
+        // Simulate click on line 2, col 3:
+        // x: 10 + 8 + 3 * 16 = 66
+        // y: 20 + 8 + 2 * 20 = 68
+        app.cursor_pos = (66, 68);
+        app.handle_click();
+
+        let st = app.text_inputs.get("multiline_input").unwrap();
+        // line 0 (6) + line 1 (6) + col 3 = 15 ('e')
+        assert_eq!(
+            st.cursor, 15,
+            "click on line 2 must map to char index on line 2"
+        );
     }
 
     #[test]

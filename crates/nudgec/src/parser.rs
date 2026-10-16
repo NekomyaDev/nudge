@@ -66,13 +66,13 @@ impl Parser {
 
     // ── cursor helpers ──────────────────────────────────────────────
     fn peek(&self) -> &Tok {
-        &self.t[self.i].tok
+        self.t.get(self.i).map(|s| &s.tok).unwrap_or(&Tok::Eof)
     }
     fn peek2(&self) -> &Tok {
         self.t.get(self.i + 1).map(|s| &s.tok).unwrap_or(&Tok::Eof)
     }
     fn pos(&self) -> usize {
-        self.t[self.i].start
+        self.t.get(self.i).map(|s| s.start).unwrap_or(0)
     }
     fn bump(&mut self) {
         if self.i + 1 < self.t.len() {
@@ -2449,5 +2449,14 @@ test "budget" {
             }
             other => panic!("expected Item::Fn, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_parse_empty_tokens() {
+        let parser = Parser::new(vec![]);
+        assert_eq!(parser.peek(), &Tok::Eof);
+        assert_eq!(parser.pos(), 0);
+        let items = parse(vec![]).expect("empty tokens should parse to empty items");
+        assert_eq!(items.len(), 0);
     }
 }

@@ -22,6 +22,23 @@ use std::time::Instant;
 const DEFAULT_PROCESS_TIMEOUT_MS: u64 = 5000;
 /// Maximum allowed process timeout in milliseconds.
 const MAX_PROCESS_TIMEOUT_MS: u64 = 120000;
+/// Maximum allowed output size in bytes (16MB).
+const MAX_PROC_OUTPUT_BYTES: u64 = 16 * 1024 * 1024;
+
+#[cfg(test)]
+pub(crate) static TEST_MAX_PROC_OUTPUT_BYTES: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(not(target_arch = "wasm32"))]
+fn get_max_proc_output_bytes() -> u64 {
+    #[cfg(test)]
+    {
+        let custom = TEST_MAX_PROC_OUTPUT_BYTES.load(Ordering::SeqCst);
+        if custom > 0 {
+            return custom;
+        }
+    }
+    MAX_PROC_OUTPUT_BYTES
+}
 
 /// Test lock to serialize tests touching `NUDGE_PROCESS_GRANTS` or process registry.
 pub static PROC_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -38,6 +55,22 @@ struct ManagedChild {
     start_time: Instant,
     timeout: Duration,
     task_token: Option<crate::task::TaskToken>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for ManagedChild {
+    fn drop(&mut self) {
+        if let Ok(None) = self.child.try_wait() {
+            let _ = self.child.kill();
+        }
+        let _ = self.child.wait();
+        if let Some(h) = self.stdout_handle.take() {
+            let _ = h.join();
+        }
+        if let Some(h) = self.stderr_handle.take() {
+            let _ = h.join();
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -318,18 +351,38 @@ fn spawn_child(cmd: &str, argv: &[String], timeout: Duration) -> Result<Value, S
 
     let stdout_handle = std::thread::spawn(move || {
         let mut buf = Vec::new();
+        let mut truncated = false;
         if let Some(mut r) = stdout_pipe.take() {
-            let _ = r.read_to_end(&mut buf);
+            let max_bytes = get_max_proc_output_bytes();
+            let _ = r.by_ref().take(max_bytes + 1).read_to_end(&mut buf);
+            if buf.len() as u64 > max_bytes {
+                buf.truncate(max_bytes as usize);
+                truncated = true;
+            }
         }
-        String::from_utf8_lossy(&buf).to_string()
+        let mut s = String::from_utf8_lossy(&buf).to_string();
+        if truncated {
+            s.push_str("\n[output truncated: exceeded 16MB limit]");
+        }
+        s
     });
 
     let stderr_handle = std::thread::spawn(move || {
         let mut buf = Vec::new();
+        let mut truncated = false;
         if let Some(mut r) = stderr_pipe.take() {
-            let _ = r.read_to_end(&mut buf);
+            let max_bytes = get_max_proc_output_bytes();
+            let _ = r.by_ref().take(max_bytes + 1).read_to_end(&mut buf);
+            if buf.len() as u64 > max_bytes {
+                buf.truncate(max_bytes as usize);
+                truncated = true;
+            }
         }
-        String::from_utf8_lossy(&buf).to_string()
+        let mut s = String::from_utf8_lossy(&buf).to_string();
+        if truncated {
+            s.push_str("\n[output truncated: exceeded 16MB limit]");
+        }
+        s
     });
 
     let id_num = PROC_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -836,5 +889,83 @@ mod tests {
             0,
             "cancelled process must be reaped"
         );
+    }
+
+    #[test]
+    fn test_proc_output_cap_truncates_large_output() {
+        let _guard = EnvGuard::set(r#"{"echo": ["*"]}"#);
+
+        // Set test ceiling to 10 bytes
+        TEST_MAX_PROC_OUTPUT_BYTES.store(10, Ordering::SeqCst);
+
+        let res = execute(
+            "proc.run",
+            vec![
+                Value::String("echo".to_string()),
+                Value::List(vec![Value::String(
+                    "abcdefghijklmnopqrstuvwxyz".to_string(),
+                )]),
+                Value::Int(3000),
+            ],
+        );
+
+        TEST_MAX_PROC_OUTPUT_BYTES.store(0, Ordering::SeqCst);
+
+        assert!(res.is_ok(), "proc.run failed: {:?}", res);
+        if let Value::Map(m) = res.unwrap() {
+            let stdout = match m.get("stdout") {
+                Some(Value::String(s)) => s.clone(),
+                _ => String::new(),
+            };
+            assert!(
+                stdout.contains("[output truncated: exceeded 16MB limit]"),
+                "expected truncation notice in stdout, got: {stdout}"
+            );
+            assert!(
+                stdout.starts_with("abcdefghij"),
+                "expected truncated prefix, got: {stdout}"
+            );
+        } else {
+            panic!("expected Value::Map");
+        }
+    }
+
+    #[test]
+    fn test_managed_child_drop_reaps_child_process() {
+        let _guard = EnvGuard::set(r#"{"sleep": ["*"]}"#);
+
+        let spawn_res = execute(
+            "proc.spawn",
+            vec![
+                Value::String("sleep".to_string()),
+                Value::List(vec![Value::String("30".to_string())]),
+                Value::Int(10000),
+            ],
+        );
+        assert!(spawn_res.is_ok(), "spawn failed: {:?}", spawn_res);
+        let handle = match spawn_res.unwrap() {
+            Value::String(s) => s,
+            _ => panic!("expected string handle"),
+        };
+
+        let pid = get_process_pid(&handle).expect("expected pid for active child");
+        assert!(pid > 0);
+
+        // Dropping the child by removing from registry or reap_all_processes
+        reap_all_processes();
+
+        assert_eq!(active_process_count(), 0);
+
+        // Verify with kill(pid, 0) that process was terminated and reaped from OS
+        #[cfg(unix)]
+        {
+            // Give OS a moment to reap
+            std::thread::sleep(Duration::from_millis(50));
+            extern "C" {
+                fn kill(pid: i32, sig: i32) -> i32;
+            }
+            let ret = unsafe { kill(pid as i32, 0) };
+            assert_eq!(ret, -1, "process {pid} should not exist after reap");
+        }
     }
 }

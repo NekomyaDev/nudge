@@ -204,7 +204,10 @@ impl<'a> VM<'a> {
                 Op::Neg => {
                     let val = self.stack.pop().ok_or("stack underflow")?;
                     match val {
-                        NudgeVal::Int(i) => self.stack.push(NudgeVal::Int(-i)),
+                        NudgeVal::Int(i) => match i.checked_neg() {
+                            Some(neg) => self.stack.push(NudgeVal::Int(neg)),
+                            None => return Err("integer negation overflow".into()),
+                        },
                         NudgeVal::Float(f) => self.stack.push(NudgeVal::Float(-f)),
                         other => return Err(format!("cannot negate {}", other.type_name())),
                     }
@@ -331,7 +334,11 @@ impl<'a> VM<'a> {
                             if b == 0 {
                                 return Err("modulo by zero".into());
                             }
-                            self.stack.push(NudgeVal::Int(a % b));
+                            if a == i64::MIN && b == -1 {
+                                self.stack.push(NudgeVal::Int(0));
+                            } else {
+                                self.stack.push(NudgeVal::Int(a % b));
+                            }
                         }
                         (a, b) => {
                             return Err(format!(
@@ -696,6 +703,13 @@ impl<'a> VM<'a> {
 
 /// Executes a compiled `Program` starting at `entry` with `args`.
 pub fn run(program: &Program, entry: &str, args: &[NudgeVal]) -> Result<NudgeVal, String> {
+    struct VmExitGuard;
+    impl Drop for VmExitGuard {
+        fn drop(&mut self) {
+            nudge_runtime::proc::reap_all_processes();
+        }
+    }
+    let _guard = VmExitGuard;
     let mut noop = |req: DelegateRequest<'_>| -> Result<NudgeVal, String> {
         match req {
             DelegateRequest::Call(name, _) => Err(format!(
@@ -718,6 +732,13 @@ pub fn run_with_delegate(
     args: &[NudgeVal],
     delegate: &mut DelegateHook<'_>,
 ) -> Result<NudgeVal, String> {
+    struct VmExitGuard;
+    impl Drop for VmExitGuard {
+        fn drop(&mut self) {
+            nudge_runtime::proc::reap_all_processes();
+        }
+    }
+    let _guard = VmExitGuard;
     let mut vm = VM::new(program);
     vm.execute(entry, args, delegate)
 }
@@ -833,6 +854,26 @@ mod tests {
             }
         "#;
         assert_parity(src, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_modulo_min_overflow() {
+        let src = r#"
+            fn main(min: int) -> int {
+                min % -1
+            }
+        "#;
+        assert_parity(src, "main", &[NudgeVal::Int(i64::MIN)]);
+    }
+
+    #[test]
+    fn test_parity_neg_min_overflow() {
+        let src = r#"
+            fn main(min: int) -> int {
+                -min
+            }
+        "#;
+        assert_parity_error(src, "main", &[NudgeVal::Int(i64::MIN)]);
     }
 
     #[test]

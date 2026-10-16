@@ -78,6 +78,7 @@ pub struct Interpreter {
     pub windows: HashMap<String, (Item, Option<String>)>,
     pub agents: HashMap<String, Item>,
     pub headless_apps: Vec<HeadlessAppRecord>,
+    pub call_depth: usize,
 }
 
 impl Interpreter {
@@ -93,6 +94,7 @@ impl Interpreter {
             windows: HashMap::new(),
             agents: HashMap::new(),
             headless_apps: Vec::new(),
+            call_depth: 0,
         }
     }
 
@@ -340,7 +342,7 @@ impl Interpreter {
         app.focused_id = Some(target_id.to_string());
         let st = app.ensure_input_state(target_id);
         st.text = new_value.to_string();
-        st.cursor = st.char_len();
+        st.cursor = st.cursor.min(st.char_len());
         st.selection_anchor = None;
 
         let on_change = app
@@ -1989,6 +1991,25 @@ impl Interpreter {
         kwargs: &[(String, Expr)],
         env: &Rc<RefCell<Env>>,
     ) -> Result<NudgeVal, String> {
+        self.call_depth += 1;
+        if self.call_depth > 1_000 {
+            self.call_depth -= 1;
+            return Err("call stack overflow: recursion limit exceeded".to_string());
+        }
+
+        let result = self.call_user_fn_inner(fn_item, agent_name, args, kwargs, env);
+        self.call_depth -= 1;
+        result
+    }
+
+    fn call_user_fn_inner(
+        &mut self,
+        fn_item: &Item,
+        agent_name: Option<&str>,
+        args: &[Expr],
+        kwargs: &[(String, Expr)],
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<NudgeVal, String> {
         let (fn_name, params, body) = match fn_item {
             Item::Fn {
                 name, params, body, ..
@@ -2042,6 +2063,24 @@ impl Interpreter {
     }
 
     fn call_user_fn_with_vals(
+        &mut self,
+        fn_item: &Item,
+        agent_name: Option<&str>,
+        args: &[NudgeVal],
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<NudgeVal, String> {
+        self.call_depth += 1;
+        if self.call_depth > 1_000 {
+            self.call_depth -= 1;
+            return Err("call stack overflow: recursion limit exceeded".to_string());
+        }
+
+        let result = self.call_user_fn_with_vals_inner(fn_item, agent_name, args, env);
+        self.call_depth -= 1;
+        result
+    }
+
+    fn call_user_fn_with_vals_inner(
         &mut self,
         fn_item: &Item,
         agent_name: Option<&str>,
@@ -2547,20 +2586,18 @@ impl Interpreter {
                 Ok(NudgeVal::List(parts))
             }
             "str.join" => {
-                let sep = args
-                    .first()
-                    .and_then(|a| match a {
-                        NudgeVal::Str(s) => Some(s.as_str()),
-                        _ => None,
-                    })
-                    .unwrap_or("");
                 let list = args
-                    .get(1)
+                    .first()
                     .and_then(|a| match a {
                         NudgeVal::List(l) => Some(l),
                         _ => None,
                     })
-                    .ok_or("'str.join' requires a list as second argument")?;
+                    .ok_or("'str.join' requires a list as first argument")?;
+                let sep = match args.get(1) {
+                    Some(NudgeVal::Str(s)) => s.as_str(),
+                    Some(_) => return Err("'str.join' requires a string as second argument".into()),
+                    None => "",
+                };
                 let joined = list
                     .iter()
                     .map(|item| item.to_string())
@@ -2620,21 +2657,25 @@ impl Interpreter {
                 let start = args
                     .get(1)
                     .and_then(|a| match a {
-                        NudgeVal::Int(i) => Some(*i as usize),
+                        NudgeVal::Int(i) => Some((*i).max(0) as usize),
                         _ => None,
                     })
                     .unwrap_or(0);
                 let end = args
                     .get(2)
                     .and_then(|a| match a {
-                        NudgeVal::Int(i) => Some(*i as usize),
+                        NudgeVal::Int(i) => Some((*i).max(0) as usize),
                         _ => None,
                     })
                     .unwrap_or(s.len());
                 let chars: Vec<char> = s.chars().collect();
-                let sub = chars[start.min(chars.len())..end.min(chars.len())]
-                    .iter()
-                    .collect();
+                let a = start.min(chars.len());
+                let b = end.min(chars.len());
+                let sub: String = if a <= b {
+                    chars[a..b].iter().collect()
+                } else {
+                    String::new()
+                };
                 Ok(NudgeVal::Str(sub))
             }
             "str.to_string" => {
@@ -2666,11 +2707,17 @@ impl Interpreter {
                         _ => None,
                     })
                     .ok_or("'str.index_of' requires 2 string arguments")?;
-                let idx = s.find(pat).map(|i| i as i64).unwrap_or(-1);
+                let idx = s
+                    .find(pat)
+                    .map(|b| s[..b].chars().count() as i64)
+                    .unwrap_or(-1);
                 Ok(NudgeVal::Int(idx))
             }
             "math.abs" => match args.first() {
-                Some(NudgeVal::Int(i)) => Ok(NudgeVal::Int(i.abs())),
+                Some(NudgeVal::Int(i)) => match i.checked_abs() {
+                    Some(val) => Ok(NudgeVal::Int(val)),
+                    None => Err("math.abs: integer overflow on i64::MIN".into()),
+                },
                 Some(NudgeVal::Float(f)) => Ok(NudgeVal::Float(f.abs())),
                 _ => Err("'math.abs' requires 1 numeric argument".into()),
             },
@@ -2702,7 +2749,15 @@ impl Interpreter {
             },
             "math.pow" => match (args.first(), args.get(1)) {
                 (Some(NudgeVal::Int(a)), Some(NudgeVal::Int(b))) if *b >= 0 => {
-                    Ok(NudgeVal::Int(a.pow(*b as u32)))
+                    if let Ok(exp) = u32::try_from(*b) {
+                        if let Some(v) = a.checked_pow(exp) {
+                            Ok(NudgeVal::Int(v))
+                        } else {
+                            Ok(NudgeVal::Float((*a as f64).powf(*b as f64)))
+                        }
+                    } else {
+                        Ok(NudgeVal::Float((*a as f64).powf(*b as f64)))
+                    }
                 }
                 (Some(NudgeVal::Float(a)), Some(NudgeVal::Float(b))) => {
                     Ok(NudgeVal::Float(a.powf(*b)))
@@ -2832,6 +2887,9 @@ impl Interpreter {
                     if b == 0 {
                         return Err("modulo by zero".into());
                     }
+                    if a == i64::MIN && b == -1 {
+                        return Ok(NudgeVal::Int(0));
+                    }
                     Ok(NudgeVal::Int(a % b))
                 }
                 (a, b) => Err(format!(
@@ -2903,7 +2961,10 @@ impl Interpreter {
         let val = self.eval_expr(x, env)?;
         match op {
             BinOp::Sub => match val {
-                NudgeVal::Int(i) => Ok(NudgeVal::Int(-i)),
+                NudgeVal::Int(i) => match i.checked_neg() {
+                    Some(neg) => Ok(NudgeVal::Int(neg)),
+                    None => Err("integer negation overflow".into()),
+                },
                 NudgeVal::Float(f) => Ok(NudgeVal::Float(-f)),
                 other => Err(format!("cannot negate {}", other.type_name())),
             },
@@ -3188,7 +3249,8 @@ impl Interpreter {
                 "streamed": true,
                 "request_hash": req_hash,
             });
-            let _ = nudge_runtime::trace::emit(record);
+            nudge_runtime::trace::emit(record)
+                .map_err(|e| format!("error[E-native-0303]: trace write failed: {e}"))?;
         }
 
         if schema_name.is_some() {
@@ -3344,6 +3406,7 @@ pub fn run_program(items: &[Item], entry: &str, args: &[NudgeVal]) -> Result<Nud
                 // Cancel running background tasks on exit so unjoined children do not hang
                 self.task.cancel();
                 nudge_runtime::proc::reap_processes_for_task(&self.task.id);
+                nudge_runtime::proc::reap_all_processes();
             }
         }
     }
@@ -5838,5 +5901,159 @@ data: [DONE]\n\n";
             "cancelled task must reap child process"
         );
         nudge_runtime::proc::reap_all_processes();
+    }
+
+    #[test]
+    fn test_str_substring_inverted_and_negative() {
+        let mut interp = Interpreter::new();
+        let res = interp
+            .call_stdlib(
+                "str.substring",
+                &[
+                    NudgeVal::Str("hello".into()),
+                    NudgeVal::Int(3),
+                    NudgeVal::Int(1),
+                ],
+            )
+            .unwrap();
+        assert_eq!(res, NudgeVal::Str("".into()));
+
+        let res = interp
+            .call_stdlib(
+                "str.substring",
+                &[
+                    NudgeVal::Str("hello".into()),
+                    NudgeVal::Int(-2),
+                    NudgeVal::Int(3),
+                ],
+            )
+            .unwrap();
+        assert_eq!(res, NudgeVal::Str("hel".into()));
+
+        let res = interp
+            .call_stdlib(
+                "str.substring",
+                &[
+                    NudgeVal::Str("hello".into()),
+                    NudgeVal::Int(2),
+                    NudgeVal::Int(-1),
+                ],
+            )
+            .unwrap();
+        assert_eq!(res, NudgeVal::Str("".into()));
+    }
+
+    #[test]
+    fn test_math_abs_min_overflow_interpreter() {
+        let mut interp = Interpreter::new();
+        let res = interp.call_stdlib("math.abs", &[NudgeVal::Int(i64::MIN)]);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_math_pow_integer_overflow_interpreter() {
+        let mut interp = Interpreter::new();
+        let res = interp
+            .call_stdlib("math.pow", &[NudgeVal::Int(10), NudgeVal::Int(30)])
+            .unwrap();
+        match res {
+            NudgeVal::Float(f) => assert!((f - 1e30).abs() < 1e20),
+            other => panic!("expected Float, got {other:?}"),
+        }
+
+        let res_fit = interp
+            .call_stdlib("math.pow", &[NudgeVal::Int(2), NudgeVal::Int(10)])
+            .unwrap();
+        assert_eq!(res_fit, NudgeVal::Int(1024));
+    }
+
+    #[test]
+    fn test_headless_cursor_preserved_mid_string_editing() {
+        let _cleanup = EnvReset::set("NUDGE_UI_HEADLESS", "1");
+
+        let src = r#"
+            view EditorView(text_val: string) -> View {
+                column [
+                    input("hello", id = "my_input", on_change = on_text_changed),
+                    text("Current: " + text_val)
+                ]
+            }
+
+            agent EditorApp {
+                state {
+                    text_val: string = "hello"
+                }
+                fn on_text_changed(new_val: string) uses UI {
+                    state.text_val = new_val
+                }
+                window EditorWindow {
+                    title: "Mid-String Editor",
+                    content: EditorView(state.text_val)
+                }
+            }
+        "#;
+        let tokens = lex(src).expect("lex failed");
+        let items = parse(tokens).expect("parse failed");
+        let mut interp = Interpreter::new();
+        interp.load_items(&items).expect("load_items failed");
+
+        let env = Rc::new(RefCell::new(Env::new()));
+        let app_id = interp
+            .mount_headless_app(&Some("EditorApp".to_string()), "EditorWindow", &env)
+            .expect("mount_headless failed");
+
+        // 1. Initial state: cursor is at 5 (end of "hello")
+        let app = interp.headless_apps.get_mut(app_id).unwrap();
+        let st = app.ensure_input_state("my_input");
+        assert_eq!(st.cursor, 5);
+        assert_eq!(st.text, "hello");
+
+        // Move cursor to mid-string: index 2 (between 'e' and 'l')
+        st.cursor = 2;
+        assert_eq!(st.cursor, 2);
+
+        // 2. dispatch_change_headless with mid-string cursor preserves cursor
+        interp
+            .dispatch_change_headless(app_id, "my_input", "heXYZllo", &env)
+            .expect("dispatch_change failed");
+        let st = interp.headless_apps[app_id].ensure_input_state("my_input");
+        assert_eq!(
+            st.cursor, 2,
+            "cursor must be preserved at index 2 after dispatch_change, not jump to end"
+        );
+        assert_eq!(st.text, "heXYZllo");
+
+        // 3. dispatch_type_headless mid-string advances cursor by typed length
+        interp
+            .dispatch_type_headless(app_id, "my_input", "W", &env)
+            .expect("dispatch_type failed");
+        let st = interp.headless_apps[app_id].ensure_input_state("my_input");
+        assert_eq!(
+            st.cursor, 3,
+            "typing mid-string must advance cursor by inserted length"
+        );
+        assert_eq!(st.text, "heWXYZllo");
+
+        // 4. dispatch_backspace_headless mid-string moves cursor back by one
+        interp
+            .dispatch_backspace_headless(app_id, "my_input", &env)
+            .expect("dispatch_backspace failed");
+        let st = interp.headless_apps[app_id].ensure_input_state("my_input");
+        assert_eq!(
+            st.cursor, 2,
+            "backspace mid-string must move cursor back by 1"
+        );
+        assert_eq!(st.text, "heXYZllo");
+
+        // 5. dispatch_delete_headless mid-string keeps cursor at same position
+        interp
+            .dispatch_delete_headless(app_id, "my_input", &env)
+            .expect("dispatch_delete failed");
+        let st = interp.headless_apps[app_id].ensure_input_state("my_input");
+        assert_eq!(
+            st.cursor, 2,
+            "delete mid-string must keep cursor at same position"
+        );
+        assert_eq!(st.text, "heYZllo");
     }
 }
