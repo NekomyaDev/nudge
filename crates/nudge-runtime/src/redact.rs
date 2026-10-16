@@ -321,10 +321,10 @@ impl Redactor {
 static CACHED_REDACTOR: LazyLock<RwLock<Option<(u64, Redactor)>>> =
     LazyLock::new(|| RwLock::new(None));
 
-/// A lightweight fingerprint of the secret-bearing environment variables (names
-/// + values that look like credentials). Used to auto-refresh the cached
-/// Redactor when a secret appears/changes in the env WITHOUT rescanning regexes
-/// on every record — this is a cheap env scan + hash, far cheaper than
+/// A lightweight fingerprint of the secret-bearing environment variables (the
+/// names and values that look like credentials). Used to auto-refresh the cached
+/// Redactor when a secret appears or changes in the env WITHOUT rescanning
+/// regexes on every record; this is a cheap env scan and hash, far cheaper than
 /// `Redactor::from_env()`.
 fn secret_env_generation() -> u64 {
     use std::hash::{Hash, Hasher};
@@ -381,7 +381,7 @@ pub fn with_cached_redactor<R, F: FnOnce(&Redactor) -> R>(f: F) -> R {
     if stale {
         *lock = Some((gen, Redactor::from_env()));
     }
-    f(lock.as_ref().unwrap().1)
+    f(&lock.as_ref().unwrap().1)
 }
 
 /// Redact fields of a trace record in place, preserving request_hash, v, seq, and kind.
