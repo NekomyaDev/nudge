@@ -22,6 +22,16 @@ Thanks for considering a contribution. Nudge is Apache-2.0; everything here (com
 
 ## Good first contributions
 
+Browse everything labeled
+[`good first issue`](https://github.com/NekomyaDev/nudge/labels/good%20first%20issue)
+— a few current starters:
+
+- Document the process/watch/auth env vars in the README ([#132](https://github.com/NekomyaDev/nudge/issues/132))
+- Mark which env vars are Python/TS-only vs native ([#133](https://github.com/NekomyaDev/nudge/issues/133))
+- Wire or remove the unused diagnostic codes ([#134](https://github.com/NekomyaDev/nudge/issues/134))
+- Remove the stale `E0805` comment in the TS codegen ([#135](https://github.com/NekomyaDev/nudge/issues/135))
+- Add `fs.watch` cancellation/removal tests ([#136](https://github.com/NekomyaDev/nudge/issues/136))
+- Add an example `.ndg` + `nudgec learn` lesson ([#137](https://github.com/NekomyaDev/nudge/issues/137))
 - The open bridges ([#69](https://github.com/NekomyaDev/nudge/issues/69)): LangGraph callback tracer, CrewAI hooks
 - Vendor list additions in [docs/jev-conformance.md](docs/jev-conformance.md) (if your decision server passes the conformance suite)
 - More recipes for `docs/recipes/` (each recipe must type-check — CI enforces it)
