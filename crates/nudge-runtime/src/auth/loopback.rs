@@ -537,7 +537,8 @@ pub fn exchange_code_at_endpoint(
     let (status, resp_body) = http::post_json(&config.token_endpoint, &headers, &body_str)?;
     if !(200..300).contains(&status) {
         return Err(format!(
-            "error[E-auth-0401]: token exchange returned HTTP status {status}: {resp_body}"
+            "error[E-auth-0401]: token exchange returned HTTP status {status}: {}",
+            crate::redact::Redactor::from_env().redact_string(&resp_body)
         ));
     }
 
@@ -654,7 +655,8 @@ pub fn refresh_provider_token(provider_name: &str) -> Result<Credential, String>
     let (status, resp_body) = http::post_json(&config.token_endpoint, &headers, &body_str)?;
     if !(200..300).contains(&status) {
         return Err(format!(
-            "error[E-auth-0401]: token refresh returned HTTP status {status}: {resp_body}"
+            "error[E-auth-0401]: token refresh returned HTTP status {status}: {}",
+            crate::redact::Redactor::from_env().redact_string(&resp_body)
         ));
     }
 

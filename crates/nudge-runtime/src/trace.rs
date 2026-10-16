@@ -564,9 +564,28 @@ struct ReplayState {
 
 static REPLAY: Mutex<Option<ReplayState>> = Mutex::new(None);
 
+/// Maximum trace file size loaded into memory (defense against a huge or
+/// malicious trace exhausting memory). 256 MiB.
+const MAX_TRACE_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Read a trace file with a size cap so a huge/malicious trace can't OOM the
+/// process. Rejected loudly rather than silently truncating (which would break
+/// replay determinism).
+fn read_trace_capped(path: &str) -> Result<String, String> {
+    let meta =
+        std::fs::metadata(path).map_err(|_| format!("ReplayMismatch: trace not found: {path}"))?;
+    if meta.len() > MAX_TRACE_BYTES {
+        return Err(format!(
+            "ReplayMismatch: trace file too large ({} bytes > {MAX_TRACE_BYTES} byte cap): {path}",
+            meta.len()
+        ));
+    }
+    std::fs::read_to_string(path)
+        .map_err(|e| format!("ReplayMismatch: cannot read trace {path}: {e}"))
+}
+
 fn llm_records(path: &str) -> Result<Vec<Value>, String> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|_| format!("ReplayMismatch: trace not found: {path}"))?;
+    let text = read_trace_capped(path)?;
     let mut recs = Vec::new();
     for line in text.lines() {
         let line = line.trim();
@@ -589,8 +608,7 @@ fn llm_records(path: &str) -> Result<Vec<Value>, String> {
 }
 
 fn tool_records(path: &str) -> Result<Vec<Value>, String> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|_| format!("ReplayMismatch: trace not found: {path}"))?;
+    let text = read_trace_capped(path)?;
     let mut recs = Vec::new();
     for line in text.lines() {
         let line = line.trim();

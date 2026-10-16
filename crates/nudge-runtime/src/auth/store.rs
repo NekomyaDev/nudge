@@ -101,15 +101,19 @@ impl CredentialStore {
             format!("error[E-auth-0405]: failed to serialize credential store: {e}")
         })?;
 
-        // Write atomically via temporary file (creating directly with 0o600 on Unix)
+        // Write atomically via temporary file (creating directly with 0o600 on Unix).
+        // create_new + O_NOFOLLOW: refuse to reuse a pre-existing or symlinked
+        // temp file (a PID-based name is predictable), so an attacker-planted
+        // symlink can't redirect the credential write. Fails closed on collision.
         let tmp_path = path.with_extension(format!("tmp.{}", std::process::id()));
         let write_res = (|| -> std::io::Result<()> {
             let mut opts = std::fs::OpenOptions::new();
-            opts.write(true).create(true).truncate(true);
+            opts.write(true).create_new(true);
             #[cfg(unix)]
             {
                 use std::os::unix::fs::OpenOptionsExt;
                 opts.mode(0o600);
+                opts.custom_flags(libc::O_NOFOLLOW);
             }
             use std::io::Write;
             let mut file = opts.open(&tmp_path)?;

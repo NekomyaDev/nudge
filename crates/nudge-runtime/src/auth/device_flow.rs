@@ -105,8 +105,9 @@ impl DeviceFlowClient {
         let (status, resp_body) = http::post_json(&self.config.issuer, &headers, &req_body)?;
         if !(200..300).contains(&status) {
             return Err(format!(
-                "error[E-auth-0401]: device authorization request to '{}' failed with status {status}: {resp_body}",
-                self.config.issuer
+                "error[E-auth-0401]: device authorization request to '{}' failed with status {status}: {}",
+                self.config.issuer,
+                crate::redact::Redactor::from_env().redact_string(&resp_body)
             ));
         }
 

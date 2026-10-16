@@ -8,6 +8,29 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+
+/// Default MCP read timeout in milliseconds (a hanging MCP server must not block
+/// a request forever). Overridable via `NUDGE_MCP_TIMEOUT_MS`.
+fn mcp_read_timeout_ms() -> u64 {
+    std::env::var("NUDGE_MCP_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(60_000)
+}
+
+/// Wait until `fd` is readable or `timeout_ms` elapses. Returns true if readable.
+/// Used to make pipe reads interruptible (so cancellation/deadline checks are
+/// reachable while the server is idle).
+#[cfg(unix)]
+fn wait_readable(fd: std::os::unix::io::RawFd, timeout_ms: i32) -> bool {
+    let mut pollfd = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let n = unsafe { libc::poll(&mut pollfd, 1, timeout_ms) };
+    n > 0 && (pollfd.revents & libc::POLLIN) != 0
+}
 #[cfg(not(target_arch = "wasm32"))]
 use std::process::{Child, Command, Stdio};
 
@@ -254,10 +277,30 @@ impl McpSession {
             return Err("error[E-task-0001]: TaskCancelled".into());
         }
 
-        // Read responses until matching req_id is found
+        // Read responses until matching req_id is found.
+        // On Unix we poll the pipe before each read so a hanging MCP server can't
+        // block forever: we wait for readability in short slices, checking
+        // cancellation and an overall deadline between polls (read_line alone
+        // would block indefinitely and make the cancel check unreachable).
+        let mcp_deadline =
+            std::time::Instant::now() + std::time::Duration::from_millis(mcp_read_timeout_ms());
         loop {
             if crate::task::is_current_cancelled() {
                 return Err("error[E-task-0001]: TaskCancelled".into());
+            }
+            if std::time::Instant::now() >= mcp_deadline {
+                return Err(format!(
+                    "error[E-native-0203]: MCP read timeout: server '{}' did not respond to '{method}' in time",
+                    self.server_name
+                ));
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::io::AsRawFd;
+                let fd = self.reader.get_ref().as_raw_fd();
+                if !wait_readable(fd, 100) {
+                    continue; // re-check cancellation + deadline
+                }
             }
 
             let mut line = String::new();

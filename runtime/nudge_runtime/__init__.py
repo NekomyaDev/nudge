@@ -1742,7 +1742,14 @@ class AgentState:
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
             f.flush()
-            os.fsync(f.fileno())
+            # fsync is best-effort: some filesystems (Docker overlayfs, NFS, WSL)
+            # don't support it and raise OSError [Errno 95]. The flush + atomic
+            # os.replace below still give us a crash-consistent checkpoint, so a
+            # failed fsync must not abort the save.
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
         os.replace(tmp, target)
 
 
