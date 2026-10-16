@@ -152,15 +152,19 @@ pub fn draw_text(
     buf: &mut [u32],
     stride: usize,
     height: usize,
-    mut x: i32,
-    y: i32,
+    start_x: i32,
+    mut y: i32,
     text: &str,
     color: u32,
     scale: usize,
 ) {
     let char_w = (8 * scale) as i32;
+    let line_h = (10 * scale) as i32;
+    let mut x = start_x;
     for ch in text.chars() {
         if ch == '\n' {
+            x = start_x;
+            y += line_h;
             continue;
         }
         draw_char(buf, stride, height, x, y, ch, color, scale);
@@ -244,8 +248,14 @@ pub fn layout_element(
         }
         "text" => {
             let content = elem.text.clone().unwrap_or_else(|| elem.get_text());
-            let w = (content.len() as i32) * 16;
-            let h = 20;
+            let lines = content.split('\n').count().max(1) as i32;
+            let max_line_len = content
+                .split('\n')
+                .map(|l| l.chars().count())
+                .max()
+                .unwrap_or(0) as i32;
+            let w = max_line_len * 16;
+            let h = lines * 20;
             boxes.push(LayoutBox {
                 rect: Rect { x, y, w, h },
                 tag: "text".into(),
@@ -290,8 +300,14 @@ pub fn layout_element(
                 .clone()
                 .or_else(|| elem.props.get("value").cloned())
                 .unwrap_or_default();
-            let w = 220.max((content.len() as i32) * 16 + 24);
-            let h = 36;
+            let lines = content.split('\n').count().max(1) as i32;
+            let max_line_len = content
+                .split('\n')
+                .map(|l| l.chars().count())
+                .max()
+                .unwrap_or(0) as i32;
+            let w = 220.max(max_line_len * 16 + 24);
+            let h = 36.max(lines * 20 + 16);
             boxes.push(LayoutBox {
                 rect: Rect { x, y, w, h },
                 tag: "input".into(),
@@ -595,13 +611,23 @@ impl<D: UiDispatcher> NativeApp<D> {
                     // Draw cursor bar if focused
                     if is_focused {
                         let cur_idx = cursor_opt.unwrap_or_else(|| display_text.chars().count());
-                        let cur_x = rx + 8 + (cur_idx as i32) * 16;
+                        let (cur_line, cur_col) = if let Some(ref id) = lbox.id {
+                            if let Some(st) = self.text_inputs.get(id) {
+                                st.line_and_col_of(cur_idx)
+                            } else {
+                                (0, cur_idx)
+                            }
+                        } else {
+                            (0, cur_idx)
+                        };
+                        let cur_x = rx + 8 + (cur_col as i32) * 16;
+                        let cur_y = ry + 8 + (cur_line as i32) * 20;
                         draw_rect(
                             &mut buffer,
                             stride,
                             h_usize,
                             cur_x,
-                            ry + 8,
+                            cur_y,
                             2,
                             20,
                             0xFFFFFFFF, // white cursor
@@ -710,6 +736,7 @@ impl<D: UiDispatcher> NativeApp<D> {
 
             let mut value_changed = false;
             let mut key_name = String::new();
+            let shift = self.shift_pressed;
 
             if self.ctrl_pressed {
                 match logical_key {
@@ -741,10 +768,19 @@ impl<D: UiDispatcher> NativeApp<D> {
                             value_changed = true;
                         }
                     }
+                    Key::Named(NamedKey::Home) => {
+                        let st = self.ensure_input_state(focused_id, initial);
+                        st.move_doc_start(shift);
+                        key_name = "Home".to_string();
+                    }
+                    Key::Named(NamedKey::End) => {
+                        let st = self.ensure_input_state(focused_id, initial);
+                        st.move_doc_end(shift);
+                        key_name = "End".to_string();
+                    }
                     _ => {}
                 }
             } else {
-                let shift = self.shift_pressed;
                 match logical_key {
                     Key::Named(NamedKey::ArrowLeft) => {
                         let st = self.ensure_input_state(focused_id, initial);
@@ -755,6 +791,16 @@ impl<D: UiDispatcher> NativeApp<D> {
                         let st = self.ensure_input_state(focused_id, initial);
                         st.move_right(shift);
                         key_name = "ArrowRight".to_string();
+                    }
+                    Key::Named(NamedKey::ArrowUp) => {
+                        let st = self.ensure_input_state(focused_id, initial);
+                        st.move_up(shift);
+                        key_name = "ArrowUp".to_string();
+                    }
+                    Key::Named(NamedKey::ArrowDown) => {
+                        let st = self.ensure_input_state(focused_id, initial);
+                        st.move_down(shift);
+                        key_name = "ArrowDown".to_string();
                     }
                     Key::Named(NamedKey::Home) => {
                         let st = self.ensure_input_state(focused_id, initial);
@@ -777,6 +823,17 @@ impl<D: UiDispatcher> NativeApp<D> {
                         key_name = "Delete".to_string();
                     }
                     Key::Named(NamedKey::Enter) => {
+                        let is_multiline = lbox
+                            .as_ref()
+                            .and_then(|b| b.text.as_ref())
+                            .map(|t| t.contains('\n'))
+                            .unwrap_or(false)
+                            || shift;
+                        if is_multiline {
+                            let st = self.ensure_input_state(focused_id, initial);
+                            st.insert_newline();
+                            value_changed = true;
+                        }
                         key_name = "Enter".to_string();
                     }
                     Key::Named(NamedKey::Escape) => {
@@ -958,6 +1015,8 @@ impl<D: UiDispatcher> NativeApp<D> {
             "Delete" => (Key::Named(NamedKey::Delete), None),
             "ArrowLeft" => (Key::Named(NamedKey::ArrowLeft), None),
             "ArrowRight" => (Key::Named(NamedKey::ArrowRight), None),
+            "ArrowUp" => (Key::Named(NamedKey::ArrowUp), None),
+            "ArrowDown" => (Key::Named(NamedKey::ArrowDown), None),
             "Home" => (Key::Named(NamedKey::Home), None),
             "End" => (Key::Named(NamedKey::End), None),
             "PageUp" => (Key::Named(NamedKey::PageUp), None),
@@ -1066,8 +1125,8 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 match delta {
-                    MouseScrollDelta::LineDelta(_dx, dy) => {
-                        self.scroll_by(0, (-dy * 30.0) as i32);
+                    MouseScrollDelta::LineDelta(dx, dy) => {
+                        self.scroll_by((-dx * 30.0) as i32, (-dy * 30.0) as i32);
                     }
                     MouseScrollDelta::PixelDelta(pos) => {
                         self.scroll_by(-pos.x as i32, -pos.y as i32);
@@ -1436,6 +1495,20 @@ mod tests {
             assert_eq!(
                 app.dispatcher.synthetic_note, "Hello Nudg",
                 "Backspace must delete last char and fire on_change"
+            );
+
+            // Test cursor navigation and delete
+            app.send_key("Home");
+            app.send_key("Delete");
+            assert_eq!(
+                app.dispatcher.synthetic_note, "ello Nudg",
+                "Delete at Home must remove the first char"
+            );
+            app.send_key("End");
+            app.send_key("!");
+            assert_eq!(
+                app.dispatcher.synthetic_note, "ello Nudg!",
+                "Typing at End must append"
             );
             println!("[desktop-gui-test] Text input editing verified successfully!");
 

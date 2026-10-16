@@ -1459,18 +1459,9 @@ fn check_expr_pos(
                         for a in args {
                             check_expr(a, locals, g, errs);
                         }
-                        for (_, v) in kwargs {
-                            check_expr(v, locals, g, errs);
-                        }
-                        return Ty::View;
-                    }
-                    "text" | "button" | "input" => {
-                        for a in args {
-                            check_expr(a, locals, g, errs);
-                        }
                         for (k, v) in kwargs {
                             check_expr(v, locals, g, errs);
-                            if k == "on_click" || k == "on_change" {
+                            if k == "on_key" {
                                 if let ExprKind::Ident(ref hname) = v.kind {
                                     if let Some(effs) = g.fn_effects.get(hname) {
                                         if !effs.iter().any(|e| e == "UI") {
@@ -1488,6 +1479,59 @@ fn check_expr_pos(
                                                 code: "E1003",
                                                 msg: format!("event handler '{hname}' signature mismatch: expected at most 1 parameter"),
                                             });
+                                        } else if params.len() == 1 {
+                                            let param_ty =
+                                                resolve(&params[0].1, g, &mut Vec::new(), errs);
+                                            if param_ty != Ty::Str && param_ty != Ty::Unknown {
+                                                errs.push(CheckError {
+                                                    span: None,
+                                                    code: "E1003",
+                                                    msg: format!("event handler '{hname}' signature mismatch: parameter '{}' must be of type string", params[0].0),
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        return Ty::View;
+                    }
+                    "text" | "button" | "input" => {
+                        for a in args {
+                            check_expr(a, locals, g, errs);
+                        }
+                        for (k, v) in kwargs {
+                            check_expr(v, locals, g, errs);
+                            if k == "on_click" || k == "on_change" || k == "on_key" {
+                                if let ExprKind::Ident(ref hname) = v.kind {
+                                    if let Some(effs) = g.fn_effects.get(hname) {
+                                        if !effs.iter().any(|e| e == "UI") {
+                                            errs.push(CheckError {
+                                                span: None,
+                                                code: "E1001",
+                                                msg: format!("event handler '{hname}' missing UI effect: event handlers require `uses UI`"),
+                                            });
+                                        }
+                                    }
+                                    if let Some((params, _)) = g.fns.get(hname) {
+                                        if params.len() > 1 {
+                                            errs.push(CheckError {
+                                                span: None,
+                                                code: "E1003",
+                                                msg: format!("event handler '{hname}' signature mismatch: expected at most 1 parameter"),
+                                            });
+                                        } else if params.len() == 1
+                                            && (k == "on_change" || k == "on_key")
+                                        {
+                                            let param_ty =
+                                                resolve(&params[0].1, g, &mut Vec::new(), errs);
+                                            if param_ty != Ty::Str && param_ty != Ty::Unknown {
+                                                errs.push(CheckError {
+                                                    span: None,
+                                                    code: "E1003",
+                                                    msg: format!("event handler '{hname}' signature mismatch: parameter '{}' must be of type string", params[0].0),
+                                                });
+                                            }
                                         }
                                     }
                                 }
@@ -4190,6 +4234,42 @@ fn f(c: bool) -> string uses IO {
                 .iter()
                 .any(|e| (e.code == "E1001" || e.code == "E0301") && e.msg.contains("UI")),
             "expected E1001/E0301, got {errs2:?}"
+        );
+
+        // Handler referenced in on_key without uses UI trips E1001
+        let src3 = r#"
+            view KeyView() -> View {
+                column [
+                    input("val", on_key = on_k)
+                ]
+            }
+            fn on_k(k: string) {
+            }
+        "#;
+        let errs3 = check_src(src3);
+        assert!(
+            errs3
+                .iter()
+                .any(|e| e.code == "E1001" && e.msg.contains("on_k")),
+            "expected E1001 for on_key missing UI, got {errs3:?}"
+        );
+
+        // Handler referenced in on_key with non-string parameter trips E1003
+        let src4 = r#"
+            view KeyView() -> View {
+                column [
+                    input("val", on_key = on_k_bad)
+                ]
+            }
+            fn on_k_bad(k: int) uses UI {
+            }
+        "#;
+        let errs4 = check_src(src4);
+        assert!(
+            errs4
+                .iter()
+                .any(|e| e.code == "E1003" && e.msg.contains("on_k_bad")),
+            "expected E1003 for on_key signature mismatch, got {errs4:?}"
         );
     }
 

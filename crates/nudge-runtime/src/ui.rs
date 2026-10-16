@@ -229,6 +229,32 @@ impl TextInputState {
     }
 
     pub fn move_home(&mut self, extend_selection: bool) {
+        let (line, _) = self.line_and_col_of(self.cursor);
+        let line_start = self.char_idx_for_line_col(line, 0);
+        if extend_selection {
+            if self.selection_anchor.is_none() {
+                self.selection_anchor = Some(self.cursor);
+            }
+        } else {
+            self.selection_anchor = None;
+        }
+        self.cursor = line_start;
+    }
+
+    pub fn move_end(&mut self, extend_selection: bool) {
+        let (line, _) = self.line_and_col_of(self.cursor);
+        let line_end = self.char_idx_for_line_col(line, self.line_len(line));
+        if extend_selection {
+            if self.selection_anchor.is_none() {
+                self.selection_anchor = Some(self.cursor);
+            }
+        } else {
+            self.selection_anchor = None;
+        }
+        self.cursor = line_end;
+    }
+
+    pub fn move_doc_start(&mut self, extend_selection: bool) {
         if extend_selection {
             if self.selection_anchor.is_none() {
                 self.selection_anchor = Some(self.cursor);
@@ -239,7 +265,7 @@ impl TextInputState {
         self.cursor = 0;
     }
 
-    pub fn move_end(&mut self, extend_selection: bool) {
+    pub fn move_doc_end(&mut self, extend_selection: bool) {
         let total = self.char_len();
         if extend_selection {
             if self.selection_anchor.is_none() {
@@ -249,6 +275,94 @@ impl TextInputState {
             self.selection_anchor = None;
         }
         self.cursor = total;
+    }
+
+    pub fn line_and_col_of(&self, char_idx: usize) -> (usize, usize) {
+        let mut line = 0;
+        let mut col = 0;
+        for c in self.text.chars().take(char_idx) {
+            if c == '\n' {
+                line += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+        }
+        (line, col)
+    }
+
+    pub fn char_idx_for_line_col(&self, target_line: usize, target_col: usize) -> usize {
+        let mut curr_line = 0;
+        let mut curr_col = 0;
+        let mut idx = 0;
+        for c in self.text.chars() {
+            if curr_line == target_line {
+                if c == '\n' || curr_col == target_col {
+                    return idx;
+                }
+                curr_col += 1;
+            } else if c == '\n' {
+                curr_line += 1;
+                curr_col = 0;
+            }
+            idx += 1;
+        }
+        idx
+    }
+
+    pub fn lines_count(&self) -> usize {
+        self.text.split('\n').count()
+    }
+
+    pub fn line_len(&self, line_idx: usize) -> usize {
+        self.text
+            .split('\n')
+            .nth(line_idx)
+            .map(|l| l.chars().count())
+            .unwrap_or(0)
+    }
+
+    pub fn move_up(&mut self, extend_selection: bool) {
+        let (line, col) = self.line_and_col_of(self.cursor);
+        if line == 0 {
+            self.move_home(extend_selection);
+        } else {
+            let target_line = line - 1;
+            let target_col = col.min(self.line_len(target_line));
+            let new_cursor = self.char_idx_for_line_col(target_line, target_col);
+            if extend_selection {
+                if self.selection_anchor.is_none() {
+                    self.selection_anchor = Some(self.cursor);
+                }
+            } else {
+                self.selection_anchor = None;
+            }
+            self.cursor = new_cursor;
+        }
+    }
+
+    pub fn move_down(&mut self, extend_selection: bool) {
+        let total_lines = self.lines_count();
+        let (line, col) = self.line_and_col_of(self.cursor);
+        if line + 1 >= total_lines {
+            self.move_end(extend_selection);
+        } else {
+            let target_line = line + 1;
+            let target_col = col.min(self.line_len(target_line));
+            let new_cursor = self.char_idx_for_line_col(target_line, target_col);
+            if extend_selection {
+                if self.selection_anchor.is_none() {
+                    self.selection_anchor = Some(self.cursor);
+                }
+            } else {
+                self.selection_anchor = None;
+            }
+            self.cursor = new_cursor;
+        }
+    }
+
+    pub fn insert_newline(&mut self) {
+        self.insert_char('\n');
     }
 
     pub fn select_all(&mut self) {
@@ -270,6 +384,102 @@ impl TextInputState {
 
     pub fn paste(&mut self, s: &str) {
         self.insert_str(s);
+    }
+}
+
+/// Estimate the bounding layout size (width, height) of a UiElement.
+pub fn estimate_element_size(elem: &UiElement, max_w: i64) -> (i64, i64) {
+    match elem.tag.as_str() {
+        "column" => {
+            let padding = elem
+                .props
+                .get("padding")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(16);
+            let gap = elem
+                .props
+                .get("gap")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(10);
+
+            let mut child_y = padding;
+            let mut max_child_w = 0;
+            let child_max_w = (max_w - 2 * padding).max(0);
+
+            for child in &elem.children {
+                let (cw, ch) = estimate_element_size(child, child_max_w);
+                max_child_w = max_child_w.max(cw);
+                child_y += ch + gap;
+            }
+
+            let total_h = if elem.children.is_empty() {
+                2 * padding
+            } else {
+                child_y - gap + padding
+            };
+            let total_w = max_child_w + 2 * padding;
+            (total_w, total_h)
+        }
+        "row" => {
+            let padding = elem
+                .props
+                .get("padding")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(16);
+            let gap = elem
+                .props
+                .get("gap")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(10);
+
+            let mut child_x = padding;
+            let mut max_child_h = 0;
+
+            for child in &elem.children {
+                let (cw, ch) = estimate_element_size(child, max_w);
+                max_child_h = max_child_h.max(ch);
+                child_x += cw + gap;
+            }
+
+            let total_w = if elem.children.is_empty() {
+                2 * padding
+            } else {
+                child_x - gap + padding
+            };
+            let total_h = max_child_h + 2 * padding;
+            (total_w, total_h)
+        }
+        "text" => {
+            let text = elem.text.as_deref().unwrap_or("");
+            let lines = text.split('\n').count().max(1) as i64;
+            let max_line_len = text
+                .split('\n')
+                .map(|l| l.chars().count())
+                .max()
+                .unwrap_or(0) as i64;
+            let w = (max_line_len * 16).min(max_w);
+            (w, lines * 24)
+        }
+        "button" => {
+            let len = elem.text.as_ref().map(|t| t.chars().count()).unwrap_or(0) as i64;
+            let w = (len * 16 + 32).max(100).min(max_w);
+            (w, 36)
+        }
+        "input" => {
+            let multiline = elem
+                .props
+                .get("multiline")
+                .map(|s| s == "true")
+                .unwrap_or(false);
+            if multiline {
+                let text = elem.text.as_deref().unwrap_or("");
+                let lines = text.split('\n').count().max(3) as i64;
+                (max_w, lines * 24 + 16)
+            } else {
+                (max_w, 40)
+            }
+        }
+        _ => (0, 0),
     }
 }
 
@@ -320,9 +530,38 @@ impl HeadlessMount {
         self.focused_id = None;
     }
 
+    pub fn content_size(&self) -> (i64, i64) {
+        if let Some(ref root) = self.root {
+            let max_w = self.width.unwrap_or(800) - 20;
+            estimate_element_size(root, max_w)
+        } else {
+            (0, 0)
+        }
+    }
+
+    pub fn max_scroll(&self) -> (i64, i64) {
+        let (cw, ch) = self.content_size();
+        let vw = self.width.unwrap_or(800);
+        let vh = self.height.unwrap_or(600);
+        let max_x = (cw - vw + 20).max(0);
+        let max_y = (ch - vh + 20).max(0);
+        (max_x, max_y)
+    }
+
     pub fn scroll(&mut self, dx: i64, dy: i64) {
-        self.scroll_x = (self.scroll_x + dx).max(0);
-        self.scroll_y = (self.scroll_y + dy).max(0);
+        let (max_x, max_y) = self.max_scroll();
+        let target_x = self.scroll_x + dx;
+        let target_y = self.scroll_y + dy;
+        self.scroll_x = if self.width.is_some() || max_x > 0 {
+            target_x.clamp(0, max_x)
+        } else {
+            target_x.max(0)
+        };
+        self.scroll_y = if self.height.is_some() || max_y > 0 {
+            target_y.clamp(0, max_y)
+        } else {
+            target_y.max(0)
+        };
     }
 
     pub fn dispatch_scroll(&mut self, dx: i64, dy: i64) {
@@ -380,6 +619,112 @@ impl HeadlessMount {
         (handler, new_val)
     }
 
+    /// Send delete to an input element and return (handler_name, new_text).
+    pub fn dispatch_delete(&mut self, id: &str) -> (Option<String>, String) {
+        self.focus(id);
+        let state = self.ensure_input_state(id);
+        state.delete();
+        let new_val = state.text.clone();
+
+        let handler = if let Some(elem) = self.find_mut(id) {
+            elem.text = Some(new_val.clone());
+            elem.props.insert("value".to_string(), new_val.clone());
+            elem.on_change.clone()
+        } else {
+            None
+        };
+        (handler, new_val)
+    }
+
+    /// Send newline (enter) to an input element and return (handler_name, new_text).
+    pub fn dispatch_newline(&mut self, id: &str) -> (Option<String>, String) {
+        self.focus(id);
+        let state = self.ensure_input_state(id);
+        state.insert_newline();
+        let new_val = state.text.clone();
+
+        let handler = if let Some(elem) = self.find_mut(id) {
+            elem.text = Some(new_val.clone());
+            elem.props.insert("value".to_string(), new_val.clone());
+            elem.on_change.clone()
+        } else {
+            None
+        };
+        (handler, new_val)
+    }
+
+    pub fn dispatch_cursor_left(&mut self, id: &str, extend_selection: bool) {
+        self.focus(id);
+        let state = self.ensure_input_state(id);
+        state.move_left(extend_selection);
+    }
+
+    pub fn dispatch_cursor_right(&mut self, id: &str, extend_selection: bool) {
+        self.focus(id);
+        let state = self.ensure_input_state(id);
+        state.move_right(extend_selection);
+    }
+
+    pub fn dispatch_cursor_up(&mut self, id: &str, extend_selection: bool) {
+        self.focus(id);
+        let state = self.ensure_input_state(id);
+        state.move_up(extend_selection);
+    }
+
+    pub fn dispatch_cursor_down(&mut self, id: &str, extend_selection: bool) {
+        self.focus(id);
+        let state = self.ensure_input_state(id);
+        state.move_down(extend_selection);
+    }
+
+    pub fn dispatch_cursor_home(&mut self, id: &str, extend_selection: bool) {
+        self.focus(id);
+        let state = self.ensure_input_state(id);
+        state.move_home(extend_selection);
+    }
+
+    pub fn dispatch_cursor_end(&mut self, id: &str, extend_selection: bool) {
+        self.focus(id);
+        let state = self.ensure_input_state(id);
+        state.move_end(extend_selection);
+    }
+
+    pub fn dispatch_select_all(&mut self, id: &str) {
+        self.focus(id);
+        let state = self.ensure_input_state(id);
+        state.select_all();
+    }
+
+    pub fn dispatch_cut(&mut self, id: &str) -> (Option<String>, Option<String>) {
+        self.focus(id);
+        let state = self.ensure_input_state(id);
+        let cut_val = state.cut();
+        let new_val = state.text.clone();
+        let handler = if let Some(elem) = self.find_mut(id) {
+            elem.text = Some(new_val.clone());
+            elem.props.insert("value".to_string(), new_val);
+            elem.on_change.clone()
+        } else {
+            None
+        };
+        (handler, cut_val)
+    }
+
+    pub fn dispatch_paste(&mut self, id: &str, s: &str) -> (Option<String>, String) {
+        self.focus(id);
+        let state = self.ensure_input_state(id);
+        state.paste(s);
+        let new_val = state.text.clone();
+        let handler = if let Some(elem) = self.find_mut(id) {
+            elem.text = Some(new_val.clone());
+            elem.props.insert("value".to_string(), new_val.clone());
+            elem.on_change.clone()
+        } else {
+            None
+        };
+        (handler, new_val)
+    }
+
     /// Dispatch a key event to the focused element or root and return the triggered handler name.
     pub fn dispatch_key(&self, _key: &str) -> Option<String> {
         if let Some(ref fid) = self.focused_id {
@@ -391,6 +736,18 @@ impl HeadlessMount {
         }
         // Fall back to root element on_key
         self.root.as_ref().and_then(|r| r.on_key.clone())
+    }
+
+    /// Dispatch a key event directly to a target element or fallback to focused/root.
+    pub fn dispatch_key_to(&self, target_id: Option<&str>, _key: &str) -> Option<String> {
+        if let Some(tid) = target_id {
+            if let Some(elem) = self.find(tid) {
+                if let Some(ref h) = elem.on_key {
+                    return Some(h.clone());
+                }
+            }
+        }
+        self.dispatch_key(_key)
     }
 }
 
@@ -519,5 +876,92 @@ mod tests {
         // Test keyboard handler dispatch
         let key_handler = mount.dispatch_key("Enter");
         assert_eq!(key_handler.as_deref(), Some("handle_key"));
+    }
+
+    #[test]
+    fn test_multiline_editing_and_cursor_navigation() {
+        let mut input = TextInputState::new("line1\nline2\nline3");
+        assert_eq!(input.lines_count(), 3);
+        assert_eq!(input.cursor, 17); // End of line 3
+        assert_eq!(input.line_and_col_of(input.cursor), (2, 5));
+
+        // Move up to line 2 (at col 5)
+        input.move_up(false);
+        assert_eq!(input.line_and_col_of(input.cursor), (1, 5));
+        assert_eq!(input.cursor, 11);
+
+        // Move to start of line 2
+        input.move_home(false);
+        assert_eq!(input.line_and_col_of(input.cursor), (1, 0));
+        assert_eq!(input.cursor, 6);
+
+        // Move to end of line 2
+        input.move_end(false);
+        assert_eq!(input.line_and_col_of(input.cursor), (1, 5));
+        assert_eq!(input.cursor, 11);
+
+        // Move up to line 1
+        input.move_up(false);
+        assert_eq!(input.line_and_col_of(input.cursor), (0, 5));
+
+        // Move up again at top line -> goes to home
+        input.move_up(false);
+        assert_eq!(input.cursor, 0);
+
+        // Insert newline in between
+        input.insert_str("new ");
+        input.insert_newline();
+        assert_eq!(input.lines_count(), 4);
+        assert_eq!(input.text, "new \nline1\nline2\nline3");
+
+        // Move down across lines
+        input.move_down(false);
+        assert_eq!(input.line_and_col_of(input.cursor), (2, 0));
+
+        // Select down with shift
+        input.move_down(true);
+        assert!(input.has_selection());
+        let (start, end) = input.selection_range().unwrap();
+        assert!(end > start);
+    }
+
+    #[test]
+    fn test_headless_mount_scroll_clamping() {
+        let mut col = UiElement::new("column");
+        for i in 0..20 {
+            let mut txt = UiElement::new("text");
+            txt.text = Some(format!("Row {i}: long text item for height and width"));
+            col.children.push(txt);
+        }
+
+        let mut mount = HeadlessMount::new("Bounded App", Some(col));
+        mount.width = Some(300);
+        mount.height = Some(200);
+
+        let (_cw, ch) = mount.content_size();
+        assert!(
+            ch > 200,
+            "content height must exceed viewport 200 (got {ch})"
+        );
+        let (max_x, max_y) = mount.max_scroll();
+        assert!(max_y > 0, "max_y scroll must be positive");
+
+        // Scroll within bounds
+        mount.scroll(0, 50);
+        assert_eq!(mount.scroll_offset(), (0, 50));
+
+        // Scroll past max -> clamped to max_y
+        mount.scroll(0, max_y + 500);
+        assert_eq!(mount.scroll_y, max_y);
+
+        // Scroll negative -> clamped to 0
+        mount.scroll(0, -(max_y + 500));
+        assert_eq!(mount.scroll_y, 0);
+
+        // Horizontal clamping
+        mount.scroll(max_x + 100, 0);
+        assert_eq!(mount.scroll_x, max_x);
+        mount.scroll(-1000, 0);
+        assert_eq!(mount.scroll_x, 0);
     }
 }

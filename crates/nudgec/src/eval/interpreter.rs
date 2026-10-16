@@ -23,6 +23,43 @@ pub struct HeadlessAppRecord {
     pub scroll_x: i64,
     pub scroll_y: i64,
     pub focused_id: Option<String>,
+    pub text_inputs: HashMap<String, nudge_runtime::ui::TextInputState>,
+}
+
+impl HeadlessAppRecord {
+    pub fn content_size(&self) -> (i64, i64) {
+        if let Some(ref r) = self.root {
+            let max_w = self.width.unwrap_or(800) - 20;
+            nudge_runtime::ui::estimate_element_size(r, max_w)
+        } else {
+            (0, 0)
+        }
+    }
+
+    pub fn max_scroll(&self) -> (i64, i64) {
+        let (cw, ch) = self.content_size();
+        let vw = self.width.unwrap_or(800);
+        let vh = self.height.unwrap_or(600);
+        let max_x = (cw - vw + 20).max(0);
+        let max_y = (ch - vh + 20).max(0);
+        (max_x, max_y)
+    }
+
+    pub fn ensure_input_state(&mut self, id: &str) -> &mut nudge_runtime::ui::TextInputState {
+        if !self.text_inputs.contains_key(id) {
+            let initial = self
+                .root
+                .as_ref()
+                .and_then(|r| r.find_by_id(id))
+                .and_then(|e| e.text.clone().or_else(|| e.props.get("value").cloned()))
+                .unwrap_or_default();
+            self.text_inputs.insert(
+                id.to_string(),
+                nudge_runtime::ui::TextInputState::new(initial),
+            );
+        }
+        self.text_inputs.get_mut(id).unwrap()
+    }
 }
 
 /// Runtime context holding global functions, tools, tests, agent store, and active agent.
@@ -234,6 +271,7 @@ impl Interpreter {
             scroll_x: 0,
             scroll_y: 0,
             focused_id: None,
+            text_inputs: HashMap::new(),
         });
         Ok(app_id)
     }
@@ -296,8 +334,14 @@ impl Interpreter {
     ) -> Result<(), String> {
         let app = self
             .headless_apps
-            .get(app_id)
+            .get_mut(app_id)
             .ok_or_else(|| "invalid app id".to_string())?;
+
+        app.focused_id = Some(target_id.to_string());
+        let st = app.ensure_input_state(target_id);
+        st.text = new_value.to_string();
+        st.cursor = st.char_len();
+        st.selection_anchor = None;
 
         let on_change = app
             .root
@@ -342,6 +386,61 @@ impl Interpreter {
                 .insert("value".to_string(), new_value.to_string());
         }
         Ok(())
+    }
+
+    /// Types text into an input element and dispatches on_change.
+    pub fn dispatch_type_headless(
+        &mut self,
+        app_id: usize,
+        target_id: &str,
+        s: &str,
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<(), String> {
+        let app = self
+            .headless_apps
+            .get_mut(app_id)
+            .ok_or_else(|| "invalid app id".to_string())?;
+        app.focused_id = Some(target_id.to_string());
+        let st = app.ensure_input_state(target_id);
+        st.insert_str(s);
+        let new_val = st.text.clone();
+        self.dispatch_change_headless(app_id, target_id, &new_val, env)
+    }
+
+    /// Sends backspace to an input element and dispatches on_change.
+    pub fn dispatch_backspace_headless(
+        &mut self,
+        app_id: usize,
+        target_id: &str,
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<(), String> {
+        let app = self
+            .headless_apps
+            .get_mut(app_id)
+            .ok_or_else(|| "invalid app id".to_string())?;
+        app.focused_id = Some(target_id.to_string());
+        let st = app.ensure_input_state(target_id);
+        st.backspace();
+        let new_val = st.text.clone();
+        self.dispatch_change_headless(app_id, target_id, &new_val, env)
+    }
+
+    /// Sends delete to an input element and dispatches on_change.
+    pub fn dispatch_delete_headless(
+        &mut self,
+        app_id: usize,
+        target_id: &str,
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<(), String> {
+        let app = self
+            .headless_apps
+            .get_mut(app_id)
+            .ok_or_else(|| "invalid app id".to_string())?;
+        app.focused_id = Some(target_id.to_string());
+        let st = app.ensure_input_state(target_id);
+        st.delete();
+        let new_val = st.text.clone();
+        self.dispatch_change_headless(app_id, target_id, &new_val, env)
     }
 
     /// Dispatches a keyboard event to a component or window inside a mounted app.
@@ -412,9 +511,574 @@ impl Interpreter {
             .headless_apps
             .get_mut(app_id)
             .ok_or_else(|| "invalid app id".to_string())?;
-        app.scroll_x = (app.scroll_x + dx).max(0);
-        app.scroll_y = (app.scroll_y + dy).max(0);
+        let (max_x, max_y) = app.max_scroll();
+        let target_x = app.scroll_x + dx;
+        let target_y = app.scroll_y + dy;
+        app.scroll_x = if app.width.is_some() || max_x > 0 {
+            target_x.clamp(0, max_x)
+        } else {
+            target_x.max(0)
+        };
+        app.scroll_y = if app.height.is_some() || max_y > 0 {
+            target_y.clamp(0, max_y)
+        } else {
+            target_y.max(0)
+        };
         Ok((app.scroll_x, app.scroll_y))
+    }
+
+    #[inline(never)]
+    fn eval_window_ref_method(
+        &mut self,
+        agent: &Option<String>,
+        win_name: &str,
+        method_name: &str,
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<NudgeVal, String> {
+        if method_name == "mount_headless" {
+            let app_id = self.mount_headless_app(agent, win_name, env)?;
+            return Ok(NudgeVal::HeadlessApp(app_id));
+        }
+        if method_name == "open" {
+            let app_id = self.mount_headless_app(agent, win_name, env)?;
+            let headless_env = std::env::var("NUDGE_UI_HEADLESS")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+            let replaying = std::env::var("NUDGE_REPLAY").is_ok_and(|v| !v.is_empty());
+
+            #[cfg(feature = "native-gui")]
+            if !headless_env && !replaying {
+                let app = self
+                    .headless_apps
+                    .get(app_id)
+                    .ok_or_else(|| "invalid app id".to_string())?;
+                let title = app.title.clone();
+                let width = app.width.unwrap_or(400).max(100) as u32;
+                let height = app.height.unwrap_or(300).max(100) as u32;
+
+                struct AppDispatcher<'a> {
+                    interp: &'a mut Interpreter,
+                    app_id: usize,
+                    env: &'a Rc<RefCell<Env>>,
+                }
+
+                impl<'a> nudge_runtime::ui_window::UiDispatcher for AppDispatcher<'a> {
+                    fn root(&mut self) -> Option<nudge_runtime::ui::UiElement> {
+                        self.interp
+                            .headless_apps
+                            .get(self.app_id)
+                            .and_then(|a| a.root.clone())
+                    }
+
+                    fn dispatch_click(&mut self, button_id: &str) {
+                        let _ =
+                            self.interp
+                                .dispatch_click_headless(self.app_id, button_id, self.env);
+                    }
+
+                    fn dispatch_change(&mut self, element_id: &str, value: &str) {
+                        let _ = self.interp.dispatch_change_headless(
+                            self.app_id,
+                            element_id,
+                            value,
+                            self.env,
+                        );
+                    }
+
+                    fn dispatch_key(&mut self, key: &str, target_id: Option<&str>) {
+                        let _ = self.interp.dispatch_key_headless(
+                            self.app_id,
+                            target_id,
+                            key,
+                            self.env,
+                        );
+                    }
+                }
+
+                let config = nudge_runtime::ui_window::WindowConfig {
+                    title,
+                    width,
+                    height,
+                };
+                let dispatcher = AppDispatcher {
+                    interp: self,
+                    app_id,
+                    env,
+                };
+                nudge_runtime::ui_window::run_window(config, dispatcher)?;
+            }
+
+            let _ = (headless_env, replaying);
+            return Ok(NudgeVal::HeadlessApp(app_id));
+        }
+        Err(format!("unknown window method '{method_name}'"))
+    }
+
+    #[inline(never)]
+    fn eval_headless_app_method(
+        &mut self,
+        app_id: usize,
+        method_name: &str,
+        args: &[Expr],
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<NudgeVal, String> {
+        if method_name == "find" {
+            if args.is_empty() {
+                return Err("'find' takes 1 argument".into());
+            }
+            let target_id = match self.eval_expr(&args[0], env)? {
+                NudgeVal::Str(s) => s,
+                other => other.to_string(),
+            };
+            let app = self
+                .headless_apps
+                .get(app_id)
+                .ok_or_else(|| "invalid app id".to_string())?;
+            let found = app
+                .root
+                .as_ref()
+                .and_then(|r| r.find_by_id(&target_id))
+                .cloned();
+            return Ok(match found {
+                Some(elem) => NudgeVal::UiElement {
+                    found: true,
+                    elem: Box::new(elem),
+                },
+                None => NudgeVal::UiElement {
+                    found: false,
+                    elem: Box::default(),
+                },
+            });
+        }
+        if method_name == "find_text" {
+            if args.is_empty() {
+                return Err("'find_text' takes 1 argument".into());
+            }
+            let target_txt = match self.eval_expr(&args[0], env)? {
+                NudgeVal::Str(s) => s,
+                other => other.to_string(),
+            };
+            let app = self
+                .headless_apps
+                .get(app_id)
+                .ok_or_else(|| "invalid app id".to_string())?;
+            let found = app
+                .root
+                .as_ref()
+                .and_then(|r| r.find_by_text(&target_txt))
+                .cloned();
+            return Ok(match found {
+                Some(elem) => NudgeVal::UiElement {
+                    found: true,
+                    elem: Box::new(elem),
+                },
+                None => NudgeVal::UiElement {
+                    found: false,
+                    elem: Box::default(),
+                },
+            });
+        }
+        if method_name == "dispatch_click" {
+            if args.is_empty() {
+                return Err("'dispatch_click' takes 1 argument".into());
+            }
+            let target_id = match self.eval_expr(&args[0], env)? {
+                NudgeVal::Str(s) => s,
+                other => other.to_string(),
+            };
+            self.dispatch_click_headless(app_id, &target_id, env)?;
+            return Ok(NudgeVal::Unit);
+        }
+        if method_name == "dispatch_change" {
+            if args.len() < 2 {
+                return Err("'dispatch_change' takes 2 arguments".into());
+            }
+            let target_id = match self.eval_expr(&args[0], env)? {
+                NudgeVal::Str(s) => s,
+                other => other.to_string(),
+            };
+            let new_val = match self.eval_expr(&args[1], env)? {
+                NudgeVal::Str(s) => s,
+                other => other.to_string(),
+            };
+            self.dispatch_change_headless(app_id, &target_id, &new_val, env)?;
+            return Ok(NudgeVal::Unit);
+        }
+        if method_name == "dispatch_type" || method_name == "type_text" {
+            if args.len() < 2 {
+                return Err(format!("'{method_name}' takes 2 arguments"));
+            }
+            let target_id = match self.eval_expr(&args[0], env)? {
+                NudgeVal::Str(s) => s,
+                other => other.to_string(),
+            };
+            let text = match self.eval_expr(&args[1], env)? {
+                NudgeVal::Str(s) => s,
+                other => other.to_string(),
+            };
+            self.dispatch_type_headless(app_id, &target_id, &text, env)?;
+            return Ok(NudgeVal::Unit);
+        }
+        if method_name == "dispatch_backspace" || method_name == "backspace" {
+            if args.is_empty() {
+                return Err(format!("'{method_name}' takes 1 argument"));
+            }
+            let target_id = match self.eval_expr(&args[0], env)? {
+                NudgeVal::Str(s) => s,
+                other => other.to_string(),
+            };
+            self.dispatch_backspace_headless(app_id, &target_id, env)?;
+            return Ok(NudgeVal::Unit);
+        }
+        if method_name == "dispatch_delete" || method_name == "delete" {
+            if args.is_empty() {
+                return Err(format!("'{method_name}' takes 1 argument"));
+            }
+            let target_id = match self.eval_expr(&args[0], env)? {
+                NudgeVal::Str(s) => s,
+                other => other.to_string(),
+            };
+            self.dispatch_delete_headless(app_id, &target_id, env)?;
+            return Ok(NudgeVal::Unit);
+        }
+        if method_name == "cursor_pos" {
+            if args.is_empty() {
+                return Err("'cursor_pos' takes 1 argument".into());
+            }
+            let target_id = match self.eval_expr(&args[0], env)? {
+                NudgeVal::Str(s) => s,
+                other => other.to_string(),
+            };
+            let app = self
+                .headless_apps
+                .get(app_id)
+                .ok_or_else(|| "invalid app id".to_string())?;
+            let pos = app
+                .text_inputs
+                .get(&target_id)
+                .map(|st| st.cursor as i64)
+                .unwrap_or(0);
+            return Ok(NudgeVal::Int(pos));
+        }
+        if method_name == "selected_text" {
+            if args.is_empty() {
+                return Err("'selected_text' takes 1 argument".into());
+            }
+            let target_id = match self.eval_expr(&args[0], env)? {
+                NudgeVal::Str(s) => s,
+                other => other.to_string(),
+            };
+            let app = self
+                .headless_apps
+                .get(app_id)
+                .ok_or_else(|| "invalid app id".to_string())?;
+            let txt = app
+                .text_inputs
+                .get(&target_id)
+                .and_then(|st| st.selected_text())
+                .unwrap_or_default();
+            return Ok(NudgeVal::Str(txt));
+        }
+        if method_name == "select_all" {
+            if args.is_empty() {
+                return Err("'select_all' takes 1 argument".into());
+            }
+            let target_id = match self.eval_expr(&args[0], env)? {
+                NudgeVal::Str(s) => s,
+                other => other.to_string(),
+            };
+            let app = self
+                .headless_apps
+                .get_mut(app_id)
+                .ok_or_else(|| "invalid app id".to_string())?;
+            let st = app.ensure_input_state(&target_id);
+            st.select_all();
+            return Ok(NudgeVal::Unit);
+        }
+        if method_name == "cursor_move" {
+            if args.len() < 2 {
+                return Err("'cursor_move' takes at least 2 arguments (id, dir)".into());
+            }
+            let target_id = match self.eval_expr(&args[0], env)? {
+                NudgeVal::Str(s) => s,
+                other => other.to_string(),
+            };
+            let dir = match self.eval_expr(&args[1], env)? {
+                NudgeVal::Str(s) => s,
+                other => other.to_string(),
+            };
+            let extend = if args.len() >= 3 {
+                match self.eval_expr(&args[2], env)? {
+                    NudgeVal::Bool(b) => b,
+                    _ => false,
+                }
+            } else {
+                false
+            };
+            let app = self
+                .headless_apps
+                .get_mut(app_id)
+                .ok_or_else(|| "invalid app id".to_string())?;
+            let st = app.ensure_input_state(&target_id);
+            match dir.as_str() {
+                "left" => st.move_left(extend),
+                "right" => st.move_right(extend),
+                "up" => st.move_up(extend),
+                "down" => st.move_down(extend),
+                "home" => st.move_home(extend),
+                "end" => st.move_end(extend),
+                _ => {}
+            }
+            return Ok(NudgeVal::Unit);
+        }
+        if method_name == "dispatch_key" {
+            if args.is_empty() {
+                return Err("'dispatch_key' takes at least 1 argument".into());
+            }
+            let (target_id, key) = if args.len() == 1 {
+                let key_str = match self.eval_expr(&args[0], env)? {
+                    NudgeVal::Str(s) => s,
+                    other => other.to_string(),
+                };
+                (None, key_str)
+            } else {
+                let tid = match self.eval_expr(&args[0], env)? {
+                    NudgeVal::Str(s) => s,
+                    other => other.to_string(),
+                };
+                let key_str = match self.eval_expr(&args[1], env)? {
+                    NudgeVal::Str(s) => s,
+                    other => other.to_string(),
+                };
+                (Some(tid), key_str)
+            };
+            self.dispatch_key_headless(app_id, target_id.as_deref(), &key, env)?;
+            return Ok(NudgeVal::Unit);
+        }
+        if method_name == "scroll" {
+            let (dx, dy) = if args.len() == 1 {
+                let dy = match self.eval_expr(&args[0], env)? {
+                    NudgeVal::Int(i) => i,
+                    other => other.to_string().parse().unwrap_or(0),
+                };
+                (0, dy)
+            } else if args.len() >= 2 {
+                let dx = match self.eval_expr(&args[0], env)? {
+                    NudgeVal::Int(i) => i,
+                    other => other.to_string().parse().unwrap_or(0),
+                };
+                let dy = match self.eval_expr(&args[1], env)? {
+                    NudgeVal::Int(i) => i,
+                    other => other.to_string().parse().unwrap_or(0),
+                };
+                (dx, dy)
+            } else {
+                (0, 0)
+            };
+            self.scroll_headless(app_id, dx, dy)?;
+            return Ok(NudgeVal::Unit);
+        }
+        if method_name == "scroll_offset" {
+            let app = self
+                .headless_apps
+                .get(app_id)
+                .ok_or_else(|| "invalid app id".to_string())?;
+            return Ok(NudgeVal::List(vec![
+                NudgeVal::Int(app.scroll_x),
+                NudgeVal::Int(app.scroll_y),
+            ]));
+        }
+        if method_name == "max_scroll" {
+            let app = self
+                .headless_apps
+                .get(app_id)
+                .ok_or_else(|| "invalid app id".to_string())?;
+            let (mx, my) = app.max_scroll();
+            return Ok(NudgeVal::List(vec![NudgeVal::Int(mx), NudgeVal::Int(my)]));
+        }
+        Ok(NudgeVal::Unit)
+    }
+
+    #[inline(never)]
+    fn eval_ui_combinator(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        kwargs: &[(String, Expr)],
+        env: &Rc<RefCell<Env>>,
+    ) -> Result<Option<NudgeVal>, String> {
+        if name == "column" || name == "row" {
+            let mut elem = nudge_runtime::ui::UiElement::new(name);
+            for (k, v_expr) in kwargs {
+                if k == "id" {
+                    let v = self.eval_expr(v_expr, env)?;
+                    elem.id = Some(match v {
+                        NudgeVal::Str(s) => s,
+                        other => other.to_string(),
+                    });
+                } else if k == "on_key" {
+                    let hname = match &v_expr.kind {
+                        ExprKind::Ident(s) => s.clone(),
+                        _ => match self.eval_expr(v_expr, env)? {
+                            NudgeVal::Str(s) => s,
+                            other => other.to_string(),
+                        },
+                    };
+                    elem.on_key = Some(hname);
+                } else {
+                    let v = self.eval_expr(v_expr, env)?;
+                    elem.props.insert(k.clone(), v.to_string());
+                }
+            }
+            for a_expr in args {
+                let val = self.eval_expr(a_expr, env)?;
+                match val {
+                    NudgeVal::List(items) => {
+                        for item in items {
+                            if let NudgeVal::UiElement {
+                                found: true,
+                                elem: child,
+                            } = item
+                            {
+                                elem.children.push(*child);
+                            }
+                        }
+                    }
+                    NudgeVal::UiElement {
+                        found: true,
+                        elem: child,
+                    } => {
+                        elem.children.push(*child);
+                    }
+                    _ => {}
+                }
+            }
+            return Ok(Some(NudgeVal::UiElement {
+                found: true,
+                elem: Box::new(elem),
+            }));
+        }
+
+        if name == "text" {
+            let mut elem = nudge_runtime::ui::UiElement::new("text");
+            if !args.is_empty() {
+                let val = self.eval_expr(&args[0], env)?;
+                elem.text = Some(match val {
+                    NudgeVal::Str(s) => s,
+                    other => other.to_string(),
+                });
+            }
+            for (k, v_expr) in kwargs {
+                let v = self.eval_expr(v_expr, env)?;
+                elem.props.insert(k.clone(), v.to_string());
+            }
+            return Ok(Some(NudgeVal::UiElement {
+                found: true,
+                elem: Box::new(elem),
+            }));
+        }
+
+        if name == "button" {
+            let mut elem = nudge_runtime::ui::UiElement::new("button");
+            if !args.is_empty() {
+                let val = self.eval_expr(&args[0], env)?;
+                elem.text = Some(match val {
+                    NudgeVal::Str(s) => s,
+                    other => other.to_string(),
+                });
+            }
+            for (k, v_expr) in kwargs {
+                if k == "id" {
+                    let v = self.eval_expr(v_expr, env)?;
+                    elem.id = Some(match v {
+                        NudgeVal::Str(s) => s,
+                        other => other.to_string(),
+                    });
+                } else if k == "on_click" {
+                    let hname = match &v_expr.kind {
+                        ExprKind::Ident(s) => s.clone(),
+                        _ => match self.eval_expr(v_expr, env)? {
+                            NudgeVal::Str(s) => s,
+                            other => other.to_string(),
+                        },
+                    };
+                    elem.on_click = Some(hname);
+                } else if k == "on_key" {
+                    let hname = match &v_expr.kind {
+                        ExprKind::Ident(s) => s.clone(),
+                        _ => match self.eval_expr(v_expr, env)? {
+                            NudgeVal::Str(s) => s,
+                            other => other.to_string(),
+                        },
+                    };
+                    elem.on_key = Some(hname);
+                } else {
+                    let v = self.eval_expr(v_expr, env)?;
+                    elem.props.insert(k.clone(), v.to_string());
+                }
+            }
+            return Ok(Some(NudgeVal::UiElement {
+                found: true,
+                elem: Box::new(elem),
+            }));
+        }
+
+        if name == "input" {
+            let mut elem = nudge_runtime::ui::UiElement::new("input");
+            if !args.is_empty() {
+                let val = self.eval_expr(&args[0], env)?;
+                let s = match val {
+                    NudgeVal::Str(s) => s,
+                    other => other.to_string(),
+                };
+                elem.text = Some(s.clone());
+                elem.props.insert("value".to_string(), s);
+            }
+            for (k, v_expr) in kwargs {
+                if k == "id" {
+                    let v = self.eval_expr(v_expr, env)?;
+                    elem.id = Some(match v {
+                        NudgeVal::Str(s) => s,
+                        other => other.to_string(),
+                    });
+                } else if k == "on_change" {
+                    let hname = match &v_expr.kind {
+                        ExprKind::Ident(s) => s.clone(),
+                        _ => match self.eval_expr(v_expr, env)? {
+                            NudgeVal::Str(s) => s,
+                            other => other.to_string(),
+                        },
+                    };
+                    elem.on_change = Some(hname);
+                } else if k == "on_key" {
+                    let hname = match &v_expr.kind {
+                        ExprKind::Ident(s) => s.clone(),
+                        _ => match self.eval_expr(v_expr, env)? {
+                            NudgeVal::Str(s) => s,
+                            other => other.to_string(),
+                        },
+                    };
+                    elem.on_key = Some(hname);
+                } else if k == "value" {
+                    let v = self.eval_expr(v_expr, env)?;
+                    let s = match v {
+                        NudgeVal::Str(s) => s,
+                        other => other.to_string(),
+                    };
+                    elem.text = Some(s.clone());
+                    elem.props.insert("value".to_string(), s);
+                } else {
+                    let v = self.eval_expr(v_expr, env)?;
+                    elem.props.insert(k.clone(), v.to_string());
+                }
+            }
+            return Ok(Some(NudgeVal::UiElement {
+                found: true,
+                elem: Box::new(elem),
+            }));
+        }
+
+        Ok(None)
     }
 
     /// Evaluates a single statement.
@@ -1241,158 +1905,8 @@ impl Interpreter {
             }
 
             // Check UI combinators
-            if name == "column" || name == "row" {
-                let mut elem = nudge_runtime::ui::UiElement::new(name);
-                for (k, v_expr) in kwargs {
-                    let v = self.eval_expr(v_expr, env)?;
-                    elem.props.insert(k.clone(), v.to_string());
-                }
-                for a_expr in args {
-                    let val = self.eval_expr(a_expr, env)?;
-                    match val {
-                        NudgeVal::List(items) => {
-                            for item in items {
-                                if let NudgeVal::UiElement {
-                                    found: true,
-                                    elem: child,
-                                } = item
-                                {
-                                    elem.children.push(*child);
-                                }
-                            }
-                        }
-                        NudgeVal::UiElement {
-                            found: true,
-                            elem: child,
-                        } => {
-                            elem.children.push(*child);
-                        }
-                        _ => {}
-                    }
-                }
-                return Ok(NudgeVal::UiElement {
-                    found: true,
-                    elem: Box::new(elem),
-                });
-            }
-
-            if name == "text" {
-                let mut elem = nudge_runtime::ui::UiElement::new("text");
-                if !args.is_empty() {
-                    let val = self.eval_expr(&args[0], env)?;
-                    elem.text = Some(match val {
-                        NudgeVal::Str(s) => s,
-                        other => other.to_string(),
-                    });
-                }
-                for (k, v_expr) in kwargs {
-                    let v = self.eval_expr(v_expr, env)?;
-                    elem.props.insert(k.clone(), v.to_string());
-                }
-                return Ok(NudgeVal::UiElement {
-                    found: true,
-                    elem: Box::new(elem),
-                });
-            }
-
-            if name == "button" {
-                let mut elem = nudge_runtime::ui::UiElement::new("button");
-                if !args.is_empty() {
-                    let val = self.eval_expr(&args[0], env)?;
-                    elem.text = Some(match val {
-                        NudgeVal::Str(s) => s,
-                        other => other.to_string(),
-                    });
-                }
-                for (k, v_expr) in kwargs {
-                    if k == "id" {
-                        let v = self.eval_expr(v_expr, env)?;
-                        elem.id = Some(match v {
-                            NudgeVal::Str(s) => s,
-                            other => other.to_string(),
-                        });
-                    } else if k == "on_click" {
-                        let hname = match &v_expr.kind {
-                            ExprKind::Ident(s) => s.clone(),
-                            _ => match self.eval_expr(v_expr, env)? {
-                                NudgeVal::Str(s) => s,
-                                other => other.to_string(),
-                            },
-                        };
-                        elem.on_click = Some(hname);
-                    } else if k == "on_key" {
-                        let hname = match &v_expr.kind {
-                            ExprKind::Ident(s) => s.clone(),
-                            _ => match self.eval_expr(v_expr, env)? {
-                                NudgeVal::Str(s) => s,
-                                other => other.to_string(),
-                            },
-                        };
-                        elem.on_key = Some(hname);
-                    } else {
-                        let v = self.eval_expr(v_expr, env)?;
-                        elem.props.insert(k.clone(), v.to_string());
-                    }
-                }
-                return Ok(NudgeVal::UiElement {
-                    found: true,
-                    elem: Box::new(elem),
-                });
-            }
-
-            if name == "input" {
-                let mut elem = nudge_runtime::ui::UiElement::new("input");
-                if !args.is_empty() {
-                    let val = self.eval_expr(&args[0], env)?;
-                    let s = match val {
-                        NudgeVal::Str(s) => s,
-                        other => other.to_string(),
-                    };
-                    elem.text = Some(s.clone());
-                    elem.props.insert("value".to_string(), s);
-                }
-                for (k, v_expr) in kwargs {
-                    if k == "id" {
-                        let v = self.eval_expr(v_expr, env)?;
-                        elem.id = Some(match v {
-                            NudgeVal::Str(s) => s,
-                            other => other.to_string(),
-                        });
-                    } else if k == "on_change" {
-                        let hname = match &v_expr.kind {
-                            ExprKind::Ident(s) => s.clone(),
-                            _ => match self.eval_expr(v_expr, env)? {
-                                NudgeVal::Str(s) => s,
-                                other => other.to_string(),
-                            },
-                        };
-                        elem.on_change = Some(hname);
-                    } else if k == "on_key" {
-                        let hname = match &v_expr.kind {
-                            ExprKind::Ident(s) => s.clone(),
-                            _ => match self.eval_expr(v_expr, env)? {
-                                NudgeVal::Str(s) => s,
-                                other => other.to_string(),
-                            },
-                        };
-                        elem.on_key = Some(hname);
-                    } else if k == "value" {
-                        let v = self.eval_expr(v_expr, env)?;
-                        let s = match v {
-                            NudgeVal::Str(s) => s,
-                            other => other.to_string(),
-                        };
-                        elem.text = Some(s.clone());
-                        elem.props.insert("value".to_string(), s);
-                    } else {
-                        let v = self.eval_expr(v_expr, env)?;
-                        elem.props.insert(k.clone(), v.to_string());
-                    }
-                }
-                return Ok(NudgeVal::UiElement {
-                    found: true,
-                    elem: Box::new(elem),
-                });
+            if let Some(ui_elem) = self.eval_ui_combinator(name, args, kwargs, env)? {
+                return Ok(ui_elem);
             }
 
             // Check view execution
@@ -1429,225 +1943,10 @@ impl Interpreter {
                     agent,
                     name: win_name,
                 } => {
-                    if method_name == "mount_headless" {
-                        let app_id = self.mount_headless_app(&agent, &win_name, env)?;
-                        return Ok(NudgeVal::HeadlessApp(app_id));
-                    }
-                    if method_name == "open" {
-                        let app_id = self.mount_headless_app(&agent, &win_name, env)?;
-                        let headless_env = std::env::var("NUDGE_UI_HEADLESS")
-                            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                            .unwrap_or(false);
-                        let replaying = std::env::var("NUDGE_REPLAY").is_ok_and(|v| !v.is_empty());
-
-                        #[cfg(feature = "native-gui")]
-                        if !headless_env && !replaying {
-                            let app = self
-                                .headless_apps
-                                .get(app_id)
-                                .ok_or_else(|| "invalid app id".to_string())?;
-                            let title = app.title.clone();
-                            let width = app.width.unwrap_or(400).max(100) as u32;
-                            let height = app.height.unwrap_or(300).max(100) as u32;
-
-                            struct AppDispatcher<'a> {
-                                interp: &'a mut Interpreter,
-                                app_id: usize,
-                                env: &'a Rc<RefCell<Env>>,
-                            }
-
-                            impl<'a> nudge_runtime::ui_window::UiDispatcher for AppDispatcher<'a> {
-                                fn root(&mut self) -> Option<nudge_runtime::ui::UiElement> {
-                                    self.interp
-                                        .headless_apps
-                                        .get(self.app_id)
-                                        .and_then(|a| a.root.clone())
-                                }
-
-                                fn dispatch_click(&mut self, button_id: &str) {
-                                    let _ = self.interp.dispatch_click_headless(
-                                        self.app_id,
-                                        button_id,
-                                        self.env,
-                                    );
-                                }
-
-                                fn dispatch_change(&mut self, element_id: &str, value: &str) {
-                                    let _ = self.interp.dispatch_change_headless(
-                                        self.app_id,
-                                        element_id,
-                                        value,
-                                        self.env,
-                                    );
-                                }
-
-                                fn dispatch_key(&mut self, key: &str, target_id: Option<&str>) {
-                                    let _ = self.interp.dispatch_key_headless(
-                                        self.app_id,
-                                        target_id,
-                                        key,
-                                        self.env,
-                                    );
-                                }
-                            }
-
-                            let config = nudge_runtime::ui_window::WindowConfig {
-                                title,
-                                width,
-                                height,
-                            };
-                            let dispatcher = AppDispatcher {
-                                interp: self,
-                                app_id,
-                                env,
-                            };
-                            nudge_runtime::ui_window::run_window(config, dispatcher)?;
-                        }
-
-                        let _ = (headless_env, replaying);
-                        return Ok(NudgeVal::HeadlessApp(app_id));
-                    }
+                    return self.eval_window_ref_method(&agent, &win_name, method_name, env);
                 }
                 NudgeVal::HeadlessApp(app_id) => {
-                    if method_name == "find" {
-                        if args.is_empty() {
-                            return Err("'find' takes 1 argument".into());
-                        }
-                        let target_id = match self.eval_expr(&args[0], env)? {
-                            NudgeVal::Str(s) => s,
-                            other => other.to_string(),
-                        };
-                        let app = self
-                            .headless_apps
-                            .get(app_id)
-                            .ok_or_else(|| "invalid app id".to_string())?;
-                        let found = app
-                            .root
-                            .as_ref()
-                            .and_then(|r| r.find_by_id(&target_id))
-                            .cloned();
-                        return Ok(match found {
-                            Some(elem) => NudgeVal::UiElement {
-                                found: true,
-                                elem: Box::new(elem),
-                            },
-                            None => NudgeVal::UiElement {
-                                found: false,
-                                elem: Box::default(),
-                            },
-                        });
-                    }
-                    if method_name == "find_text" {
-                        if args.is_empty() {
-                            return Err("'find_text' takes 1 argument".into());
-                        }
-                        let target_txt = match self.eval_expr(&args[0], env)? {
-                            NudgeVal::Str(s) => s,
-                            other => other.to_string(),
-                        };
-                        let app = self
-                            .headless_apps
-                            .get(app_id)
-                            .ok_or_else(|| "invalid app id".to_string())?;
-                        let found = app
-                            .root
-                            .as_ref()
-                            .and_then(|r| r.find_by_text(&target_txt))
-                            .cloned();
-                        return Ok(match found {
-                            Some(elem) => NudgeVal::UiElement {
-                                found: true,
-                                elem: Box::new(elem),
-                            },
-                            None => NudgeVal::UiElement {
-                                found: false,
-                                elem: Box::default(),
-                            },
-                        });
-                    }
-                    if method_name == "dispatch_click" {
-                        if args.is_empty() {
-                            return Err("'dispatch_click' takes 1 argument".into());
-                        }
-                        let target_id = match self.eval_expr(&args[0], env)? {
-                            NudgeVal::Str(s) => s,
-                            other => other.to_string(),
-                        };
-                        self.dispatch_click_headless(app_id, &target_id, env)?;
-                        return Ok(NudgeVal::Unit);
-                    }
-                    if method_name == "dispatch_change" {
-                        if args.len() < 2 {
-                            return Err("'dispatch_change' takes 2 arguments".into());
-                        }
-                        let target_id = match self.eval_expr(&args[0], env)? {
-                            NudgeVal::Str(s) => s,
-                            other => other.to_string(),
-                        };
-                        let new_val = match self.eval_expr(&args[1], env)? {
-                            NudgeVal::Str(s) => s,
-                            other => other.to_string(),
-                        };
-                        self.dispatch_change_headless(app_id, &target_id, &new_val, env)?;
-                        return Ok(NudgeVal::Unit);
-                    }
-                    if method_name == "dispatch_key" {
-                        if args.is_empty() {
-                            return Err("'dispatch_key' takes at least 1 argument".into());
-                        }
-                        let (target_id, key) = if args.len() == 1 {
-                            let key_str = match self.eval_expr(&args[0], env)? {
-                                NudgeVal::Str(s) => s,
-                                other => other.to_string(),
-                            };
-                            (None, key_str)
-                        } else {
-                            let tid = match self.eval_expr(&args[0], env)? {
-                                NudgeVal::Str(s) => s,
-                                other => other.to_string(),
-                            };
-                            let key_str = match self.eval_expr(&args[1], env)? {
-                                NudgeVal::Str(s) => s,
-                                other => other.to_string(),
-                            };
-                            (Some(tid), key_str)
-                        };
-                        self.dispatch_key_headless(app_id, target_id.as_deref(), &key, env)?;
-                        return Ok(NudgeVal::Unit);
-                    }
-                    if method_name == "scroll" {
-                        let (dx, dy) = if args.len() == 1 {
-                            let dy = match self.eval_expr(&args[0], env)? {
-                                NudgeVal::Int(i) => i,
-                                other => other.to_string().parse().unwrap_or(0),
-                            };
-                            (0, dy)
-                        } else if args.len() >= 2 {
-                            let dx = match self.eval_expr(&args[0], env)? {
-                                NudgeVal::Int(i) => i,
-                                other => other.to_string().parse().unwrap_or(0),
-                            };
-                            let dy = match self.eval_expr(&args[1], env)? {
-                                NudgeVal::Int(i) => i,
-                                other => other.to_string().parse().unwrap_or(0),
-                            };
-                            (dx, dy)
-                        } else {
-                            (0, 0)
-                        };
-                        self.scroll_headless(app_id, dx, dy)?;
-                        return Ok(NudgeVal::Unit);
-                    }
-                    if method_name == "scroll_offset" {
-                        let app = self
-                            .headless_apps
-                            .get(app_id)
-                            .ok_or_else(|| "invalid app id".to_string())?;
-                        return Ok(NudgeVal::List(vec![
-                            NudgeVal::Int(app.scroll_x),
-                            NudgeVal::Int(app.scroll_y),
-                        ]));
-                    }
+                    return self.eval_headless_app_method(app_id, method_name, args, env);
                 }
                 NudgeVal::UiElement { found, ref elem } => {
                     if method_name == "exists" {
@@ -5146,7 +5445,22 @@ data: [DONE]\n\n";
                 column(padding = 16, gap = 8) [
                     input("initial", id = "my_input", on_change = on_text_changed, on_key = on_key_pressed),
                     text("Current: " + text_val),
-                    text("LastKey: " + key_val)
+                    text("LastKey: " + key_val),
+                    text("Line 1: filler content for overflow"),
+                    text("Line 2: filler content for overflow"),
+                    text("Line 3: filler content for overflow"),
+                    text("Line 4: filler content for overflow"),
+                    text("Line 5: filler content for overflow"),
+                    text("Line 6: filler content for overflow"),
+                    text("Line 7: filler content for overflow"),
+                    text("Line 8: filler content for overflow"),
+                    text("Line 9: filler content for overflow"),
+                    text("Line 10: filler content for overflow"),
+                    text("Line 11: filler content for overflow"),
+                    text("Line 12: filler content for overflow"),
+                    text("Line 13: filler content for overflow"),
+                    text("Line 14: filler content for overflow"),
+                    text("Line 15: filler content for overflow")
                 ]
             }
 
@@ -5174,22 +5488,47 @@ data: [DONE]\n\n";
                 assert app.find("my_input").exists()
                 assert app.find_text("Current: initial").exists()
 
-                // 1. Text input editing: on_change fires, state updates, view re-renders
-                app.dispatch_change("my_input", "edited text")
-                assert app.find_text("Current: edited text").exists()
-                assert EditorApp.state.text_val == "edited text"
+                // 1. Text input editing: dispatch_type, dispatch_backspace, selection, cursor
+                app.dispatch_type("my_input", " edit")
+                assert app.find_text("Current: initial edit").exists()
+                assert EditorApp.state.text_val == "initial edit"
 
-                // 2. Keyboard event: on_key fires, state updates, view re-renders
+                app.dispatch_backspace("my_input")
+                assert app.find_text("Current: initial edi").exists()
+                assert EditorApp.state.text_val == "initial edi"
+
+                app.select_all("my_input")
+                assert app.selected_text("my_input") == "initial edi"
+
+                app.dispatch_delete("my_input")
+                assert app.find_text("Current: ").exists()
+                assert EditorApp.state.text_val == ""
+
+                // 2. Keyboard event routing: on_key fires, state updates, view re-renders
                 app.dispatch_key("my_input", "Enter")
                 assert app.find_text("LastKey: Enter").exists()
                 assert EditorApp.state.key_val == "Enter"
 
-                // 3. Viewport scrolling
+                app.dispatch_key("my_input", "Ctrl+S")
+                assert app.find_text("LastKey: Ctrl+S").exists()
+                assert EditorApp.state.key_val == "Ctrl+S"
+
+                // 3. Viewport scrolling and clamping
                 assert app.scroll_offset() == [0, 0]
+                let max_s = app.max_scroll()
+                assert max_s[1] > 100
+
+                // Scroll within bounds
                 app.scroll(0, 150)
                 assert app.scroll_offset() == [0, 150]
-                app.scroll(25, -50)
-                assert app.scroll_offset() == [25, 100]
+
+                // Scroll past max -> clamped to max_s[1]
+                app.scroll(0, 1000)
+                assert app.scroll_offset()[1] == max_s[1]
+
+                // Scroll negative -> clamped to 0
+                app.scroll(0, -2000)
+                assert app.scroll_offset() == [0, 0]
             }
         "#;
         let tokens = lex(src).expect("lex failed");
@@ -5200,11 +5539,11 @@ data: [DONE]\n\n";
 
         assert_eq!(
             interp.agent_store.get_field("EditorApp", "text_val"),
-            Ok(NudgeVal::Str("edited text".to_string()))
+            Ok(NudgeVal::Str("".to_string()))
         );
         assert_eq!(
             interp.agent_store.get_field("EditorApp", "key_val"),
-            Ok(NudgeVal::Str("Enter".to_string()))
+            Ok(NudgeVal::Str("Ctrl+S".to_string()))
         );
     }
 }
