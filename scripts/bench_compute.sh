@@ -57,12 +57,12 @@ for i in $(seq 1 "$ITERATIONS"); do
     START_NS=$(python3 -c 'import time; print(int(time.perf_counter_ns()))')
     OUTPUT=$(NUDGE_TRACE="$TRACE_PATH" "$NUDGEC" run "$BENCH_FILE")
     END_NS=$(python3 -c 'import time; print(int(time.perf_counter_ns()))')
-    
+
     if [ "$OUTPUT" != "$EXPECTED_OUTPUT" ]; then
         echo "FAIL: Iteration $i output '$OUTPUT' != expected '$EXPECTED_OUTPUT'" >&2
         exit 1
     fi
-    
+
     DURATION_MS=$(python3 -c "print(($END_NS - $START_NS) / 1_000_000)")
     echo "  Run $i: ${DURATION_MS} ms (output: $OUTPUT)"
     echo "$DURATION_MS" >> "$RESULTS_FILE"
@@ -75,12 +75,12 @@ for i in $(seq 1 "$ITERATIONS"); do
     START_NS=$(python3 -c 'import time; print(int(time.perf_counter_ns()))')
     OUTPUT=$(NUDGE_TRACE="/dev/null" "$NUDGEC" run "$BENCH_FILE")
     END_NS=$(python3 -c 'import time; print(int(time.perf_counter_ns()))')
-    
+
     if [ "$OUTPUT" != "$EXPECTED_OUTPUT" ]; then
         echo "FAIL: Iteration $i output '$OUTPUT' != expected '$EXPECTED_OUTPUT'" >&2
         exit 1
     fi
-    
+
     DURATION_MS=$(python3 -c "print(($END_NS - $START_NS) / 1_000_000)")
     echo "  Run $i: ${DURATION_MS} ms (output: $OUTPUT)"
     echo "$DURATION_MS" >> "$NULL_RESULTS_FILE"

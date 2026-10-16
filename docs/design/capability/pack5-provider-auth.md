@@ -1,10 +1,10 @@
 # Nudge Language Capability Request: Pack 5 (Provider Auth)
 
-**Status:** Implemented (see git log)  
-**Implementation Commits:** `2f9901b` (PACK 5 slice 1: fail-closed provider auth, no foreign token harvesting, per-provider OAuth gate), `9bee7ab` (PACK 5 slice 2: auth surface, account declarations, uses Auth(account), RFC 8628 device flow client)  
-**Security Note:** Providers without a proven official credential path remain strictly DISABLED and fail-closed (E-auth-0404). Unapproved provider access is not enabled.  
-**Date:** 2026-10-15  
-**Area:** Runtime, Engine, Security, Language Syntax  
+**Status:** Implemented (see git log)
+**Implementation Commits:** `2f9901b` (PACK 5 slice 1: fail-closed provider auth, no foreign token harvesting, per-provider OAuth gate), `9bee7ab` (PACK 5 slice 2: auth surface, account declarations, uses Auth(account), RFC 8628 device flow client)
+**Security Note:** Providers without a proven official credential path remain strictly DISABLED and fail-closed (E-auth-0404). Unapproved provider access is not enabled.
+**Date:** 2026-10-15
+**Area:** Runtime, Engine, Security, Language Syntax
 
 ---
 

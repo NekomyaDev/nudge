@@ -31,5 +31,3 @@ libc = "0.2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 nudgec = { path = "../nudgec" }
-
-

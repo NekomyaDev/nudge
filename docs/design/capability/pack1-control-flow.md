@@ -1,10 +1,10 @@
 # Nudge Language Capability Request: Pack 1 (Control Flow & Data)
 
-**Status:** Implemented (see git log)  
-**Implementation Commits:** `0837df3` (PACK 1 control flow & data: if/else, for, record literals, indexing, mutable locals), `7b2bef3` (multi-statement if branches + Python/TS codegen)  
-**Author:** Pack 1 Coordinator  
-**Target Repository:** `/home/neko/Belgeler/ZCode-AI-Calisma-Alani/nudge` at commit `e2cafc0`  
-**Classification:** MEVCUT / KISMI / ÖNERİ  
+**Status:** Implemented (see git log)
+**Implementation Commits:** `0837df3` (PACK 1 control flow & data: if/else, for, record literals, indexing, mutable locals), `7b2bef3` (multi-statement if branches + Python/TS codegen)
+**Author:** Pack 1 Coordinator
+**Target Repository:** `/home/neko/Belgeler/ZCode-AI-Calisma-Alani/nudge` at commit `e2cafc0`
+**Classification:** MEVCUT / KISMI / ÖNERİ
 
 ---
 

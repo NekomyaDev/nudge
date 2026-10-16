@@ -516,7 +516,7 @@ AI agents frequently handle sensitive tokens, authorization headers, private key
 | `NUDGE_PRICING` | both | Custom JSON pricing table: `{"model": [usd_per_1M_in, usd_per_1M_out]}` | Built-in table |
 | `NUDGE_GUARD` | python/TS | Output guards (`pii` masks secrets, emails, IP addresses in LLM outputs) | None |
 | `NUDGE_BUDGET` | both | Run-wide USD spending ceiling enforced across parallel fan-outs | None |
-| `NUDGE_REPAIR_BUDGET` | python/TS | Cumulative USD ceiling for repair rounds | None |
+| `NUDGE_REPAIR_BUDGET` | python | Cumulative USD ceiling for repair rounds | None |
 | `NUDGE_MAX_LOOP_ITERATIONS` | native | Maximum sequential loop iterations before raising runtime error `E0703` | `10000` |
 | `NUDGE_TRACE` | both | Destination path for writing the NTF JSONL execution trace | `trace.jsonl` |
 | `NUDGE_REPLAY` | both | Trace path for deterministic offline replay (`NUDGE_REPLAY_MODE=all` or `llm`) | None |
@@ -530,16 +530,16 @@ AI agents frequently handle sensitive tokens, authorization headers, private key
 | `NUDGE_UI_HEADLESS` | native | Force UI window operations to run headlessly in memory (`1` or `true`) | `0` |
 | `NUDGE_TOOL_GRANTS` | both | Execution-layer JSON tool policy (e.g. `{"web_search": ["*"]}`). Fails closed | None |
 | `NUDGE_MCP_SERVERS` | both | JSON registry mapping MCP server names to stdio commands | None |
-| `NUDGE_DECISION_SERVERS` | both | JSON registry for decision model endpoints (e.g. `{"laya": {"base_url": "..."}}`) | None |
-| `NUDGE_DECISION_CACHE` | both | Cache file path for persisted decision model distributions | None |
+| `NUDGE_DECISION_SERVERS` | python/TS | JSON registry for decision model endpoints (e.g. `{"laya": {"base_url": "..."}}`) | None |
+| `NUDGE_DECISION_CACHE` | python/TS | Cache file path for persisted decision model distributions | None |
 | `NUDGE_COMPUTER_SERVERS` | both | JSON registry for computer use bridges (subprocess JSONL or HTTP) | None |
 | `NUDGE_COMPUTER_PROVIDER` | both | Selected bridge for computer actions (`fake`, or registered server name) | `fake` |
 | `NUDGE_COMPUTER_KILL` | both | Hard kill switch: `1` immediately refuses all computer operations | `0` |
 | `NUDGE_COMPUTER_DRIFT` | both | When `1`, re-observes live state during replay and attaches mechanical drift diffs | `0` |
 | `NUDGE_AGENT_RUNTIME` | native | Path to pre-built `nudge-agent` binary for `nudgec build --standalone` | Sibling binary |
 | `NUDGE_CREDENTIALS_PATH` | native | Custom path to Nudge authentication credentials store | `~/.nudge/credentials.json` |
-| `NUDGE_OTEL` | python/TS | OpenTelemetry span export file | None |
-| `NUDGE_OTEL_ENDPOINT` | python/TS | OpenTelemetry HTTP export endpoint | None |
+| `NUDGE_OTEL` | python | OpenTelemetry span export file | None |
+| `NUDGE_OTEL_ENDPOINT` | python | OpenTelemetry HTTP export endpoint | None |
 
 `native` applies to the Rust runtime (`nudgec`/`nudge-runtime`), `python/TS` to the legacy generated runtimes, and `both` to both runtime families.
 
