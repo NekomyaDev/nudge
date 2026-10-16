@@ -1738,6 +1738,33 @@ fn check_expr_pos(
                             }
                             _ => {}
                         }
+                    } else if let Some((params, ret)) = g.fns.get(&format!("{prefix}.{name}")) {
+                        let full_name = format!("{prefix}.{name}");
+                        if args.len() > params.len() {
+                            errs.push(CheckError {
+                                span: None,
+                                code: "E0201",
+                                msg: format!(
+                                    "'{full_name}' takes {} argument(s), got {}",
+                                    params.len(),
+                                    args.len()
+                                ),
+                            });
+                        } else {
+                            for (at, (_, pt)) in arg_tys.iter().zip(params.iter()) {
+                                let want = resolve(pt, g, &mut Vec::new(), errs);
+                                if !assignable(at, &want) {
+                                    errs.push(CheckError {
+                                        span: None,
+                                        code: "E0201",
+                                        msg: format!(
+                                            "argument to '{full_name}' must be {want}, got {at}"
+                                        ),
+                                    });
+                                }
+                            }
+                        }
+                        return resolve(ret, g, &mut Vec::new(), errs);
                     }
                 }
             }
@@ -2505,19 +2532,17 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                             ..
                         } => {
                             g.fn_effects.insert(name.clone(), effects.clone());
-                            if g.fns
-                                .insert(
-                                    name.clone(),
-                                    (
-                                        params
-                                            .iter()
-                                            .map(|p| (p.name.clone(), p.ty.clone()))
-                                            .collect(),
-                                        ret.clone(),
-                                    ),
-                                )
-                                .is_some()
-                            {
+                            g.fn_effects
+                                .insert(format!("{agent}.{name}"), effects.clone());
+                            let sig = (
+                                params
+                                    .iter()
+                                    .map(|p| (p.name.clone(), p.ty.clone()))
+                                    .collect(),
+                                ret.clone(),
+                            );
+                            g.fns.insert(format!("{agent}.{name}"), sig.clone());
+                            if g.fns.insert(name.clone(), sig).is_some() {
                                 errs.push(CheckError {
                                     span: None,
                                     code: "E0102",

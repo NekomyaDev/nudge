@@ -71,10 +71,15 @@ pub fn emit(items: &[Item]) -> String {
                 }
                 let ps = params
                     .iter()
-                    .map(|p| p.name.clone())
+                    .map(|p| py_ident(&p.name))
                     .collect::<Vec<_>>()
                     .join(", ");
-                out.push_str(&format!("def {name}({ps}):\n"));
+                let def_name = if name == "main" {
+                    "main".to_string()
+                } else {
+                    py_ident(name)
+                };
+                out.push_str(&format!("def {def_name}({ps}):\n"));
                 out.push_str(&emit_body(body, &aliases, None));
                 if name == "main" {
                     has_main = true;
@@ -145,10 +150,15 @@ pub fn emit(items: &[Item]) -> String {
                             }
                             let ps = params
                                 .iter()
-                                .map(|p| p.name.clone())
+                                .map(|p| py_ident(&p.name))
                                 .collect::<Vec<_>>()
                                 .join(", ");
-                            out.push_str(&format!("def {fn_name}({ps}):\n"));
+                            let def_fn_name = if fn_name == "main" {
+                                "main".to_string()
+                            } else {
+                                py_ident(fn_name)
+                            };
+                            out.push_str(&format!("def {def_fn_name}({ps}):\n"));
                             let bound = bind_state(body, name);
                             out.push_str(&emit_body(&bound, &aliases, Some(name)));
                             if fn_name == "main" {
@@ -220,10 +230,15 @@ pub fn emit(items: &[Item]) -> String {
             } => {
                 let ps = params
                     .iter()
-                    .map(|p| p.name.clone())
+                    .map(|p| py_ident(&p.name))
                     .collect::<Vec<_>>()
                     .join(", ");
-                out.push_str(&format!("def {name}({ps}):\n"));
+                let def_name = if name == "main" {
+                    "main".to_string()
+                } else {
+                    py_ident(name)
+                };
+                out.push_str(&format!("def {def_name}({ps}):\n"));
                 out.push_str(&emit_body(body, &aliases, None));
             }
             Item::Window { name, fields } => {
@@ -258,6 +273,7 @@ fn emit_body(body: &[Stmt], aliases: &HashSet<String>, agent: Option<&str>) -> S
                 stream,
                 ..
             } => {
+                let id = py_ident(name);
                 if *stream {
                     match &value.kind {
                         // design §4.5: stream let lowers to the incremental-validating stream call
@@ -266,18 +282,15 @@ fn emit_body(body: &[Stmt], aliases: &HashSet<String>, agent: Option<&str>) -> S
                             options,
                             repair,
                         } => {
-                            format!(
-                                "{name} = {}",
-                                llm_py(true, prompt, options, *repair, aliases)
-                            )
+                            format!("{id} = {}", llm_py(true, prompt, options, *repair, aliases))
                         }
                         _ => format!(
-                            "{name} = {}  # warning: stream ignored on non-llm binding",
+                            "{id} = {}  # warning: stream ignored on non-llm binding",
                             py(value, aliases)
                         ),
                     }
                 } else {
-                    format!("{name} = {}", py(value, aliases))
+                    format!("{id} = {}", py(value, aliases))
                 }
             }
             // design §7: a state write is a checkpoint — attribute writes on
@@ -297,7 +310,9 @@ fn emit_body(body: &[Stmt], aliases: &HashSet<String>, agent: Option<&str>) -> S
                     "# error: state write 'state.{field}' outside an agent block (E0701)\n    pass"
                 ),
             },
-            StmtKind::Assign { name, value } => format!("{name} = {}", py(value, aliases)),
+            StmtKind::Assign { name, value } => {
+                format!("{} = {}", py_ident(name), py(value, aliases))
+            }
             StmtKind::Assert(e) => format!("assert {}", py(e, aliases)),
             // MVP return rule: the fn's final expression is its return value.
             StmtKind::ExprStmt(e) if i == last => format!("return {}", py(e, aliases)),
@@ -799,6 +814,22 @@ fn expr_schema_py(e: &Expr, aliases: &HashSet<String>) -> String {
     }
 }
 
+/// Escape Python reserved keywords by suffixing an underscore (e.g. `def` -> `def_`),
+/// following standard PEP 8 conventions.
+pub fn py_ident(name: &str) -> String {
+    const PYTHON_KEYWORDS: &[&str] = &[
+        "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class",
+        "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global",
+        "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return",
+        "try", "while", "with", "yield",
+    ];
+    if PYTHON_KEYWORDS.contains(&name) {
+        format!("{name}_")
+    } else {
+        name.to_string()
+    }
+}
+
 /// f64 → a Python/TS float literal. Rust prints 1.0 as "1" — an INT literal
 /// in the emitted code — so a bare integral value gains a trailing ".0".
 pub fn fmt_f64(v: f64) -> String {
@@ -824,7 +855,7 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
             }
         }
         ExprKind::None => "None".into(),
-        ExprKind::Ident(n) => n.clone(),
+        ExprKind::Ident(n) => py_ident(n),
         ExprKind::ListLit(xs) => {
             format!(
                 "[{}]",

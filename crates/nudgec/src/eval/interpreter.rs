@@ -60,6 +60,23 @@ impl HeadlessAppRecord {
         }
         self.text_inputs.get_mut(id).unwrap()
     }
+
+    /// Syncs existing TextInputState instances with updated values from a newly rendered tree.
+    pub fn sync_inputs_from_tree(&mut self) {
+        if let Some(ref root) = self.root {
+            for (id, st) in self.text_inputs.iter_mut() {
+                if let Some(elem) = root.find_by_id(id) {
+                    if let Some(val) = elem.text.as_ref().or_else(|| elem.props.get("value")) {
+                        if st.text != *val {
+                            st.text = val.clone();
+                            st.cursor = st.cursor.min(st.char_len());
+                            st.selection_anchor = None;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Runtime context holding global functions, tools, tests, agent store, and active agent.
@@ -140,6 +157,10 @@ impl Interpreter {
                     for f in fns {
                         match f {
                             Item::Fn { name, .. } => {
+                                self.fns.insert(
+                                    format!("{agent_name}.{name}"),
+                                    (f.clone(), Some(agent_name.clone())),
+                                );
                                 self.fns
                                     .insert(name.clone(), (f.clone(), Some(agent_name.clone())));
                             }
@@ -321,6 +342,7 @@ impl Interpreter {
             self.active_agent = prev_agent2;
             if let NudgeVal::UiElement { found: true, elem } = new_root_val {
                 self.headless_apps[app_id].root = Some(*elem);
+                self.headless_apps[app_id].sync_inputs_from_tree();
             }
         }
         Ok(())
@@ -377,6 +399,30 @@ impl Interpreter {
             self.active_agent = prev_agent2;
             if let NudgeVal::UiElement { found: true, elem } = new_root_val {
                 self.headless_apps[app_id].root = Some(*elem);
+                // In dispatch_change, target_id was just set by user and has current text_inputs state.
+                // Sync any other inputs that might have changed from external state.
+                let mut other_inputs = HashMap::new();
+                if let Some(ref r) = self.headless_apps[app_id].root {
+                    for (id, st) in self.headless_apps[app_id].text_inputs.iter() {
+                        if id != target_id {
+                            if let Some(e) = r.find_by_id(id) {
+                                if let Some(val) = e.text.as_ref().or_else(|| e.props.get("value"))
+                                {
+                                    if st.text != *val {
+                                        other_inputs.insert(id.clone(), val.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                for (id, val) in other_inputs {
+                    if let Some(st) = self.headless_apps[app_id].text_inputs.get_mut(&id) {
+                        st.text = val;
+                        st.cursor = st.cursor.min(st.char_len());
+                        st.selection_anchor = None;
+                    }
+                }
             }
         } else if let Some(elem) = self.headless_apps[app_id]
             .root
@@ -497,6 +543,7 @@ impl Interpreter {
             self.active_agent = prev_agent2;
             if let NudgeVal::UiElement { found: true, elem } = new_root_val {
                 self.headless_apps[app_id].root = Some(*elem);
+                self.headless_apps[app_id].sync_inputs_from_tree();
             }
         }
         Ok(())
@@ -1908,6 +1955,15 @@ impl Interpreter {
         {
             let target_val = self.eval_expr(obj, env)?;
             match target_val {
+                NudgeVal::AgentRef(agent_name) => {
+                    let full_fn = format!("{agent_name}.{method_name}");
+                    if let Some((fn_item, fn_agent)) = self.fns.get(&full_fn).cloned() {
+                        return self.call_user_fn(&fn_item, fn_agent.as_deref(), args, kwargs, env);
+                    }
+                    return Err(format!(
+                        "agent '{agent_name}' has no function '{method_name}'"
+                    ));
+                }
                 NudgeVal::WindowRef {
                     agent,
                     name: win_name,
