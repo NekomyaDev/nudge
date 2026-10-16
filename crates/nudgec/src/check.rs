@@ -424,6 +424,9 @@ fn direct_effects(
                     "replay" | "python" => {
                         effects.insert("IO".into());
                     }
+                    "run" => {
+                        effects.insert("Process".into());
+                    }
                     "mcp" => {
                         effects.insert("Tool".into());
                     }
@@ -1438,6 +1441,15 @@ fn check_expr_pos(
                             });
                         }
                         return Ty::Int;
+                    }
+                    "run" => {
+                        return builtin_record_ty("ProcessOutput").unwrap_or_else(|| {
+                            Ty::Record(vec![
+                                ("code".to_string(), Ty::Int),
+                                ("stdout".to_string(), Ty::Str),
+                                ("stderr".to_string(), Ty::Str),
+                            ])
+                        });
                     }
                     "zip" => {
                         if args.len() != 2 {
@@ -3506,6 +3518,81 @@ fn f(c: bool) -> string uses IO {
         assert!(
             !errs3.iter().any(|e| e.code == "E0101"),
             "Store should be a known effect, got {errs3:?}"
+        );
+    }
+
+    #[test]
+    fn fs_watch_requires_fswatch_effect() {
+        // fs.watch without FsWatch effect trips E0301
+        let errs1 = check_src("fn f() -> [FsEvent] { fs.watch(\"dir\", 100) }");
+        assert!(
+            errs1
+                .iter()
+                .any(|e| e.code == "E0301" && e.msg.contains("FsWatch")),
+            "expected E0301 for fs.watch, got {errs1:?}"
+        );
+
+        // fs.changed without FsWatch effect trips E0301
+        let errs2 = check_src("fn f() -> bool { fs.changed(\"dir\", 100) }");
+        assert!(
+            errs2
+                .iter()
+                .any(|e| e.code == "E0301" && e.msg.contains("FsWatch")),
+            "expected E0301 for fs.changed, got {errs2:?}"
+        );
+
+        // with uses FsWatch is clean
+        let clean = check_src("fn f() -> [FsEvent] uses FsWatch { fs.watch(\"dir\", 100) }");
+        assert_eq!(clean, vec![], "unexpected errors: {clean:?}");
+
+        // FsWatch is a known effect
+        let errs3 = check_src("fn f() -> int uses FsWatch { 1 }");
+        assert!(
+            !errs3.iter().any(|e| e.code == "E0101"),
+            "FsWatch should be a known effect, got {errs3:?}"
+        );
+    }
+
+    #[test]
+    fn proc_requires_process_effect() {
+        // proc.run without Process effect trips E0301
+        let errs1 = check_src("fn f() -> ProcessOutput { proc.run(\"echo\", [\"hi\"], 1000) }");
+        assert!(
+            errs1
+                .iter()
+                .any(|e| e.code == "E0301" && e.msg.contains("Process")),
+            "expected E0301 for proc.run, got {errs1:?}"
+        );
+
+        // proc.spawn without Process effect trips E0301
+        let errs2 = check_src("fn f() -> string { proc.spawn(\"echo\", [\"hi\"], 1000) }");
+        assert!(
+            errs2
+                .iter()
+                .any(|e| e.code == "E0301" && e.msg.contains("Process")),
+            "expected E0301 for proc.spawn, got {errs2:?}"
+        );
+
+        // run builtin without Process effect trips E0301
+        let errs_run = check_src("fn f() -> ProcessOutput { run(\"echo\", [\"hi\"]) }");
+        assert!(
+            errs_run
+                .iter()
+                .any(|e| e.code == "E0301" && e.msg.contains("Process")),
+            "expected E0301 for run builtin, got {errs_run:?}"
+        );
+
+        // with uses Process is clean
+        let clean = check_src(
+            "fn f() -> ProcessOutput uses Process { proc.run(\"echo\", [\"hi\"], 1000) }",
+        );
+        assert_eq!(clean, vec![], "unexpected errors: {clean:?}");
+
+        // Process is a known effect
+        let errs3 = check_src("fn f() -> int uses Process { 1 }");
+        assert!(
+            !errs3.iter().any(|e| e.code == "E0101"),
+            "Process should be a known effect, got {errs3:?}"
         );
     }
 

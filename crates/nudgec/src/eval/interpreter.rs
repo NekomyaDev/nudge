@@ -1876,12 +1876,15 @@ impl Interpreter {
             // Check standard library dispatch
             if name.starts_with("io.")
                 || name.starts_with("workspace.")
+                || name.starts_with("fs.")
+                || name.starts_with("proc.")
                 || name.starts_with("store.")
                 || name.starts_with("task.")
                 || name.starts_with("math.")
                 || name.starts_with("str.")
                 || name == "print"
                 || name == "println"
+                || name == "run"
             {
                 let mut evaluated_args = Vec::with_capacity(args.len() + kwargs.len());
                 for a in args {
@@ -2308,6 +2311,41 @@ impl Interpreter {
                 let result = nudge_runtime::store::execute(name, call_args)
                     .map_err(|e| format!("error[E-native-0202]: {name} failed: {e}"))?;
                 value_to_nudgeval(&result).map_err(|e| format!("error[E-native-0203]: {name}: {e}"))
+            }
+            "fs.watch" | "fs.changed" => {
+                let mut call_args = Vec::with_capacity(args.len());
+                for a in args {
+                    let converted = nudgeval_to_value(a)
+                        .map_err(|e| format!("error[E-native-0203]: {name}: {e}"))?;
+                    call_args.push(converted);
+                }
+                let result = nudge_runtime::fs_watch::execute(name, call_args).map_err(|e| {
+                    if e.starts_with("error[") {
+                        e
+                    } else {
+                        format!("error[E-native-0202]: {name} failed: {e}")
+                    }
+                })?;
+                value_to_nudgeval(&result).map_err(|e| format!("error[E-native-0203]: {name}: {e}"))
+            }
+            "proc.run" | "proc.spawn" | "proc.await" | "proc.wait" | "proc.kill"
+            | "proc.terminate" | "proc.alive" | "proc.is_alive" | "run" => {
+                let call_name = if name == "run" { "proc.run" } else { name };
+                let mut call_args = Vec::with_capacity(args.len());
+                for a in args {
+                    let converted = nudgeval_to_value(a)
+                        .map_err(|e| format!("error[E-native-0203]: {call_name}: {e}"))?;
+                    call_args.push(converted);
+                }
+                let result = nudge_runtime::proc::execute(call_name, call_args).map_err(|e| {
+                    if e.starts_with("error[") {
+                        e
+                    } else {
+                        format!("error[E-native-0202]: {call_name} failed: {e}")
+                    }
+                })?;
+                value_to_nudgeval(&result)
+                    .map_err(|e| format!("error[E-native-0203]: {call_name}: {e}"))
             }
             "task.status" => {
                 let target_id = if args.is_empty() {
@@ -3288,8 +3326,11 @@ fn fake_distribution(mut seed: u64, k: usize) -> Vec<f64> {
 /// Public API: Execute a Nudge program from entry point with arguments.
 pub fn run_program(items: &[Item], entry: &str, args: &[NudgeVal]) -> Result<NudgeVal, String> {
     let is_top_run = nudge_runtime::task::current_task().is_none();
-    let root_task =
-        nudge_runtime::task::current_task().unwrap_or_else(nudge_runtime::task::TaskToken::root);
+    let root_task = nudge_runtime::task::current_task().unwrap_or_else(|| {
+        static RUN_TASK_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let seq = RUN_TASK_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        nudge_runtime::task::TaskToken::new(nudge_runtime::task::TaskId::new(format!("prog_{seq}")))
+    });
     nudge_runtime::task::task_register(root_task.clone());
     let _task_guard = nudge_runtime::task::push_current_task(root_task.clone());
 
@@ -3302,6 +3343,7 @@ pub fn run_program(items: &[Item], entry: &str, args: &[NudgeVal]) -> Result<Nud
             if self.is_top {
                 // Cancel running background tasks on exit so unjoined children do not hang
                 self.task.cancel();
+                nudge_runtime::proc::reap_processes_for_task(&self.task.id);
             }
         }
     }
@@ -4750,6 +4792,9 @@ data: [DONE]\n\n";
         let _scope = nudge_runtime::trace::testing::scope(Some(trace_path.clone()), None);
         let _env_provider = EnvReset::set("NUDGE_PROVIDER", "fake");
         nudge_runtime::task::task_reset();
+        let root_token = nudge_runtime::task::TaskToken::root();
+        nudge_runtime::task::task_register(root_token.clone());
+        let _root_guard = nudge_runtime::task::push_current_task(root_token.clone());
 
         let src = r#"
             tool mock_external_write(data: string) -> bool {
@@ -5545,5 +5590,253 @@ data: [DONE]\n\n";
             interp.agent_store.get_field("EditorApp", "key_val"),
             Ok(NudgeVal::Str("Ctrl+S".to_string()))
         );
+    }
+
+    #[test]
+    fn test_nudge_fs_watch_and_changed_in_ndg() {
+        let _guard_ws = nudge_runtime::workspace::WS_TEST_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "nudge_ndg_fswatch_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let watched_dir = temp_dir.join("watched");
+        std::fs::create_dir_all(&watched_dir).unwrap();
+        let _env_ws = EnvReset::set("NUDGE_WORKSPACE_DIR", temp_dir.to_str().unwrap());
+
+        let target_file = watched_dir.join("new_file.txt");
+        let handle = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            let mut f = std::fs::File::create(&target_file).unwrap();
+            use std::io::Write;
+            f.write_all(b"hello from watcher test").unwrap();
+            f.sync_all().unwrap();
+        });
+
+        let src = r#"
+            fn test_watch() -> bool uses FsWatch {
+                let evs = fs.watch("watched", 1500)
+                len(evs) > 0
+            }
+            fn main() -> bool uses FsWatch {
+                test_watch()
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        // 1. VM=1
+        let _env_vm = EnvReset::set("NUDGE_VM", "1");
+        let res_vm = run_program(&items, "main", &[]).expect("VM=1 fs.watch run");
+        handle.join().unwrap();
+        assert_eq!(res_vm, NudgeVal::Bool(true));
+
+        // 2. Timeout with no changes returns cleanly (VM=0)
+        let _env_zero = EnvReset::set("NUDGE_VM", "0");
+        let src_no_change = r#"
+            fn test_no_change() -> bool uses FsWatch {
+                let changed = fs.changed("watched", 30)
+                !changed
+            }
+            fn main() -> bool uses FsWatch {
+                test_no_change()
+            }
+        "#;
+        let tokens_nc = lex(src_no_change).expect("lex");
+        let items_nc = parse(tokens_nc).expect("parse");
+        let res_interp = run_program(&items_nc, "main", &[]).expect("VM=0 fs.changed run");
+        assert_eq!(res_interp, NudgeVal::Bool(true));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_nudge_fs_watch_outside_workspace_denied() {
+        let _guard_ws = nudge_runtime::workspace::WS_TEST_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let temp_dir =
+            std::env::temp_dir().join(format!("nudge_ndg_fswatch_escape_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let _env_ws = EnvReset::set("NUDGE_WORKSPACE_DIR", temp_dir.to_str().unwrap());
+
+        let src = r#"
+            fn main() -> bool uses FsWatch {
+                let evs = fs.watch("../escape_test", 50)
+                true
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let res = run_program(&items, "main", &[]);
+        assert!(res.is_err(), "expected error for path escaping workspace");
+        let err = res.unwrap_err();
+        assert!(
+            err.contains("E0922") || err.contains("escape denied"),
+            "expected E0922 or escape denied, got: {err}"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_nudge_proc_run_and_spawn_lifecycle() {
+        let _guard_proc = nudge_runtime::proc::PROC_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        nudge_runtime::proc::reap_all_processes();
+
+        let _env_grants = EnvReset::set("NUDGE_PROCESS_GRANTS", r#"{"echo": ["*"]}"#);
+
+        let src = r#"
+            fn test_proc() -> bool uses Process {
+                let r1 = proc.run("echo", ["nudge_proc_out"], 2000)
+                let h = proc.spawn("echo", ["nudge_spawn_out"], 2000)
+                let r2 = proc.await(h)
+                r1.code == 0 and r2.code == 0
+            }
+            fn main() -> bool uses Process {
+                test_proc()
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        // 1. VM=1
+        let _env_vm = EnvReset::set("NUDGE_VM", "1");
+        let res_vm = run_program(&items, "main", &[]).expect("VM=1 proc run");
+        assert_eq!(res_vm, NudgeVal::Bool(true));
+
+        // 2. VM=0
+        let _env_zero = EnvReset::set("NUDGE_VM", "0");
+        let res_interp = run_program(&items, "main", &[]).expect("VM=0 proc run");
+        assert_eq!(res_interp, NudgeVal::Bool(true));
+
+        assert_eq!(
+            nudge_runtime::proc::active_process_count(),
+            0,
+            "registry must have no active processes"
+        );
+        nudge_runtime::proc::reap_all_processes();
+    }
+
+    #[test]
+    fn test_nudge_proc_kill_no_orphan() {
+        let _guard_proc = nudge_runtime::proc::PROC_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        nudge_runtime::proc::reap_all_processes();
+
+        let _env_grants = EnvReset::set("NUDGE_PROCESS_GRANTS", r#"{"sleep": ["*"]}"#);
+
+        let src = r#"
+            fn test_kill() -> bool uses Process {
+                let h = proc.spawn("sleep", ["30"], 10000)
+                let alive_before = proc.alive(h)
+                let killed = proc.kill(h)
+                let alive_after = proc.alive(h)
+                alive_before and killed and !alive_after
+            }
+            fn main() -> bool uses Process {
+                test_kill()
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let res = run_program(&items, "main", &[]).expect("proc kill run");
+        assert_eq!(res, NudgeVal::Bool(true));
+
+        assert_eq!(
+            nudge_runtime::proc::active_process_count(),
+            0,
+            "killed process must leave no orphan"
+        );
+        nudge_runtime::proc::reap_all_processes();
+    }
+
+    #[test]
+    fn test_nudge_proc_grants_denial_fail_closed() {
+        let _guard_proc = nudge_runtime::proc::PROC_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        nudge_runtime::proc::reap_all_processes();
+
+        let _env_grants = EnvReset::remove("NUDGE_PROCESS_GRANTS");
+
+        let src = r#"
+            fn main() -> int uses Process {
+                let r = proc.run("echo", ["hello"], 1000)
+                r.code
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let res = run_program(&items, "main", &[]);
+        assert!(res.is_err(), "expected error when grants are absent");
+        let err = res.unwrap_err();
+        assert!(
+            err.contains("E0920") && err.contains("denied"),
+            "expected E0920 fail closed error, got: {err}"
+        );
+        nudge_runtime::proc::reap_all_processes();
+    }
+
+    #[test]
+    fn test_nudge_proc_cancel_kills_child_process() {
+        let _guard_proc = nudge_runtime::proc::PROC_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        nudge_runtime::proc::reap_all_processes();
+
+        let _env_grants = EnvReset::set("NUDGE_PROCESS_GRANTS", r#"{"sleep": ["*"]}"#);
+
+        let task = nudge_runtime::task::TaskToken::new(nudge_runtime::task::TaskId::new(
+            "test_cancel_proc_child",
+        ));
+        let task_clone = task.clone();
+
+        let cancel_thread = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            task_clone.cancel();
+        });
+
+        let src = r#"
+            fn main() -> bool uses Process {
+                let r = proc.run("sleep", ["20"], 5000)
+                r.code == 0
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let res = nudge_runtime::task::with_task(task, || run_program(&items, "main", &[]));
+        cancel_thread.join().unwrap();
+
+        assert!(res.is_err(), "expected task cancellation error");
+        let err = res.unwrap_err();
+        assert!(
+            err.contains("TaskCancelled") || err.contains("E-task-0001"),
+            "expected cancellation error, got: {err}"
+        );
+        assert_eq!(
+            nudge_runtime::proc::active_process_count(),
+            0,
+            "cancelled task must reap child process"
+        );
+        nudge_runtime::proc::reap_all_processes();
     }
 }

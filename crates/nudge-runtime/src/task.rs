@@ -239,6 +239,7 @@ impl TaskToken {
         for kid in kids {
             kid.cancel();
         }
+        crate::proc::reap_cancelled_processes();
     }
 
     /// Current lifecycle state.

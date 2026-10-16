@@ -138,7 +138,13 @@ fn execute_watch(args: Vec<Value>) -> Result<Value, String> {
     };
 
     // Workspace confinement check: deny paths escaping workspace root
-    let canonical_target = crate::workspace::resolve_and_validate_path(path_str)?;
+    let canonical_target = crate::workspace::resolve_and_validate_path(path_str).map_err(|e| {
+        if e.starts_with("error[") {
+            e
+        } else {
+            format!("error[E0922]: fs.watch path escape denied: {e}")
+        }
+    })?;
 
     let timeout = resolve_timeout(args.get(1))?;
     let start = Instant::now();

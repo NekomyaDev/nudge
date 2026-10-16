@@ -5,7 +5,9 @@
 
 use crate::value::Value;
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -24,6 +26,7 @@ const MAX_PROCESS_TIMEOUT_MS: u64 = 120000;
 /// Test lock to serialize tests touching `NUDGE_PROCESS_GRANTS` or process registry.
 pub static PROC_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+#[cfg(not(target_arch = "wasm32"))]
 static PROC_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -484,6 +487,72 @@ pub fn reap_all_processes() {
     }
 }
 
+/// Reap and kill active child processes whose task token is cancelled.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn reap_cancelled_processes() {
+    let cancelled_handles: Vec<String> = with_registry(|reg| {
+        reg.iter()
+            .filter_map(|(handle, child)| {
+                if child
+                    .task_token
+                    .as_ref()
+                    .map(|t| t.is_cancelled())
+                    .unwrap_or(false)
+                {
+                    Some(handle.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    });
+    for handle in cancelled_handles {
+        if let Some(mut managed) = with_registry(|reg| reg.remove(&handle)) {
+            let _ = managed.child.kill();
+            let _ = managed.child.wait();
+            if let Some(h) = managed.stdout_handle.take() {
+                let _ = h.join();
+            }
+            if let Some(h) = managed.stderr_handle.take() {
+                let _ = h.join();
+            }
+        }
+    }
+}
+
+/// Reap and kill active child processes spawned by a specific task.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn reap_processes_for_task(task_id: &crate::task::TaskId) {
+    let matching: Vec<String> = with_registry(|reg| {
+        reg.iter()
+            .filter_map(|(handle, child)| {
+                if child
+                    .task_token
+                    .as_ref()
+                    .map(|t| &t.id == task_id)
+                    .unwrap_or(false)
+                {
+                    Some(handle.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    });
+    for handle in matching {
+        if let Some(mut managed) = with_registry(|reg| reg.remove(&handle)) {
+            let _ = managed.child.kill();
+            let _ = managed.child.wait();
+            if let Some(h) = managed.stdout_handle.take() {
+                let _ = h.join();
+            }
+            if let Some(h) = managed.stderr_handle.take() {
+                let _ = h.join();
+            }
+        }
+    }
+}
+
 /// Get the OS process ID (PID) of a managed child process, if still active.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn get_process_pid(handle: &str) -> Option<u32> {
@@ -517,6 +586,12 @@ pub fn active_process_count() -> usize {
 
 #[cfg(target_arch = "wasm32")]
 pub fn reap_all_processes() {}
+
+#[cfg(target_arch = "wasm32")]
+pub fn reap_cancelled_processes() {}
+
+#[cfg(target_arch = "wasm32")]
+pub fn reap_processes_for_task(_task_id: &crate::task::TaskId) {}
 
 #[cfg(test)]
 mod tests {
