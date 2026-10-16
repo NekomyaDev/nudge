@@ -167,6 +167,10 @@ impl Default for Redactor {
 impl Redactor {
     /// Construct a Redactor reflecting the current environment.
     pub fn from_env() -> Self {
+        // Hold ENV_LOCK across all env reads here (load_env_secrets iterates
+        // env::vars). The test-side set_var/remove_var also take this lock, so
+        // env mutation and env iteration are never concurrent (UB otherwise).
+        let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let env_secrets = if is_env_redact_disabled() {
             Vec::new()
         } else {
@@ -318,16 +322,27 @@ impl Redactor {
     }
 }
 
-static CACHED_REDACTOR: LazyLock<RwLock<Option<(u64, Redactor)>>> =
+static CACHED_REDACTOR: LazyLock<RwLock<Option<(u64, Redactor, std::time::Instant)>>> =
     LazyLock::new(|| RwLock::new(None));
+
+/// Serializes process-env access in the redactor. `std::env::set_var` and
+/// `std::env::vars` must not run concurrently (UB), so every env read here and
+/// every env mutation in the tests share this lock.
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Minimum interval between env-generation recomputes. Reading the env is a
+/// data-race hazard against `set_var`, so we amortize it (at most ~4x/sec) rather
+/// than scanning on every trace record.
+const ENV_GEN_REFRESH: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// A lightweight fingerprint of the secret-bearing environment variables (the
 /// names and values that look like credentials). Used to auto-refresh the cached
 /// Redactor when a secret appears or changes in the env WITHOUT rescanning
 /// regexes on every record; this is a cheap env scan and hash, far cheaper than
-/// `Redactor::from_env()`.
+/// `Redactor::from_env()`. Serialized under ENV_LOCK.
 fn secret_env_generation() -> u64 {
     use std::hash::{Hash, Hasher};
+    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut h = std::collections::hash_map::DefaultHasher::new();
     let mut pairs: Vec<(String, String)> = std::env::vars()
         .filter(|(k, _)| {
@@ -363,23 +378,37 @@ pub fn reset_redactor_cache() {
 /// a lightweight env fingerprint is checked before reuse, so a secret added
 /// after the first record is still redacted (no explicit reset needed).
 pub fn with_cached_redactor<R, F: FnOnce(&Redactor) -> R>(f: F) -> R {
-    let gen = secret_env_generation();
+    // Throttle: only recompute the env fingerprint every ENV_GEN_REFRESH. This
+    // keeps the auto-refresh (a secret added later is picked up within ~250ms)
+    // while avoiding a per-record env scan (which races with set_var and costs
+    // time). The cached generation is reused until the throttle elapses.
+    let now = std::time::Instant::now();
+    let gen = {
+        let cached = CACHED_REDACTOR.read().unwrap_or_else(|e| e.into_inner());
+        match *cached {
+            Some((g, _, last)) if now.duration_since(last) < ENV_GEN_REFRESH => Some(g),
+            _ => None,
+        }
+    };
+    let gen = match gen {
+        Some(g) => g,
+        None => secret_env_generation(),
+    };
     {
-        if let Ok(lock) = CACHED_REDACTOR.read() {
-            if let Some((cached_gen, ref r)) = *lock {
-                if cached_gen == gen {
-                    return f(r);
-                }
+        let lock = CACHED_REDACTOR.read().unwrap_or_else(|e| e.into_inner());
+        if let Some((cached_gen, ref r, _)) = *lock {
+            if cached_gen == gen {
+                return f(r);
             }
         }
     }
     let mut lock = CACHED_REDACTOR.write().unwrap_or_else(|e| e.into_inner());
     let stale = match *lock {
-        Some((g, _)) => g != gen,
+        Some((g, _, _)) => g != gen,
         None => true,
     };
     if stale {
-        *lock = Some((gen, Redactor::from_env()));
+        *lock = Some((gen, Redactor::from_env(), now));
     }
     f(&lock.as_ref().unwrap().1)
 }
@@ -569,7 +598,13 @@ mod tests {
         use serde_json::json;
         let key_name = "NUDGE_API_KEY";
         let secret_val = "sk-secret-test-value-12345";
-        std::env::set_var(key_name, secret_val);
+        // Serialize env mutation against the redactor's env iteration (UB if
+        // concurrent). The lock is released before redact_record_fields, which
+        // takes it internally — no self-deadlock.
+        {
+            let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            std::env::set_var(key_name, secret_val);
+        }
         reset_redactor_cache();
 
         let mut record = serde_json::Map::new();
@@ -584,7 +619,10 @@ mod tests {
 
         redact_record_fields(&mut record);
 
-        std::env::remove_var(key_name);
+        {
+            let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            std::env::remove_var(key_name);
+        }
         reset_redactor_cache();
 
         let out = record.get("output").and_then(Value::as_str).unwrap();
