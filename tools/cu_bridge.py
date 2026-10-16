@@ -49,12 +49,27 @@ import atexit
 import json
 import os
 import sys
+import tempfile
+from pathlib import Path
+
+_repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_runtime_dir = os.path.join(_repo_root, "runtime")
+if _runtime_dir not in sys.path:
+    sys.path.insert(0, _runtime_dir)
+
+try:
+    from nudge_runtime import _safe_path
+except ImportError:
+    if "nudge_runtime" in sys.modules:
+        del sys.modules["nudge_runtime"]
+    from nudge_runtime import _safe_path
 
 
 def _load_scenes():
     path = os.environ.get("CU_BRIDGE_SCENARIO")
     if path:
-        with open(path, "r", encoding="utf-8") as f:
+        safe_path = _safe_path(path, root=(Path.cwd(), tempfile.gettempdir()))
+        with open(safe_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         if not data.get("scenes"):
             raise SystemExit("CU_BRIDGE_SCENARIO has no `scenes` list")
@@ -74,7 +89,8 @@ class Lease:
     pid; a stale lease (owner process gone) is re-claimable."""
 
     def __init__(self):
-        self.path = os.environ.get("CU_BRIDGE_LOCK", "/tmp/nudge-cu-bridge.lock")
+        raw_lock = os.environ.get("CU_BRIDGE_LOCK", "/tmp/nudge-cu-bridge.lock")
+        self.path = str(_safe_path(raw_lock, root=(Path.cwd(), tempfile.gettempdir(), Path("/tmp"))))
         self.held = False
         atexit.register(self.release)
 
@@ -82,9 +98,10 @@ class Lease:
         if self.held:
             return None  # we already own it
         try:
-            if os.path.exists(self.path):
+            safe_p = _safe_path(self.path, root=(Path.cwd(), tempfile.gettempdir(), Path("/tmp")))
+            if os.path.exists(safe_p):
                 try:
-                    with open(self.path) as f:
+                    with open(safe_p) as f:
                         pid = int(f.read().strip() or 0)
                     os.kill(pid, 0)  # alive? then the lease is real
                     return "controller_busy"
@@ -97,8 +114,8 @@ class Lease:
                     return "controller_busy (owner alive, unverifiable)"
                 except ValueError:
                     pass  # unparseable pid — stale lease, re-claim
-                os.unlink(self.path)
-            fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.unlink(safe_p)
+            fd = os.open(str(safe_p), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             with os.fdopen(fd, "w") as f:
                 f.write(str(os.getpid()))
             self.held = True
@@ -111,9 +128,10 @@ class Lease:
     def release(self):
         if self.held:
             try:
-                with open(self.path) as f:
+                safe_p = _safe_path(self.path, root=(Path.cwd(), tempfile.gettempdir(), Path("/tmp")))
+                with open(safe_p) as f:
                     if f.read().strip() == str(os.getpid()):
-                        os.unlink(self.path)
+                        os.unlink(safe_p)
             except OSError:
                 pass
             self.held = False

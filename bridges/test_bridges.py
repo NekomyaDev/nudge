@@ -132,6 +132,32 @@ class ComputerBridgeContractTests(unittest.TestCase):
         self.assertEqual(out["outcome"], "not_actionable")
         self.assertEqual(out["dispatch"], "not_sent")
 
+    def test_cu_bridge_scenario_traversal_rejected(self):
+        import os
+        old = os.environ.get("CU_BRIDGE_SCENARIO")
+        os.environ["CU_BRIDGE_SCENARIO"] = "../../../etc/passwd"
+        try:
+            with self.assertRaises(ValueError):
+                self.bridge._load_scenes()
+        finally:
+            if old is None:
+                os.environ.pop("CU_BRIDGE_SCENARIO", None)
+            else:
+                os.environ["CU_BRIDGE_SCENARIO"] = old
+
+    def test_cu_bridge_lock_traversal_rejected(self):
+        import os
+        old = os.environ.get("CU_BRIDGE_LOCK")
+        os.environ["CU_BRIDGE_LOCK"] = "../../../etc/passwd"
+        try:
+            with self.assertRaises(ValueError):
+                self.bridge.Lease()
+        finally:
+            if old is None:
+                os.environ.pop("CU_BRIDGE_LOCK", None)
+            else:
+                os.environ["CU_BRIDGE_LOCK"] = old
+
 
 if __name__ == "__main__":
     unittest.main()

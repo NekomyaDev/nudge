@@ -291,5 +291,52 @@ class CheckpointAtomicTests(unittest.TestCase):
         shutil.rmtree(".nudge", ignore_errors=True)
 
 
+class SafePathTests(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.root = Path(self.tmpdir).resolve()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_rejects_parent_traversal(self):
+        with self.assertRaises(ValueError):
+            rt._safe_path("../etc/passwd", root=self.root)
+
+    def test_rejects_absolute_escape(self):
+        with self.assertRaises(ValueError):
+            rt._safe_path("/etc/passwd", root=self.root)
+
+    def test_accepts_normal_in_root_path(self):
+        path = rt._safe_path("normal.txt", root=self.root)
+        self.assertEqual(path, self.root / "normal.txt")
+
+    def test_accepts_nested_in_root_path(self):
+        path = rt._safe_path("subdir/nested.jsonl", root=self.root)
+        self.assertEqual(path, self.root / "subdir" / "nested.jsonl")
+
+    def test_accepts_absolute_in_root_path(self):
+        target = self.root / "inside.txt"
+        path = rt._safe_path(str(target), root=self.root)
+        self.assertEqual(path, target)
+
+    def test_rejects_empty_or_none(self):
+        with self.assertRaises(ValueError):
+            rt._safe_path("", root=self.root)
+        with self.assertRaises(ValueError):
+            rt._safe_path(None, root=self.root)
+
+
+class McpCommandSecurityTests(unittest.TestCase):
+    def test_mcp_call_rejects_empty_command(self):
+        with self.assertRaises(RuntimeError):
+            rt._mcp_call("test_srv", "tool", {}, {"command": ""})
+
+    def test_mcp_call_rejects_invalid_command_type(self):
+        with self.assertRaises(RuntimeError):
+            rt._mcp_call("test_srv", "tool", {}, {"command": 12345})
+
+
 if __name__ == "__main__":
     unittest.main()

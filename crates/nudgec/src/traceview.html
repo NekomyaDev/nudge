@@ -91,7 +91,18 @@ function branchBadge(r) {
   const c = branchColor(r.branch);
   return `<span class="branch" style="background:${c}22;color:${c}">${esc(r.branch)}</span>`;
 }
-function esc(s) { return String(s).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+// XSS fix: escape helper and DOM construction to prevent DOM-based XSS
+function escapeHtml(s) {
+  if (s == null) return "";
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  }[c]));
+}
+function esc(s) { return escapeHtml(s); }
 
 function renderStats() {
   const llm = recs.filter(r => r.kind === "llm.call");
@@ -100,31 +111,76 @@ function renderStats() {
   const tout = llm.reduce((a, r) => a + (r.tokens && r.tokens.out || 0), 0);
   const cost = llm.reduce((a, r) => a + (r.cost_usd || 0), 0);
   const repairs = llm.filter(r => r.repair_round > 0).length;
-  document.getElementById("stats").innerHTML = [
+  const statsEl = document.getElementById("stats");
+  statsEl.textContent = "";
+  const items = [
     [recs.length, "records"], [llm.length, "llm calls"], [tool.length, "tool calls"],
     [tin + tout, "tokens (" + tin + " in / " + tout + " out)"],
     [money(cost), "total cost"], [repairs, "repairs"]
-  ].map(([b, s]) => `<div class="stat"><b>${b}</b><span>${s}</span></div>`).join("");
+  ];
+  for (const [b, s] of items) {
+    const div = document.createElement("div");
+    div.className = "stat";
+    const bold = document.createElement("b");
+    bold.textContent = b;
+    const span = document.createElement("span");
+    span.textContent = s;
+    div.appendChild(bold);
+    div.appendChild(span);
+    statsEl.appendChild(div);
+  }
 }
 
 function who(r) {
-  if (r.kind === "llm.call") return r.model + "  ·  " + (r.provider || "");
-  if (r.kind === "tool.call") return r.tool + (r.server ? "  ·  " + r.server : "");
-  return r.fn + "()";
+  if (r.kind === "llm.call") return (r.model || "") + "  ·  " + (r.provider || "");
+  if (r.kind === "tool.call") return (r.tool || "") + (r.server ? "  ·  " + r.server : "");
+  return (r.fn || "") + "()";
+}
+function branchBadgeEl(r) {
+  if (!r.branch) return null;
+  const c = branchColor(r.branch);
+  const span = document.createElement("span");
+  span.className = "branch";
+  span.style.background = c + "22";
+  span.style.color = c;
+  span.textContent = r.branch;
+  return span;
+}
+function renderMeta(metaEl, r) {
+  metaEl.textContent = "";
+  if (r.kind === "llm.call") {
+    const t = r.tokens || {};
+    const cls = r.outcome === "ok" ? "ok" : (r.repair_round > 0 ? "repair" : "fail");
+    metaEl.appendChild(document.createTextNode(`${t.in || 0}+${t.out || 0} tok · ${money(r.cost_usd || 0)} · `));
+    const outcomeSpan = document.createElement("span");
+    outcomeSpan.className = cls;
+    outcomeSpan.textContent = r.outcome || "";
+    metaEl.appendChild(outcomeSpan);
+    if (r.repair_round > 0) {
+      metaEl.appendChild(document.createTextNode(" · "));
+      const repairSpan = document.createElement("span");
+      repairSpan.className = "repair";
+      repairSpan.textContent = `repair #${r.repair_round}`;
+      metaEl.appendChild(repairSpan);
+    }
+    return;
+  }
+  const out = JSON.stringify(r.output);
+  metaEl.textContent = (out && out.length > 60 ? out.slice(0, 60) + "…" : out || "");
 }
 function meta(r) {
   if (r.kind === "llm.call") {
     const t = r.tokens || {};
     const cls = r.outcome === "ok" ? "ok" : (r.repair_round > 0 ? "repair" : "fail");
-    const rr = r.repair_round > 0 ? ` · <span class="repair">repair #${esc(r.repair_round)}</span>` : "";
-    return `${esc(t.in||0)}+${esc(t.out||0)} tok · ${money(r.cost_usd||0)} · <span class="${esc(cls)}">${esc(r.outcome||"")}</span>${rr}`;
+    const rr = r.repair_round > 0 ? ` · <span class="repair">repair #${escapeHtml(r.repair_round)}</span>` : "";
+    return `${escapeHtml(t.in||0)}+${escapeHtml(t.out||0)} tok · ${escapeHtml(money(r.cost_usd||0))} · <span class="${escapeHtml(cls)}">${escapeHtml(r.outcome||"")}</span>${rr}`;
   }
   if (r.kind === "tool.call") {
     const out = JSON.stringify(r.output);
-    return esc(out && out.length > 60 ? out.slice(0, 60) + "…" : out || "");
+    return escapeHtml(out && out.length > 60 ? out.slice(0, 60) + "…" : out || "");
   }
   const out = JSON.stringify(r.output);
-  return esc(out && out.length > 60 ? out.slice(0, 60) + "…" : out || "");
+  return escapeHtml(out && out.length > 60 ? out.slice(0, 60) + "…" : out || "");
 }
 function matches(r) {
   if (filter === "repair" && !(r.kind === "llm.call" && r.repair_round > 0)) return false;
@@ -135,34 +191,141 @@ function matches(r) {
 function renderList() {
   const el = document.getElementById("list");
   const vis = recs.map((r, i) => [r, i]).filter(([r]) => matches(r));
-  if (!vis.length) { el.innerHTML = '<div class="empty">No records match.</div>'; return; }
-  el.innerHTML = vis.map(([r, i]) => `
-    <div class="rec lane${i === sel ? " sel" : ""}" data-i="${i}" style="${r.branch ? `border-left-color:${branchColor(r.branch)}` : ""}">
-      <span class="seq">#${r.seq ?? i + 1}</span>
-      <span class="kind kind-${r.kind.split(".")[0]}">${esc(r.kind)}</span>
-      ${branchBadge(r)}
-      <span class="who">${esc(who(r))}</span>
-      <span class="meta">${meta(r)}</span>
-    </div>`).join("");
-  el.querySelectorAll(".rec").forEach(d => d.onclick = () => { sel = +d.dataset.i; renderList(); renderDetail(); });
+  el.textContent = "";
+  if (!vis.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "No records match.";
+    el.appendChild(empty);
+    return;
+  }
+  for (const [r, i] of vis) {
+    const recDiv = document.createElement("div");
+    recDiv.className = `rec lane${i === sel ? " sel" : ""}`;
+    recDiv.dataset.i = i;
+    if (r.branch) {
+      recDiv.style.borderLeftColor = branchColor(r.branch);
+    }
+
+    const seqSpan = document.createElement("span");
+    seqSpan.className = "seq";
+    seqSpan.textContent = `#${r.seq ?? i + 1}`;
+    recDiv.appendChild(seqSpan);
+
+    const kindSpan = document.createElement("span");
+    const kindPrefix = typeof r.kind === "string" ? r.kind.split(".")[0] : "";
+    kindSpan.className = `kind kind-${kindPrefix}`;
+    kindSpan.textContent = r.kind || "";
+    recDiv.appendChild(kindSpan);
+
+    const badge = branchBadgeEl(r);
+    if (badge) {
+      recDiv.appendChild(badge);
+    }
+
+    const whoSpan = document.createElement("span");
+    whoSpan.className = "who";
+    whoSpan.textContent = who(r);
+    recDiv.appendChild(whoSpan);
+
+    const metaSpan = document.createElement("span");
+    metaSpan.className = "meta";
+    renderMeta(metaSpan, r);
+    recDiv.appendChild(metaSpan);
+
+    recDiv.onclick = () => {
+      sel = i;
+      renderList();
+      renderDetail();
+    };
+
+    el.appendChild(recDiv);
+  }
 }
 function renderDetail() {
   const r = recs[sel];
   const el = document.getElementById("detail");
-  if (!r) { el.innerHTML = '<div class="empty">Select a record to inspect it.</div>'; return; }
-  let head = "";
-  if (r.kind === "llm.call") {
-    head = `<div class="kv"><b>model</b> ${esc(r.model)} · <b>provider</b> ${esc(r.provider||"")}</div>
-      <div class="kv"><b>outcome</b> ${esc(r.outcome||"")} · <b>repair_round</b> ${esc(r.repair_round||0)} · <b>cost</b> ${money(r.cost_usd||0)} · <b>tokens</b> ${esc((r.tokens&&r.tokens.in)||0)} in / ${esc((r.tokens&&r.tokens.out)||0)} out</div>
-      <div class="kv"><b>input</b></div><pre>${esc(typeof r.input === "string" ? r.input : JSON.stringify(r.input, null, 2))}</pre>
-      <div class="kv"><b>output</b></div><pre>${esc(typeof r.output === "string" ? r.output : JSON.stringify(r.output, null, 2))}</pre>`;
-  } else {
-    head = `<div class="kv"><b>input</b></div><pre>${esc(JSON.stringify(r.input, null, 2))}</pre>
-      <div class="kv"><b>output</b></div><pre>${esc(JSON.stringify(r.output, null, 2))}</pre>`;
+  el.textContent = "";
+  if (!r) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "Select a record to inspect it.";
+    el.appendChild(empty);
+    return;
   }
-  el.innerHTML = `<h2>${esc(r.kind)} · seq #${r.seq}</h2>${head}
-    <div class="kv" style="margin-top:14px"><b>raw record</b></div>
-    <pre>${esc(JSON.stringify(r, null, 2))}</pre>`;
+
+  const h2 = document.createElement("h2");
+  h2.textContent = `${r.kind || ""} · seq #${r.seq ?? ""}`;
+  el.appendChild(h2);
+
+  function createKv(boldLabel, textContent) {
+    const kv = document.createElement("div");
+    kv.className = "kv";
+    const b = document.createElement("b");
+    b.textContent = boldLabel;
+    kv.appendChild(b);
+    if (textContent !== undefined) {
+      kv.appendChild(document.createTextNode(" " + textContent));
+    }
+    return kv;
+  }
+
+  function createPre(content) {
+    const pre = document.createElement("pre");
+    pre.textContent = typeof content === "string" ? content : JSON.stringify(content, null, 2);
+    return pre;
+  }
+
+  if (r.kind === "llm.call") {
+    const kv1 = document.createElement("div");
+    kv1.className = "kv";
+    const bModel = document.createElement("b");
+    bModel.textContent = "model";
+    kv1.appendChild(bModel);
+    kv1.appendChild(document.createTextNode(` ${r.model || ""} · `));
+    const bProvider = document.createElement("b");
+    bProvider.textContent = "provider";
+    kv1.appendChild(bProvider);
+    kv1.appendChild(document.createTextNode(` ${r.provider || ""}`));
+    el.appendChild(kv1);
+
+    const kv2 = document.createElement("div");
+    kv2.className = "kv";
+    const bOutcome = document.createElement("b");
+    bOutcome.textContent = "outcome";
+    kv2.appendChild(bOutcome);
+    kv2.appendChild(document.createTextNode(` ${r.outcome || ""} · `));
+    const bRepair = document.createElement("b");
+    bRepair.textContent = "repair_round";
+    kv2.appendChild(bRepair);
+    kv2.appendChild(document.createTextNode(` ${r.repair_round || 0} · `));
+    const bCost = document.createElement("b");
+    bCost.textContent = "cost";
+    kv2.appendChild(bCost);
+    kv2.appendChild(document.createTextNode(` ${money(r.cost_usd || 0)} · `));
+    const bTokens = document.createElement("b");
+    bTokens.textContent = "tokens";
+    kv2.appendChild(bTokens);
+    const tin = (r.tokens && r.tokens.in) || 0;
+    const tout = (r.tokens && r.tokens.out) || 0;
+    kv2.appendChild(document.createTextNode(` ${tin} in / ${tout} out`));
+    el.appendChild(kv2);
+
+    el.appendChild(createKv("input"));
+    el.appendChild(createPre(r.input));
+    el.appendChild(createKv("output"));
+    el.appendChild(createPre(r.output));
+  } else {
+    el.appendChild(createKv("input"));
+    el.appendChild(createPre(r.input));
+    el.appendChild(createKv("output"));
+    el.appendChild(createPre(r.output));
+  }
+
+  const rawKv = createKv("raw record");
+  rawKv.style.marginTop = "14px";
+  el.appendChild(rawKv);
+  el.appendChild(createPre(r));
 }
 document.querySelectorAll(".fbtn").forEach(b => b.onclick = () => {
   document.querySelectorAll(".fbtn").forEach(x => x.classList.remove("on"));

@@ -27,7 +27,22 @@ LangChain token fields are skipped rather than guessed.
 """
 import json
 import os
+import sys
+import tempfile
 import time
+from pathlib import Path
+
+_repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_runtime_dir = os.path.join(_repo_root, "runtime")
+if _runtime_dir not in sys.path:
+    sys.path.insert(0, _runtime_dir)
+
+try:
+    from nudge_runtime import _safe_path
+except ImportError:
+    if "nudge_runtime" in sys.modules:
+        del sys.modules["nudge_runtime"]
+    from nudge_runtime import _safe_path
 
 
 def llm_result_to_ntf(prompt, output, model, provider="langchain",
@@ -138,6 +153,7 @@ if __name__ == "__main__":
         rec = llm_result_to_ntf("Say hi", {"answer": "hi"},
                                 model="demo", provider="fake")
         rec["seq"] = 1
-        with open(args.out, "w") as f:
+        safe_out = _safe_path(args.out, root=(Path.cwd(), tempfile.gettempdir(), Path("/tmp")))
+        with open(safe_out, "w") as f:
             f.write(json.dumps(rec) + "\n")
-        print(f"wrote {args.out} — check with: nudgec trace-check {args.out}")
+        print(f"wrote {safe_out} (check with: nudgec trace-check {safe_out})")

@@ -86,8 +86,58 @@ import time
 import uuid
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from pathlib import Path
+import tempfile
 
 __version__ = "1.2.1"
+
+
+_SAFE_ROOTS = (Path.cwd(), tempfile.gettempdir(), Path("/tmp"))
+
+
+def _safe_path(p: str | Path, root: str | Path | list | tuple | set | None = None) -> Path:
+    """Validate that path p does not escape the expected base directory.
+
+    Rejects directory traversal (such as ../ escapes) and absolute paths outside root.
+    Returns the resolved Path if safe, or raises ValueError.
+    """
+    if p is None:
+        raise ValueError("path cannot be None")
+
+    raw_str = os.fspath(p).strip()
+    if not raw_str:
+        raise ValueError("path cannot be empty")
+
+    if root is None:
+        bases = [Path(r).resolve() for r in _SAFE_ROOTS]
+    elif isinstance(root, (list, tuple, set)):
+        bases = [Path(r).resolve() for r in root]
+    else:
+        bases = [Path(root).resolve()]
+
+    target = Path(raw_str)
+
+    if target.is_absolute():
+        resolved = target.resolve()
+        for base in bases:
+            try:
+                resolved.relative_to(base)
+                return resolved
+            except ValueError:
+                pass
+        raise ValueError(f"Path traversal detected: {raw_str!r} escapes allowed base {bases!r}")
+    else:
+        primary_base = bases[0]
+        resolved = (primary_base / target).resolve()
+        for base in bases:
+            try:
+                resolved.relative_to(base)
+                return resolved
+            except ValueError:
+                pass
+        raise ValueError(f"Path traversal detected: {raw_str!r} escapes allowed base {bases!r}")
+
+
+safe_path = _safe_path
 
 
 def _version_key(v):
@@ -422,10 +472,21 @@ def _mcp_call(server, name, args, cfg):
             raise RuntimeError(
                 f"MCP server '{server}' has no 'command' in NUDGE_MCP_SERVERS"
             )
-        argv = shlex.split(cmd) if isinstance(cmd, str) else list(cmd)
+        if isinstance(cmd, str):
+            argv = shlex.split(cmd)
+        elif isinstance(cmd, (list, tuple)):
+            argv = [str(x) for x in cmd]
+        else:
+            raise RuntimeError(
+                f"MCP server '{server}' command must be string or list"
+            )
+        if not argv or not argv[0].strip():
+            raise RuntimeError(
+                f"MCP server '{server}' has empty command in NUDGE_MCP_SERVERS"
+            )
         try:
             proc = subprocess.Popen(
-                argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1
+                argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1, shell=False
             )
         except OSError as e:
             raise RuntimeError(f"MCP server '{server}' failed to start ({argv[0]}): {e}")
@@ -685,7 +746,8 @@ def _jsonable(value):
 # ── trace ────────────────────────────────────────────────────────────
 
 def _trace_path() -> Path:
-    return Path(os.environ.get("NUDGE_TRACE", "trace.jsonl"))
+    raw = os.environ.get("NUDGE_TRACE", "trace.jsonl")
+    return _safe_path(raw, root=(Path.cwd(), tempfile.gettempdir()))
 
 
 _TRACE_LOCK = threading.Lock()
@@ -727,6 +789,7 @@ def _otel_export(record: dict) -> None:
     path = os.environ.get("NUDGE_OTEL")
     if not path:
         return
+    safe_dest = _safe_path(path, root=(Path.cwd(), tempfile.gettempdir()))
     global _OTEL_TRACE_ID
     if _OTEL_TRACE_ID is None:
         _OTEL_TRACE_ID = uuid.uuid4().hex
@@ -744,7 +807,7 @@ def _otel_export(record: dict) -> None:
         "status": {"code": 1 if ok else 2},
     }
     with _TRACE_LOCK:
-        with open(path, "a", encoding="utf-8") as f:
+        with open(safe_dest, "a", encoding="utf-8") as f:
             f.write(json.dumps(span, ensure_ascii=False) + "\n")
     endpoint = os.environ.get("NUDGE_OTEL_ENDPOINT")
     if endpoint:
@@ -843,7 +906,7 @@ class Trace:
     """A recorded run, loaded from JSONL. Property-test input (§6.3)."""
 
     def __init__(self, path):
-        self.path = Path(path)
+        self.path = _safe_path(path, root=(Path.cwd(), tempfile.gettempdir()))
         if not self.path.exists():
             raise ReplayMismatch(f"trace not found: {path}")
         self.records = []
@@ -2706,7 +2769,8 @@ def _decision_cache_key(state, questions, model):
 
 def _decision_cache_load(path):
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        safe_path = _safe_path(path, root=(Path.cwd(), tempfile.gettempdir()))
+        with open(safe_path, "r", encoding="utf-8") as f:
             data = json.loads(f.read())
         return data if isinstance(data, dict) else {}
     except Exception:  # missing/corrupt cache = cold start, never fatal
@@ -2722,12 +2786,13 @@ def _decision_cache_get(path, key):
 
 def _decision_cache_put(path, key, answers):
     with _DECISION_CACHE_LOCK:
-        data = _decision_cache_load(path)
+        safe_path = _safe_path(path, root=(Path.cwd(), tempfile.gettempdir()))
+        data = _decision_cache_load(safe_path)
         data[key] = {"answers": answers, "cached_at": time.time()}
-        tmp = path + ".tmp"
+        tmp = _safe_path(str(safe_path) + ".tmp", root=(Path.cwd(), tempfile.gettempdir()))
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(json.dumps(data, ensure_ascii=False, sort_keys=True))
-        os.replace(tmp, path)
+        os.replace(tmp, safe_path)
 
 
 def _valen_wire_questions(questions):
@@ -2909,12 +2974,13 @@ def _dispatch_decision(questions, state, opts, model):
         )
     if not cache_path:
         return _run_decision(kind, entry, questions, state, opts), False
+    safe_cache = _safe_path(cache_path, root=(Path.cwd(), tempfile.gettempdir()))
     key = _decision_cache_key(state, questions, model)
-    hit = _decision_cache_get(cache_path, key)
+    hit = _decision_cache_get(safe_cache, key)
     if hit is not None:
         return hit, True
     answers = _run_decision(kind, entry, questions, state, opts)
-    _decision_cache_put(cache_path, key, answers)
+    _decision_cache_put(safe_cache, key, answers)
     return answers, False
 
 
@@ -2996,10 +3062,11 @@ def predict_batch(questions, states, options=None):
         )
 
     cache_path = os.environ.get("NUDGE_DECISION_CACHE")
+    safe_cache = _safe_path(cache_path, root=(Path.cwd(), tempfile.gettempdir())) if cache_path else None
     miss_idx = []
     for i, state in enumerate(states):
-        if cache_path:
-            hit = _decision_cache_get(cache_path, _decision_cache_key(state, questions, model))
+        if safe_cache:
+            hit = _decision_cache_get(safe_cache, _decision_cache_key(state, questions, model))
             if hit is not None:
                 answers[i] = _attr(hit)
                 _write_decision_record(model, provider, questions, hit,
@@ -3028,8 +3095,8 @@ def predict_batch(questions, states, options=None):
                 for a in got[pos].values():
                     a["deadline_missed"] = True
             answers[i] = _attr(got[pos])
-            if cache_path:
-                _decision_cache_put(cache_path, _decision_cache_key(states[i], questions, model), got[pos])
+            if safe_cache:
+                _decision_cache_put(safe_cache, _decision_cache_key(states[i], questions, model), got[pos])
             _write_decision_record(model, provider, questions, got[pos],
                                    per_ms, deadline, outcome, False,
                                    batch=batch_meta,
@@ -3451,7 +3518,8 @@ def _fake_scenes():
     single scene. Deterministic — same scenario, same tree, same hashes."""
     path = os.environ.get("NUDGE_COMPUTER_SCENARIO")
     if path:
-        with open(path, "r", encoding="utf-8") as f:
+        safe_path = _safe_path(path, root=(Path.cwd(), tempfile.gettempdir()))
+        with open(safe_path, "r", encoding="utf-8") as f:
             data = json.loads(f.read())
         scenes = data.get("scenes") if isinstance(data, dict) else None
         if not scenes:
@@ -3749,7 +3817,8 @@ def _write_trace_asset(digest, data_url):
     if not re.fullmatch(r"[0-9a-f]{64}", digest):
         return None
     try:
-        assets = _trace_path().parent / (_trace_path().name + ".assets")
+        trace_p = _trace_path()
+        assets = _safe_path(trace_p.parent / (trace_p.name + ".assets"), root=(Path.cwd(), tempfile.gettempdir()))
         assets.mkdir(parents=True, exist_ok=True)
         path = assets / (digest + ".txt")
         # containment is checked on the RESOLVED path — a symlinked asset
@@ -3772,14 +3841,14 @@ def _read_trace_asset(name, digest=None):
     if not re.fullmatch(r"[0-9a-f]{64}\.txt", str(name)):
         return ""
     src = os.environ.get("NUDGE_REPLAY") or str(_trace_path())
-    p = Path(src)
-    base = (p.parent / (p.name + ".assets")).resolve()
-    path = (base / name).resolve()
-    if path.parent != base:
-        return ""
     try:
+        p = _safe_path(src, root=(Path.cwd(), tempfile.gettempdir()))
+        base = _safe_path(p.parent / (p.name + ".assets"), root=(Path.cwd(), tempfile.gettempdir())).resolve()
+        path = (base / name).resolve()
+        if path.parent != base:
+            return ""
         content = path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, ValueError):
         return ""
     # a crafted trace must not serve pixels whose content disagrees with
     # the recorded digest — unverified pixels are not served at all
