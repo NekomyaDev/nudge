@@ -119,7 +119,7 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
 /// cwd-relative for names with a separator). Returns None if it cannot be
 /// resolved. Used so a grant keyed on a basename cannot be satisfied by a
 /// different, workspace-local executable that happens to share that name.
-#[cfg(not(target_arch = "wasm32"))]
+/// (Compiles on all targets; on wasm it simply resolves to None.)
 fn resolve_executable(cmd: &str) -> Option<std::path::PathBuf> {
     let p = std::path::Path::new(cmd);
     if cmd.contains('/') || cmd.contains('\\') || p.is_absolute() {
