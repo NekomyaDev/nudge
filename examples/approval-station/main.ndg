@@ -1,0 +1,81 @@
+// Interactive approval station example
+// Demonstrates typed UI (column, row, text, input, button) and headless testing ($0)
+
+type Review = { summary: string, risk: string }
+
+fn analyze(prompt: string) -> Review uses LLM {
+    llm"""Review this requested action for security risks.
+
+    Request:
+    {prompt}
+
+    summary: one concise sentence explaining what this request does
+    risk: one of safe, medium, critical"""
+    with { schema: Review, model: "fake:default", budget: 0.01 USD, retry: 1 with repair }
+}
+
+view ApprovalView(prompt: string, status: string, risk: string) -> View {
+    column(padding = 16, gap = 10) [
+        text("Agent Review Station", size = 18, bold = true),
+        text("Request: " + prompt),
+        input(prompt, id = "input_prompt", on_change = update_prompt),
+        row(gap = 8) [
+            button("Inspect", id = "btn_inspect", on_click = inspect_action),
+            button("Approve", id = "btn_approve", on_click = approve_action),
+            button("Reject", id = "btn_reject", on_click = reject_action)
+        ],
+        text("Status: " + status),
+        text("Risk Level: " + risk)
+    ]
+}
+
+agent ApprovalStation {
+    state {
+        prompt: string = "deploy updates"
+        status: string = "pending review"
+        risk: string = "unknown"
+    }
+
+    fn update_prompt(val: string) uses UI {
+        state.prompt = val
+    }
+
+    fn inspect_action() uses UI, LLM {
+        let res = analyze(state.prompt)
+        state.status = res.summary
+        state.risk = res.risk
+    }
+
+    fn approve_action() uses UI {
+        state.status = "approved"
+    }
+
+    fn reject_action() uses UI {
+        state.status = "rejected"
+    }
+
+    window MainWindow {
+        title: "Approval Station",
+        width: 400,
+        height: 300,
+        content: ApprovalView(state.prompt, state.status, state.risk)
+    }
+}
+
+fn main() uses UI {
+    ApprovalStation.MainWindow.open()
+}
+
+test "approval station mounts headlessly and executes actions" {
+    let app = ApprovalStation.MainWindow.mount_headless()
+    assert app.find("input_prompt").exists()
+    assert app.find("btn_inspect").exists()
+    assert app.find_text("Status: pending review").exists()
+
+    app.dispatch_click("btn_inspect")
+    assert ApprovalStation.state.risk != "unknown"
+
+    app.dispatch_click("btn_approve")
+    assert ApprovalStation.state.status == "approved"
+    assert app.find_text("Status: approved").exists()
+}

@@ -28,6 +28,7 @@ corresponding provider or service configuration described below.
 | Computer automation | [`computer-automation/`](computer-automation/) | Observe, decide, act, replay, drift checks | Fake computer provider or configured desktop |
 | Dungeon crawler | [`dungeon-crawler/`](dungeon-crawler/) | Pure Nudge state, combat, routing, and tests | None |
 | Property fuzz | [`property-fuzz/`](property-fuzz/) | `for_all`, generators, and shrinking | None |
+| Approval station | [`approval-station/`](approval-station/) | Interactive UI, human-in-the-loop review, headless testing | None for fake-provider tests |
 | Provider smoke | [`smoke_provider.ndg`](smoke_provider.ndg) | Real-provider adapter smoke test | Configured provider |
 
 ## Check and test examples

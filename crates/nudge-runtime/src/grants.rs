@@ -148,9 +148,17 @@ fn match_char_class(content: &[char], target: char) -> bool {
 }
 
 /// Formats the denial error message to match Python runtime parity.
-fn deny_message(tool: &str, server: Option<&str>) -> String {
-    match server {
-        Some(s) if !s.is_empty() => {
+fn deny_message(tool: &str, server: Option<&str>, agent: Option<&str>) -> String {
+    match (agent, server) {
+        (Some(a), Some(s)) if !a.is_empty() && !s.is_empty() => {
+            format!(
+                "tool '{tool}' on server '{s}' is not granted for agent '{a}' by NUDGE_TOOL_GRANTS"
+            )
+        }
+        (Some(a), _) if !a.is_empty() => {
+            format!("tool '{tool}' is not granted for agent '{a}' by NUDGE_TOOL_GRANTS")
+        }
+        (_, Some(s)) if !s.is_empty() => {
             format!("tool '{tool}' on server '{s}' is not granted by NUDGE_TOOL_GRANTS")
         }
         _ => format!("tool '{tool}' is not granted by NUDGE_TOOL_GRANTS"),
@@ -161,6 +169,26 @@ fn deny_message(tool: &str, server: Option<&str>) -> String {
 ///
 /// Validates policy structure upfront and performs least-privilege lookup.
 pub fn check_policy_str(raw: &str, tool: &str, server: Option<&str>) -> Result<(), String> {
+    check_policy_str_with_agent(raw, tool, server, None)
+}
+
+/// Evaluates a raw policy JSON string against a tool call, server, and optional agent.
+///
+/// Precedence order (least privilege):
+/// 1. `{agent}/{server}/{tool}`
+/// 2. `{agent}/{server}/*`
+/// 3. `{agent}/{tool}`
+/// 4. `{agent}/*`
+/// 5. `{server}/{tool}`
+/// 6. `{server}/*`
+/// 7. `{tool}`
+/// 8. `*`
+pub fn check_policy_str_with_agent(
+    raw: &str,
+    tool: &str,
+    server: Option<&str>,
+    agent: Option<&str>,
+) -> Result<(), String> {
     let value: serde_json::Value = match serde_json::from_str(raw) {
         Ok(v) => v,
         Err(e) => return Err(format!("NUDGE_TOOL_GRANTS is not valid JSON: {e}")),
@@ -197,7 +225,19 @@ pub fn check_policy_str(raw: &str, tool: &str, server: Option<&str>) -> Result<(
         grants.insert(key.as_str(), rules);
     }
 
-    let mut keys = Vec::with_capacity(4);
+    let mut keys = Vec::with_capacity(8);
+    if let Some(a) = agent {
+        if !a.is_empty() {
+            if let Some(s) = server {
+                if !s.is_empty() {
+                    keys.push(format!("{a}/{s}/{tool}"));
+                    keys.push(format!("{a}/{s}/*"));
+                }
+            }
+            keys.push(format!("{a}/{tool}"));
+            keys.push(format!("{a}/*"));
+        }
+    }
     if let Some(s) = server {
         if !s.is_empty() {
             keys.push(format!("{s}/{tool}"));
@@ -212,12 +252,12 @@ pub fn check_policy_str(raw: &str, tool: &str, server: Option<&str>) -> Result<(
             if rules.iter().any(|r| fnmatch(r, tool)) {
                 return Ok(());
             } else {
-                return Err(deny_message(tool, server));
+                return Err(deny_message(tool, server, agent));
             }
         }
     }
 
-    Err(deny_message(tool, server))
+    Err(deny_message(tool, server, agent))
 }
 
 /// Check whether a tool call is allowed by the `NUDGE_TOOL_GRANTS` environment variable.
@@ -227,6 +267,15 @@ pub fn check_policy_str(raw: &str, tool: &str, server: Option<&str>) -> Result<(
 /// Returns `Ok(())` if granted.
 /// Returns `Err(String)` if denied or if the policy is invalid JSON / improperly typed.
 pub fn check(tool: &str, server: Option<&str>) -> Result<(), String> {
+    check_with_agent(tool, server, None)
+}
+
+/// Check whether a tool call is allowed by `NUDGE_TOOL_GRANTS` with an active agent context.
+pub fn check_with_agent(
+    tool: &str,
+    server: Option<&str>,
+    agent: Option<&str>,
+) -> Result<(), String> {
     if crate::task::is_current_cancelled() {
         return Err("error[E-task-0001]: TaskCancelled".to_string());
     }
@@ -238,7 +287,7 @@ pub fn check(tool: &str, server: Option<&str>) -> Result<(), String> {
         }
     };
 
-    check_policy_str(&raw, tool, server)
+    check_policy_str_with_agent(&raw, tool, server, agent)
 }
 
 #[cfg(test)]
@@ -474,5 +523,57 @@ mod tests {
         }
 
         crate::task::task_reset();
+    }
+
+    #[test]
+    fn test_agent_grant_attenuation() {
+        let guard = EnvGuard::new();
+        guard.set(r#"{"*": ["*"], "RestrictedAgent/*": ["fs.read", "web_search"], "RestrictedAgent/dangerous": []}"#);
+
+        // Unrestricted agent / global
+        assert!(check_with_agent("fs.write", None, None).is_ok());
+        assert!(check_with_agent("dangerous", None, None).is_ok());
+
+        // RestrictedAgent is attenuated
+        assert!(check_with_agent("fs.read", None, Some("RestrictedAgent")).is_ok());
+        assert!(check_with_agent("web_search", None, Some("RestrictedAgent")).is_ok());
+
+        let err1 = check_with_agent("fs.write", None, Some("RestrictedAgent")).unwrap_err();
+        assert_eq!(
+            err1,
+            "tool 'fs.write' is not granted for agent 'RestrictedAgent' by NUDGE_TOOL_GRANTS"
+        );
+
+        let err2 = check_with_agent("dangerous", None, Some("RestrictedAgent")).unwrap_err();
+        assert_eq!(
+            err2,
+            "tool 'dangerous' is not granted for agent 'RestrictedAgent' by NUDGE_TOOL_GRANTS"
+        );
+    }
+
+    #[test]
+    fn test_agent_server_tool_precedence() {
+        let guard = EnvGuard::new();
+        guard.set(
+            r#"{"*": ["*"], "Bot/mcp_server/*": ["safe_*"], "Bot/mcp_server/safe_delete": []}"#,
+        );
+
+        // Bot on mcp_server
+        assert!(check_with_agent("safe_search", Some("mcp_server"), Some("Bot")).is_ok());
+
+        let err1 = check_with_agent("safe_delete", Some("mcp_server"), Some("Bot")).unwrap_err();
+        assert_eq!(
+            err1,
+            "tool 'safe_delete' on server 'mcp_server' is not granted for agent 'Bot' by NUDGE_TOOL_GRANTS"
+        );
+
+        let err2 = check_with_agent("raw_exec", Some("mcp_server"), Some("Bot")).unwrap_err();
+        assert_eq!(
+            err2,
+            "tool 'raw_exec' on server 'mcp_server' is not granted for agent 'Bot' by NUDGE_TOOL_GRANTS"
+        );
+
+        // Another agent falls back to global '*' rule
+        assert!(check_with_agent("safe_delete", Some("mcp_server"), Some("OtherBot")).is_ok());
     }
 }

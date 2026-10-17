@@ -274,6 +274,11 @@ mod tests {
     }
 
     #[test]
+    fn test_conformance_corpus() {
+        conformance_corpus_matches_expected_verdicts();
+    }
+
+    #[test]
     fn wrong_typed_frozen_v1_fields_are_reported() {
         let text = format!(
             "{}\n{}\n",

@@ -3042,73 +3042,30 @@ impl Interpreter {
             }
         }
 
-        let mut answers = HashMap::new();
-        for (name, q) in questions {
-            let prompt = match q {
-                DecisionQ::Choice { prompt, .. } => prompt.as_str(),
-                DecisionQ::Noul { prompt } => prompt.as_str(),
-                DecisionQ::Score { prompt, .. } => prompt.as_str(),
+        let is_replay = nudge_runtime::trace::replay_active();
+        let cache_env = std::env::var("NUDGE_DECISION_CACHE").ok();
+        let cache_key = if !is_replay && cache_env.is_some() {
+            Some(decision_cache_key(&state_text, &model_str, questions))
+        } else {
+            None
+        };
+
+        let mut cache_hit = false;
+        let answers: HashMap<String, NudgeVal> =
+            if let (false, Some(ref cache_path), Some(ref key)) =
+                (is_replay, &cache_env, &cache_key)
+            {
+                if let Some(cached_answers) = decision_cache_get(cache_path, key) {
+                    cache_hit = true;
+                    cached_answers
+                } else {
+                    let computed = compute_fake_decide(questions, &state_text, &model_str);
+                    decision_cache_put(cache_path, key, &computed);
+                    computed
+                }
+            } else {
+                compute_fake_decide(questions, &state_text, &model_str)
             };
-            let seed_text = format!("{state_text}\x1f{name}\x1f{prompt}\x1f{model_str}");
-            let seed = fnv1a(&seed_text);
-
-            match q {
-                DecisionQ::Choice { options, .. } => {
-                    let k = options.len();
-                    let dist = fake_distribution(seed, k);
-                    let mut winner_i = 0;
-                    let mut max_p = 0.0;
-                    for (i, p) in dist.iter().enumerate() {
-                        if *p > max_p {
-                            max_p = *p;
-                            winner_i = i;
-                        }
-                    }
-                    let confidence = if k > 1 {
-                        ((max_p - 1.0 / (k as f64)) / (1.0 - 1.0 / (k as f64))).max(0.0)
-                    } else {
-                        1.0
-                    };
-
-                    let mut dist_map = HashMap::new();
-                    for (i, opt) in options.iter().enumerate() {
-                        dist_map.insert(opt.clone(), NudgeVal::Float(dist[i]));
-                    }
-
-                    let mut q_res = HashMap::new();
-                    q_res.insert(
-                        "winner".to_string(),
-                        NudgeVal::Str(options[winner_i].clone()),
-                    );
-                    q_res.insert("p".to_string(), NudgeVal::Float(max_p));
-                    q_res.insert("confidence".to_string(), NudgeVal::Float(confidence));
-                    q_res.insert("distribution".to_string(), NudgeVal::Map(dist_map));
-
-                    answers.insert(name.clone(), NudgeVal::Map(q_res));
-                }
-                DecisionQ::Noul { .. } => {
-                    let dist = fake_distribution(seed, 2);
-                    let mut q_res = HashMap::new();
-                    q_res.insert("p".to_string(), NudgeVal::Float(dist[0]));
-                    answers.insert(name.clone(), NudgeVal::Map(q_res));
-                }
-                DecisionQ::Score { levels, .. } => {
-                    let dist = fake_distribution(seed, levels.len());
-                    let score: f64 = dist.iter().enumerate().map(|(i, p)| (i as f64) * p).sum();
-
-                    let mut dist_map = HashMap::new();
-                    for (i, lvl) in levels.iter().enumerate() {
-                        dist_map.insert(lvl.clone(), NudgeVal::Float(dist[i]));
-                    }
-
-                    let mut q_res = HashMap::new();
-                    q_res.insert("score".to_string(), NudgeVal::Float(score));
-                    q_res.insert("distribution".to_string(), NudgeVal::Map(dist_map));
-
-                    answers.insert(name.clone(), NudgeVal::Map(q_res));
-                }
-            }
-        }
 
         // `decision.call` NTF record (v1.4): questions keyed by name (the
         // wire shape), answers as computed, measured latency — replay
@@ -3136,15 +3093,23 @@ impl Interpreter {
                 }
                 qjson.insert(name.clone(), serde_json::Value::Object(obj));
             }
-            let record = serde_json::json!({
+            let latency_ms = if cache_hit {
+                0
+            } else {
+                started.elapsed().as_millis() as u64
+            };
+            let mut record = serde_json::json!({
                 "kind": "decision.call",
                 "model": model_str,
                 "provider": std::env::var("NUDGE_PROVIDER").unwrap_or_else(|_| "fake".to_string()),
                 "questions": qjson,
                 "answers": nudgeval_to_json(&NudgeVal::Map(answers.clone())),
-                "latency_ms": started.elapsed().as_millis() as u64,
+                "latency_ms": latency_ms,
                 "outcome": "ok",
             });
+            if cache_hit {
+                record["cache"] = serde_json::json!("hit");
+            }
             nudge_runtime::trace::emit(record)?;
         }
 
@@ -3410,6 +3375,240 @@ fn fake_distribution(mut seed: u64, k: usize) -> Vec<f64> {
     }
     let total: f64 = weights.iter().sum();
     weights.into_iter().map(|w| w / total).collect()
+}
+
+fn compute_fake_decide(
+    questions: &[(String, DecisionQ)],
+    state_text: &str,
+    model_str: &str,
+) -> HashMap<String, NudgeVal> {
+    let mut answers = HashMap::new();
+    for (name, q) in questions {
+        let prompt = match q {
+            DecisionQ::Choice { prompt, .. } => prompt.as_str(),
+            DecisionQ::Noul { prompt } => prompt.as_str(),
+            DecisionQ::Score { prompt, .. } => prompt.as_str(),
+        };
+        let seed_text = format!("{state_text}\x1f{name}\x1f{prompt}\x1f{model_str}");
+        let seed = fnv1a(&seed_text);
+
+        match q {
+            DecisionQ::Choice { options, .. } => {
+                let k = options.len();
+                let dist = fake_distribution(seed, k);
+                let mut winner_i = 0;
+                let mut max_p = 0.0;
+                for (i, p) in dist.iter().enumerate() {
+                    if *p > max_p {
+                        max_p = *p;
+                        winner_i = i;
+                    }
+                }
+                let confidence = if k > 1 {
+                    ((max_p - 1.0 / (k as f64)) / (1.0 - 1.0 / (k as f64))).max(0.0)
+                } else {
+                    1.0
+                };
+
+                let mut dist_map = HashMap::new();
+                for (i, opt) in options.iter().enumerate() {
+                    dist_map.insert(opt.clone(), NudgeVal::Float(dist[i]));
+                }
+
+                let mut q_res = HashMap::new();
+                q_res.insert(
+                    "winner".to_string(),
+                    NudgeVal::Str(options[winner_i].clone()),
+                );
+                q_res.insert("p".to_string(), NudgeVal::Float(max_p));
+                q_res.insert("confidence".to_string(), NudgeVal::Float(confidence));
+                q_res.insert("distribution".to_string(), NudgeVal::Map(dist_map));
+
+                answers.insert(name.clone(), NudgeVal::Map(q_res));
+            }
+            DecisionQ::Noul { .. } => {
+                let dist = fake_distribution(seed, 2);
+                let mut q_res = HashMap::new();
+                q_res.insert("p".to_string(), NudgeVal::Float(dist[0]));
+                answers.insert(name.clone(), NudgeVal::Map(q_res));
+            }
+            DecisionQ::Score { levels, .. } => {
+                let dist = fake_distribution(seed, levels.len());
+                let score: f64 = dist.iter().enumerate().map(|(i, p)| (i as f64) * p).sum();
+
+                let mut dist_map = HashMap::new();
+                for (i, lvl) in levels.iter().enumerate() {
+                    dist_map.insert(lvl.clone(), NudgeVal::Float(dist[i]));
+                }
+
+                let mut q_res = HashMap::new();
+                q_res.insert("score".to_string(), NudgeVal::Float(score));
+                q_res.insert("distribution".to_string(), NudgeVal::Map(dist_map));
+
+                answers.insert(name.clone(), NudgeVal::Map(q_res));
+            }
+        }
+    }
+    answers
+}
+
+fn decision_cache_key(state: &str, model: &str, questions: &[(String, DecisionQ)]) -> String {
+    let mut q_list = Vec::with_capacity(questions.len());
+    for (name, q) in questions {
+        let mut map = serde_json::Map::new();
+        map.insert("name".to_string(), serde_json::Value::String(name.clone()));
+        match q {
+            DecisionQ::Choice { prompt, options } => {
+                map.insert(
+                    "kind".to_string(),
+                    serde_json::Value::String("choice".to_string()),
+                );
+                map.insert("options".to_string(), serde_json::json!(options));
+                map.insert(
+                    "prompt".to_string(),
+                    serde_json::Value::String(prompt.clone()),
+                );
+            }
+            DecisionQ::Noul { prompt } => {
+                map.insert(
+                    "kind".to_string(),
+                    serde_json::Value::String("noul".to_string()),
+                );
+                map.insert(
+                    "prompt".to_string(),
+                    serde_json::Value::String(prompt.clone()),
+                );
+            }
+            DecisionQ::Score { prompt, levels } => {
+                map.insert(
+                    "kind".to_string(),
+                    serde_json::Value::String("score".to_string()),
+                );
+                map.insert("levels".to_string(), serde_json::json!(levels));
+                map.insert(
+                    "prompt".to_string(),
+                    serde_json::Value::String(prompt.clone()),
+                );
+            }
+        }
+        q_list.push(serde_json::Value::Object(map));
+    }
+
+    let mut shape = serde_json::Map::new();
+    shape.insert(
+        "model".to_string(),
+        serde_json::Value::String(model.to_string()),
+    );
+    shape.insert("questions".to_string(), serde_json::Value::Array(q_list));
+    shape.insert(
+        "state".to_string(),
+        serde_json::Value::String(state.to_string()),
+    );
+
+    let json_val = serde_json::Value::Object(shape);
+    let blob = serde_json::to_string(&json_val).unwrap_or_default();
+    nudge_runtime::trace::sha256_hex(blob.as_bytes())
+}
+
+static DECISION_CACHE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn decision_cache_load(path: &std::path::Path) -> HashMap<String, serde_json::Value> {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return HashMap::new();
+    };
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return HashMap::new();
+    };
+    let Some(obj) = val.as_object() else {
+        return HashMap::new();
+    };
+    let mut map = HashMap::new();
+    for (k, v) in obj {
+        map.insert(k.clone(), v.clone());
+    }
+    map
+}
+
+fn decision_cache_get(path_str: &str, key: &str) -> Option<HashMap<String, NudgeVal>> {
+    let path = std::path::Path::new(path_str);
+    let cache = decision_cache_load(path);
+    let entry = cache.get(key)?;
+    let answers_val = entry.get("answers")?;
+    let nudgeval = json_to_nudgeval(answers_val.clone());
+    match nudgeval {
+        NudgeVal::Map(m) => Some(m),
+        _ => None,
+    }
+}
+
+fn decision_cache_put(path_str: &str, key: &str, answers: &HashMap<String, NudgeVal>) {
+    let Ok(_lock) = DECISION_CACHE_LOCK.lock() else {
+        return;
+    };
+    let path = std::path::Path::new(path_str);
+    let mut cache = decision_cache_load(path);
+
+    let cached_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64();
+
+    let answers_json = nudgeval_to_json(&NudgeVal::Map(answers.clone()));
+    let entry = serde_json::json!({
+        "answers": answers_json,
+        "cached_at": cached_at,
+    });
+    cache.insert(key.to_string(), entry);
+
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+    }
+
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("cache.json");
+    let temp_name = format!(
+        ".{}.tmp.{}.{}",
+        file_name,
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    let temp_path = path.with_file_name(temp_name);
+
+    let mut map = serde_json::Map::new();
+    for (k, v) in cache {
+        map.insert(k, v);
+    }
+    let Ok(serialized) = serde_json::to_string(&serde_json::Value::Object(map)) else {
+        return;
+    };
+
+    use std::io::Write;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    let Ok(mut file) = opts.open(&temp_path) else {
+        return;
+    };
+    if file.write_all(serialized.as_bytes()).is_err() {
+        let _ = std::fs::remove_file(&temp_path);
+        return;
+    }
+    if file.flush().is_err() {
+        let _ = std::fs::remove_file(&temp_path);
+        return;
+    }
+    let _ = file.sync_all();
+    drop(file);
+
+    if std::fs::rename(&temp_path, path).is_err() {
+        let _ = std::fs::remove_file(&temp_path);
+    }
 }
 
 /// Public API: Execute a Nudge program from entry point with arguments.
@@ -6124,5 +6323,211 @@ data: [DONE]\n\n";
             "delete mid-string must keep cursor at same position"
         );
         assert_eq!(st.text, "heYZllo");
+    }
+
+    #[test]
+    fn test_decision_cache_hit_produces_cache_hit_trace() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("nudge_test_dcache_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let cache_file = temp_dir.join("cache.json");
+        let trace_file = temp_dir.join("trace.jsonl");
+
+        let _env_cache = EnvReset::set("NUDGE_DECISION_CACHE", cache_file.to_str().unwrap());
+        let _scope = nudge_runtime::trace::testing::scope(Some(trace_file.clone()), None);
+
+        let src = r#"
+            fn triage(t: string) -> string {
+                let d = decide {
+                    dept: "choose team" choose [billing, tech]
+                }
+                on t
+                with { model: "fake:default" }
+                d.dept.winner
+            }
+            fn main() -> string {
+                triage("hello")
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        // 1. First run: cold cache -> miss, computes and populates cache
+        let res1 = run_program(&items, "main", &[]).expect("first run");
+        assert_eq!(res1, NudgeVal::Str("tech".to_string()));
+        nudge_runtime::trace::flush_sink().unwrap();
+
+        assert!(cache_file.exists(), "cache file should be written");
+
+        // Read trace to verify first call is not cache hit
+        let trace_content = std::fs::read_to_string(&trace_file).unwrap();
+        let dec_records: Vec<serde_json::Value> = trace_content
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .filter(|r| r.get("kind").and_then(|v| v.as_str()) == Some("decision.call"))
+            .collect();
+        assert_eq!(dec_records.len(), 1);
+        let rec1 = &dec_records[0];
+        assert_eq!(
+            rec1.get("kind").and_then(|v| v.as_str()),
+            Some("decision.call")
+        );
+        assert!(rec1.get("cache").is_none());
+
+        // 2. Second run: warm cache -> hit, latency_ms = 0, cache = "hit"
+        let res2 = run_program(&items, "main", &[]).expect("second run");
+        assert_eq!(res2, NudgeVal::Str("tech".to_string()));
+        nudge_runtime::trace::flush_sink().unwrap();
+
+        let trace_content2 = std::fs::read_to_string(&trace_file).unwrap();
+        let dec_records2: Vec<serde_json::Value> = trace_content2
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .filter(|r| r.get("kind").and_then(|v| v.as_str()) == Some("decision.call"))
+            .collect();
+        assert_eq!(dec_records2.len(), 2);
+        let rec2 = &dec_records2[1];
+        assert_eq!(
+            rec2.get("kind").and_then(|v| v.as_str()),
+            Some("decision.call")
+        );
+        assert_eq!(rec2.get("cache").and_then(|v| v.as_str()), Some("hit"));
+        assert_eq!(rec2.get("latency_ms").and_then(|v| v.as_u64()), Some(0));
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_decision_cache_corrupt_recovers_as_cold_start() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("nudge_test_dcache_corrupt_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let cache_file = temp_dir.join("corrupt_cache.json");
+        std::fs::write(&cache_file, b"NOT VALID JSON").unwrap();
+
+        let _env_cache = EnvReset::set("NUDGE_DECISION_CACHE", cache_file.to_str().unwrap());
+
+        let src = r#"
+            fn triage(t: string) -> string {
+                let d = decide {
+                    dept: "choose team" choose [billing, tech]
+                }
+                on t
+                with { model: "fake:default" }
+                d.dept.winner
+            }
+            fn main() -> string {
+                triage("test")
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        // Must not error on corrupt cache file; should recover as cold start and overwrite
+        let res =
+            run_program(&items, "main", &[]).expect("execution with corrupt cache should succeed");
+        assert_eq!(res, NudgeVal::Str("tech".to_string()));
+
+        // Check that cache file is now valid JSON
+        let content = std::fs::read_to_string(&cache_file).unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&content).expect("cache should be valid JSON now");
+        assert!(parsed.is_object());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_decision_cache_replay_takes_precedence_over_cache() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("nudge_test_dcache_replay_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let cache_file = temp_dir.join("cache.json");
+        let trace_file = temp_dir.join("trace.jsonl");
+
+        let _env_cache = EnvReset::set("NUDGE_DECISION_CACHE", cache_file.to_str().unwrap());
+        let _scope = nudge_runtime::trace::testing::scope(Some(trace_file.clone()), None);
+
+        let src = r#"
+            fn triage(t: string) -> string {
+                let d = decide {
+                    dept: "choose team" choose [billing, tech]
+                }
+                on t
+                with { model: "fake:default" }
+                d.dept.winner
+            }
+            fn main() -> string {
+                triage("replay_test")
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        // Populate trace and cache
+        let res = run_program(&items, "main", &[]).expect("first run");
+        assert_eq!(res, NudgeVal::Str("tech".to_string()));
+        nudge_runtime::trace::flush_sink().unwrap();
+
+        // Replay active scope (sink=None, replay=Some(trace_file))
+        let _replay_scope = nudge_runtime::trace::testing::scope(None, Some(trace_file.clone()));
+        assert!(nudge_runtime::trace::replay_active());
+
+        // Run in replay mode: replay takes precedence, no trace record is written
+        let res_replay = run_program(&items, "main", &[]).expect("replay run");
+        assert_eq!(res_replay, NudgeVal::Str("tech".to_string()));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_bytecode_vm_delegates_decide_and_runs() {
+        let src = r#"
+            fn triage(t: string) -> string {
+                let d = decide {
+                    dept: "which team?" choose [billing, tech]
+                }
+                on t
+                with { model: "fake:default" }
+                d.dept.winner
+            }
+            fn main() -> string {
+                triage("urgent refund")
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let prog = crate::bytecode::compile_with_entry(&items, "main")
+            .expect("main calling decide must compile to bytecode via DelegateExpr");
+
+        let mut interp = Interpreter::new();
+        interp.load_items(&items).unwrap();
+        let mut delegate = |req: vm::DelegateRequest<'_>| -> Result<NudgeVal, String> {
+            match req {
+                vm::DelegateRequest::Call(callee, callee_args) => {
+                    interp.invoke_fn(callee, &callee_args)
+                }
+                vm::DelegateRequest::Expr(expr, locals) => {
+                    let child_env = Rc::new(RefCell::new(Env::new()));
+                    for (k, v) in locals {
+                        child_env.borrow_mut().define(k.clone(), v.clone());
+                    }
+                    interp.eval_expr(expr, &child_env)
+                }
+            }
+        };
+
+        let res = vm::run_with_delegate(&prog, "main", &[], &mut delegate)
+            .expect("VM execution with decide delegation should succeed");
+        assert_eq!(res, NudgeVal::Str("tech".to_string()));
+
+        // Also test run_program with NUDGE_VM=1
+        let _env_vm = EnvReset::set("NUDGE_VM", "1");
+        let prog_res = run_program(&items, "main", &[]).expect("run_program VM=1 should succeed");
+        assert_eq!(prog_res, NudgeVal::Str("tech".to_string()));
     }
 }

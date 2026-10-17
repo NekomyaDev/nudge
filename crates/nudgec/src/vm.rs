@@ -1576,11 +1576,9 @@ mod tests {
             }
         "#;
         let items = parse_src(src);
-        let err = compile(&items).expect_err("decide must be rejected");
-        assert!(
-            err.contains("not in bytecode subset: decide call"),
-            "Expected 'not in bytecode subset: decide call', got: {err}"
-        );
+        let prog = compile(&items).expect("decide should compile via DelegateExpr");
+        assert_eq!(prog.delegated_exprs.len(), 1);
+        assert!(prog.functions[0].chunk.code.contains(&Op::DelegateExpr(0)));
     }
 
     #[test]

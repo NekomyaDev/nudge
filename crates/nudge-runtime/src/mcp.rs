@@ -11,6 +11,7 @@ use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 
 /// Default MCP read timeout in milliseconds (a hanging MCP server must not block
 /// a request forever). Overridable via `NUDGE_MCP_TIMEOUT_MS`.
+#[cfg(not(target_arch = "wasm32"))]
 fn mcp_read_timeout_ms() -> u64 {
     std::env::var("NUDGE_MCP_TIMEOUT_MS")
         .ok()

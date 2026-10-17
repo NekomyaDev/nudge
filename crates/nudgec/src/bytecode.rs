@@ -788,11 +788,7 @@ impl<'a> Compiler<'a> {
                     ))
                 }
             }
-            ExprKind::Prompt { .. } => {
-                self.emit_delegated_expr(expr);
-                Ok(())
-            }
-            ExprKind::LlmCall { .. } => {
+            ExprKind::Prompt { .. } | ExprKind::LlmCall { .. } | ExprKind::DecideCall { .. } => {
                 self.emit_delegated_expr(expr);
                 Ok(())
             }
@@ -839,7 +835,7 @@ impl<'a> Compiler<'a> {
 
                 Ok(())
             }
-            ExprKind::DecideCall { .. } => Err("not in bytecode subset: decide call".to_string()),
+            // ExprKind::DecideCall is handled above via emit_delegated_expr
             ExprKind::RecordLit(fields) => {
                 let mut keys = Vec::with_capacity(fields.len());
                 for (name, expr) in fields {
@@ -1013,12 +1009,8 @@ fn check_expr_effects(expr: &Expr, tool_names: &[String]) -> Result<(), String> 
             }
             Ok(())
         }
-        ExprKind::Prompt { .. } => {
-            // Prompt literal expressions are delegated to the interpreter via DelegateExpr.
-            Ok(())
-        }
-        ExprKind::LlmCall { .. } => {
-            // Inline LLM call expressions are delegated to the interpreter via DelegateExpr.
+        ExprKind::Prompt { .. } | ExprKind::LlmCall { .. } | ExprKind::DecideCall { .. } => {
+            // Prompt, LLM call, and decide expressions are delegated to the interpreter via DelegateExpr.
             Ok(())
         }
         ExprKind::ComputerCall { .. } => Err("not in bytecode subset: computer call".to_string()),
@@ -1035,7 +1027,7 @@ fn check_expr_effects(expr: &Expr, tool_names: &[String]) -> Result<(), String> 
             }
             Ok(())
         }
-        ExprKind::DecideCall { .. } => Err("not in bytecode subset: decide call".to_string()),
+        // ExprKind::DecideCall is handled above via DelegateExpr delegation
         ExprKind::RecordLit(fields) => {
             for (_, v) in fields {
                 check_expr_effects(v, tool_names)?;

@@ -246,7 +246,40 @@ impl Parser {
             loop {
                 let name = self.ident()?;
                 if self.eat(&Tok::LParen) {
-                    let arg = self.ident()?;
+                    let arg = match self.peek() {
+                        Tok::Str(s) => {
+                            let s = s.clone();
+                            self.bump();
+                            s
+                        }
+                        Tok::Star => {
+                            self.bump();
+                            "*".to_string()
+                        }
+                        Tok::Ident(_) => {
+                            let mut s = self.ident()?;
+                            while self.at(&Tok::Dot) || self.at(&Tok::Slash) {
+                                if self.eat(&Tok::Dot) {
+                                    s.push('.');
+                                } else {
+                                    self.bump();
+                                    s.push('/');
+                                }
+                                if self.eat(&Tok::Star) {
+                                    s.push('*');
+                                    break;
+                                } else {
+                                    s.push_str(&self.ident()?);
+                                }
+                            }
+                            s
+                        }
+                        other => {
+                            let other = format!("{other:?}");
+                            return self
+                                .err(format!("expected effect argument in '()', found {other}"));
+                        }
+                    };
                     self.expect(&Tok::RParen, "')' after effect parameter")?;
                     effs.push(format!("{name}({arg})"));
                 } else {
@@ -322,10 +355,19 @@ impl Parser {
         Ok(Item::Test { name, body })
     }
 
-    /// `agent Name { state { ... } fn ... }` (design §7, v0.2c MVP).
+    /// `agent Name { state { ... } fn ... }` (design §7, v0.2c MVP, v1.5 tools attenuation).
     fn parse_agent(&mut self) -> PResult<Item> {
         self.bump(); // agent
         let name = self.ident()?;
+        let mut agent_tools = Vec::new();
+        let agent_effects = self.parse_effects()?;
+        for eff in agent_effects {
+            if eff == "Tool" || eff == "Tool(*)" {
+                agent_tools.push("*".to_string());
+            } else if eff.starts_with("Tool(") && eff.ends_with(')') {
+                agent_tools.push(eff[5..eff.len() - 1].to_string());
+            }
+        }
         self.expect(&Tok::LBrace, "'{' before agent body")?;
         let mut state = Vec::new();
         let mut fns = Vec::new();
@@ -334,6 +376,59 @@ impl Parser {
                 return self.err("unexpected end of file inside agent");
             }
             match self.peek() {
+                Tok::Ident(ref s) if s == "tools" => {
+                    self.bump();
+                    self.eat(&Tok::Colon);
+                    self.expect(&Tok::LBracket, "'[' after tools")?;
+                    while !self.at(&Tok::RBracket) {
+                        let tname = match self.peek() {
+                            Tok::Str(s) => {
+                                let s = s.clone();
+                                self.bump();
+                                s
+                            }
+                            Tok::Star => {
+                                self.bump();
+                                "*".to_string()
+                            }
+                            Tok::Ident(_) => {
+                                let mut s = self.ident()?;
+                                while self.at(&Tok::Dot) || self.at(&Tok::Slash) {
+                                    if self.eat(&Tok::Dot) {
+                                        s.push('.');
+                                    } else {
+                                        self.bump();
+                                        s.push('/');
+                                    }
+                                    if self.eat(&Tok::Star) {
+                                        s.push('*');
+                                        break;
+                                    } else {
+                                        s.push_str(&self.ident()?);
+                                    }
+                                }
+                                s
+                            }
+                            other => {
+                                let other = format!("{other:?}");
+                                return self.err(format!("expected tool name in tools list, found {other}"));
+                            }
+                        };
+                        agent_tools.push(tname);
+                        self.eat(&Tok::Comma);
+                    }
+                    self.expect(&Tok::RBracket, "']' after tools list")?;
+                }
+                Tok::Uses => {
+                    let effs = self.parse_effects()?;
+                    for eff in effs {
+                        if eff == "Tool" || eff == "Tool(*)" {
+                            agent_tools.push("*".to_string());
+                        } else if eff.starts_with("Tool(") && eff.ends_with(')') {
+                            agent_tools.push(eff[5..eff.len() - 1].to_string());
+                        }
+                    }
+                }
                 Tok::State => {
                     self.bump(); // state
                     self.expect(&Tok::LBrace, "'{' before state block")?;
@@ -355,12 +450,42 @@ impl Parser {
                 Tok::Ident(ref s) if s == "handle" => fns.push(self.parse_handle()?),
                 other => {
                     return self.err(format!(
-                        "expected `state`, `fn`, `window`, `view`, or `handle` inside agent, found {other:?}"
+                        "expected `tools`, `state`, `fn`, `window`, `view`, or `handle` inside agent, found {other:?}"
                     ))
                 }
             }
         }
         self.expect(&Tok::RBrace, "'}' after agent body")?;
+
+        // Attenuate member fns using the agent's declared tool capabilities
+        if !agent_tools.is_empty() {
+            for item in &mut fns {
+                if let Item::Fn { effects, .. } = item {
+                    if effects.contains(&"Tool".to_string()) {
+                        effects.retain(|e| e != "Tool");
+                        for t in &agent_tools {
+                            if t == "*" {
+                                effects.push("Tool(*)".to_string());
+                            } else {
+                                effects.push(format!("Tool({t})"));
+                            }
+                        }
+                    } else if !effects
+                        .iter()
+                        .any(|e| e.starts_with("Tool(") || e == "Tool")
+                    {
+                        for t in &agent_tools {
+                            if t == "*" {
+                                effects.push("Tool(*)".to_string());
+                            } else {
+                                effects.push(format!("Tool({t})"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(Item::Agent { name, state, fns })
     }
 

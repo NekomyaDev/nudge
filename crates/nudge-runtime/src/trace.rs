@@ -102,7 +102,7 @@ pub(crate) fn sha256(data: &[u8]) -> [u8; 32] {
     out
 }
 
-fn sha256_hex(data: &[u8]) -> String {
+pub fn sha256_hex(data: &[u8]) -> String {
     let digest = sha256(data);
     let mut out = String::with_capacity(64);
     for b in digest {

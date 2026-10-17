@@ -73,6 +73,7 @@ struct Globals {
     views: HashMap<String, (Vec<(String, TypeExpr)>, TypeExpr)>,
     windows: HashMap<String, Vec<(String, Expr)>>,
     agents: HashMap<String, (Vec<(String, TypeExpr, Expr)>, Vec<Item>)>,
+    tool_servers: HashMap<String, String>,
     fn_effects: HashMap<String, Vec<String>>,
     auth_providers: HashMap<String, Vec<(String, Expr)>>,
     accounts: HashMap<String, (String, Vec<(String, Expr)>)>,
@@ -255,6 +256,10 @@ fn is_known_effect(eff: &str) -> bool {
         return true;
     }
     if eff.starts_with("Auth(") && eff.ends_with(')') {
+        let inner = &eff[5..eff.len() - 1];
+        return !inner.trim().is_empty();
+    }
+    if eff.starts_with("Tool(") && eff.ends_with(')') {
         let inner = &eff[5..eff.len() - 1];
         return !inner.trim().is_empty();
     }
@@ -456,6 +461,7 @@ fn direct_effects(
                             effects.insert("UI".into());
                         } else if g.tools.contains_key(name) {
                             effects.insert("Tool".into());
+                            effects.insert(format!("Tool({name})"));
                         } else if g.fns.contains_key(name) {
                             calls.insert(name.clone());
                         }
@@ -2413,6 +2419,46 @@ fn check_expr_pos(
 
 // ── entry point ─────────────────────────────────────────────────────
 
+fn tool_matches_declared(
+    want_tool: &str,
+    declared: &[String],
+    tool_servers: &HashMap<String, String>,
+) -> bool {
+    if declared.iter().any(|d| d == "Tool" || d == "Tool(*)") {
+        return true;
+    }
+    let tool_target = if want_tool.starts_with("Tool(") && want_tool.ends_with(')') {
+        &want_tool[5..want_tool.len() - 1]
+    } else {
+        want_tool
+    };
+    let server_opt = tool_servers.get(tool_target);
+    for d in declared {
+        if d.starts_with("Tool(") && d.ends_with(')') {
+            let rule = &d[5..d.len() - 1];
+            if rule == "*" || rule == tool_target {
+                return true;
+            }
+            if nudge_runtime::grants::fnmatch(rule, tool_target) {
+                return true;
+            }
+            if let Some(srv) = server_opt {
+                let qualified = format!("{srv}/{tool_target}");
+                if rule == qualified || nudge_runtime::grants::fnmatch(rule, &qualified) {
+                    return true;
+                }
+            }
+            if tool_target.contains('/') {
+                let unqualified = tool_target.split('/').next_back().unwrap();
+                if rule == unqualified || nudge_runtime::grants::fnmatch(rule, unqualified) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Check a whole program. Returns every diagnostic found (deterministic order).
 pub fn check(items: &[Item]) -> Vec<CheckError> {
     let mut g = Globals::default();
@@ -2485,8 +2531,14 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                 }
             }
             Item::Tool {
-                name, params, ret, ..
+                name,
+                params,
+                ret,
+                fields,
             } => {
+                if let Some(srv) = crate::codegen::impl_server(fields) {
+                    g.tool_servers.insert(name.clone(), srv);
+                }
                 if g.tools
                     .insert(
                         name.clone(),
@@ -2861,6 +2913,13 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                 }
             }
             let want = &inferred[name];
+            let specific_tools: Vec<&String> =
+                want.iter().filter(|w| w.starts_with("Tool(")).collect();
+            let all_tools_satisfied = !specific_tools.is_empty()
+                && specific_tools
+                    .iter()
+                    .all(|st| tool_matches_declared(st, declared, &g.tool_servers));
+
             let missing: Vec<&String> = want
                 .iter()
                 .filter(|e| {
@@ -2870,6 +2929,16 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                             .any(|d| d == "Auth" || d.starts_with("Auth("))
                     } else if e.starts_with("Auth(") {
                         !declared.iter().any(|d| d == *e || d == "Auth")
+                    } else if *e == "Tool" {
+                        if declared.iter().any(|d| d == "Tool" || d == "Tool(*)") {
+                            return false;
+                        }
+                        if all_tools_satisfied {
+                            return false;
+                        }
+                        specific_tools.is_empty()
+                    } else if e.starts_with("Tool(") {
+                        !tool_matches_declared(e, declared, &g.tool_servers)
                     } else {
                         !declared.iter().any(|d| d == *e)
                     }
@@ -3625,6 +3694,129 @@ fn f(c: bool) -> string uses IO {
     fn tool_call_declared_is_clean() {
         let src = "type R = { t: string }\ntool web(q: string) -> [R] { impl: mcp(\"s\").web(q) }\nfn f(q: string) -> [R] uses Tool { web(q) }";
         assert_eq!(check_src(src), vec![]);
+    }
+
+    #[test]
+    fn tool_capability_attenuation_and_reachable_tool_graph() {
+        let base = r#"
+            tool web(q: string) -> string { impl: mcp("search").web(q) }
+            tool drop_db(t: string) -> string { impl: mcp("db").drop(t) }
+        "#;
+
+        // 1. Function declaring Tool(web) calling web(q) -> Clean
+        let src_clean =
+            format!("{base}\nfn search(q: string) -> string uses Tool(web) {{ web(q) }}");
+        assert_eq!(check_src(&src_clean), vec![]);
+
+        // 2. Function declaring Tool(web) calling drop_db(t) -> E0302 (annotation too narrow)
+        let src_denied =
+            format!("{base}\nfn bad(q: string) -> string uses Tool(web) {{ drop_db(q) }}");
+        let errs_denied = check_src(&src_denied);
+        assert!(
+            errs_denied
+                .iter()
+                .any(|e| e.code == "E0302" && e.msg.contains("Tool(drop_db)")),
+            "expected E0302 for Tool(drop_db), got: {errs_denied:?}"
+        );
+
+        // 3. Proves reachable-tool graph: safe function calls helper that reaches drop_db -> E0302
+        let src_transitive = format!(
+            "{base}\nfn helper(t: string) -> string uses Tool(drop_db) {{ drop_db(t) }}\nfn search_flow(q: string) -> string uses Tool(web) {{ helper(q) }}"
+        );
+        let errs_trans = check_src(&src_transitive);
+        assert!(
+            errs_trans.iter().any(|e| e.code == "E0302"
+                && e.msg.contains("search_flow")
+                && e.msg.contains("Tool(drop_db)")),
+            "expected E0302 for transitive ungranted tool, got: {errs_trans:?}"
+        );
+
+        // 4. Undeclared tool call with no uses clause -> E0301 naming Tool(web)
+        let src_no_uses = format!("{base}\nfn f(q: string) -> string {{ web(q) }}");
+        let errs_no_uses = check_src(&src_no_uses);
+        assert!(
+            errs_no_uses
+                .iter()
+                .any(|e| e.code == "E0301" && e.msg.contains("Tool(web)")),
+            "expected E0301 naming Tool(web), got: {errs_no_uses:?}"
+        );
+
+        // 5. Server-scoped wildcard Tool("search/*") matches web tool on server "search"
+        let src_server_glob =
+            format!("{base}\nfn search(q: string) -> string uses Tool(\"search/*\") {{ web(q) }}");
+        assert_eq!(check_src(&src_server_glob), vec![]);
+
+        // 6. Broad Tool or Tool(*) allows any tool call
+        let src_broad =
+            format!("{base}\nfn f(q: string) -> string uses Tool(*) {{ web(q) + drop_db(q) }}");
+        assert_eq!(check_src(&src_broad), vec![]);
+    }
+
+    #[test]
+    fn agent_tool_capability_attenuation() {
+        let base = r#"
+            tool web(q: string) -> string { impl: mcp("search").web(q) }
+            tool drop_db(t: string) -> string { impl: mcp("db").drop(t) }
+        "#;
+
+        // 1. Agent declaring tools [web] attenuates member fn with uses Tool: calling web is clean
+        let src_agent_clean = format!(
+            r#"
+            {base}
+            agent SafeAgent {{
+                tools [web]
+                state {{ round: int = 0 }}
+                fn step(q: string) -> string uses Tool {{
+                    web(q)
+                }}
+            }}
+        "#
+        );
+        assert_eq!(check_src(&src_agent_clean), vec![]);
+
+        // 2. Agent declaring tools [web] attenuates member fn: calling drop_db trips E0302!
+        let src_agent_denied = format!(
+            r#"
+            {base}
+            agent SafeAgent {{
+                tools [web]
+                state {{ round: int = 0 }}
+                fn step(q: string) -> string uses Tool {{
+                    drop_db(q)
+                }}
+            }}
+        "#
+        );
+        let errs_agent_denied = check_src(&src_agent_denied);
+        assert!(
+            errs_agent_denied
+                .iter()
+                .any(|e| e.code == "E0302" && e.msg.contains("Tool(drop_db)")),
+            "expected E0302 for agent tool attenuation violation, got: {errs_agent_denied:?}"
+        );
+
+        // 3. Agent declaring uses Tool(web) in header attenuates member fns
+        let src_agent_header = format!(
+            r#"
+            {base}
+            agent WebBot uses Tool(web) {{
+                state {{ round: int = 0 }}
+                fn run(q: string) -> string {{
+                    web(q)
+                }}
+                fn dangerous(t: string) -> string {{
+                    drop_db(t)
+                }}
+            }}
+        "#
+        );
+        let errs_header = check_src(&src_agent_header);
+        assert!(
+            errs_header.iter().any(|e| e.code == "E0302"
+                && e.msg.contains("dangerous")
+                && e.msg.contains("Tool(drop_db)")),
+            "expected E0302 for ungranted dangerous call in WebBot, got: {errs_header:?}"
+        );
     }
 
     #[test]
@@ -4546,5 +4738,41 @@ fn f(c: bool) -> string uses IO {
                 .any(|e| e.code == "E-auth-0404" && e.msg.contains("github_copilot")),
             "Expected E-auth-0404 for undeclared provider in account, got {errs:?}"
         );
+    }
+
+    #[test]
+    fn check_all_examples_typecheck() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let examples_dir = manifest_dir.join("../../examples");
+        fn collect_ndg(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        collect_ndg(&path, out);
+                    } else if path.extension().and_then(|s| s.to_str()) == Some("ndg") {
+                        out.push(path);
+                    }
+                }
+            }
+        }
+        let mut paths = Vec::new();
+        collect_ndg(&examples_dir, &mut paths);
+        assert!(
+            !paths.is_empty(),
+            "examples directory should contain .ndg files"
+        );
+        paths.sort();
+        for path in paths {
+            let src = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+            let errs = check_src(&src);
+            assert!(
+                errs.is_empty(),
+                "example '{}' failed typecheck: {:?}",
+                path.display(),
+                errs.iter().map(|e| &e.msg).collect::<Vec<_>>()
+            );
+        }
     }
 }

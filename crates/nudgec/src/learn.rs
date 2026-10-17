@@ -1,4 +1,4 @@
-// `nudgec learn` — a terminal tutorial: six short lessons, each with an
+// `nudgec learn` - a terminal tutorial: seven short lessons, each with an
 // explanation, a program that compiles against the compiler shipping the
 // lessons, and the exact commands to run. No TTY assumptions: plain
 // stdout, works over SSH and in CI.
@@ -16,7 +16,7 @@ pub struct Lesson {
 pub const LESSONS: &[Lesson] = &[
     Lesson {
         name: "hello",
-        title: "1/6 — Your first LLM call",
+        title: "1/7 - Your first LLM call",
         body: r#"Nudge compiles typed LLM calls into plain Python/TypeScript.
 
 An `llm"""..."""` block is a prompt with {interpolation} holes; `with {}`
@@ -41,7 +41,7 @@ Try:
     },
     Lesson {
         name: "types",
-        title: "2/6 — Typed outputs (schemas)",
+        title: "2/7 - Typed outputs (schemas)",
         body: r#"Free-text LLM output is a bug factory. In Nudge you declare a
 record type and pin it with `schema:` — the runtime validates every
 response against the type and repairs or rejects mismatches.
@@ -70,7 +70,7 @@ fn triage(body: string) -> Ticket uses LLM {
     },
     Lesson {
         name: "decide",
-        title: "3/6 — Typed decisions (decide{})",
+        title: "3/7 - Typed decisions (decide{})",
         body: r#"`decide{}` asks a *decision model* (the JEV family: Laya, Jev, Valen)
 typed questions about a state — one batched call, answers with
 probabilities and confidence. A decision is an effect like LLM: tracked,
@@ -107,7 +107,7 @@ fn main() -> Triage uses Decision {
     },
     Lesson {
         name: "policy",
-        title: "4/6 — Confidence policies (route{})",
+        title: "4/7 - Confidence policies (route{})",
         body: r#"raw model output should not reach users unchecked. `route{}` is a
 policy switch: arms carry conditions (confidence thresholds, winner
 equality) and an `otherwise` fallback. The compiler unifies the arm
@@ -158,7 +158,7 @@ test "triage stays deterministic and policy picks an arm" {
     },
     Lesson {
         name: "test",
-        title: "5/6 — $0 tests and property fuzzing",
+        title: "5/7 - $0 tests and property fuzzing",
         body: r#"test blocks run against the fake provider: deterministic, $0, no API
 keys — your whole suite runs on every save.
 
@@ -190,7 +190,7 @@ test "injection corpus never crashes the checker" {
     },
     Lesson {
         name: "trace",
-        title: "6/6 — Traces, replay and regressions",
+        title: "6/7 - Traces, replay and regressions",
         body: r#"Set NUDGE_TRACE=<file> and every LLM call, tool call and decision
 lands in an NTF trace (an open, frozen-v1 JSONL format — no vendor
 lock-in). Then:
@@ -207,11 +207,108 @@ You now know the whole loop: write → check → build → test → trace →
 gate. Next: `nudgec init my-agent --list` and ship something."#,
         program: None,
     },
+    Lesson {
+        name: "ui",
+        title: "7/7 - Interactive UI & Agents",
+        body: r#"Agents often require human oversight, review stations, and interactive
+interfaces. Nudge provides typed UI primitives (`view`, `column`, `row`,
+`text`, `button`, `input`) declared in code and managed by stateful agents.
+
+The `UI` effect tracks interface actions. In CI and unit tests,
+`mount_headless()` evaluates views, button clicks, and state transitions
+in memory without requiring a physical display.
+
+Try:
+  nudgec check ui.ndg
+  nudgec run ui.ndg
+  nudgec test ui.ndg"#,
+        program: Some(
+            r#"type Review = { summary: string, risk: string }
+
+fn analyze(prompt: string) -> Review uses LLM {
+    llm"""Review this requested action for security risks.
+
+    Request:
+    {prompt}
+
+    summary: one concise sentence explaining what this request does
+    risk: one of safe, medium, critical"""
+    with { schema: Review, model: "fake:default", budget: 0.01 USD, retry: 1 with repair }
+}
+
+view ApprovalView(prompt: string, status: string, risk: string) -> View {
+    column(padding = 16, gap = 10) [
+        text("Agent Review Station", size = 18, bold = true),
+        text("Request: " + prompt),
+        input(prompt, id = "input_prompt", on_change = update_prompt),
+        row(gap = 8) [
+            button("Inspect", id = "btn_inspect", on_click = inspect_action),
+            button("Approve", id = "btn_approve", on_click = approve_action),
+            button("Reject", id = "btn_reject", on_click = reject_action)
+        ],
+        text("Status: " + status),
+        text("Risk Level: " + risk)
+    ]
+}
+
+agent ApprovalStation {
+    state {
+        prompt: string = "deploy updates"
+        status: string = "pending review"
+        risk: string = "unknown"
+    }
+
+    fn update_prompt(val: string) uses UI {
+        state.prompt = val
+    }
+
+    fn inspect_action() uses UI, LLM {
+        let res = analyze(state.prompt)
+        state.status = res.summary
+        state.risk = res.risk
+    }
+
+    fn approve_action() uses UI {
+        state.status = "approved"
+    }
+
+    fn reject_action() uses UI {
+        state.status = "rejected"
+    }
+
+    window MainWindow {
+        title: "Approval Station",
+        width: 400,
+        height: 300,
+        content: ApprovalView(state.prompt, state.status, state.risk)
+    }
+}
+
+fn main() uses UI {
+    ApprovalStation.MainWindow.open()
+}
+
+test "approval station mounts headlessly and executes actions" {
+    let app = ApprovalStation.MainWindow.mount_headless()
+    assert app.find("input_prompt").exists()
+    assert app.find("btn_inspect").exists()
+    assert app.find_text("Status: pending review").exists()
+
+    app.dispatch_click("btn_inspect")
+    assert ApprovalStation.state.risk != "unknown"
+
+    app.dispatch_click("btn_approve")
+    assert ApprovalStation.state.status == "approved"
+    assert app.find_text("Status: approved").exists()
+}
+"#,
+        ),
+    },
 ];
 
 pub fn run(rest: &[String]) -> Result<(), String> {
     if rest.is_empty() {
-        println!("nudge learn — the language in six lessons\n");
+        println!("nudge learn - the language in seven lessons\n");
         for l in LESSONS {
             println!("  nudgec learn {:<8} {}", l.name, l.title);
         }
@@ -253,8 +350,8 @@ mod tests {
     }
 
     #[test]
-    fn six_lessons_with_unique_names_and_helpful_titles() {
-        assert_eq!(LESSONS.len(), 6);
+    fn seven_lessons_with_unique_names_and_helpful_titles() {
+        assert_eq!(LESSONS.len(), 7);
         let mut names: Vec<_> = LESSONS.iter().map(|l| l.name).collect();
         names.sort_unstable();
         names.dedup();

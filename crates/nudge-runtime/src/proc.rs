@@ -23,6 +23,7 @@ const DEFAULT_PROCESS_TIMEOUT_MS: u64 = 5000;
 /// Maximum allowed process timeout in milliseconds.
 const MAX_PROCESS_TIMEOUT_MS: u64 = 120000;
 /// Maximum allowed output size in bytes (16MB).
+#[cfg(not(target_arch = "wasm32"))]
 const MAX_PROC_OUTPUT_BYTES: u64 = 16 * 1024 * 1024;
 
 #[cfg(test)]
