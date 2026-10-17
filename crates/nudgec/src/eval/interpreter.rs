@@ -3856,16 +3856,34 @@ fn http_post_json(
     headers: &[(&str, &str)],
     timeout: std::time::Duration,
 ) -> Result<(u16, String), String> {
+    if url_str.starts_with("https://") {
+        #[cfg(feature = "live-provider")]
+        {
+            let headers_vec: Vec<(String, String)> = headers
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            return nudge_runtime::provider::http::post_json_with_timeout(
+                url_str,
+                &headers_vec,
+                body,
+                timeout,
+            );
+        }
+        #[cfg(not(feature = "live-provider"))]
+        {
+            return Err("error[E-decision-0003]: HTTPS decision provider requires secure TLS transport (enable live-provider feature or use HTTP endpoint)".to_string());
+        }
+    }
+
+    let Some(rest) = url_str.strip_prefix("http://") else {
+        return Err(format!(
+            "decision server URL must start with http:// or https://: '{url_str}'"
+        ));
+    };
+
     use std::io::{Read, Write};
     use std::net::TcpStream;
-
-    let rest = if let Some(stripped) = url_str.strip_prefix("http://") {
-        stripped
-    } else if let Some(stripped) = url_str.strip_prefix("https://") {
-        stripped
-    } else {
-        url_str
-    };
 
     let (host_port, path) = match rest.find('/') {
         Some(idx) => (&rest[..idx], &rest[idx..]),
@@ -8108,5 +8126,44 @@ with open(out_path, "w", encoding="utf-8") as f:
         );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_decision_https_without_tls_fails_closed() {
+        let _env_prov = EnvReset::remove("NUDGE_PROVIDER");
+        let servers_json = r#"{"laya": {"base_url": "https://remote.secure.example.com"}}"#;
+        let _env_servers = EnvReset::set("NUDGE_DECISION_SERVERS", servers_json);
+
+        let src = r#"
+            fn triage(t: string) -> string {
+                let d = decide {
+                    dept: "choose team" choose [billing, tech]
+                }
+                on t
+                with { model: "laya:fast" }
+                d.dept.winner
+            }
+            fn main() -> string {
+                triage("hello")
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let res = run_program(&items, "main", &[]);
+        assert!(res.is_err());
+        let err = res.err().unwrap();
+        #[cfg(not(feature = "live-provider"))]
+        {
+            assert!(err.contains("error[E-decision-0003]"), "{err}");
+            assert!(
+                err.contains("HTTPS decision provider requires secure TLS transport"),
+                "{err}"
+            );
+        }
+        #[cfg(feature = "live-provider")]
+        {
+            assert!(!err.is_empty(), "{err}");
+        }
     }
 }

@@ -509,6 +509,8 @@ pub struct TaskRecord {
     pub output: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing)]
+    pub created_at: u64,
 }
 
 #[derive(Clone)]
@@ -519,10 +521,42 @@ struct ServerContext {
     whitelisted_skills: HashSet<String>,
     skill_params: HashMap<String, Vec<String>>,
     tasks: Arc<RwLock<HashMap<String, TaskRecord>>>,
+    cancel_tokens: Arc<RwLock<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
     api_key: Option<String>,
+    active_connections: Arc<std::sync::atomic::AtomicUsize>,
+    max_connections: usize,
+    max_tasks: usize,
+}
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 impl ServerContext {
+    fn insert_and_prune_task(&self, id: String, rec: TaskRecord) {
+        let mut tasks = self.tasks.write().unwrap();
+        if tasks.len() >= self.max_tasks {
+            let mut candidates: Vec<(String, u64)> = tasks
+                .iter()
+                .filter(|(_, t)| {
+                    t.status == "completed" || t.status == "cancelled" || t.status == "failed"
+                })
+                .map(|(k, t)| (k.clone(), t.created_at))
+                .collect();
+            candidates.sort_by_key(|(_, ts)| *ts);
+            let to_remove = (tasks.len() + 1).saturating_sub(self.max_tasks);
+            for (k, _) in candidates.into_iter().take(to_remove) {
+                tasks.remove(&k);
+                let mut tokens = self.cancel_tokens.write().unwrap();
+                tokens.remove(&k);
+            }
+        }
+        tasks.insert(id, rec);
+    }
+
     fn build_args(&self, skill: &str, payload: &serde_json::Value) -> Vec<NudgeVal> {
         let params = self.skill_params.get(skill).cloned().unwrap_or_default();
         if params.is_empty() {
@@ -638,14 +672,14 @@ impl ServerContext {
             .unwrap_or(serde_json::Value::Null);
 
         match method {
-            "agent.card" => {
+            "agent.card" | "agent.getCard" => {
                 serde_json::json!({
                     "jsonrpc": "2.0",
                     "id": id,
                     "result": self.card_json
                 })
             }
-            "tasks.create" => {
+            "tasks.create" | "task.create" => {
                 let skill_name = params
                     .get("skill")
                     .or_else(|| params.get("name"))
@@ -681,48 +715,124 @@ impl ServerContext {
                     .map(String::from)
                     .unwrap_or_else(generate_task_id);
 
+                let is_async = params
+                    .get("async")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let args = self.build_args(&skill, &params);
-                match crate::eval::run_program(&self.items, &skill, &args) {
-                    Ok(val) => {
-                        let out_json = crate::eval::val::nudgeval_to_json(&val);
-                        let rec = TaskRecord {
-                            id: task_id.clone(),
-                            status: "completed".to_string(),
-                            output: Some(out_json.clone()),
-                            error: None,
-                        };
-                        self.tasks.write().unwrap().insert(task_id.clone(), rec);
+                let cancel_token = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                self.cancel_tokens
+                    .write()
+                    .unwrap()
+                    .insert(task_id.clone(), cancel_token.clone());
+
+                if is_async {
+                    let rec = TaskRecord {
+                        id: task_id.clone(),
+                        status: "running".to_string(),
+                        output: None,
+                        error: None,
+                        created_at: now_millis(),
+                    };
+                    self.insert_and_prune_task(task_id.clone(), rec);
+
+                    let ctx = self.clone();
+                    let tid = task_id.clone();
+                    let sk = skill;
+                    let ctok = cancel_token;
+                    std::thread::spawn(move || {
+                        if ctok.load(std::sync::atomic::Ordering::SeqCst) {
+                            return;
+                        }
+                        let res = crate::eval::run_program(&ctx.items, &sk, &args);
+                        let mut tasks = ctx.tasks.write().unwrap();
+                        if let Some(t) = tasks.get_mut(&tid) {
+                            if ctok.load(std::sync::atomic::Ordering::SeqCst)
+                                || t.status == "cancelled"
+                            {
+                                t.status = "cancelled".to_string();
+                                return;
+                            }
+                            match res {
+                                Ok(val) => {
+                                    t.status = "completed".to_string();
+                                    t.output = Some(crate::eval::val::nudgeval_to_json(&val));
+                                }
+                                Err(e) => {
+                                    t.status = "failed".to_string();
+                                    t.error = Some(e);
+                                }
+                            }
+                        }
+                    });
+
+                    serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "result": {
+                            "id": task_id,
+                            "status": "running"
+                        }
+                    })
+                } else {
+                    let rec = TaskRecord {
+                        id: task_id.clone(),
+                        status: "running".to_string(),
+                        output: None,
+                        error: None,
+                        created_at: now_millis(),
+                    };
+                    self.insert_and_prune_task(task_id.clone(), rec);
+
+                    let res = crate::eval::run_program(&self.items, &skill, &args);
+                    let mut tasks = self.tasks.write().unwrap();
+                    let t = tasks.get_mut(&task_id).unwrap();
+                    if cancel_token.load(std::sync::atomic::Ordering::SeqCst)
+                        || t.status == "cancelled"
+                    {
+                        t.status = "cancelled".to_string();
                         serde_json::json!({
                             "jsonrpc": "2.0",
                             "id": id,
                             "result": {
                                 "id": task_id,
-                                "status": "completed",
-                                "output": out_json
+                                "status": "cancelled"
                             }
                         })
-                    }
-                    Err(e) => {
-                        let rec = TaskRecord {
-                            id: task_id.clone(),
-                            status: "failed".to_string(),
-                            output: None,
-                            error: Some(e.clone()),
-                        };
-                        self.tasks.write().unwrap().insert(task_id.clone(), rec);
-                        serde_json::json!({
-                            "jsonrpc": "2.0",
-                            "id": id,
-                            "result": {
-                                "id": task_id,
-                                "status": "failed",
-                                "error": e
+                    } else {
+                        match res {
+                            Ok(val) => {
+                                let out_json = crate::eval::val::nudgeval_to_json(&val);
+                                t.status = "completed".to_string();
+                                t.output = Some(out_json.clone());
+                                serde_json::json!({
+                                    "jsonrpc": "2.0",
+                                    "id": id,
+                                    "result": {
+                                        "id": task_id,
+                                        "status": "completed",
+                                        "output": out_json
+                                    }
+                                })
                             }
-                        })
+                            Err(e) => {
+                                t.status = "failed".to_string();
+                                t.error = Some(e.clone());
+                                serde_json::json!({
+                                    "jsonrpc": "2.0",
+                                    "id": id,
+                                    "result": {
+                                        "id": task_id,
+                                        "status": "failed",
+                                        "error": e
+                                    }
+                                })
+                            }
+                        }
                     }
                 }
             }
-            "tasks.get" => {
+            "tasks.get" | "task.get" => {
                 let task_id = if let Some(s) = params.as_str() {
                     Some(s)
                 } else {
@@ -752,7 +862,7 @@ impl ServerContext {
                     })
                 }
             }
-            "tasks.cancel" => {
+            "tasks.cancel" | "task.cancel" => {
                 let task_id = if let Some(s) = params.as_str() {
                     Some(s)
                 } else {
@@ -768,8 +878,12 @@ impl ServerContext {
                         "error": { "code": -32602, "message": "Invalid params: missing task id" }
                     });
                 };
-                if let Some(task) = self.tasks.write().unwrap().get_mut(tid) {
+                let mut tasks = self.tasks.write().unwrap();
+                if let Some(task) = tasks.get_mut(tid) {
                     task.status = "cancelled".to_string();
+                    if let Some(tok) = self.cancel_tokens.read().unwrap().get(tid) {
+                        tok.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
                     serde_json::json!({
                         "jsonrpc": "2.0",
                         "id": id,
@@ -785,6 +899,14 @@ impl ServerContext {
                         "error": { "code": -32602, "message": format!("Task '{tid}' not found") }
                     })
                 }
+            }
+            "tasks.list" | "task.list" => {
+                let tasks: Vec<TaskRecord> = self.tasks.read().unwrap().values().cloned().collect();
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "tasks": tasks }
+                })
             }
             other => {
                 serde_json::json!({
@@ -802,46 +924,118 @@ impl ServerContext {
         task_id: String,
         skill: &str,
         args: &[NudgeVal],
+        is_async: bool,
     ) -> std::io::Result<()> {
-        match crate::eval::run_program(&self.items, skill, args) {
-            Ok(val) => {
-                let out_json = crate::eval::val::nudgeval_to_json(&val);
-                let rec = TaskRecord {
-                    id: task_id.clone(),
-                    status: "completed".to_string(),
-                    output: Some(out_json.clone()),
-                    error: None,
-                };
-                self.tasks.write().unwrap().insert(task_id.clone(), rec);
+        let cancel_token = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.cancel_tokens
+            .write()
+            .unwrap()
+            .insert(task_id.clone(), cancel_token.clone());
+
+        if is_async {
+            let rec = TaskRecord {
+                id: task_id.clone(),
+                status: "running".to_string(),
+                output: None,
+                error: None,
+                created_at: now_millis(),
+            };
+            self.insert_and_prune_task(task_id.clone(), rec);
+
+            let ctx = self.clone();
+            let tid = task_id.clone();
+            let sk = skill.to_string();
+            let args_vec = args.to_vec();
+            let ctok = cancel_token;
+            std::thread::spawn(move || {
+                if ctok.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+                let res = crate::eval::run_program(&ctx.items, &sk, &args_vec);
+                let mut tasks = ctx.tasks.write().unwrap();
+                if let Some(t) = tasks.get_mut(&tid) {
+                    if ctok.load(std::sync::atomic::Ordering::SeqCst) || t.status == "cancelled" {
+                        t.status = "cancelled".to_string();
+                        return;
+                    }
+                    match res {
+                        Ok(val) => {
+                            t.status = "completed".to_string();
+                            t.output = Some(crate::eval::val::nudgeval_to_json(&val));
+                        }
+                        Err(e) => {
+                            t.status = "failed".to_string();
+                            t.error = Some(e);
+                        }
+                    }
+                }
+            });
+
+            self.send_json(
+                stream,
+                200,
+                &serde_json::json!({
+                    "id": task_id,
+                    "task_id": task_id,
+                    "status": "running"
+                }),
+            )
+        } else {
+            let rec = TaskRecord {
+                id: task_id.clone(),
+                status: "running".to_string(),
+                output: None,
+                error: None,
+                created_at: now_millis(),
+            };
+            self.insert_and_prune_task(task_id.clone(), rec);
+
+            let res = crate::eval::run_program(&self.items, skill, args);
+            let mut tasks = self.tasks.write().unwrap();
+            let t = tasks.get_mut(&task_id).unwrap();
+            if cancel_token.load(std::sync::atomic::Ordering::SeqCst) || t.status == "cancelled" {
+                t.status = "cancelled".to_string();
                 self.send_json(
                     stream,
                     200,
                     &serde_json::json!({
                         "id": task_id,
                         "task_id": task_id,
-                        "status": "completed",
-                        "output": out_json
+                        "status": "cancelled"
                     }),
                 )
-            }
-            Err(e) => {
-                let rec = TaskRecord {
-                    id: task_id.clone(),
-                    status: "failed".to_string(),
-                    output: None,
-                    error: Some(e.clone()),
-                };
-                self.tasks.write().unwrap().insert(task_id.clone(), rec);
-                self.send_json(
-                    stream,
-                    500,
-                    &serde_json::json!({
-                        "id": task_id,
-                        "task_id": task_id,
-                        "status": "failed",
-                        "error": e
-                    }),
-                )
+            } else {
+                match res {
+                    Ok(val) => {
+                        let out_json = crate::eval::val::nudgeval_to_json(&val);
+                        t.status = "completed".to_string();
+                        t.output = Some(out_json.clone());
+                        self.send_json(
+                            stream,
+                            200,
+                            &serde_json::json!({
+                                "id": task_id,
+                                "task_id": task_id,
+                                "status": "completed",
+                                "output": out_json
+                            }),
+                        )
+                    }
+                    Err(e) => {
+                        t.status = "failed".to_string();
+                        t.error = Some(e.clone());
+                        self.send_json(
+                            stream,
+                            500,
+                            &serde_json::json!({
+                                "id": task_id,
+                                "task_id": task_id,
+                                "status": "failed",
+                                "error": e
+                            }),
+                        )
+                    }
+                }
             }
         }
     }
@@ -1026,8 +1220,12 @@ impl ServerContext {
                 if let Some(rest) = path.strip_prefix("/tasks/") {
                     if let Some(task_id_raw) = rest.strip_suffix("/cancel") {
                         let task_id = task_id_raw.trim_matches('/');
-                        if let Some(t) = self.tasks.write().unwrap().get_mut(task_id) {
+                        let mut tasks = self.tasks.write().unwrap();
+                        if let Some(t) = tasks.get_mut(task_id) {
                             t.status = "cancelled".to_string();
+                            if let Some(tok) = self.cancel_tokens.read().unwrap().get(task_id) {
+                                tok.store(true, std::sync::atomic::Ordering::SeqCst);
+                            }
                             return self.send_json(
                                 &mut stream,
                                 200,
@@ -1104,8 +1302,12 @@ impl ServerContext {
                         .map(String::from)
                         .unwrap_or_else(generate_task_id);
 
+                    let is_async = req_val
+                        .get("async")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
                     let args = self.build_args(&skill, &req_val);
-                    self.execute_task_and_reply(&mut stream, task_id, &skill, &args)
+                    self.execute_task_and_reply(&mut stream, task_id, &skill, &args, is_async)
                 } else if let Some(skill_raw) = path.strip_prefix("/skills/") {
                     let skill = skill_raw.trim_matches('/');
                     // Skill Whitelist Check
@@ -1131,8 +1333,12 @@ impl ServerContext {
                         .map(String::from)
                         .unwrap_or_else(generate_task_id);
 
+                    let is_async = req_val
+                        .get("async")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
                     let args = self.build_args(skill, &req_val);
-                    self.execute_task_and_reply(&mut stream, task_id, skill, &args)
+                    self.execute_task_and_reply(&mut stream, task_id, skill, &args, is_async)
                 } else {
                     self.send_error(&mut stream, 404, "Not Found")
                 }
@@ -1227,7 +1433,11 @@ impl NativeServer {
             whitelisted_skills,
             skill_params,
             tasks: Arc::new(RwLock::new(HashMap::new())),
+            cancel_tokens: Arc::new(RwLock::new(HashMap::new())),
             api_key,
+            active_connections: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            max_connections: 128,
+            max_tasks: 5000,
         };
 
         Ok(NativeServer {
@@ -1235,6 +1445,14 @@ impl NativeServer {
             port: actual_port,
             context,
         })
+    }
+
+    pub fn set_max_connections(&mut self, limit: usize) {
+        self.context.max_connections = limit;
+    }
+
+    pub fn set_max_tasks(&mut self, limit: usize) {
+        self.context.max_tasks = limit;
     }
 
     pub fn port(&self) -> u16 {
@@ -1248,9 +1466,38 @@ impl NativeServer {
     pub fn serve(&self) -> Result<(), String> {
         for stream in self.listener.incoming() {
             match stream {
-                Ok(stream) => {
+                Ok(mut stream) => {
+                    let active = self
+                        .context
+                        .active_connections
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if active >= self.context.max_connections {
+                        self.context
+                            .active_connections
+                            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                        let resp = "HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\nServer Busy: max concurrent connections reached";
+                        let _ = stream.write_all(resp.as_bytes());
+                        let _ = stream.flush();
+                        let _ = stream.shutdown(std::net::Shutdown::Write);
+                        let mut drain = [0u8; 1024];
+                        let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(50)));
+                        while let Ok(n) = stream.read(&mut drain) {
+                            if n == 0 {
+                                break;
+                            }
+                        }
+                        continue;
+                    }
+                    let counter = self.context.active_connections.clone();
                     let ctx = self.context.clone();
                     std::thread::spawn(move || {
+                        struct ConnGuard(Arc<std::sync::atomic::AtomicUsize>);
+                        impl Drop for ConnGuard {
+                            fn drop(&mut self) {
+                                self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                            }
+                        }
+                        let _guard = ConnGuard(counter);
                         let _ = ctx.handle_connection(stream);
                     });
                 }
@@ -1272,9 +1519,38 @@ impl NativeServer {
                 break;
             }
             match self.listener.accept() {
-                Ok((stream, _)) => {
+                Ok((mut stream, _)) => {
+                    let active = self
+                        .context
+                        .active_connections
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if active >= self.context.max_connections {
+                        self.context
+                            .active_connections
+                            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                        let resp = "HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\nServer Busy: max concurrent connections reached";
+                        let _ = stream.write_all(resp.as_bytes());
+                        let _ = stream.flush();
+                        let _ = stream.shutdown(std::net::Shutdown::Write);
+                        let mut drain = [0u8; 1024];
+                        let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(50)));
+                        while let Ok(n) = stream.read(&mut drain) {
+                            if n == 0 {
+                                break;
+                            }
+                        }
+                        continue;
+                    }
+                    let counter = self.context.active_connections.clone();
                     let ctx = self.context.clone();
                     std::thread::spawn(move || {
+                        struct ConnGuard(Arc<std::sync::atomic::AtomicUsize>);
+                        impl Drop for ConnGuard {
+                            fn drop(&mut self) {
+                                self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                            }
+                        }
+                        let _guard = ConnGuard(counter);
                         let _ = ctx.handle_connection(stream);
                     });
                 }
@@ -1821,5 +2097,218 @@ mod tests {
         let _ = child.kill();
         let _ = child.wait();
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_native_server_async_task_execution_and_cancellation() {
+        let src = r#"agent MathWorker {
+    fn compute(x: int) -> int {
+        x * 10
+    }
+}"#;
+        let items = parse(lex(src).unwrap()).unwrap();
+        let server = NativeServer::bind(&items, 0, None).expect("bind server");
+        let port = server.port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            server.serve_with_shutdown(rx).unwrap();
+        });
+
+        // 1. Async task creation: status "running" returned immediately
+        let (code, body) = http_request(
+            port,
+            "POST",
+            "/tasks",
+            Some(r#"{"skill": "compute", "input": 4, "async": true}"#),
+        );
+        assert_eq!(code, 200);
+        assert!(body.contains("\"status\":\"running\""), "{body}");
+        let val: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let task_id = val["id"].as_str().unwrap().to_string();
+
+        // Poll for task completion
+        let mut completed = false;
+        for _ in 0..50 {
+            let (code, body) = http_request(port, "GET", &format!("/tasks/{task_id}"), None);
+            assert_eq!(code, 200);
+            if body.contains("\"status\":\"completed\"") {
+                assert!(body.contains("\"output\":40"), "{body}");
+                completed = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(completed, "async task should complete");
+
+        // 2. Cancellation of a task
+        let (code, body) = http_request(
+            port,
+            "POST",
+            "/tasks",
+            Some(r#"{"skill": "compute", "input": 5, "async": true}"#),
+        );
+        assert_eq!(code, 200);
+        let val: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let cancel_id = val["id"].as_str().unwrap().to_string();
+
+        let (code, body) = http_request(port, "POST", &format!("/tasks/{cancel_id}/cancel"), None);
+        assert_eq!(code, 200);
+        assert!(body.contains("\"status\":\"cancelled\""), "{body}");
+
+        let (code, body) = http_request(port, "GET", &format!("/tasks/{cancel_id}"), None);
+        assert_eq!(code, 200);
+        assert!(body.contains("\"status\":\"cancelled\""), "{body}");
+
+        tx.send(()).unwrap();
+        let _ = std::net::TcpStream::connect(("127.0.0.1", port));
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_native_server_jsonrpc_aliases() {
+        let src = r#"agent MathWorker {
+    fn compute(x: int) -> int {
+        x * 10
+    }
+}"#;
+        let items = parse(lex(src).unwrap()).unwrap();
+        let server = NativeServer::bind(&items, 0, None).expect("bind server");
+        let port = server.port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            server.serve_with_shutdown(rx).unwrap();
+        });
+
+        // 1. agent.getCard alias
+        let (code, body) = http_request(
+            port,
+            "POST",
+            "/rpc",
+            Some(r#"{"jsonrpc": "2.0", "id": 1, "method": "agent.getCard"}"#),
+        );
+        assert_eq!(code, 200);
+        assert!(body.contains("\"name\":\"MathWorker\""), "{body}");
+
+        // 2. task.create alias
+        let (code, body) = http_request(
+            port,
+            "POST",
+            "/",
+            Some(
+                r#"{"jsonrpc": "2.0", "id": 2, "method": "task.create", "params": {"skill": "compute", "input": [7]}}"#,
+            ),
+        );
+        assert_eq!(code, 200);
+        assert!(body.contains("\"output\":70"), "{body}");
+        let val: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let tid = val["result"]["id"].as_str().unwrap().to_string();
+
+        // 3. task.get alias
+        let (code, body) = http_request(
+            port,
+            "POST",
+            "/rpc",
+            Some(&format!(
+                r#"{{"jsonrpc": "2.0", "id": 3, "method": "task.get", "params": {{"id": "{tid}"}}}}"#
+            )),
+        );
+        assert_eq!(code, 200);
+        assert!(body.contains("\"output\":70"), "{body}");
+
+        // 4. task.cancel alias
+        let (code, body) = http_request(
+            port,
+            "POST",
+            "/rpc",
+            Some(&format!(
+                r#"{{"jsonrpc": "2.0", "id": 4, "method": "task.cancel", "params": {{"id": "{tid}"}}}}"#
+            )),
+        );
+        assert_eq!(code, 200);
+        assert!(body.contains("\"status\":\"cancelled\""), "{body}");
+
+        // 5. task.list alias
+        let (code, body) = http_request(
+            port,
+            "POST",
+            "/rpc",
+            Some(r#"{"jsonrpc": "2.0", "id": 5, "method": "task.list"}"#),
+        );
+        assert_eq!(code, 200);
+        assert!(body.contains("\"tasks\""), "{body}");
+
+        tx.send(()).unwrap();
+        let _ = std::net::TcpStream::connect(("127.0.0.1", port));
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_native_server_max_connections_503() {
+        let src = r#"fn ping() -> string { "pong" }"#;
+        let items = parse(lex(src).unwrap()).unwrap();
+        let mut server = NativeServer::bind(&items, 0, None).expect("bind server");
+        server.set_max_connections(1);
+        let port = server.port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            server.serve_with_shutdown(rx).unwrap();
+        });
+
+        // Occupy the only allowed connection
+        let mut conn1 = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect conn1");
+        conn1
+            .set_read_timeout(Some(std::time::Duration::from_millis(100)))
+            .unwrap();
+        conn1.write_all(b"POST /health HTTP/1.1\r\n").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Second connection exceeds limit (max 1) -> must get 503 Service Unavailable
+        let (code, body) = http_request(port, "GET", "/health", None);
+        assert_eq!(code, 503);
+        assert!(body.contains("Server Busy"), "{body}");
+
+        drop(conn1);
+        tx.send(()).unwrap();
+        let _ = std::net::TcpStream::connect(("127.0.0.1", port));
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_native_server_task_history_pruning() {
+        let src = r#"fn ping() -> string { "pong" }"#;
+        let items = parse(lex(src).unwrap()).unwrap();
+        let mut server = NativeServer::bind(&items, 0, None).expect("bind server");
+        server.set_max_tasks(3);
+        let port = server.port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            server.serve_with_shutdown(rx).unwrap();
+        });
+
+        // Run 4 tasks: tasks 1, 2, 3, 4
+        for i in 1..=4 {
+            let (code, body) = http_request(
+                port,
+                "POST",
+                "/tasks",
+                Some(&format!(r#"{{"skill": "ping", "id": "task-prune-{i}"}}"#)),
+            );
+            assert_eq!(code, 200);
+            assert!(body.contains("\"status\":\"completed\""), "{body}");
+        }
+
+        // Oldest task (task-prune-1) should be pruned FIFO
+        let (code1, _) = http_request(port, "GET", "/tasks/task-prune-1", None);
+        assert_eq!(code1, 404);
+
+        // Newer tasks should remain
+        let (code2, _) = http_request(port, "GET", "/tasks/task-prune-2", None);
+        assert_eq!(code2, 200);
+        let (code4, _) = http_request(port, "GET", "/tasks/task-prune-4", None);
+        assert_eq!(code4, 200);
+
+        tx.send(()).unwrap();
+        let _ = std::net::TcpStream::connect(("127.0.0.1", port));
+        handle.join().unwrap();
     }
 }
