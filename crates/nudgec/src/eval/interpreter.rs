@@ -7634,7 +7634,7 @@ data: [DONE]\n\n";
     #[test]
     fn test_bytecode_vm_delegates_decide_and_runs() {
         let src = r#"
-            fn triage(t: string) -> string uses Decision {
+            fn triage(t: string) -> string {
                 let d = decide {
                     dept: "which team?" choose [billing, tech]
                 }

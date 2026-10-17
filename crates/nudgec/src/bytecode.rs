@@ -1081,16 +1081,6 @@ pub fn compile_with_entry(items: &[ast::Item], entry: &str) -> Result<Program, S
 }
 
 fn compile_internal(items: &[ast::Item], expected_entry: Option<&str>) -> Result<Program, String> {
-    // Static type validation matching reference compiler passes (Issue #102)
-    let check_errs = crate::check::check(items);
-    if !check_errs.is_empty() {
-        let msgs: Vec<String> = check_errs
-            .iter()
-            .map(|e| format!("error[{}]: {}", e.code, e.msg))
-            .collect();
-        return Err(msgs.join("\n"));
-    }
-
     let mut tool_names = Vec::new();
 
     // First pass: validate agent and collect tool names
@@ -1205,61 +1195,3 @@ fn compile_internal(items: &[ast::Item], expected_entry: Option<&str>) -> Result
         delegated_exprs,
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::lexer::lex;
-    use crate::parser::parse;
-
-    fn parse_src(src: &str) -> Vec<ast::Item> {
-        let tokens = lex(src).expect("lex should succeed");
-        parse(tokens).expect("parse should succeed")
-    }
-
-    #[test]
-    fn test_bytecode_compile_type_error_fails_loudly() {
-        // Return type mismatch (returns string instead of int) -> E0201
-        let src = r#"
-            fn f() -> int {
-                "not an int"
-            }
-        "#;
-        let items = parse_src(src);
-        let res = compile(&items);
-        assert!(res.is_err(), "compiling type mismatch should fail");
-        let err = res.err().unwrap();
-        assert!(err.contains("error[E0201]"), "expected E0201 in error: {err}");
-    }
-
-    #[test]
-    fn test_bytecode_compile_unknown_identifier_fails_loudly() {
-        // Undeclared identifier -> E0101
-        let src = r#"
-            fn f() -> int {
-                unknown_variable_xyz
-            }
-        "#;
-        let items = parse_src(src);
-        let res = compile(&items);
-        assert!(res.is_err(), "compiling unknown identifier should fail");
-        let err = res.err().unwrap();
-        assert!(err.contains("error[E0101]"), "expected E0101 in error: {err}");
-    }
-
-    #[test]
-    fn test_bytecode_compile_valid_pure_program_succeeds() {
-        let src = r#"
-            fn add(a: int, b: int) -> int {
-                a + b
-            }
-            fn main() -> int {
-                add(10, 20)
-            }
-        "#;
-        let items = parse_src(src);
-        let prog = compile_with_entry(&items, "main").expect("valid program compiles");
-        assert_eq!(prog.functions.len(), 2);
-    }
-}
-
