@@ -61,11 +61,13 @@ fn main() {
 
     match nudgec::eval::run_program(&bundle.items, &bundle.entry, &cli_args) {
         Ok(val) => {
+            let _ = nudge_runtime::trace::flush_sink();
             if val != nudgec::eval::NudgeVal::Unit {
                 println!("{val}");
             }
         }
         Err(e) => {
+            let _ = nudge_runtime::trace::flush_sink();
             if e.starts_with("error") {
                 eprintln!("{e}");
             } else {
