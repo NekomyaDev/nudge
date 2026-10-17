@@ -9,6 +9,7 @@
 //!   nudgec resume <run_id>    continue a crashed run from its last checkpoint (design §7)
 //!   nudgec trace-check <t.jsonl> validate a trace against the frozen v1 schema (v1.0, design §6)
 //!   nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json (v1.0, design §9)
+//!   nudgec a2a-serve <file.ndg> [--port N]  serve agent as an A2A protocol peer (v2.0)
 //!   nudgec lsp                serve the Language Server Protocol over stdio (v1.0, design §10)
 //!   nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace (v1.2)
 //!   nudgec trace-diff <a.jsonl> <b.jsonl> [--fail-on-regression]  compare two traces; with the flag, exit 1 on regression (v1.2)
@@ -24,7 +25,7 @@ use std::{env, fs, process};
 
 fn print_usage_to(to_stderr: bool) {
     let msg = format!(
-        "nudgec {} — the Nudge compiler\nusage:\n  nudgec fmt   <file.ndg> [--check]   normalize indentation, trim trailing ws, collapse blanks\n  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)\n  nudgec learn [lesson]     the language in seven terminal lessons (run bare for the index)\n  nudgec lex   <file.ndg>   dump token stream\n  nudgec parse <file.ndg>   dump AST\n  nudgec check <file.ndg>   type-check (E0101–E0302)\n  nudgec build <file.ndg> [--standalone] [-o <output>] [--fn <entry>]  check, emit Python (or native binary with --standalone)\n  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts\n  nudgec check <file.ndg> --watch   re-check on every file change (Ctrl-C to stop)\n  nudgec cost  <file.ndg>   static cost report per fn\n  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn\n  nudgec run  <file.ndg> [--fn <name>] [args...]  execute a program fn on the bytecode VM (or the interpreter)\n  nudgec resume <run_id>    continue a crashed run from its last checkpoint\n  nudgec trace-check <t.jsonl> validate a trace against the frozen v1 schema\n  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json\n  nudgec lsp                serve the Language Server Protocol over stdio\n  nudgec trace-html <t.jsonl> [--out file.html]  static single-file viewer (no server, works offline)\n  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace\n  nudgec explain <t.jsonl>    human report over a trace: totals, failures, low-confidence answers\n  nudgec trace-diff <a.jsonl> <b.jsonl> [--fail-on-regression]  compare traces; gate CI on regression\n  nudgec audit <trace.jsonl> [--json]       compliance audit report over an NTF trace (EU AI Act)\n  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8]\n  nudgec compare <results_a.jsonl> <results_b.jsonl>  two eval runs: which rows flipped\n  nudgec runs  [--run <run_id>]   list recorded agent runs / show one run's state and trace\n  nudgec mcp   <file.ndg> [--fns a,b]   expose program fns as MCP tools over stdio\n  nudgec serve <file.ndg> [--fn <name>] [--port N]   run a program fn as a local HTTP API (POST /run, GET /health)\n  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8]  score a program over a dataset\n  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)\n  nudgec fuzz  [file.ndg] [--iterations N] [--seed S]  fuzz the compiler pipeline with mutated inputs (v1.6)",
+        "nudgec {} — the Nudge compiler\nusage:\n  nudgec fmt   <file.ndg> [--check]   normalize indentation, trim trailing ws, collapse blanks\n  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)\n  nudgec learn [lesson]     the language in seven terminal lessons (run bare for the index)\n  nudgec lex   <file.ndg>   dump token stream\n  nudgec parse <file.ndg>   dump AST\n  nudgec check <file.ndg>   type-check (E0101–E0302)\n  nudgec build <file.ndg> [--standalone] [-o <output>] [--fn <entry>]  check, emit Python (or native binary with --standalone)\n  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts\n  nudgec check <file.ndg> --watch   re-check on every file change (Ctrl-C to stop)\n  nudgec cost  <file.ndg>   static cost report per fn\n  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn\n  nudgec run  <file.ndg> [--fn <name>] [args...]  execute a program fn on the bytecode VM (or the interpreter)\n  nudgec resume <run_id>    continue a crashed run from its last checkpoint\n  nudgec trace-check <t.jsonl> validate a trace against the frozen v1 schema\n  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json\n  nudgec a2a-serve <file.ndg> [--port N]  serve agent as an A2A protocol peer (v2.0)\n  nudgec lsp                serve the Language Server Protocol over stdio\n  nudgec trace-html <t.jsonl> [--out file.html]  static single-file viewer (no server, works offline)\n  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace\n  nudgec explain <t.jsonl>    human report over a trace: totals, failures, low-confidence answers\n  nudgec trace-diff <a.jsonl> <b.jsonl> [--fail-on-regression]  compare traces; gate CI on regression\n  nudgec audit <trace.jsonl> [--json]       compliance audit report over an NTF trace (EU AI Act)\n  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8]\n  nudgec compare <results_a.jsonl> <results_b.jsonl>  two eval runs: which rows flipped\n  nudgec runs  [--run <run_id>]   list recorded agent runs / show one run's state and trace\n  nudgec mcp   <file.ndg> [--fns a,b]   expose program fns as MCP tools over stdio\n  nudgec serve <file.ndg> [--fn <name>] [--port N]   run a program fn as a local HTTP API (POST /run, GET /health)\n  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8]  score a program over a dataset\n  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)\n  nudgec fuzz  [file.ndg] [--iterations N] [--seed S]  fuzz the compiler pipeline with mutated inputs (v1.6)",
         env!("CARGO_PKG_VERSION")
     );
     if to_stderr {
@@ -395,6 +396,7 @@ fn main() {
     if args.len() != 3
         && args[1] != "policy-sweep"
         && args[1] != "serve"
+        && args[1] != "a2a-serve"
         && args[1] != "mcp"
         && args[1] != "eval"
         && args[1] != "compare"
@@ -436,6 +438,8 @@ fn main() {
             Some(f) => read_src(f),
             None => usage(),
         }
+    } else if args.len() < 3 {
+        usage();
     } else {
         read_src(&args[2])
     };
@@ -1248,6 +1252,113 @@ fn main() {
                 process::exit(1);
             }
         },
+        "a2a-serve" => {
+            let mut port: u16 = a2a::DEFAULT_PORT;
+            let mut i = 3usize;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--port" | "-p" => {
+                        i += 1;
+                        port = args.get(i).and_then(|v| v.parse().ok()).unwrap_or_else(|| {
+                            eprintln!("error: --port requires a number");
+                            process::exit(64);
+                        });
+                    }
+                    arg if arg.starts_with("--port=") => {
+                        port = arg["--port=".len()..].parse().unwrap_or_else(|_| {
+                            eprintln!("error: --port requires a number");
+                            process::exit(64);
+                        });
+                    }
+                    other => {
+                        eprintln!("error: unknown a2a-serve argument '{other}'");
+                        process::exit(64);
+                    }
+                }
+                i += 1;
+            }
+            let items = match compile(&src) {
+                Ok(items) => {
+                    let errs = check::check(&items);
+                    if !errs.is_empty() {
+                        for e in &errs {
+                            match e.span {
+                                Some(sp) => {
+                                    let (l, c) = line_col(&src, sp.start);
+                                    eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
+                                }
+                                None => eprintln!("error[{}]: {}", e.code, e.msg),
+                            }
+                            print_hint(e.code);
+                        }
+                        process::exit(1);
+                    }
+                    print_lints(&items);
+                    items
+                }
+                Err((msg, at)) => {
+                    eprintln!("error[E0002]: {msg} at byte {at}");
+                    print_hint("E0002");
+                    process::exit(1);
+                }
+            };
+            let stem = std::path::Path::new(&args[2])
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("agent");
+            fs::create_dir_all("out").unwrap_or(());
+            let module_path = std::path::Path::new("out").join(format!("{stem}.py"));
+            if let Err(e) = fs::write(&module_path, codegen::emit(&items)) {
+                eprintln!("error: cannot write {}: {e}", module_path.display());
+                process::exit(1);
+            }
+            let abs = module_path.canonicalize().unwrap_or_else(|e| {
+                eprintln!("error: cannot resolve {}: {e}", module_path.display());
+                process::exit(1);
+            });
+            let cards = a2a::cards_with_url(&items, stem, &format!("http://127.0.0.1:{port}/"));
+            let (agent_name, agent_card) = cards
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| (stem.to_string(), a2a::card(stem, vec![])));
+            let server_path = std::path::Path::new("out").join(format!("{stem}_a2a_server.py"));
+            let server_src = a2a::server_source(
+                &abs.to_string_lossy(),
+                &agent_name,
+                &json::dumps(&agent_card),
+                port,
+            );
+            if let Err(e) = fs::write(&server_path, server_src) {
+                eprintln!("error: cannot write {}: {e}", server_path.display());
+                process::exit(1);
+            }
+            let mut cmd = process::Command::new("python3");
+            cmd.arg(&server_path);
+            if std::env::var("NUDGE_PROVIDER").is_err() {
+                cmd.env("NUDGE_PROVIDER", "fake");
+            }
+            if std::env::var("PYTHONPATH")
+                .map(|s| s.is_empty())
+                .unwrap_or(true)
+            {
+                for candidate in &["runtime", "../runtime", "../../runtime"] {
+                    let p = std::path::Path::new(candidate);
+                    if p.join("nudge_runtime").is_dir() {
+                        if let Ok(abs_rt) = p.canonicalize() {
+                            cmd.env("PYTHONPATH", abs_rt);
+                            break;
+                        }
+                    }
+                }
+            }
+            match cmd.status() {
+                Ok(st) => process::exit(st.code().unwrap_or(0)),
+                Err(e) => {
+                    eprintln!("error: cannot run python3: {e}");
+                    process::exit(1);
+                }
+            }
+        }
         _ => usage(),
     }
 }
