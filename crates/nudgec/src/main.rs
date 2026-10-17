@@ -1302,61 +1302,9 @@ fn main() {
                     process::exit(1);
                 }
             };
-            let stem = std::path::Path::new(&args[2])
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("agent");
-            fs::create_dir_all("out").unwrap_or(());
-            let module_path = std::path::Path::new("out").join(format!("{stem}.py"));
-            if let Err(e) = fs::write(&module_path, codegen::emit(&items)) {
-                eprintln!("error: cannot write {}: {e}", module_path.display());
+            if let Err(e) = a2a::run_native_server(&items, port, None) {
+                eprintln!("error: {e}");
                 process::exit(1);
-            }
-            let abs = module_path.canonicalize().unwrap_or_else(|e| {
-                eprintln!("error: cannot resolve {}: {e}", module_path.display());
-                process::exit(1);
-            });
-            let cards = a2a::cards_with_url(&items, stem, &format!("http://127.0.0.1:{port}/"));
-            let (agent_name, agent_card) = cards
-                .into_iter()
-                .next()
-                .unwrap_or_else(|| (stem.to_string(), a2a::card(stem, vec![])));
-            let server_path = std::path::Path::new("out").join(format!("{stem}_a2a_server.py"));
-            let server_src = a2a::server_source(
-                &abs.to_string_lossy(),
-                &agent_name,
-                &json::dumps(&agent_card),
-                port,
-            );
-            if let Err(e) = fs::write(&server_path, server_src) {
-                eprintln!("error: cannot write {}: {e}", server_path.display());
-                process::exit(1);
-            }
-            let mut cmd = process::Command::new("python3");
-            cmd.arg(&server_path);
-            if std::env::var("NUDGE_PROVIDER").is_err() {
-                cmd.env("NUDGE_PROVIDER", "fake");
-            }
-            if std::env::var("PYTHONPATH")
-                .map(|s| s.is_empty())
-                .unwrap_or(true)
-            {
-                for candidate in &["runtime", "../runtime", "../../runtime"] {
-                    let p = std::path::Path::new(candidate);
-                    if p.join("nudge_runtime").is_dir() {
-                        if let Ok(abs_rt) = p.canonicalize() {
-                            cmd.env("PYTHONPATH", abs_rt);
-                            break;
-                        }
-                    }
-                }
-            }
-            match cmd.status() {
-                Ok(st) => process::exit(st.code().unwrap_or(0)),
-                Err(e) => {
-                    eprintln!("error: cannot run python3: {e}");
-                    process::exit(1);
-                }
             }
         }
         _ => usage(),
