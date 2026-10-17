@@ -5,9 +5,62 @@
 set -e
 
 REPO="NekomyaDev/nudge"
-# NUDGE_VERSION=v1.2.1 bash install.sh pins a release; NUDGE_VERSION=main tracks main.
-VERSION_OVERRIDE="${NUDGE_VERSION:-}"
 BINARY="nudgec"
+
+# Parse CLI options (e.g. bash install.sh --version v1.2.1)
+VERSION_ARG=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --version|-v)
+            if [ -n "$2" ] && [ "${2#--}" = "$2" ]; then
+                VERSION_ARG="$2"
+                shift 2
+            else
+                echo "Error: --version requires a version string (e.g. v1.2.1 or latest)" >&2
+                exit 1
+            fi
+            ;;
+        --version=*)
+            VERSION_ARG="${1#*=}"
+            shift
+            ;;
+        --help|-h)
+            echo "Nudge Installer"
+            echo "Usage: install.sh [--version <ver>]"
+            echo ""
+            echo "Options:"
+            echo "  --version, -v <ver>   Install specific version (e.g. v1.2.1) or 'latest'"
+            echo "  --help, -h            Show this help message"
+            exit 0
+            ;;
+        *)
+            echo "Warning: unknown argument '$1' ignored" >&2
+            shift
+            ;;
+    esac
+done
+
+# Resolve VERSION_OVERRIDE from CLI argument or NUDGE_VERSION environment variable
+VERSION_OVERRIDE="${VERSION_ARG:-${NUDGE_VERSION:-}}"
+
+# Resolve 'latest' via GitHub API if requested
+if [ "$VERSION_OVERRIDE" = "latest" ]; then
+    echo "Resolving latest release tag from GitHub..."
+    if command -v curl &> /dev/null; then
+        RESOLVED_TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null | grep '"tag_name":' | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+    elif command -v wget &> /dev/null; then
+        RESOLVED_TAG=$(wget -qO- "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null | grep '"tag_name":' | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+    else
+        RESOLVED_TAG=""
+    fi
+    if [ -n "$RESOLVED_TAG" ]; then
+        VERSION_OVERRIDE="$RESOLVED_TAG"
+        echo "Resolved latest version: ${VERSION_OVERRIDE}"
+    else
+        echo "Warning: could not resolve latest release tag via GitHub API; falling back to default" >&2
+        VERSION_OVERRIDE=""
+    fi
+fi
 # VERSION is set per-platform below: v1.2.1 assets currently ship for linux,
 # while macOS/Windows remain on the v1.2.0 release assets.
 
@@ -72,13 +125,59 @@ TMPDIR=$(mktemp -d)
 trap "rm -rf $TMPDIR" EXIT
 
 # Download
-echo "Downloading..."
+echo "Downloading ${FILENAME}..."
 if command -v curl &> /dev/null; then
     curl -fsSL "$URL" -o "$TMPDIR/$FILENAME"
 elif command -v wget &> /dev/null; then
     wget -q "$URL" -O "$TMPDIR/$FILENAME"
 else
     echo "Error: curl or wget required"
+    exit 1
+fi
+
+# Checksum Verification (SHA-256)
+CHECKSUM_URL="https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt"
+CHECKSUM_FILE="$TMPDIR/checksums.txt"
+CHECKSUM_FETCHED=false
+
+if command -v curl &> /dev/null; then
+    if curl -fsSL "$CHECKSUM_URL" -o "$CHECKSUM_FILE" 2>/dev/null; then
+        CHECKSUM_FETCHED=true
+    fi
+elif command -v wget &> /dev/null; then
+    if wget -q "$CHECKSUM_URL" -O "$CHECKSUM_FILE" 2>/dev/null; then
+        CHECKSUM_FETCHED=true
+    fi
+fi
+
+if [ "$CHECKSUM_FETCHED" = true ] && [ -s "$CHECKSUM_FILE" ]; then
+    echo "Verifying SHA-256 checksum..."
+    EXPECTED_SHA=$(grep "${FILENAME}" "$CHECKSUM_FILE" | awk '{print $1}')
+    if [ -n "$EXPECTED_SHA" ]; then
+        if command -v sha256sum &> /dev/null; then
+            ACTUAL_SHA=$(sha256sum "$TMPDIR/$FILENAME" | awk '{print $1}')
+        elif command -v shasum &> /dev/null; then
+            ACTUAL_SHA=$(shasum -a 256 "$TMPDIR/$FILENAME" | awk '{print $1}')
+        else
+            echo "Warning: sha256sum/shasum not found, skipping checksum verification"
+            ACTUAL_SHA=""
+        fi
+
+        if [ -n "$ACTUAL_SHA" ]; then
+            if [ "$EXPECTED_SHA" = "$ACTUAL_SHA" ]; then
+                echo "Checksum verified: ${ACTUAL_SHA}"
+            else
+                echo "Error: SHA-256 checksum verification failed!" >&2
+                echo "Expected: ${EXPECTED_SHA}" >&2
+                echo "Actual:   ${ACTUAL_SHA}" >&2
+                exit 1
+            fi
+        fi
+    else
+        echo "Note: '${FILENAME}' not listed in checksums.txt, proceeding"
+    fi
+elif [ "${NUDGE_REQUIRE_CHECKSUM:-0}" = "1" ]; then
+    echo "Error: checksums.txt not available for ${VERSION} and NUDGE_REQUIRE_CHECKSUM=1" >&2
     exit 1
 fi
 
