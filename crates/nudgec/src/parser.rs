@@ -303,12 +303,14 @@ impl Parser {
             TypeExpr::Named("()".into())
         };
         let effects = self.parse_effects()?;
+        let cost_bound = self.parse_cost_bound()?;
         let body = self.parse_block()?;
         Ok(Item::Fn {
             name,
             params,
             ret,
             effects,
+            cost_bound,
             body,
         })
     }
@@ -523,6 +525,16 @@ impl Parser {
         Ok(Item::Window { name, fields })
     }
 
+    fn parse_cost_bound(&mut self) -> PResult<Option<Expr>> {
+        if self.eat(&Tok::Costs) {
+            self.expect(&Tok::Lt, "'<' after 'costs'")?;
+            let expr = self.parse_expr()?;
+            Ok(Some(expr))
+        } else {
+            Ok(None)
+        }
+    }
+
     fn parse_handle(&mut self) -> PResult<Item> {
         self.bump(); // handle
         let name = self.ident()?;
@@ -533,12 +545,14 @@ impl Parser {
             TypeExpr::Named("()".into())
         };
         let effects = self.parse_effects()?;
+        let cost_bound = self.parse_cost_bound()?;
         let body = self.parse_block()?;
         Ok(Item::Fn {
             name,
             params,
             ret,
             effects,
+            cost_bound,
             body,
         })
     }
@@ -2623,5 +2637,71 @@ test "budget" {
         assert_eq!(parser.pos(), 0);
         let items = parse(vec![]).expect("empty tokens should parse to empty items");
         assert_eq!(items.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_cost_bound() {
+        let src = "fn f() -> string uses LLM costs < 0.05 USD { llm\"\"\"hi\"\"\" with { model: \"m\" } }";
+        let items = parse_str(src);
+        assert_eq!(items.len(), 1);
+        match &items[0] {
+            Item::Fn {
+                name,
+                effects,
+                cost_bound,
+                ..
+            } => {
+                assert_eq!(name, "f");
+                assert_eq!(effects, &vec!["LLM".to_string()]);
+                assert!(cost_bound.is_some());
+                if let Some(Expr {
+                    kind: ExprKind::Money(v, u),
+                    ..
+                }) = cost_bound
+                {
+                    assert!((*v - 0.05).abs() < 1e-6);
+                    assert_eq!(u, "USD");
+                } else {
+                    panic!("expected ExprKind::Money, got {cost_bound:?}");
+                }
+            }
+            other => panic!("expected Item::Fn, got {other:?}"),
+        }
+
+        // Without uses
+        let src_no_uses = "fn g() -> string costs < 0.10 USD { \"hello\" }";
+        let items = parse_str(src_no_uses);
+        match &items[0] {
+            Item::Fn {
+                name,
+                effects,
+                cost_bound,
+                ..
+            } => {
+                assert_eq!(name, "g");
+                assert!(effects.is_empty());
+                assert!(cost_bound.is_some());
+            }
+            other => panic!("expected Item::Fn, got {other:?}"),
+        }
+
+        // Without return type and without uses
+        let src_no_ret = "fn h() costs < 0.02 USD { }";
+        let items = parse_str(src_no_ret);
+        match &items[0] {
+            Item::Fn {
+                name,
+                ret,
+                effects,
+                cost_bound,
+                ..
+            } => {
+                assert_eq!(name, "h");
+                assert_eq!(*ret, TypeExpr::Named("()".to_string()));
+                assert!(effects.is_empty());
+                assert!(cost_bound.is_some());
+            }
+            other => panic!("expected Item::Fn, got {other:?}"),
+        }
     }
 }

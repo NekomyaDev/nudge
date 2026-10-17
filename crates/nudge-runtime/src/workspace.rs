@@ -55,7 +55,7 @@ pub fn lexical_normalize(path: &Path) -> PathBuf {
 /// Resolve and verify that a target path is strictly contained within the workspace root.
 ///
 /// Returns the canonicalized (or partially-canonicalized) target path on success.
-/// Returns `Err("workspace path escape denied: <path>")` on any escape attempt.
+/// Returns `Err("error[E0910]: workspace path escape denied: <path>")` on any escape attempt.
 ///
 /// Location: `crates/nudge-runtime/src/workspace.rs`, function `resolve_and_validate_path`.
 pub fn resolve_and_validate_path(user_path: &str) -> Result<PathBuf, String> {
@@ -81,7 +81,10 @@ pub fn resolve_and_validate_path(user_path: &str) -> Result<PathBuf, String> {
             Ok(tail) => canonical_root.join(tail),
             Err(_) => {
                 // Absolute path that doesn't start with the workspace root.
-                return Err(format!("workspace path escape denied: {}", user_path));
+                return Err(format!(
+                    "error[E0910]: workspace path escape denied: {}",
+                    user_path
+                ));
             }
         }
     } else {
@@ -113,7 +116,10 @@ pub fn resolve_and_validate_path(user_path: &str) -> Result<PathBuf, String> {
                     }
                     _ => {
                         // Reached the filesystem root without finding any existing ancestor.
-                        return Err(format!("workspace path escape denied: {}", user_path));
+                        return Err(format!(
+                            "error[E0910]: workspace path escape denied: {}",
+                            user_path
+                        ));
                     }
                 }
             }
@@ -122,7 +128,10 @@ pub fn resolve_and_validate_path(user_path: &str) -> Result<PathBuf, String> {
 
     // (3) Verify containment: target must start with the canonical root.
     if !canonical_target.starts_with(&canonical_root) {
-        return Err(format!("workspace path escape denied: {}", user_path));
+        return Err(format!(
+            "error[E0910]: workspace path escape denied: {}",
+            user_path
+        ));
     }
 
     // (4) Symlink check: walk the existing portion under the root and verify
@@ -152,7 +161,7 @@ pub fn resolve_and_validate_path(user_path: &str) -> Result<PathBuf, String> {
                         Ok(canon_link) => {
                             if !canon_link.starts_with(&canonical_root) {
                                 return Err(format!(
-                                    "workspace symlink escape denied: {}",
+                                    "error[E0910]: workspace path escape denied: symlink escape: {}",
                                     user_path
                                 ));
                             }
@@ -320,7 +329,7 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             if let Ok(meta) = raw_path.symlink_metadata() {
                 if meta.file_type().is_symlink() {
                     return Err(format!(
-                        "workspace.append: symlink escape denied for '{}'",
+                        "error[E0910]: workspace path escape denied: symlink escape for '{}'",
                         path_str
                     ));
                 }
@@ -337,7 +346,7 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             if let Ok(meta) = safe_path.symlink_metadata() {
                 if meta.file_type().is_symlink() {
                     return Err(format!(
-                        "workspace.append: symlink escape denied for '{}'",
+                        "error[E0910]: workspace path escape denied: symlink escape for '{}'",
                         path_str
                     ));
                 }
@@ -355,7 +364,7 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                         .unwrap_or_else(|_| get_workspace_root());
                     if !canon_parent.starts_with(&root) {
                         return Err(format!(
-                            "workspace.append: parent symlink escape denied for '{}'",
+                            "error[E0910]: workspace path escape denied: parent symlink escape for '{}'",
                             path_str
                         ));
                     }
@@ -377,7 +386,7 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                     })?;
                     if meta.file_type().is_symlink() {
                         return Err(format!(
-                            "workspace.append: symlink escape denied for '{}'",
+                            "error[E0910]: workspace path escape denied: symlink escape for '{}'",
                             path_str
                         ));
                     }
@@ -590,7 +599,7 @@ mod tests {
         assert!(res.is_err(), "expected escape denial for ../outside.txt");
         let msg = res.unwrap_err();
         assert!(
-            msg.contains("escape denied") || msg.contains("path"),
+            msg.contains("error[E0910]") && msg.contains("workspace path escape denied"),
             "unexpected error: {}",
             msg
         );
@@ -609,6 +618,12 @@ mod tests {
             vec![Value::String("/etc/hosts".to_string())],
         );
         assert!(res.is_err(), "expected escape denial for /etc/hosts");
+        let msg = res.unwrap_err();
+        assert!(
+            msg.contains("error[E0910]") && msg.contains("workspace path escape denied"),
+            "unexpected error: {}",
+            msg
+        );
 
         teardown(&dir);
     }

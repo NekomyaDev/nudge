@@ -1111,6 +1111,7 @@ fn compile_internal(items: &[ast::Item], expected_entry: Option<&str>) -> Result
             ret: _,
             effects,
             body,
+            ..
         } = item
         {
             let meta = FnMeta {

@@ -140,6 +140,7 @@ mod tests {
                 params: vec![],
                 ret: nudgec::ast::TypeExpr::Named("unit".to_string()),
                 effects: vec![],
+                cost_bound: None,
                 body: vec![],
             }],
         };
@@ -211,6 +212,7 @@ mod tests {
                 params: vec![],
                 ret: nudgec::ast::TypeExpr::Named("int".to_string()),
                 effects: vec![],
+                cost_bound: None,
                 body: vec![],
             }],
         };

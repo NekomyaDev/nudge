@@ -1473,6 +1473,14 @@ fn check_expr_pos(
                         ])));
                     }
                     "replay" | "mcp" | "python" => return Ty::Unknown,
+                    "stack" | "box" | "container" => {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E1002",
+                            msg: format!("invalid or unknown UI component '{name}': check the element combinator name and its children or properties"),
+                        });
+                        return Ty::View;
+                    }
                     "column" | "row" => {
                         for a in args {
                             check_expr(a, locals, g, errs);
@@ -1705,6 +1713,18 @@ fn check_expr_pos(
                             }
                             "changed" => return Ty::Bool,
                             _ => {}
+                        }
+                    } else if prefix == "ui" {
+                        match name.as_str() {
+                            "column" | "row" | "text" | "button" | "input" => return Ty::View,
+                            other => {
+                                errs.push(CheckError {
+                                    span: None,
+                                    code: "E1002",
+                                    msg: format!("invalid or unknown UI component 'ui.{other}': check the element combinator name and its children or properties"),
+                                });
+                                return Ty::Unknown;
+                            }
                         }
                     } else if prefix == "proc" {
                         match name.as_str() {
@@ -2994,6 +3014,7 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
             let has_auth = missing
                 .iter()
                 .any(|e| *e == "Auth" || e.starts_with("Auth("));
+            let has_workspace_delete = missing.iter().any(|e| *e == "WorkspaceDelete");
             if declared.is_empty() {
                 errs.push(CheckError {
                     span: None,
@@ -3015,6 +3036,8 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                         "E-auth-0403"
                     } else if has_ui {
                         "E1001"
+                    } else if has_workspace_delete {
+                        "E0912"
                     } else {
                         "E0302"
                     },
@@ -3026,6 +3049,49 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
             }
         }
     }
+
+    // ── static cost bound verification (roadmap v1.5 Door 3 Safe) ───────
+    let fn_costs = crate::cost::calculate_transitive_costs(items);
+    for item in fn_items(items) {
+        if let Item::Fn {
+            name,
+            cost_bound: Some(bound_expr),
+            ..
+        } = item
+        {
+            // Evaluate the bound expr: must be ExprKind::Money with USD
+            match &bound_expr.kind {
+                ExprKind::Money(amount, unit) => {
+                    if unit != "USD" {
+                        errs.push(CheckError {
+                            span: Some(bound_expr.span),
+                            code: "E0501",
+                            msg: format!("unknown budget unit '{unit}' (v0.1 supports USD only)"),
+                        });
+                    } else if let Some(cost) = fn_costs.get(name) {
+                        let worst_case = cost.transitive_max;
+                        if worst_case > *amount + 1e-9 {
+                            errs.push(CheckError {
+                                span: Some(bound_expr.span),
+                                code: "E0502",
+                                msg: format!(
+                                    "static cost bound exceeded: fn '{name}' declared costs < {amount:.2} USD but static call graph worst-case is {worst_case:.2} USD"
+                                ),
+                            });
+                        }
+                    }
+                }
+                _ => {
+                    errs.push(CheckError {
+                        span: Some(bound_expr.span),
+                        code: "E0201",
+                        msg: "cost bound must be a money literal like 0.05 USD".to_string(),
+                    });
+                }
+            }
+        }
+    }
+
     errs
 }
 
@@ -3552,15 +3618,19 @@ fn f(c: bool) -> string uses IO {
             "expected E0301 for WorkspaceDelete, got {errs:?}"
         );
 
-        // With only Workspace, still trips E0301 for WorkspaceDelete (annotation too narrow)
+        // With only Workspace, still trips E0912 for WorkspaceDelete (annotation too narrow)
         let errs2 =
             check_src("fn f(p: string) -> string uses Workspace { workspace.delete(p)\np }");
         assert!(
-            errs2
-                .iter()
-                .any(|e| (e.code == "E0301" || e.code == "E0302")
-                    && e.msg.contains("WorkspaceDelete")),
-            "expected E0301/E0302 for WorkspaceDelete, got {errs2:?}"
+            errs2.iter().any(
+                |e| (e.code == "E0912" || e.code == "E0301" || e.code == "E0302")
+                    && e.msg.contains("WorkspaceDelete")
+            ),
+            "expected E0912/E0301/E0302 for WorkspaceDelete, got {errs2:?}"
+        );
+        assert!(
+            errs2.iter().any(|e| e.code == "E0912"),
+            "expected E0912 for WorkspaceDelete, got {errs2:?}"
         );
 
         // With both effects declared, clean
@@ -4614,6 +4684,37 @@ fn f(c: bool) -> string uses IO {
     }
 
     #[test]
+    fn test_ui_unknown_component_trips_e1002() {
+        let src1 = r#"
+            view MyView() -> View {
+                stack [
+                    text("hi")
+                ]
+            }
+        "#;
+        let errs1 = check_src(src1);
+        assert!(
+            errs1
+                .iter()
+                .any(|e| e.code == "E1002" && e.msg.contains("stack")),
+            "expected E1002 for stack, got {errs1:?}"
+        );
+
+        let src2 = r#"
+            view MyView2() -> View {
+                ui.custom_widget("hi")
+            }
+        "#;
+        let errs2 = check_src(src2);
+        assert!(
+            errs2
+                .iter()
+                .any(|e| e.code == "E1002" && e.msg.contains("custom_widget")),
+            "expected E1002 for ui.custom_widget, got {errs2:?}"
+        );
+    }
+
+    #[test]
     fn test_auth_syntax_and_checker_gating_missing_auth_effect_trips_e_auth_0403() {
         let src = r#"
             auth provider github_copilot {
@@ -4737,6 +4838,81 @@ fn f(c: bool) -> string uses IO {
             errs.iter()
                 .any(|e| e.code == "E-auth-0404" && e.msg.contains("github_copilot")),
             "Expected E-auth-0404 for undeclared provider in account, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn valid_cost_bound_passes_check() {
+        // analyze: 1 site, retry: 2 with repair -> max calls = 3 -> worst-case cost = 0.003 USD
+        // bound is 0.005 USD, 0.003 <= 0.005 -> passes
+        let src = r#"
+            fn analyze() -> string uses LLM costs < 0.005 USD {
+                llm"""prompt""" with { model: "m", retry: 2 with repair }
+            }
+        "#;
+        let errs = check_src(src);
+        assert_eq!(errs, vec![], "expected valid cost bound to pass: {errs:?}");
+
+        // Also test without uses clause (pure fn or $0 cost fn)
+        let src_pure = r#"
+            fn add(a: int, b: int) -> int costs < 0.01 USD {
+                a + b
+            }
+        "#;
+        let errs_pure = check_src(src_pure);
+        assert_eq!(
+            errs_pure,
+            vec![],
+            "expected pure fn with cost bound to pass: {errs_pure:?}"
+        );
+    }
+
+    #[test]
+    fn exceeded_cost_bound_produces_e0502() {
+        // analyze: 1 site, retry: 2 with repair -> max calls = 3 -> worst-case cost = 0.003 USD
+        // bound is 0.002 USD -> 0.003 > 0.002 -> trips E0502
+        let src = r#"
+            fn analyze() -> string uses LLM costs < 0.002 USD {
+                llm"""prompt""" with { model: "m", retry: 2 with repair }
+            }
+        "#;
+        let errs = check_src(src);
+        let e0502 = errs.iter().find(|e| e.code == "E0502");
+        assert!(e0502.is_some(), "expected E0502, got: {errs:?}");
+        let msg = &e0502.unwrap().msg;
+        assert!(
+            msg.contains("static cost bound exceeded: fn 'analyze' declared costs < 0.00 USD")
+                || msg.contains(
+                    "static cost bound exceeded: fn 'analyze' declared costs < 0.002 USD"
+                )
+                || msg.contains("static cost bound exceeded: fn 'analyze' declared costs <"),
+            "unexpected message: {msg}"
+        );
+        assert!(msg.contains("worst-case is"), "unexpected message: {msg}");
+    }
+
+    #[test]
+    fn transitive_callee_cost_causes_caller_to_exceed_bound() {
+        // g() has worst case 0.003 USD
+        // f() calls g() and declares costs < 0.002 USD -> f's transitive worst case is 0.003 USD -> exceeds 0.002 USD
+        let src = r#"
+            fn g() -> string uses LLM {
+                llm"""prompt""" with { model: "m", retry: 2 with repair }
+            }
+            fn f() -> string uses LLM costs < 0.002 USD {
+                g()
+            }
+        "#;
+        let errs = check_src(src);
+        let e0502 = errs.iter().find(|e| e.code == "E0502");
+        assert!(
+            e0502.is_some(),
+            "expected E0502 on caller f due to callee g cost, got: {errs:?}"
+        );
+        let msg = &e0502.unwrap().msg;
+        assert!(
+            msg.contains("fn 'f' declared costs <"),
+            "message was: {msg}"
         );
     }
 

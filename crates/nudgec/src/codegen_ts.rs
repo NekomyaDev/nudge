@@ -463,100 +463,7 @@ fn emit_body(
                 gen,
                 args,
                 body,
-            } => {
-                *prop_id += 1;
-                let arg_list = args
-                    .iter()
-                    .map(|a| ts(a, aliases, sigs))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let mut inner = String::new();
-                for st in body {
-                    let line = match &st.kind {
-                        StmtKind::Let {
-                            name,
-                            value,
-                            mutable,
-                            ..
-                        } => {
-                            let kw = if *mutable { "let" } else { "const" };
-                            format!("{kw} {name} = {};", ts(value, aliases, sigs))
-                        }
-                        StmtKind::Assign { name, value } => {
-                            format!("{name} = {};", ts(value, aliases, sigs))
-                        }
-                        StmtKind::Assert(e) => format!(
-                            "if (!({})) throw new Error(\"assertion failed\");",
-                            ts(e, aliases, sigs)
-                        ),
-                        StmtKind::ExprStmt(e) => format!("{};", ts(e, aliases, sigs)),
-                        StmtKind::StateWrite { field, .. } => format!(
-                            "// error: state write 'state.{field}' outside an agent block (E0701)"
-                        ),
-                        // one nesting level is the documented v1 surface
-                        StmtKind::ForAll { .. } => "// error: nested for_all (E0805)".to_string(),
-                        StmtKind::For {
-                            var,
-                            idx_var,
-                            coll,
-                            body,
-                        } => {
-                            let header = match idx_var {
-                                Some(idx) => format!(
-                                    "for (const [{var}, {idx}] of {}.map((_v, _i) => [_v, _i])) {{",
-                                    ts(coll, aliases, sigs)
-                                ),
-                                None => {
-                                    format!("for (const {var} of {}) {{", ts(coll, aliases, sigs))
-                                }
-                            };
-                            let mut s = header;
-                            for l in emit_body(body, aliases, sigs, agent, prop_id)
-                                .trim_end()
-                                .lines()
-                            {
-                                s.push_str("\n    ");
-                                s.push_str(l);
-                            }
-                            s.push_str("\n    }");
-                            s
-                        }
-                        StmtKind::If {
-                            cond,
-                            then_body,
-                            else_body,
-                        } => {
-                            let mut s = format!("if ({}) {{", ts(cond, aliases, sigs));
-                            for l in emit_body(then_body, aliases, sigs, agent, prop_id)
-                                .trim_end()
-                                .lines()
-                            {
-                                s.push_str("\n    ");
-                                s.push_str(l);
-                            }
-                            s.push_str("\n    }");
-                            if let Some(eb) = else_body {
-                                s.push_str(" else {");
-                                for l in emit_body(eb, aliases, sigs, agent, prop_id)
-                                    .trim_end()
-                                    .lines()
-                                {
-                                    s.push_str("\n    ");
-                                    s.push_str(l);
-                                }
-                                s.push_str("\n    }");
-                            }
-                            s
-                        }
-                    };
-                    inner.push_str("    ");
-                    inner.push_str(&line);
-                    inner.push('\n');
-                }
-                format!(
-                    "rt.forAll(\"{gen}\", [{arg_list}], ({var}) => {{\n{inner}    }}, \"{var}\");"
-                )
-            }
+            } => emit_for_all(var, gen, args, body, aliases, sigs, agent, prop_id),
             StmtKind::For {
                 var,
                 idx_var,
@@ -614,6 +521,115 @@ fn emit_body(
         out.push('\n');
     }
     out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_for_all(
+    var: &str,
+    gen: &str,
+    args: &[Expr],
+    body: &[Stmt],
+    aliases: &HashSet<String>,
+    sigs: &HashMap<String, Vec<String>>,
+    agent: Option<(&str, &[String])>,
+    prop_id: &mut usize,
+) -> String {
+    *prop_id += 1;
+    let arg_list = args
+        .iter()
+        .map(|a| ts(a, aliases, sigs))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut inner = String::new();
+    for st in body {
+        let line = match &st.kind {
+            StmtKind::Let {
+                name,
+                value,
+                mutable,
+                ..
+            } => {
+                let kw = if *mutable { "let" } else { "const" };
+                format!("{kw} {name} = {};", ts(value, aliases, sigs))
+            }
+            StmtKind::Assign { name, value } => {
+                format!("{name} = {};", ts(value, aliases, sigs))
+            }
+            StmtKind::Assert(e) => format!(
+                "if (!({})) throw new Error(\"assertion failed\");",
+                ts(e, aliases, sigs)
+            ),
+            StmtKind::ExprStmt(e) => format!("{};", ts(e, aliases, sigs)),
+            StmtKind::StateWrite { field, .. } => {
+                format!("// error: state write 'state.{field}' outside an agent block (E0701)")
+            }
+            StmtKind::ForAll {
+                var: ivar,
+                gen: igen,
+                args: iargs,
+                body: ibody,
+            } => emit_for_all(ivar, igen, iargs, ibody, aliases, sigs, agent, prop_id),
+            StmtKind::For {
+                var,
+                idx_var,
+                coll,
+                body,
+            } => {
+                let header = match idx_var {
+                    Some(idx) => format!(
+                        "for (const [{var}, {idx}] of {}.map((_v, _i) => [_v, _i])) {{",
+                        ts(coll, aliases, sigs)
+                    ),
+                    None => {
+                        format!("for (const {var} of {}) {{", ts(coll, aliases, sigs))
+                    }
+                };
+                let mut s = header;
+                for l in emit_body(body, aliases, sigs, agent, prop_id)
+                    .trim_end()
+                    .lines()
+                {
+                    s.push_str("\n    ");
+                    s.push_str(l);
+                }
+                s.push_str("\n    }");
+                s
+            }
+            StmtKind::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
+                let mut s = format!("if ({}) {{", ts(cond, aliases, sigs));
+                for l in emit_body(then_body, aliases, sigs, agent, prop_id)
+                    .trim_end()
+                    .lines()
+                {
+                    s.push_str("\n    ");
+                    s.push_str(l);
+                }
+                s.push_str("\n    }");
+                if let Some(eb) = else_body {
+                    s.push_str(" else {");
+                    for l in emit_body(eb, aliases, sigs, agent, prop_id)
+                        .trim_end()
+                        .lines()
+                    {
+                        s.push_str("\n    ");
+                        s.push_str(l);
+                    }
+                    s.push_str("\n    }");
+                }
+                s
+            }
+        };
+        for l in line.lines() {
+            inner.push_str("    ");
+            inner.push_str(l);
+            inner.push('\n');
+        }
+    }
+    format!("rt.forAll(\"{gen}\", [{arg_list}], ({var}) => {{\n{inner}    }}, \"{var}\");")
 }
 
 /// Nudge type → simple TS annotation (erasable: identifiers only).
@@ -1959,5 +1975,29 @@ mod computer_tests {
             String::from_utf8_lossy(&out.stderr)
         );
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "true");
+    }
+
+    #[test]
+    fn ts_nested_for_all_lowering() {
+        let src = r#"test "nested" {
+    for_all x in gen.int(0, 5) {
+        for_all y in gen.int(0, 5) {
+            assert x + y >= 0
+        }
+    }
+}"#;
+        let emitted = gen_ts(src);
+        assert!(
+            !emitted.contains("E0805"),
+            "must not contain stale E0805 comment, got:\n{emitted}"
+        );
+        assert!(
+            emitted.contains("rt.forAll(\"int\", [0, 5], (x) => {"),
+            "got:\n{emitted}"
+        );
+        assert!(
+            emitted.contains("rt.forAll(\"int\", [0, 5], (y) => {"),
+            "got:\n{emitted}"
+        );
     }
 }

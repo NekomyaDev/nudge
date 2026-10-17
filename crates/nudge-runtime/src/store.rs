@@ -123,19 +123,28 @@ impl Store {
         let entries = if path.exists() {
             let raw = fs::read_to_string(&path)
                 .map_err(|e| format!("store: cannot read '{}': {}", path.display(), e))?;
-            let json: serde_json::Value = serde_json::from_str(&raw)
-                .map_err(|e| format!("store: invalid JSON in '{}': {}", path.display(), e))?;
+            let json: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
+                format!(
+                    "error[E0913]: store schema mismatch: invalid JSON in '{}': {}",
+                    path.display(),
+                    e
+                )
+            })?;
             match json {
                 serde_json::Value::Object(map) => {
                     let mut entries = HashMap::with_capacity(map.len());
                     for (k, v) in map {
-                        entries.insert(k, json_to_value(v)?);
+                        entries.insert(
+                            k,
+                            json_to_value(v)
+                                .map_err(|e| format!("error[E0913]: store schema mismatch: {e}"))?,
+                        );
                     }
                     entries
                 }
                 _ => {
                     return Err(format!(
-                        "store: root JSON must be an object in '{}'",
+                        "error[E0913]: store schema mismatch: root JSON must be an object in '{}'",
                         path.display()
                     ))
                 }
@@ -760,5 +769,31 @@ mod tests {
 
         // Calling reset() on the main thread must recover from poisoning without panicking
         reset();
+    }
+
+    #[test]
+    fn test_store_schema_mismatch_e0913() {
+        let _guard = crate::workspace::WS_TEST_LOCK.lock().unwrap();
+        let dir = setup_temp_workspace("schema_mismatch");
+        let store_file = dir.join(".nudge").join("store.json");
+        fs::create_dir_all(store_file.parent().unwrap()).unwrap();
+
+        // 1. Invalid JSON trips E0913
+        fs::write(&store_file, "not a valid json").unwrap();
+        let err1 = Store::open(store_file.clone()).unwrap_err();
+        assert!(
+            err1.contains("error[E0913]") && err1.contains("store schema mismatch"),
+            "expected E0913 for invalid JSON, got: {err1}"
+        );
+
+        // 2. Non-object root JSON trips E0913
+        fs::write(&store_file, "[1, 2, 3]").unwrap();
+        let err2 = Store::open(store_file.clone()).unwrap_err();
+        assert!(
+            err2.contains("error[E0913]") && err2.contains("store schema mismatch"),
+            "expected E0913 for non-object root, got: {err2}"
+        );
+
+        teardown(&dir);
     }
 }

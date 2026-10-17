@@ -31,6 +31,144 @@ impl Count {
     }
 }
 
+fn count_stmt(st: &Stmt, in_par: bool, c: &mut Count) {
+    match &st.kind {
+        StmtKind::Let { value, .. } | StmtKind::Assign { value, .. } => {
+            count_expr(value, in_par, c);
+        }
+        StmtKind::StateWrite { value, .. } => count_expr(value, in_par, c),
+        StmtKind::Assert(e) | StmtKind::ExprStmt(e) => count_expr(e, in_par, c),
+        StmtKind::For { coll, body, .. } => {
+            count_expr(coll, in_par, c);
+            for s in body.iter() {
+                count_stmt(s, in_par, c);
+            }
+        }
+        StmtKind::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            count_expr(cond, in_par, c);
+            for s in then_body.iter() {
+                count_stmt(s, in_par, c);
+            }
+            if let Some(else_stmts) = else_body {
+                for s in else_stmts.iter() {
+                    count_stmt(s, in_par, c);
+                }
+            }
+        }
+        StmtKind::ForAll { .. } => {}
+    }
+}
+
+fn collect_calls_stmt(st: &Stmt, in_par: bool, edges: &mut Vec<(String, bool)>) {
+    match &st.kind {
+        StmtKind::Let { value, .. } | StmtKind::Assign { value, .. } => {
+            collect_calls(value, in_par, edges);
+        }
+        StmtKind::StateWrite { value, .. } => collect_calls(value, in_par, edges),
+        StmtKind::Assert(e) | StmtKind::ExprStmt(e) => collect_calls(e, in_par, edges),
+        StmtKind::For { coll, body, .. } => {
+            collect_calls(coll, in_par, edges);
+            for s in body.iter() {
+                collect_calls_stmt(s, in_par, edges);
+            }
+        }
+        StmtKind::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            collect_calls(cond, in_par, edges);
+            for s in then_body.iter() {
+                collect_calls_stmt(s, in_par, edges);
+            }
+            if let Some(else_stmts) = else_body {
+                for s in else_stmts.iter() {
+                    collect_calls_stmt(s, in_par, edges);
+                }
+            }
+        }
+        StmtKind::ForAll { .. } => {}
+    }
+}
+
+pub struct FunctionCost {
+    pub display_name: String,
+    pub plain_name: String,
+    pub direct_min: f64,
+    pub direct_max: f64,
+    pub transitive_min: f64,
+    pub transitive_max: f64,
+    pub dynamic: bool,
+}
+
+pub fn calculate_transitive_costs(items: &[Item]) -> HashMap<String, FunctionCost> {
+    let mut fns: Vec<(String, String, &[Stmt])> = Vec::new();
+    for item in items {
+        match item {
+            Item::Fn { name, body, .. } => fns.push((name.clone(), name.clone(), body)),
+            Item::Agent {
+                name,
+                fns: agent_fns,
+                ..
+            } => {
+                for f in agent_fns {
+                    if let Item::Fn {
+                        name: fn_name,
+                        body,
+                        ..
+                    } = f
+                    {
+                        fns.push((format!("{name}.{fn_name}"), fn_name.clone(), body));
+                    }
+                }
+            }
+            Item::Test { .. }
+            | Item::TypeAlias { .. }
+            | Item::Tool { .. }
+            | Item::View { .. }
+            | Item::Window { .. }
+            | Item::AuthProvider { .. }
+            | Item::Account { .. } => {}
+        }
+    }
+
+    let mut direct: HashMap<&str, Count> = HashMap::new();
+    let mut graph: HashMap<&str, Vec<(String, bool)>> = HashMap::new();
+    for (display, _, body) in &fns {
+        let mut c = Count::default();
+        for st in body.iter() {
+            count_stmt(st, false, &mut c);
+        }
+        direct.insert(display.as_str(), c);
+        let mut edges = Vec::new();
+        for st in body.iter() {
+            collect_calls_stmt(st, false, &mut edges);
+        }
+        graph.insert(display.as_str(), edges);
+    }
+
+    let mut result = HashMap::new();
+    for (display, plain, _) in &fns {
+        let c = &direct[display.as_str()];
+        let t = transitive(display.as_str(), &direct, &graph);
+        let fc = FunctionCost {
+            display_name: display.clone(),
+            plain_name: plain.clone(),
+            direct_min: c.sites as f64 * FAKE_CALL_COST,
+            direct_max: c.max_calls as f64 * FAKE_CALL_COST,
+            transitive_min: t.sites as f64 * FAKE_CALL_COST,
+            transitive_max: t.max_calls as f64 * FAKE_CALL_COST,
+            dynamic: t.dynamic,
+        };
+        result.insert(display.clone(), fc);
+    }
+    result
+}
+
 /// `nudgec cost <file.ndg>` output: one line per fn plus a total.
 pub fn report(items: &[Item]) -> String {
     // collect every fn: (display name, plain name, body)
@@ -70,81 +208,12 @@ pub fn report(items: &[Item]) -> String {
     for (display, _, body) in &fns {
         let mut c = Count::default();
         for st in body.iter() {
-            match &st.kind {
-                StmtKind::Let { value, .. } | StmtKind::Assign { value, .. } => {
-                    count_expr(value, false, &mut c)
-                }
-                StmtKind::StateWrite { value, .. } => count_expr(value, false, &mut c),
-                StmtKind::Assert(e) | StmtKind::ExprStmt(e) => count_expr(e, false, &mut c),
-                StmtKind::For { coll, body, .. } => {
-                    count_expr(coll, false, &mut c);
-                    for s in body.iter() {
-                        if let StmtKind::ExprStmt(e) = &s.kind {
-                            count_expr(e, false, &mut c);
-                        }
-                    }
-                }
-                StmtKind::If {
-                    cond,
-                    then_body,
-                    else_body,
-                } => {
-                    count_expr(cond, false, &mut c);
-                    for s in then_body.iter() {
-                        if let StmtKind::ExprStmt(e) = &s.kind {
-                            count_expr(e, false, &mut c);
-                        }
-                    }
-                    if let Some(else_stmts) = else_body {
-                        for s in else_stmts.iter() {
-                            if let StmtKind::ExprStmt(e) = &s.kind {
-                                count_expr(e, false, &mut c);
-                            }
-                        }
-                    }
-                }
-                // properties are pure (E0804) — no cost contribution
-                StmtKind::ForAll { .. } => {}
-            }
+            count_stmt(st, false, &mut c);
         }
         direct.insert(display.as_str(), c);
         let mut edges = Vec::new();
         for st in body.iter() {
-            match &st.kind {
-                StmtKind::Let { value, .. } | StmtKind::Assign { value, .. } => {
-                    collect_calls(value, false, &mut edges)
-                }
-                StmtKind::StateWrite { value, .. } => collect_calls(value, false, &mut edges),
-                StmtKind::Assert(e) | StmtKind::ExprStmt(e) => collect_calls(e, false, &mut edges),
-                StmtKind::For { coll, body, .. } => {
-                    collect_calls(coll, false, &mut edges);
-                    for s in body.iter() {
-                        if let StmtKind::ExprStmt(e) = &s.kind {
-                            collect_calls(e, false, &mut edges);
-                        }
-                    }
-                }
-                StmtKind::If {
-                    cond,
-                    then_body,
-                    else_body,
-                } => {
-                    collect_calls(cond, false, &mut edges);
-                    for s in then_body.iter() {
-                        if let StmtKind::ExprStmt(e) = &s.kind {
-                            collect_calls(e, false, &mut edges);
-                        }
-                    }
-                    if let Some(else_stmts) = else_body {
-                        for s in else_stmts.iter() {
-                            if let StmtKind::ExprStmt(e) = &s.kind {
-                                collect_calls(e, false, &mut edges);
-                            }
-                        }
-                    }
-                }
-                StmtKind::ForAll { .. } => {}
-            }
+            collect_calls_stmt(st, false, &mut edges);
         }
         graph.insert(display.as_str(), edges);
     }
@@ -596,5 +665,30 @@ agent B {
             r.contains("total: 3 llm call site(s), min $0.003, max $0.003"),
             "got:\n{r}"
         );
+    }
+
+    #[test]
+    fn test_calculate_transitive_costs() {
+        let src = r#"
+            fn leaf() -> string uses LLM {
+                llm"""leaf""" with { model: "m", retry: 1 with repair }
+            }
+            fn caller() -> string uses LLM {
+                leaf()
+            }
+        "#;
+        let items = parse(lex(src).unwrap()).unwrap();
+        let costs = calculate_transitive_costs(&items);
+        let leaf = costs.get("leaf").expect("leaf exists");
+        assert_eq!(leaf.direct_min, 0.001);
+        assert_eq!(leaf.direct_max, 0.002);
+        assert_eq!(leaf.transitive_min, 0.001);
+        assert_eq!(leaf.transitive_max, 0.002);
+
+        let caller = costs.get("caller").expect("caller exists");
+        assert_eq!(caller.direct_min, 0.0);
+        assert_eq!(caller.direct_max, 0.0);
+        assert_eq!(caller.transitive_min, 0.001);
+        assert_eq!(caller.transitive_max, 0.002);
     }
 }

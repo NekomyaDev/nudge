@@ -81,8 +81,12 @@ fn take_snapshot(target: &Path) -> BTreeMap<PathBuf, EntrySnapshot> {
         if meta.is_dir() {
             collect_dir_snapshot(target, target, &mut map);
         } else {
+            let rel = target
+                .file_name()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| target.to_path_buf());
             map.insert(
-                target.to_path_buf(),
+                rel,
                 EntrySnapshot {
                     is_dir: false,
                     size: meta.len(),
@@ -129,6 +133,10 @@ fn collect_dir_snapshot(root: &Path, dir: &Path, map: &mut BTreeMap<PathBuf, Ent
 
 /// Watch a path inside the workspace for filesystem change events.
 fn execute_watch(args: Vec<Value>) -> Result<Value, String> {
+    if crate::task::is_current_cancelled() {
+        return Err("error[E-task-0001]: TaskCancelled".to_string());
+    }
+
     if args.is_empty() {
         return Err("fs.watch requires at least 1 argument (path)".to_string());
     }
@@ -139,11 +147,8 @@ fn execute_watch(args: Vec<Value>) -> Result<Value, String> {
 
     // Workspace confinement check: deny paths escaping workspace root
     let canonical_target = crate::workspace::resolve_and_validate_path(path_str).map_err(|e| {
-        if e.starts_with("error[") {
-            e
-        } else {
-            format!("error[E0922]: fs.watch path escape denied: {e}")
-        }
+        let clean = e.strip_prefix("error[E0910]: ").unwrap_or(&e);
+        format!("error[E0922]: fs.watch path escape denied: {clean}")
     })?;
 
     let timeout = resolve_timeout(args.get(1))?;
@@ -201,6 +206,10 @@ fn execute_watch(args: Vec<Value>) -> Result<Value, String> {
         }
 
         if !events.is_empty() {
+            if crate::task::is_current_cancelled() {
+                return Err("error[E-task-0001]: TaskCancelled".to_string());
+            }
+
             // Sort events deterministically by path then kind
             events.sort_by(|a, b| {
                 let get_key = |v: &Value| -> (String, String) {
@@ -229,6 +238,10 @@ fn execute_watch(args: Vec<Value>) -> Result<Value, String> {
             return Ok(Value::List(events));
         }
 
+        if crate::task::is_current_cancelled() {
+            return Err("error[E-task-0001]: TaskCancelled".to_string());
+        }
+
         if start.elapsed() >= timeout {
             return Ok(Value::List(Vec::new()));
         }
@@ -241,6 +254,9 @@ fn execute_watch(args: Vec<Value>) -> Result<Value, String> {
 
 /// Check if a path inside the workspace changed within a bounded wait window.
 fn execute_changed(args: Vec<Value>) -> Result<Value, String> {
+    if crate::task::is_current_cancelled() {
+        return Err("error[E-task-0001]: TaskCancelled".to_string());
+    }
     if args.is_empty() {
         return Err("fs.changed requires at least 1 argument (path)".to_string());
     }
@@ -354,6 +370,243 @@ mod tests {
 
         assert!(res.is_ok(), "fs.changed failed: {:?}", res);
         assert_eq!(res.unwrap(), Value::Bool(false));
+
+        teardown(&ws);
+    }
+
+    #[test]
+    fn test_fs_watch_respects_task_cancellation() {
+        let _guard = crate::workspace::WS_TEST_LOCK.lock().unwrap();
+        let ws = setup_temp_workspace("cancel_watch");
+
+        let sub = ws.join("watched");
+        fs::create_dir_all(&sub).unwrap();
+
+        let task = crate::task::TaskToken::new(crate::task::TaskId::new("test_cancel_fs_watch"));
+        let task_clone = task.clone();
+
+        // Spawn a thread that runs fs.watch under the task with a long timeout (10s)
+        let watch_handle = std::thread::spawn(move || {
+            crate::task::with_task(task_clone, || {
+                execute(
+                    "fs.watch",
+                    vec![Value::String("watched".to_string()), Value::Int(10000)],
+                )
+            })
+        });
+
+        // Let watch start polling
+        std::thread::sleep(Duration::from_millis(50));
+        let start = Instant::now();
+        task.cancel();
+
+        let res = watch_handle.join().expect("watch thread join");
+        let elapsed = start.elapsed();
+
+        assert!(res.is_err(), "expected error on cancelled watch");
+        let err = res.unwrap_err();
+        assert_eq!(
+            err, "error[E-task-0001]: TaskCancelled",
+            "expected TaskCancelled error, got: {err}"
+        );
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "watch should exit promptly upon cancellation, took {elapsed:?}"
+        );
+
+        // Pre-cancelled task should exit immediately without starting
+        let pre_cancelled_task =
+            crate::task::TaskToken::new(crate::task::TaskId::new("test_pre_cancelled"));
+        pre_cancelled_task.cancel();
+        let pre_res = crate::task::with_task(pre_cancelled_task, || {
+            execute(
+                "fs.watch",
+                vec![Value::String("watched".to_string()), Value::Int(5000)],
+            )
+        });
+        assert_eq!(pre_res.unwrap_err(), "error[E-task-0001]: TaskCancelled");
+
+        // fs.changed should also exit promptly when cancelled
+        let changed_task =
+            crate::task::TaskToken::new(crate::task::TaskId::new("test_cancel_fs_changed"));
+        let changed_clone = changed_task.clone();
+        let changed_handle = std::thread::spawn(move || {
+            crate::task::with_task(changed_clone, || {
+                execute(
+                    "fs.changed",
+                    vec![Value::String("watched".to_string()), Value::Int(10000)],
+                )
+            })
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        changed_task.cancel();
+        let changed_res = changed_handle.join().expect("changed thread join");
+        assert_eq!(
+            changed_res.unwrap_err(),
+            "error[E-task-0001]: TaskCancelled"
+        );
+
+        teardown(&ws);
+    }
+
+    #[test]
+    fn test_fs_watch_detects_file_removal_in_directory() {
+        let _guard = crate::workspace::WS_TEST_LOCK.lock().unwrap();
+        let ws = setup_temp_workspace("detects_removal_dir");
+
+        let sub = ws.join("watched");
+        fs::create_dir_all(&sub).unwrap();
+        let target_file = sub.join("sample.txt");
+        {
+            let mut f = File::create(&target_file).unwrap();
+            f.write_all(b"sample file to delete").unwrap();
+            f.sync_all().unwrap();
+        }
+
+        // Spawn thread that deletes the file shortly after watching starts
+        let target_clone = target_file.clone();
+        let handle = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(60));
+            fs::remove_file(&target_clone).unwrap();
+        });
+
+        let res = execute(
+            "fs.watch",
+            vec![Value::String("watched".to_string()), Value::Int(1500)],
+        );
+        handle.join().unwrap();
+
+        assert!(res.is_ok(), "fs.watch failed: {:?}", res);
+        let val = res.unwrap();
+        if let Value::List(events) = val {
+            assert!(!events.is_empty(), "expected events, got empty list");
+            let removed_event = events.iter().find(|e| {
+                if let Value::Map(m) = e {
+                    m.get("kind") == Some(&Value::String("removed".to_string()))
+                } else {
+                    false
+                }
+            });
+            assert!(
+                removed_event.is_some(),
+                "expected removed event in {:?}",
+                events
+            );
+            if let Some(Value::Map(m)) = removed_event {
+                assert_eq!(
+                    m.get("path"),
+                    Some(&Value::String("sample.txt".to_string())),
+                    "expected path to be sample.txt"
+                );
+            }
+        } else {
+            panic!("expected Value::List, got {:?}", val);
+        }
+
+        teardown(&ws);
+    }
+
+    #[test]
+    fn test_fs_watch_detects_direct_file_removal() {
+        let _guard = crate::workspace::WS_TEST_LOCK.lock().unwrap();
+        let ws = setup_temp_workspace("detects_file_removal");
+
+        let target_file = ws.join("target_file.txt");
+        {
+            let mut f = File::create(&target_file).unwrap();
+            f.write_all(b"direct file to remove").unwrap();
+            f.sync_all().unwrap();
+        }
+
+        let target_clone = target_file.clone();
+        let handle = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(60));
+            fs::remove_file(&target_clone).unwrap();
+        });
+
+        let res = execute(
+            "fs.watch",
+            vec![
+                Value::String("target_file.txt".to_string()),
+                Value::Int(1500),
+            ],
+        );
+        handle.join().unwrap();
+
+        assert!(res.is_ok(), "fs.watch failed: {:?}", res);
+        let val = res.unwrap();
+        if let Value::List(events) = val {
+            assert!(!events.is_empty(), "expected events, got empty list");
+            let removed_event = events.iter().find(|e| {
+                if let Value::Map(m) = e {
+                    m.get("kind") == Some(&Value::String("removed".to_string()))
+                } else {
+                    false
+                }
+            });
+            assert!(
+                removed_event.is_some(),
+                "expected removed event in {:?}",
+                events
+            );
+            if let Some(Value::Map(m)) = removed_event {
+                assert_eq!(
+                    m.get("path"),
+                    Some(&Value::String("target_file.txt".to_string())),
+                    "expected path to be target_file.txt"
+                );
+            }
+        } else {
+            panic!("expected Value::List, got {:?}", val);
+        }
+
+        teardown(&ws);
+    }
+
+    #[test]
+    fn test_fs_watch_handles_watched_directory_removal_without_panic() {
+        let _guard = crate::workspace::WS_TEST_LOCK.lock().unwrap();
+        let ws = setup_temp_workspace("removal_dir_all");
+
+        let sub = ws.join("watched_folder");
+        fs::create_dir_all(&sub).unwrap();
+        let nested_file = sub.join("nested.txt");
+        {
+            let mut f = File::create(&nested_file).unwrap();
+            f.write_all(b"nested content").unwrap();
+            f.sync_all().unwrap();
+        }
+
+        let sub_clone = sub.clone();
+        let handle = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(60));
+            let _ = fs::remove_dir_all(&sub_clone);
+        });
+
+        let res = execute(
+            "fs.watch",
+            vec![
+                Value::String("watched_folder".to_string()),
+                Value::Int(1500),
+            ],
+        );
+        handle.join().unwrap();
+
+        assert!(res.is_ok(), "fs.watch failed on folder removal: {:?}", res);
+        let val = res.unwrap();
+        if let Value::List(events) = val {
+            assert!(!events.is_empty(), "expected removal events for entries");
+            let found = events.iter().any(|e| {
+                if let Value::Map(m) = e {
+                    m.get("kind") == Some(&Value::String("removed".to_string()))
+                } else {
+                    false
+                }
+            });
+            assert!(found, "expected at least one removed event in {:?}", events);
+        } else {
+            panic!("expected Value::List, got {:?}", val);
+        }
 
         teardown(&ws);
     }

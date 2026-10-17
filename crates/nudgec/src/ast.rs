@@ -428,6 +428,8 @@ pub enum Item {
         params: Vec<Param>,
         ret: TypeExpr,
         effects: Vec<String>,
+        #[serde(default)]
+        cost_bound: Option<Expr>,
         body: Vec<Stmt>,
     },
     Tool {
@@ -671,6 +673,7 @@ mod tests {
                     "Decision".to_string(),
                     "Computer".to_string(),
                 ],
+                cost_bound: None,
                 body: vec![
                     Stmt {
                         kind: StmtKind::Let {

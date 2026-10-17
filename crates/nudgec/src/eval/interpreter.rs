@@ -956,6 +956,11 @@ impl Interpreter {
         kwargs: &[(String, Expr)],
         env: &Rc<RefCell<Env>>,
     ) -> Result<Option<NudgeVal>, String> {
+        if matches!(name, "stack" | "box" | "container") {
+            return Err(format!(
+                "error[E1002]: invalid or unknown UI component '{name}': check the element combinator name and its children or properties"
+            ));
+        }
         if name == "column" || name == "row" {
             let mut elem = nudge_runtime::ui::UiElement::new(name);
             for (k, v_expr) in kwargs {
@@ -1953,6 +1958,24 @@ impl Interpreter {
             name: method_name,
         } = &func.kind
         {
+            if let ExprKind::Ident(prefix) = &obj.kind {
+                if prefix == "ui" {
+                    if matches!(
+                        method_name.as_str(),
+                        "column" | "row" | "text" | "button" | "input"
+                    ) {
+                        if let Some(ui_elem) =
+                            self.eval_ui_combinator(method_name, args, kwargs, env)?
+                        {
+                            return Ok(ui_elem);
+                        }
+                    } else {
+                        return Err(format!(
+                            "error[E1002]: invalid or unknown UI component 'ui.{method_name}': check the element combinator name and its children or properties"
+                        ));
+                    }
+                }
+            }
             let target_val = self.eval_expr(obj, env)?;
             match target_val {
                 NudgeVal::AgentRef(agent_name) => {
@@ -2356,8 +2379,13 @@ impl Interpreter {
                         .map_err(|e| format!("error[E-native-0203]: {name}: {e}"))?;
                     call_args.push(converted);
                 }
-                let result = nudge_runtime::workspace::execute(name, call_args)
-                    .map_err(|e| format!("error[E-native-0202]: {name} failed: {e}"))?;
+                let result = nudge_runtime::workspace::execute(name, call_args).map_err(|e| {
+                    if e.starts_with("error[") {
+                        e
+                    } else {
+                        format!("error[E-native-0202]: {name} failed: {e}")
+                    }
+                })?;
                 value_to_nudgeval(&result).map_err(|e| format!("error[E-native-0203]: {name}: {e}"))
             }
             "store.get" | "store.set" | "store.has" | "store.delete" | "store.keys" => {
@@ -2367,9 +2395,15 @@ impl Interpreter {
                         .map_err(|e| format!("error[E-native-0203]: {name}: {e}"))?;
                     call_args.push(converted);
                 }
-                let result = nudge_runtime::store::execute(name, call_args)
-                    .map_err(|e| format!("error[E-native-0202]: {name} failed: {e}"))?;
-                value_to_nudgeval(&result).map_err(|e| format!("error[E-native-0203]: {name}: {e}"))
+                let result = nudge_runtime::store::execute(name, call_args).map_err(|e| {
+                    if e.starts_with("error[") {
+                        e
+                    } else {
+                        format!("error[E-native-0202]: {name} failed: {e}")
+                    }
+                })?;
+                value_to_nudgeval(&result)
+                    .map_err(|e| format!("error[E0913]: store schema mismatch: {name}: {e}"))
             }
             "fs.watch" | "fs.changed" => {
                 let mut call_args = Vec::with_capacity(args.len());
