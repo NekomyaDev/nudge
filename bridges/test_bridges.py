@@ -10,9 +10,9 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from bridges.crewai_ntf import task_to_ntf, tool_use_to_ntf
+from bridges.crewai_ntf import CrewAINTFTracer, task_to_ntf, tool_use_to_ntf
 from bridges.langchain_ntf import NTFTracer, llm_result_to_ntf
-from bridges.langgraph_ntf import step_to_ntf
+from bridges.langgraph_ntf import LangGraphNTFTracer, step_to_ntf
 
 
 class TestBridges(unittest.TestCase):
@@ -46,6 +46,48 @@ class TestBridges(unittest.TestCase):
             data = json.loads(line)
             self.assertEqual(data["outcome"], "error")
             self.assertEqual(data["error"], "connection dropped")
+
+    def test_langgraph_tracer(self):
+        with tempfile.NamedTemporaryFile("w+", suffix=".jsonl") as f:
+            tracer = LangGraphNTFTracer(f.name)
+            tracer.on_chain_start({"name": "planner"}, {"goal": "analyze"})
+            rec1 = tracer.on_chain_end({"steps": ["step1", "step2"]})
+            self.assertEqual(rec1["kind"], "fn.return")
+            self.assertEqual(rec1["fn"], "planner")
+            self.assertEqual(rec1["outcome"], "ok")
+
+            rec2 = tracer.on_tool_end("docs found", name="search_tool", input="search query")
+            self.assertEqual(rec2["kind"], "tool.call")
+            self.assertEqual(rec2["tool"], "search_tool")
+
+            tracer.on_chain_start({"name": "executor"}, {})
+            rec3 = tracer.on_chain_error(RuntimeError("step timeout"))
+            self.assertEqual(rec3["outcome"], "error")
+            self.assertEqual(rec3["error"], "step timeout")
+
+            f.seek(0)
+            lines = [json.loads(line) for line in f.readlines()]
+            self.assertEqual(len(lines), 3)
+
+    def test_crewai_tracer(self):
+        with tempfile.NamedTemporaryFile("w+", suffix=".jsonl") as f:
+            tracer = CrewAINTFTracer(f.name)
+            rec1 = tracer.on_task_completed("researcher", "find articles", {"count": 3})
+            self.assertEqual(rec1["kind"], "llm.call")
+            self.assertEqual(rec1["agent"], "researcher")
+            self.assertEqual(rec1["outcome"], "ok")
+
+            rec2 = tracer.on_tool_use("fetch_page", "https://example.com", "page content")
+            self.assertEqual(rec2["kind"], "tool.call")
+            self.assertEqual(rec2["tool"], "fetch_page")
+
+            rec3 = tracer.on_task_error("writer", "draft summary", RuntimeError("quota exceeded"))
+            self.assertEqual(rec3["outcome"], "error")
+            self.assertIn("quota exceeded", rec3["error"])
+
+            f.seek(0)
+            lines = [json.loads(line) for line in f.readlines()]
+            self.assertEqual(len(lines), 3)
 
 
 class ComputerBridgeContractTests(unittest.TestCase):
