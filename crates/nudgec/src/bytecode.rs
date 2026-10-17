@@ -1082,13 +1082,16 @@ pub fn compile_with_entry(items: &[ast::Item], entry: &str) -> Result<Program, S
 
 fn compile_internal(items: &[ast::Item], expected_entry: Option<&str>) -> Result<Program, String> {
     // Static type validation matching reference compiler passes (Issue #102)
-    let check_errs = crate::check::check(items);
-    if !check_errs.is_empty() {
-        let msgs: Vec<String> = check_errs
-            .iter()
-            .map(|e| format!("error[{}]: {}", e.code, e.msg))
-            .collect();
-        return Err(msgs.join("\n"));
+    #[cfg(feature = "compiler")]
+    {
+        let check_errs = crate::check::check(items);
+        if !check_errs.is_empty() {
+            let msgs: Vec<String> = check_errs
+                .iter()
+                .map(|e| format!("error[{}]: {}", e.code, e.msg))
+                .collect();
+            return Err(msgs.join("\n"));
+        }
     }
 
     let mut tool_names = Vec::new();
