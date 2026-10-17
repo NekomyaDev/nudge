@@ -53,6 +53,8 @@ pub mod serve;
 #[cfg(feature = "compiler")]
 pub mod standalone;
 #[cfg(feature = "compiler")]
+pub mod traceaudit;
+#[cfg(feature = "compiler")]
 pub mod tracecheck;
 #[cfg(feature = "compiler")]
 pub mod tracediff;

@@ -90,6 +90,16 @@ fn main() {
                         .and_then(|q| q.as_str())
                         .unwrap_or("");
 
+                    if tool_name == "hang" || q == "hang" {
+                        loop {
+                            std::thread::sleep(std::time::Duration::from_secs(3600));
+                        }
+                    }
+
+                    if tool_name == "crash" || q == "crash" {
+                        std::process::exit(1);
+                    }
+
                     let resp = if tool_name == "web" {
                         serde_json::json!({
                             "jsonrpc": "2.0",

@@ -26,6 +26,13 @@ pub struct CheckError {
     pub span: Option<Span>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum VerificationStage {
+    Unverified,
+    Validated,
+    Verified,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 enum Ty {
     Int,
@@ -37,6 +44,8 @@ enum Ty {
     List(Box<Ty>),
     Record(Vec<(String, Ty)>),
     Refine(Box<Ty>, String),
+    Confidence(Box<Ty>, u32), // confidence threshold in basis points: 0..=10000 (8500 = 0.85)
+    Stage(Box<Ty>, VerificationStage),
     View,
     Task(Box<Ty>),
 }
@@ -56,6 +65,15 @@ impl fmt::Display for Ty {
                 write!(f, "{{{}}}", inner.join(", "))
             }
             Ty::Refine(base, name) => write!(f, "{base} @{name}"),
+            Ty::Confidence(inner, bp) => {
+                let score = (*bp as f64) / 10000.0;
+                write!(f, "{inner} @confidence({score})")
+            }
+            Ty::Stage(inner, stage) => match stage {
+                VerificationStage::Unverified => write!(f, "Unverified[{inner}]"),
+                VerificationStage::Validated => write!(f, "Validated[{inner}]"),
+                VerificationStage::Verified => write!(f, "Verified[{inner}]"),
+            },
             Ty::View => write!(f, "View"),
             Ty::Task(inner) => write!(f, "Task[{inner}]"),
         }
@@ -142,10 +160,70 @@ fn resolve(
         ),
         TypeExpr::Refine(base, name, args) => {
             validate_refinement(name, args, errs);
-            Ty::Refine(Box::new(resolve(base, g, visiting, errs)), name.clone())
+            let inner = resolve(base, g, visiting, errs);
+            match name.as_str() {
+                "confidence" => {
+                    let score = if args.len() == 1 {
+                        match &args[0].kind {
+                            ExprKind::Int(v) if *v == 0 => Some(0),
+                            ExprKind::Int(v) if *v == 1 => Some(10000),
+                            ExprKind::Float(f) if *f >= 0.0 && *f <= 1.0 => {
+                                Some((*f * 10000.0).round() as u32)
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    if let Some(bp) = score {
+                        Ty::Confidence(Box::new(inner), bp)
+                    } else {
+                        Ty::Refine(Box::new(inner), name.clone())
+                    }
+                }
+                "stage" => {
+                    let st = if args.len() == 1 {
+                        match &args[0].kind {
+                            ExprKind::Ident(s) | ExprKind::Str(s) => match s.as_str() {
+                                "unverified" => Some(VerificationStage::Unverified),
+                                "validated" => Some(VerificationStage::Validated),
+                                "verified" => Some(VerificationStage::Verified),
+                                _ => None,
+                            },
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    if let Some(s) = st {
+                        Ty::Stage(Box::new(inner), s)
+                    } else {
+                        Ty::Refine(Box::new(inner), name.clone())
+                    }
+                }
+                "unverified" => Ty::Stage(Box::new(inner), VerificationStage::Unverified),
+                "validated" => Ty::Stage(Box::new(inner), VerificationStage::Validated),
+                "verified" => Ty::Stage(Box::new(inner), VerificationStage::Verified),
+                _ => Ty::Refine(Box::new(inner), name.clone()),
+            }
         }
         TypeExpr::Generic(name, args) => match name.as_str() {
             "Task" if args.len() == 1 => Ty::Task(Box::new(resolve(&args[0], g, visiting, errs))),
+            "Unverified" if args.len() == 1 => Ty::Stage(
+                Box::new(resolve(&args[0], g, visiting, errs)),
+                VerificationStage::Unverified,
+            ),
+            "Validated" if args.len() == 1 => Ty::Stage(
+                Box::new(resolve(&args[0], g, visiting, errs)),
+                VerificationStage::Validated,
+            ),
+            "Verified" if args.len() == 1 => Ty::Stage(
+                Box::new(resolve(&args[0], g, visiting, errs)),
+                VerificationStage::Verified,
+            ),
+            "Confidence" if args.len() == 1 => {
+                Ty::Confidence(Box::new(resolve(&args[0], g, visiting, errs)), 0)
+            }
             _ => {
                 errs.push(CheckError {
                     span: None,
@@ -193,10 +271,59 @@ fn validate_refinement(name: &str, args: &[Expr], errs: &mut Vec<CheckError>) {
                 });
             }
         }
+        "confidence" => {
+            let valid = if args.len() == 1 {
+                match &args[0].kind {
+                    ExprKind::Int(v) => *v == 0 || *v == 1,
+                    ExprKind::Float(f) => (0.0..=1.0).contains(f),
+                    _ => false,
+                }
+            } else {
+                false
+            };
+            if !valid {
+                errs.push(CheckError {
+                    span: None,
+                    code: "E0202",
+                    msg: format!(
+                        "@confidence expects a numeric threshold between 0.0 and 1.0, e.g. @confidence(0.8) — got {args:?}"
+                    ),
+                });
+            }
+        }
+        "stage" => {
+            let ok = args.len() == 1
+                && match &args[0].kind {
+                    ExprKind::Ident(s) | ExprKind::Str(s) => {
+                        matches!(s.as_str(), "unverified" | "validated" | "verified")
+                    }
+                    _ => false,
+                };
+            if !ok {
+                errs.push(CheckError {
+                    span: None,
+                    code: "E0202",
+                    msg: format!(
+                        "@stage expects one of (unverified, validated, verified) — got {args:?}"
+                    ),
+                });
+            }
+        }
+        "unverified" | "validated" | "verified" => {
+            if !args.is_empty() {
+                errs.push(CheckError {
+                    span: None,
+                    code: "E0202",
+                    msg: format!("@{name} expects no arguments, got {args:?}"),
+                });
+            }
+        }
         _ => errs.push(CheckError {
             span: None,
             code: "E0202",
-            msg: format!("unknown refinement '@{name}' (known: @range, @format)"),
+            msg: format!(
+                "unknown refinement '@{name}' (known: @range, @format, @confidence, @stage)"
+            ),
         }),
     }
 }
@@ -221,6 +348,22 @@ fn assignable(src: &Ty, dst: &Ty) -> bool {
                         .unwrap_or(false)
                 })
         }
+        // Verification stage subtyping:
+        // Verified[T] <: Validated[T] <: Unverified[T]
+        (Ty::Stage(a, src_stage), Ty::Stage(b, dst_stage)) => {
+            src_stage >= dst_stage && assignable(a, b)
+        }
+        (a, Ty::Stage(b, dst_stage)) => {
+            *dst_stage == VerificationStage::Unverified && assignable(a, b)
+        }
+        (Ty::Stage(a, _), b) => assignable(a, b),
+
+        // Confidence subtyping:
+        // T @confidence(c1) <: T @confidence(c2) iff c1 >= c2
+        (Ty::Confidence(a, c1), Ty::Confidence(b, c2)) => c1 >= c2 && assignable(a, b),
+        (a, Ty::Confidence(b, c2)) => *c2 == 0 && assignable(a, b),
+        (Ty::Confidence(a, _), b) => assignable(a, b),
+
         (Ty::Refine(a, _), b) => assignable(a, b),
         (a, Ty::Refine(b, _)) => assignable(a, b),
         _ => false,
@@ -230,6 +373,14 @@ fn assignable(src: &Ty, dst: &Ty) -> bool {
 fn elem_of(t: &Ty) -> Ty {
     match t {
         Ty::List(e) => (**e).clone(),
+        Ty::Stage(inner, st) => match elem_of(inner) {
+            Ty::Unknown => Ty::Unknown,
+            other => Ty::Stage(Box::new(other), *st),
+        },
+        Ty::Confidence(inner, c) => match elem_of(inner) {
+            Ty::Unknown => Ty::Unknown,
+            other => Ty::Confidence(Box::new(other), *c),
+        },
         _ => Ty::Unknown,
     }
 }
@@ -1796,43 +1947,50 @@ fn check_expr_pos(
             }
             Ty::Unknown
         }
-        ExprKind::Field { obj, name } => match check_expr(obj, locals, g, errs) {
-            Ty::Task(_) => {
-                if name == "id" || name == "state" || name == "status" {
-                    Ty::Str
-                } else {
-                    errs.push(CheckError {
-                        span: None,
-                        code: "E0101",
-                        msg: format!("task has no field '{name}'"),
-                    });
-                    Ty::Unknown
-                }
+        ExprKind::Field { obj, name } => {
+            let mut obj_ty = check_expr(obj, locals, g, errs);
+            while let Ty::Stage(inner, _) | Ty::Confidence(inner, _) | Ty::Refine(inner, _) = obj_ty
+            {
+                obj_ty = *inner;
             }
-            Ty::Record(fs) => {
-                // map-shaped record (v1.2.1): `{string: T}` is a string-keyed
-                // map — any field name resolves to the value type, matching
-                // the schema lowering in codegen
-                if fs.len() == 1 && is_builtin_type_name(&fs[0].0) {
-                    return fs[0].1.clone();
-                }
-                match fs.iter().find(|(k, _)| k == name) {
-                    Some((_, t)) => t.clone(),
-                    None => {
-                        let did = crate::hints::closest(name, fs.iter().map(|(k, _)| k))
-                            .map(|c| format!(", did you mean '{c}'?"))
-                            .unwrap_or_default();
+            match obj_ty {
+                Ty::Task(_) => {
+                    if name == "id" || name == "state" || name == "status" {
+                        Ty::Str
+                    } else {
                         errs.push(CheckError {
                             span: None,
                             code: "E0101",
-                            msg: format!("record has no field '{name}'{did}"),
+                            msg: format!("task has no field '{name}'"),
                         });
                         Ty::Unknown
                     }
                 }
+                Ty::Record(fs) => {
+                    // map-shaped record (v1.2.1): `{string: T}` is a string-keyed
+                    // map — any field name resolves to the value type, matching
+                    // the schema lowering in codegen
+                    if fs.len() == 1 && is_builtin_type_name(&fs[0].0) {
+                        return fs[0].1.clone();
+                    }
+                    match fs.iter().find(|(k, _)| k == name) {
+                        Some((_, t)) => t.clone(),
+                        None => {
+                            let did = crate::hints::closest(name, fs.iter().map(|(k, _)| k))
+                                .map(|c| format!(", did you mean '{c}'?"))
+                                .unwrap_or_default();
+                            errs.push(CheckError {
+                                span: None,
+                                code: "E0101",
+                                msg: format!("record has no field '{name}'{did}"),
+                            });
+                            Ty::Unknown
+                        }
+                    }
+                }
+                _ => Ty::Unknown,
             }
-            _ => Ty::Unknown,
-        },
+        }
         ExprKind::Binary { op, l, r } => {
             let lt = check_expr(l, locals, g, errs);
             let rt_ = check_expr(r, locals, g, errs);
@@ -1863,7 +2021,9 @@ fn check_expr_pos(
                         match t {
                             // money literals lower to float (design §4.3)
                             Ty::Int | Ty::Float => true,
-                            Ty::Refine(b, ..) => matches!(b.as_ref(), Ty::Int | Ty::Float),
+                            Ty::Refine(b, ..) | Ty::Confidence(b, ..) | Ty::Stage(b, ..) => {
+                                matches!(b.as_ref(), Ty::Int | Ty::Float)
+                            }
                             _ => false,
                         }
                     }
@@ -1900,7 +2060,9 @@ fn check_expr_pos(
                     // `true + 1` / `"a" * 3` compiled with no diagnostic
                     let numeric_ty = |t: &Ty| match t {
                         Ty::Int | Ty::Float => true,
-                        Ty::Refine(b, ..) => matches!(b.as_ref(), Ty::Int | Ty::Float),
+                        Ty::Refine(b, ..) | Ty::Confidence(b, ..) | Ty::Stage(b, ..) => {
+                            matches!(b.as_ref(), Ty::Int | Ty::Float)
+                        }
                         _ => false,
                     };
                     if !numeric_ty(&lt) || !numeric_ty(&rt_) {
@@ -4913,6 +5075,129 @@ fn f(c: bool) -> string uses IO {
         assert!(
             msg.contains("fn 'f' declared costs <"),
             "message was: {msg}"
+        );
+    }
+
+    #[test]
+    fn confidence_refinement_validation() {
+        // Valid confidence bounds: 0.0, 1.0, and 0.85
+        let errs = check_src("type C1 = float @confidence(0.85)\ntype C2 = float @confidence(1)\ntype C3 = float @confidence(0)");
+        assert!(errs.is_empty(), "expected valid confidence, got {errs:?}");
+
+        // Out-of-range confidence > 1.0
+        let errs_high = check_src("type Bad = float @confidence(1.5)");
+        assert!(
+            errs_high
+                .iter()
+                .any(|e| e.code == "E0202" && e.msg.contains("@confidence")),
+            "expected E0202 for confidence > 1.0, got {errs_high:?}"
+        );
+
+        // Out-of-range negative confidence
+        let errs_neg = check_src("type Bad = float @confidence(-0.1)");
+        assert!(
+            errs_neg
+                .iter()
+                .any(|e| e.code == "E0202" && e.msg.contains("@confidence")),
+            "expected E0202 for negative confidence, got {errs_neg:?}"
+        );
+    }
+
+    #[test]
+    fn confidence_subtyping_and_threshold_enforcement() {
+        let valid_src = r#"
+            type Plan = { title: string }
+            fn deploy(p: Plan @confidence(0.85)) -> int { 1 }
+            fn caller(high: Plan @confidence(0.90)) -> int {
+                deploy(high)
+            }
+        "#;
+        let errs = check_src(valid_src);
+        assert!(
+            errs.is_empty(),
+            "expected subtyping high confidence -> lower threshold to succeed, got {errs:?}"
+        );
+
+        let invalid_src = r#"
+            type Plan = { title: string }
+            fn deploy(p: Plan @confidence(0.85)) -> int { 1 }
+            fn caller(low: Plan @confidence(0.70)) -> int {
+                deploy(low)
+            }
+        "#;
+        let errs = check_src(invalid_src);
+        assert!(
+            errs.iter().any(|e| e.code == "E0201"),
+            "expected E0201 when confidence is insufficient, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn verification_stages_subtyping_and_lattice() {
+        let valid_src = r#"
+            type Action = { cmd: string }
+            fn sink_verified(a: Verified[Action]) -> int { 1 }
+            fn sink_validated(a: Validated[Action]) -> int { 2 }
+            fn sink_unverified(a: Unverified[Action]) -> int { 3 }
+
+            fn caller(v: Verified[Action], val: Validated[Action]) -> int {
+                sink_verified(v)
+                sink_validated(v)
+                sink_unverified(v)
+                sink_validated(val)
+                sink_unverified(val)
+                42
+            }
+        "#;
+        let errs = check_src(valid_src);
+        assert!(
+            errs.is_empty(),
+            "expected covariant verification stage subtyping, got {errs:?}"
+        );
+
+        // Unverified passed to Verified sink -> E0201
+        let err_unv_to_ver = check_src(
+            r#"
+            type Action = { cmd: string }
+            fn execute(a: Verified[Action]) -> int { 1 }
+            fn caller(raw: Unverified[Action]) -> int {
+                execute(raw)
+            }
+        "#,
+        );
+        assert!(
+            err_unv_to_ver.iter().any(|e| e.code == "E0201"),
+            "expected E0201 for Unverified -> Verified, got {err_unv_to_ver:?}"
+        );
+
+        // Validated passed to Verified sink -> E0201
+        let err_val_to_ver = check_src(
+            r#"
+            type Action = { cmd: string }
+            fn execute(a: Verified[Action]) -> int { 1 }
+            fn caller(val: Validated[Action]) -> int {
+                execute(val)
+            }
+        "#,
+        );
+        assert!(
+            err_val_to_ver.iter().any(|e| e.code == "E0201"),
+            "expected E0201 for Validated -> Verified, got {err_val_to_ver:?}"
+        );
+    }
+
+    #[test]
+    fn verification_stage_record_field_access() {
+        let src = r#"
+            type Doc = { score: float, text: string }
+            fn inspect(d: Validated[Doc]) -> float {
+                d.score
+            }
+        "#;
+        let errs = check_src(src);
+        assert!(
+            errs.is_empty(),
+            "expected record field access on Validated[Doc] to typecheck, got {errs:?}"
         );
     }
 

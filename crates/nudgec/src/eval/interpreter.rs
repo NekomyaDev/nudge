@@ -2326,8 +2326,43 @@ impl Interpreter {
             }
         }
 
-        let result_text = nudge_runtime::mcp::call_tool(&server, name, args_json.clone())
-            .map_err(|e| format!("error[E-native-0201]: {e}"))?;
+        let mut timeout_ms = None;
+        for (k, v) in &evaluated_kwargs {
+            if k == "timeout" || k == "timeout_ms" {
+                if let NudgeVal::Int(i) = v {
+                    if *i > 0 {
+                        timeout_ms = Some(*i as u64);
+                    }
+                } else if let NudgeVal::Float(f) = v {
+                    if *f > 0.0 {
+                        timeout_ms = Some((*f * 1000.0) as u64);
+                    }
+                }
+            }
+        }
+        if timeout_ms.is_none() {
+            for (fname, expr) in fields {
+                if fname == "timeout" || fname == "timeout_ms" {
+                    if let Ok(NudgeVal::Int(i)) = self.eval_expr(expr, env) {
+                        if i > 0 {
+                            timeout_ms = Some(i as u64);
+                        }
+                    } else if let Ok(NudgeVal::Float(f)) = self.eval_expr(expr, env) {
+                        if f > 0.0 {
+                            timeout_ms = Some((f * 1000.0) as u64);
+                        }
+                    }
+                }
+            }
+        }
+
+        let result_text = nudge_runtime::mcp::call_tool_with_timeout(
+            &server,
+            name,
+            args_json.clone(),
+            timeout_ms,
+        )
+        .map_err(|e| format!("error[E-native-0201]: {e}"))?;
 
         let ret_val = convert_tool_output(ret, &self.aliases, &result_text);
 
@@ -3901,7 +3936,12 @@ fn type_schema_json(
                 }
             }
         }
-        TypeExpr::Generic(name, _) => json!({"type": "object", "description": name}),
+        TypeExpr::Generic(name, args) => match name.as_str() {
+            "Unverified" | "Validated" | "Verified" | "Confidence" if args.len() == 1 => {
+                type_schema_json(&args[0], aliases, depth + 1)
+            }
+            _ => json!({"type": "object", "description": name}),
+        },
     }
 }
 
@@ -4018,6 +4058,14 @@ pub fn convert_tool_output(
             }
         }
         TypeExpr::Refine(inner, ..) => convert_tool_output(inner, aliases, text),
+        TypeExpr::Generic(name, args)
+            if matches!(
+                name.as_str(),
+                "Unverified" | "Validated" | "Verified" | "Confidence"
+            ) && args.len() == 1 =>
+        {
+            convert_tool_output(&args[0], aliases, text)
+        }
         _ => NudgeVal::Str(text.to_string()),
     }
 }
@@ -4451,6 +4499,66 @@ pub(crate) mod tests {
         assert!(
             err.contains("unknown MCP server 'unregistered'"),
             "expected unknown MCP server error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_mcp_tool_per_rpc_timeout_in_interpreter() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let mock_bin = option_env!("CARGO_BIN_EXE_mock_mcp_nudgec")
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                std::env::var("CARGO_BIN_EXE_mock_mcp_nudgec")
+                    .ok()
+                    .map(std::path::PathBuf::from)
+            })
+            .or_else(|| {
+                let me = std::env::current_exe().ok()?;
+                let dir = me.parent()?.parent()?;
+                let p = dir.join("mock_mcp_nudgec");
+                if p.exists() {
+                    Some(p)
+                } else {
+                    let p2 = dir.join("mock_mcp");
+                    if p2.exists() {
+                        Some(p2)
+                    } else {
+                        None
+                    }
+                }
+            })
+            .expect("could not locate mock_mcp binary");
+        let registry_json = format!(r#"{{"search": {{"command": "{}"}}}}"#, mock_bin.display());
+
+        let _env_provider = EnvReset::set("NUDGE_PROVIDER", "native");
+        let _env_servers = EnvReset::set("NUDGE_MCP_SERVERS", &registry_json);
+
+        let src = r#"
+            tool web(q: string) -> string {
+                impl: mcp("search").web(q)
+                timeout: 100
+                side_effects: none
+            }
+            fn main() -> string uses Tool {
+                web("hang")
+            }
+        "#;
+
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let start = std::time::Instant::now();
+        let err = run_program(&items, "main", &[]).unwrap_err();
+        let elapsed = start.elapsed();
+
+        assert!(
+            err.contains("error[E-native-0203]: MCP read timeout"),
+            "expected E-native-0203 timeout error, got: {err}"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_millis(1500),
+            "tool timeout must abort in ~100ms (elapsed: {elapsed:?})"
         );
     }
 

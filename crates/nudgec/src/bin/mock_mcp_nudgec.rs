@@ -78,7 +78,7 @@ fn main() {
             Some("tools/call") => {
                 if let Some(id) = id {
                     let params = msg.get("params");
-                    let _tool_name = params
+                    let tool_name = params
                         .and_then(|p| p.get("name"))
                         .and_then(|n| n.as_str())
                         .unwrap_or("");
@@ -87,6 +87,16 @@ fn main() {
                         .and_then(|a| a.get("q"))
                         .and_then(|q| q.as_str())
                         .unwrap_or("");
+
+                    if tool_name == "hang" || q == "hang" {
+                        loop {
+                            std::thread::sleep(std::time::Duration::from_secs(3600));
+                        }
+                    }
+
+                    if tool_name == "crash" || q == "crash" {
+                        std::process::exit(1);
+                    }
 
                     let resp = serde_json::json!({
                         "jsonrpc": "2.0",

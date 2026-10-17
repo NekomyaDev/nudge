@@ -646,7 +646,12 @@ fn ty_ts(t: &TypeExpr, aliases: &HashSet<String>) -> String {
         TypeExpr::List(_) => "any[]".into(),
         TypeExpr::Record(_) => "Record<string, any>".into(),
         TypeExpr::Refine(base, ..) => ty_ts(base, aliases),
-        TypeExpr::Generic(name, _) => format!("/* {name} */ any"),
+        TypeExpr::Generic(name, args) => match name.as_str() {
+            "Unverified" | "Validated" | "Verified" | "Confidence" if args.len() == 1 => {
+                ty_ts(&args[0], aliases)
+            }
+            _ => format!("/* {name} */ any"),
+        },
     }
 }
 
@@ -729,9 +734,12 @@ fn schema_ts(
                 }
             }
         }
-        TypeExpr::Generic(name, _) => {
-            format!("{{\"type\": \"object\", \"description\": \"{name}\"}}")
-        }
+        TypeExpr::Generic(name, args) => match name.as_str() {
+            "Unverified" | "Validated" | "Verified" | "Confidence" if args.len() == 1 => {
+                schema_ts(&args[0], aliases, sigs)
+            }
+            _ => format!("{{\"type\": \"object\", \"description\": \"{name}\"}}"),
+        },
     }
 }
 

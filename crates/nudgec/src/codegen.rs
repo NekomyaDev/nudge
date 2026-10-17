@@ -793,9 +793,12 @@ fn schema_py(t: &TypeExpr, aliases: &HashSet<String>) -> String {
                 }
             }
         }
-        TypeExpr::Generic(name, _) => {
-            format!("{{\"type\": \"object\", \"description\": \"{name}\"}}")
-        }
+        TypeExpr::Generic(name, args) => match name.as_str() {
+            "Unverified" | "Validated" | "Verified" | "Confidence" if args.len() == 1 => {
+                schema_py(&args[0], aliases)
+            }
+            _ => format!("{{\"type\": \"object\", \"description\": \"{name}\"}}"),
+        },
     }
 }
 

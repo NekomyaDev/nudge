@@ -87,7 +87,7 @@ The language thesis ships: **the language where agents are safe to deploy.**
   `NUDGE_PRICING_WARN=0` silences) and an additive `pricing: "unknown"` field on
   the trace record, so replays and cost reports can tell a placeholder from a
   genuinely free call (Ollama / plan-priced MiMo stay exempt)
-- **MCP deadline & lifecycle** — per-RPC timeouts, hung-server cleanup and
+- ~~**MCP deadline & lifecycle**~~ ✅ shipped - per-RPC timeouts, hung-server cleanup and
   restart strategy for persistent MCP sessions
 - ~~**Trace redaction hooks**~~ ✅ shipped (commit `a3e36e4`, issue #104) - filter secrets/PII before records hit disk via fail-closed `TraceWriter::emit` masking while preserving `request_hash` deterministic replay
 - Security conformance suite + a threat-model document; possibly a short

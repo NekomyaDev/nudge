@@ -12,18 +12,19 @@
 //!   nudgec lsp                serve the Language Server Protocol over stdio (v1.0, design §10)
 //!   nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace (v1.2)
 //!   nudgec trace-diff <a.jsonl> <b.jsonl> [--fail-on-regression]  compare two traces; with the flag, exit 1 on regression (v1.2)
+//!   nudgec audit <trace.jsonl> [--json]  EU AI Act compliance audit report over an NTF trace (v1.6)
 
 use nudgec::{
     a2a, ast, check, codegen, codegen_ts, compile, cost, dap, eval, evalcmd, fmt, hints, init,
-    json, learn, lexer, lint, lsp, mcpserver, policysweep, runs, serve, standalone, tracecheck,
-    tracediff, traceexplain, traceview, watch,
+    json, learn, lexer, lint, lsp, mcpserver, policysweep, runs, serve, standalone, traceaudit,
+    tracecheck, tracediff, traceexplain, traceview, watch,
 };
 
 use std::{env, fs, process};
 
 fn print_usage_to(to_stderr: bool) {
     let msg = format!(
-        "nudgec {} — the Nudge compiler\nusage:\n  nudgec fmt   <file.ndg> [--check]   normalize indentation, trim trailing ws, collapse blanks\n  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)\n  nudgec learn [lesson]     the language in seven terminal lessons (run bare for the index)\n  nudgec lex   <file.ndg>   dump token stream\n  nudgec parse <file.ndg>   dump AST\n  nudgec check <file.ndg>   type-check (E0101–E0302)\n  nudgec build <file.ndg> [--standalone] [-o <output>] [--fn <entry>]  check, emit Python (or native binary with --standalone)\n  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts\n  nudgec check <file.ndg> --watch   re-check on every file change (Ctrl-C to stop)\n  nudgec cost  <file.ndg>   static cost report per fn\n  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn\n  nudgec run  <file.ndg> [--fn <name>] [args...]  execute a program fn on the bytecode VM (or the interpreter)\n  nudgec resume <run_id>    continue a crashed run from its last checkpoint\n  nudgec trace-check <t.jsonl> validate a trace against the frozen v1 schema\n  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json\n  nudgec lsp                serve the Language Server Protocol over stdio\n  nudgec trace-html <t.jsonl> [--out file.html]  static single-file viewer (no server, works offline)\n  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace\n  nudgec explain <t.jsonl>    human report over a trace: totals, failures, low-confidence answers\n  nudgec trace-diff <a.jsonl> <b.jsonl> [--fail-on-regression]  compare traces; gate CI on regression\n  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8]\n  nudgec compare <results_a.jsonl> <results_b.jsonl>  two eval runs: which rows flipped\n  nudgec runs  [--run <run_id>]   list recorded agent runs / show one run's state and trace\n  nudgec mcp   <file.ndg> [--fns a,b]   expose program fns as MCP tools over stdio\n  nudgec serve <file.ndg> [--fn <name>] [--port N]   run a program fn as a local HTTP API (POST /run, GET /health)\n  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8]  score a program over a dataset\n  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)",
+        "nudgec {} — the Nudge compiler\nusage:\n  nudgec fmt   <file.ndg> [--check]   normalize indentation, trim trailing ws, collapse blanks\n  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)\n  nudgec learn [lesson]     the language in seven terminal lessons (run bare for the index)\n  nudgec lex   <file.ndg>   dump token stream\n  nudgec parse <file.ndg>   dump AST\n  nudgec check <file.ndg>   type-check (E0101–E0302)\n  nudgec build <file.ndg> [--standalone] [-o <output>] [--fn <entry>]  check, emit Python (or native binary with --standalone)\n  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts\n  nudgec check <file.ndg> --watch   re-check on every file change (Ctrl-C to stop)\n  nudgec cost  <file.ndg>   static cost report per fn\n  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn\n  nudgec run  <file.ndg> [--fn <name>] [args...]  execute a program fn on the bytecode VM (or the interpreter)\n  nudgec resume <run_id>    continue a crashed run from its last checkpoint\n  nudgec trace-check <t.jsonl> validate a trace against the frozen v1 schema\n  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json\n  nudgec lsp                serve the Language Server Protocol over stdio\n  nudgec trace-html <t.jsonl> [--out file.html]  static single-file viewer (no server, works offline)\n  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace\n  nudgec explain <t.jsonl>    human report over a trace: totals, failures, low-confidence answers\n  nudgec trace-diff <a.jsonl> <b.jsonl> [--fail-on-regression]  compare traces; gate CI on regression\n  nudgec audit <trace.jsonl> [--json]       compliance audit report over an NTF trace (EU AI Act)\n  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8]\n  nudgec compare <results_a.jsonl> <results_b.jsonl>  two eval runs: which rows flipped\n  nudgec runs  [--run <run_id>]   list recorded agent runs / show one run's state and trace\n  nudgec mcp   <file.ndg> [--fns a,b]   expose program fns as MCP tools over stdio\n  nudgec serve <file.ndg> [--fn <name>] [--port N]   run a program fn as a local HTTP API (POST /run, GET /health)\n  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8]  score a program over a dataset\n  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)",
         env!("CARGO_PKG_VERSION")
     );
     if to_stderr {
@@ -226,6 +227,39 @@ fn main() {
             "wrote {out} ({} record(s)) — open it in any browser",
             src.lines().filter(|l| !l.trim().is_empty()).count()
         );
+        return;
+    }
+    // `audit` analyzes an NTF trace and produces a compliance report (EU AI Act)
+    if args.len() >= 3 && args[1] == "audit" {
+        let mut json_mode = false;
+        let mut target_file = None;
+        for arg in &args[2..] {
+            if arg == "--json" {
+                json_mode = true;
+            } else if !arg.starts_with('-') && target_file.is_none() {
+                target_file = Some(arg.as_str());
+            } else {
+                eprintln!("error: unknown flag '{arg}'");
+                process::exit(64);
+            }
+        }
+        let file_path = match target_file {
+            Some(f) => f,
+            None => {
+                eprintln!("usage: nudgec audit <trace.jsonl> [--json]");
+                process::exit(64);
+            }
+        };
+        let src = read_src(file_path);
+        let report = traceaudit::audit_trace(&src, Some(file_path));
+        if json_mode {
+            println!("{}", traceaudit::format_json_report(&report));
+        } else {
+            print!(
+                "{}",
+                traceaudit::format_text_report(&report, Some(file_path))
+            );
+        }
         return;
     }
     // `explain` turns a recorded trace into a human report
