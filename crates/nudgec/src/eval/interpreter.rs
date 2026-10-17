@@ -3103,15 +3103,30 @@ impl Interpreter {
         let state_text = state_val.to_string();
 
         let mut model_str = "fake:default".to_string();
+        let mut deadline_ms: Option<u64> = None;
         for (k, v_expr) in options {
             if k == "model" {
                 if let Ok(m) = self.eval_expr(v_expr, env) {
                     model_str = m.to_string();
                 }
+            } else if k == "deadline" {
+                if let Ok(d) = self.eval_expr(v_expr, env) {
+                    match d {
+                        NudgeVal::Int(i) if i > 0 => deadline_ms = Some(i as u64),
+                        NudgeVal::Float(f) if f > 0.0 => deadline_ms = Some(f as u64),
+                        _ => {}
+                    }
+                }
             }
         }
 
         let is_replay = nudge_runtime::trace::replay_active();
+        let provider_config = if is_replay {
+            None
+        } else {
+            resolve_decision_provider(&model_str)?
+        };
+
         let cache_env = std::env::var("NUDGE_DECISION_CACHE").ok();
         let cache_key = if !is_replay && cache_env.is_some() {
             Some(decision_cache_key(&state_text, &model_str, questions))
@@ -3120,7 +3135,7 @@ impl Interpreter {
         };
 
         let mut cache_hit = false;
-        let answers: HashMap<String, NudgeVal> =
+        let mut answers: HashMap<String, NudgeVal> =
             if let (false, Some(ref cache_path), Some(ref key)) =
                 (is_replay, &cache_env, &cache_key)
             {
@@ -3128,16 +3143,49 @@ impl Interpreter {
                     cache_hit = true;
                     cached_answers
                 } else {
-                    let computed = compute_fake_decide(questions, &state_text, &model_str);
+                    let computed = dispatch_decision(
+                        provider_config.as_ref(),
+                        questions,
+                        &state_text,
+                        &model_str,
+                        deadline_ms,
+                    )?;
                     decision_cache_put(cache_path, key, &computed);
                     computed
                 }
             } else {
-                compute_fake_decide(questions, &state_text, &model_str)
+                dispatch_decision(
+                    provider_config.as_ref(),
+                    questions,
+                    &state_text,
+                    &model_str,
+                    deadline_ms,
+                )?
             };
 
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let mut is_overrun = false;
+        if let Some(d) = deadline_ms {
+            if !cache_hit && elapsed_ms > d {
+                is_overrun = true;
+                let strict = std::env::var("NUDGE_DECISION_STRICT")
+                    .map(|v| v == "1" || v == "true")
+                    .unwrap_or(false);
+                if strict {
+                    return Err(format!(
+                        "decision took {elapsed_ms} ms over the {d} ms deadline"
+                    ));
+                }
+                for q_val in answers.values_mut() {
+                    if let NudgeVal::Map(ref mut q_map) = q_val {
+                        q_map.insert("deadline_missed".to_string(), NudgeVal::Bool(true));
+                    }
+                }
+            }
+        }
+
         // `decision.call` NTF record (v1.4): questions keyed by name (the
-        // wire shape), answers as computed, measured latency — replay
+        // wire shape), answers as computed, measured latency -- replay
         // runs stay silent (parity with the Python runtime)
         if nudge_runtime::trace::sink_active() && !nudge_runtime::trace::replay_active() {
             let mut qjson = serde_json::Map::new();
@@ -3162,19 +3210,22 @@ impl Interpreter {
                 }
                 qjson.insert(name.clone(), serde_json::Value::Object(obj));
             }
-            let latency_ms = if cache_hit {
-                0
+            let latency_ms = if cache_hit { 0 } else { elapsed_ms };
+            let outcome = if is_overrun { "deadline_missed" } else { "ok" };
+            let provider_prefix = model_str.split(':').next().unwrap_or("fake");
+            let trace_provider = if provider_prefix != "fake" {
+                provider_prefix
             } else {
-                started.elapsed().as_millis() as u64
+                "fake"
             };
             let mut record = serde_json::json!({
                 "kind": "decision.call",
                 "model": model_str,
-                "provider": std::env::var("NUDGE_PROVIDER").unwrap_or_else(|_| "fake".to_string()),
+                "provider": trace_provider,
                 "questions": qjson,
                 "answers": nudgeval_to_json(&NudgeVal::Map(answers.clone())),
                 "latency_ms": latency_ms,
-                "outcome": "ok",
+                "outcome": outcome,
             });
             if cache_hit {
                 record["cache"] = serde_json::json!("hit");
@@ -3678,6 +3729,911 @@ fn decision_cache_put(path_str: &str, key: &str, answers: &HashMap<String, Nudge
     if std::fs::rename(&temp_path, path).is_err() {
         let _ = std::fs::remove_file(&temp_path);
     }
+}
+
+#[derive(Clone, Debug)]
+enum DecisionProviderConfig {
+    Http { base_url: String },
+    Valen { command: String },
+}
+
+fn resolve_decision_provider(model_str: &str) -> Result<Option<DecisionProviderConfig>, String> {
+    let provider = model_str.split(':').next().unwrap_or(model_str);
+    if std::env::var("NUDGE_PROVIDER").as_deref() == Ok("fake") || provider == "fake" {
+        return Ok(None);
+    }
+    let servers_env = std::env::var("NUDGE_DECISION_SERVERS").map_err(|_| {
+        format!("error[E-decision-0001]: decision provider '{provider}' is not configured -- set NUDGE_DECISION_SERVERS or use the fake provider")
+    })?;
+    if servers_env.trim().is_empty() {
+        return Err(format!("error[E-decision-0001]: decision provider '{provider}' is not configured -- set NUDGE_DECISION_SERVERS or use the fake provider"));
+    }
+    let servers: serde_json::Value = serde_json::from_str(&servers_env)
+        .map_err(|e| format!("error[E-decision-0001]: bad NUDGE_DECISION_SERVERS JSON: {e}"))?;
+    let entry = servers
+        .get(provider)
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| {
+            format!("error[E-decision-0002]: decision provider '{provider}' needs a base_url or command in NUDGE_DECISION_SERVERS")
+        })?;
+
+    if let Some(base_url) = entry.get("base_url").and_then(|v| v.as_str()) {
+        Ok(Some(DecisionProviderConfig::Http {
+            base_url: base_url.to_string(),
+        }))
+    } else if let Some(command) = entry.get("command").and_then(|v| v.as_str()) {
+        if command.trim().is_empty() {
+            Err(format!(
+                "decision provider '{provider}': empty command in NUDGE_DECISION_SERVERS"
+            ))
+        } else {
+            Ok(Some(DecisionProviderConfig::Valen {
+                command: command.to_string(),
+            }))
+        }
+    } else {
+        Err(format!("error[E-decision-0002]: decision provider '{provider}' needs a base_url or command in NUDGE_DECISION_SERVERS"))
+    }
+}
+
+fn dispatch_decision(
+    provider_config: Option<&DecisionProviderConfig>,
+    questions: &[(String, DecisionQ)],
+    state_text: &str,
+    model_str: &str,
+    deadline_ms: Option<u64>,
+) -> Result<HashMap<String, NudgeVal>, String> {
+    match provider_config {
+        None => Ok(compute_fake_decide(questions, state_text, model_str)),
+        Some(DecisionProviderConfig::Http { base_url }) => {
+            http_decide(base_url, questions, state_text, deadline_ms)
+        }
+        Some(DecisionProviderConfig::Valen { command }) => {
+            valen_decide(command, questions, state_text, deadline_ms)
+        }
+    }
+}
+
+fn split_command(command: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    for c in command.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => cur.push(c),
+            None if c == '"' || c == '\'' => quote = Some(c),
+            None if c.is_whitespace() => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            None => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+fn decode_chunked(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let mut line_end = None;
+        for j in i..bytes.len() {
+            if j + 1 < bytes.len() && bytes[j] == b'\r' && bytes[j + 1] == b'\n' {
+                line_end = Some(j);
+                break;
+            }
+        }
+        let Some(le) = line_end else { break };
+        let line = String::from_utf8_lossy(&bytes[i..le]);
+        let hex_str = line.trim().split(';').next().unwrap_or("").trim();
+        let Ok(chunk_size) = usize::from_str_radix(hex_str, 16) else {
+            break;
+        };
+        if chunk_size == 0 {
+            break;
+        }
+        let chunk_start = le + 2;
+        let chunk_end = chunk_start + chunk_size;
+        if chunk_end <= bytes.len() {
+            out.extend_from_slice(&bytes[chunk_start..chunk_end]);
+            i = chunk_end + 2;
+        } else {
+            out.extend_from_slice(&bytes[chunk_start..]);
+            break;
+        }
+    }
+    out
+}
+
+fn http_post_json(
+    url_str: &str,
+    body: &str,
+    headers: &[(&str, &str)],
+    timeout: std::time::Duration,
+) -> Result<(u16, String), String> {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+
+    let rest = if let Some(stripped) = url_str.strip_prefix("http://") {
+        stripped
+    } else if let Some(stripped) = url_str.strip_prefix("https://") {
+        stripped
+    } else {
+        url_str
+    };
+
+    let (host_port, path) = match rest.find('/') {
+        Some(idx) => (&rest[..idx], &rest[idx..]),
+        None => (rest, "/"),
+    };
+
+    let (host, port) = match host_port.find(':') {
+        Some(idx) => (
+            &host_port[..idx],
+            host_port[idx + 1..]
+                .parse::<u16>()
+                .map_err(|e| format!("invalid port in URL '{url_str}': {e}"))?,
+        ),
+        None => (host_port, 80),
+    };
+
+    let socket_addrs: Vec<std::net::SocketAddr> =
+        std::net::ToSocketAddrs::to_socket_addrs(&(host, port))
+            .map_err(|e| {
+                format!(
+                    "decision server unreachable at {url_str}: cannot resolve host '{host}': {e}"
+                )
+            })?
+            .collect();
+    if socket_addrs.is_empty() {
+        return Err(format!(
+            "decision server unreachable at {url_str}: no addresses found for host '{host}'"
+        ));
+    }
+
+    let mut stream_opt = None;
+    for saddr in &socket_addrs {
+        if let Ok(st) = TcpStream::connect_timeout(saddr, timeout) {
+            stream_opt = Some(st);
+            break;
+        }
+    }
+    let mut stream = stream_opt.ok_or_else(|| {
+        format!("decision server unreachable at {url_str}: connection timed out or refused")
+    })?;
+
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(timeout));
+
+    let mut req = format!(
+        "POST {path} HTTP/1.1\r\nHost: {host_port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n",
+        body.len()
+    );
+    for (k, v) in headers {
+        req.push_str(&format!("{k}: {v}\r\n"));
+    }
+    req.push_str("\r\n");
+    req.push_str(body);
+
+    stream
+        .write_all(req.as_bytes())
+        .map_err(|e| format!("decision server unreachable at {url_str}: {e}"))?;
+
+    let mut resp = Vec::new();
+    let mut buf = [0u8; 4096];
+    let mut content_length: Option<usize> = None;
+    let mut header_end_idx: Option<usize> = None;
+    let mut is_chunked = false;
+
+    loop {
+        match stream.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                resp.extend_from_slice(&buf[..n]);
+                if header_end_idx.is_none() {
+                    if let Some(pos) = resp.windows(4).position(|w| w == b"\r\n\r\n") {
+                        header_end_idx = Some(pos + 4);
+                        let header_str = String::from_utf8_lossy(&resp[..pos]);
+                        for line in header_str.lines() {
+                            let line_lower = line.to_lowercase();
+                            if let Some(rest) = line_lower.strip_prefix("content-length:") {
+                                content_length = rest.trim().parse::<usize>().ok();
+                            }
+                            if let Some(rest) = line_lower.strip_prefix("transfer-encoding:") {
+                                if rest.contains("chunked") {
+                                    is_chunked = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                if let (Some(head_end), Some(cl)) = (header_end_idx, content_length) {
+                    if resp.len() >= head_end + cl {
+                        break;
+                    }
+                }
+            }
+            Err(ref e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                if resp.is_empty() {
+                    return Err(format!(
+                        "decision server unreachable at {url_str}: read timed out"
+                    ));
+                }
+                break;
+            }
+            Err(e) => {
+                return Err(format!(
+                    "decision server unreachable at {url_str}: read error: {e}"
+                ));
+            }
+        }
+    }
+
+    let head_end = header_end_idx.unwrap_or(0);
+    let header_str = String::from_utf8_lossy(&resp[..head_end]).to_string();
+    let status_line = header_str.lines().next().unwrap_or("");
+    let status_code: u16 = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    let raw_body = if head_end < resp.len() {
+        &resp[head_end..]
+    } else {
+        &[]
+    };
+    let body_bytes = if is_chunked {
+        decode_chunked(raw_body)
+    } else {
+        raw_body.to_vec()
+    };
+    let body_str = String::from_utf8_lossy(&body_bytes).to_string();
+
+    Ok((status_code, body_str))
+}
+
+fn http_decide(
+    base_url: &str,
+    questions: &[(String, DecisionQ)],
+    state_text: &str,
+    deadline_ms: Option<u64>,
+) -> Result<HashMap<String, NudgeVal>, String> {
+    let url = format!("{}/v1/systemone", base_url.trim_end_matches('/'));
+    let mut q_map = serde_json::Map::new();
+    for (name, q) in questions {
+        let mut q_obj = serde_json::Map::new();
+        match q {
+            DecisionQ::Choice { prompt, options } => {
+                q_obj.insert("type".to_string(), serde_json::json!("choice"));
+                q_obj.insert("instructions".to_string(), serde_json::json!(prompt));
+                let mut crit = serde_json::Map::new();
+                for o in options {
+                    crit.insert(o.clone(), serde_json::json!(o));
+                }
+                q_obj.insert("criteria".to_string(), serde_json::Value::Object(crit));
+            }
+            DecisionQ::Noul { prompt } => {
+                q_obj.insert("type".to_string(), serde_json::json!("noul"));
+                q_obj.insert("instructions".to_string(), serde_json::json!(prompt));
+            }
+            DecisionQ::Score { prompt, levels } => {
+                q_obj.insert("type".to_string(), serde_json::json!("score"));
+                q_obj.insert("instructions".to_string(), serde_json::json!(prompt));
+                q_obj.insert("criteria".to_string(), serde_json::json!(levels));
+            }
+        }
+        q_map.insert(name.clone(), serde_json::Value::Object(q_obj));
+    }
+    let body = serde_json::json!({
+        "state": {
+            "text": state_text
+        },
+        "questions": q_map
+    });
+    let body_str = serde_json::to_string(&body).map_err(|e| e.to_string())?;
+
+    let mut headers = vec![("Content-Type", "application/json")];
+    let api_key = std::env::var("NUDGE_DECISION_API_KEY").ok();
+    let auth_header;
+    if let Some(ref k) = api_key {
+        auth_header = format!("Bearer {k}");
+        headers.push(("Authorization", &auth_header));
+    }
+
+    let timeout_s = (deadline_ms.unwrap_or(30000) / 1000) + 1;
+    let (status_code, resp_body) = http_post_json(
+        &url,
+        &body_str,
+        &headers,
+        std::time::Duration::from_secs(timeout_s),
+    )?;
+
+    if status_code != 200 {
+        return Err(format!(
+            "decision server returned HTTP {status_code}: {resp_body}"
+        ));
+    }
+
+    let payload: serde_json::Value = serde_json::from_str(&resp_body)
+        .map_err(|e| format!("decision server response is not valid JSON: {e}"))?;
+
+    let raw_answers = payload
+        .get("answers")
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| "decision server response has no `answers` object".to_string())?;
+
+    let asked: HashMap<&str, &DecisionQ> = questions.iter().map(|(n, q)| (n.as_str(), q)).collect();
+    let mut seen = std::collections::HashSet::new();
+    let mut out = HashMap::new();
+
+    for (name, ans) in raw_answers {
+        let Some(q) = asked.get(name.as_str()) else {
+            return Err(format!(
+                "decision server answered unasked question '{name}'"
+            ));
+        };
+        if !seen.insert(name.clone()) {
+            return Err(format!(
+                "decision server answered question '{name}' more than once"
+            ));
+        }
+        match q {
+            DecisionQ::Choice { options, .. } => {
+                if ans.get("type").and_then(|v| v.as_str()) != Some("choice") {
+                    let got = ans.get("type").and_then(|v| v.as_str()).unwrap_or("none");
+                    return Err(format!(
+                        "question '{name}': expected answer type 'choice', got '{got}'"
+                    ));
+                }
+                let Some(probs) = ans.get("probabilities").and_then(|v| v.as_object()) else {
+                    return Err(format!(
+                        "question '{name}': probabilities must cover the declared options exactly"
+                    ));
+                };
+                if probs.len() != options.len() || !options.iter().all(|o| probs.contains_key(o)) {
+                    return Err(format!(
+                        "question '{name}': probabilities must cover the declared options exactly"
+                    ));
+                }
+                let mut dist_raw = HashMap::new();
+                let mut total = 0.0;
+                for (k, v) in probs {
+                    let p = match v.as_f64() {
+                        Some(f) if !f.is_nan() && (0.0..=1.0).contains(&f) => f,
+                        _ => {
+                            return Err(format!(
+                                "question '{name}': probabilities out of range or NaN"
+                            ));
+                        }
+                    };
+                    dist_raw.insert(k.clone(), p);
+                    total += p;
+                }
+                if total <= 0.0 {
+                    return Err(format!(
+                        "question '{name}': probability distribution sums to {total}"
+                    ));
+                }
+                let winner = ans
+                    .get("choice")
+                    .or_else(|| ans.get("winner"))
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        format!("question '{name}': winner is missing or not one of the options")
+                    })?;
+                if !dist_raw.contains_key(winner) {
+                    return Err(format!(
+                        "question '{name}': winner '{winner}' is not one of the options"
+                    ));
+                }
+                let mut dist_map = HashMap::new();
+                for (k, p) in dist_raw {
+                    dist_map.insert(k, NudgeVal::Float(p / total));
+                }
+                let max_p = match dist_map.get(winner) {
+                    Some(NudgeVal::Float(f)) => *f,
+                    _ => 0.0,
+                };
+                let k = options.len();
+                let default_conf = if k > 1 {
+                    ((max_p - 1.0 / (k as f64)) / (1.0 - 1.0 / (k as f64))).max(0.0)
+                } else {
+                    1.0
+                };
+                let confidence = ans
+                    .get("confidence")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(default_conf);
+                let mut q_res = HashMap::new();
+                q_res.insert("winner".to_string(), NudgeVal::Str(winner.to_string()));
+                q_res.insert("p".to_string(), NudgeVal::Float(max_p));
+                q_res.insert("distribution".to_string(), NudgeVal::Map(dist_map));
+                q_res.insert("confidence".to_string(), NudgeVal::Float(confidence));
+                out.insert(name.clone(), NudgeVal::Map(q_res));
+            }
+            DecisionQ::Noul { .. } => {
+                if ans.get("type").and_then(|v| v.as_str()) != Some("noul") {
+                    let got = ans.get("type").and_then(|v| v.as_str()).unwrap_or("none");
+                    return Err(format!(
+                        "question '{name}': expected answer type 'noul', got '{got}'"
+                    ));
+                }
+                let p = match ans
+                    .get("noul")
+                    .or_else(|| ans.get("p"))
+                    .and_then(|v| v.as_f64())
+                {
+                    Some(f) if !f.is_nan() && (0.0..=1.0).contains(&f) => f,
+                    _ => {
+                        return Err(format!(
+                            "question '{name}': noul probability out of range or NaN"
+                        ));
+                    }
+                };
+                let mut q_res = HashMap::new();
+                q_res.insert("p".to_string(), NudgeVal::Float(p));
+                out.insert(name.clone(), NudgeVal::Map(q_res));
+            }
+            DecisionQ::Score { levels, .. } => {
+                if ans.get("type").and_then(|v| v.as_str()) != Some("score") {
+                    let got = ans.get("type").and_then(|v| v.as_str()).unwrap_or("none");
+                    return Err(format!(
+                        "question '{name}': expected answer type 'score', got '{got}'"
+                    ));
+                }
+                let Some(probs) = ans.get("probabilities").and_then(|v| v.as_object()) else {
+                    return Err(format!(
+                        "question '{name}': score probabilities must cover rubric indices 0..{}",
+                        levels.len() - 1
+                    ));
+                };
+                if probs.len() != levels.len() {
+                    return Err(format!(
+                        "question '{name}': score probabilities must cover rubric indices 0..{}",
+                        levels.len() - 1
+                    ));
+                }
+                let mut dist_raw = Vec::with_capacity(levels.len());
+                for i in 0..levels.len() {
+                    let key = i.to_string();
+                    let val = match probs.get(&key).and_then(|v| v.as_f64()) {
+                        Some(f) if !f.is_nan() && f >= 0.0 => f,
+                        _ => {
+                            return Err(format!(
+                                "question '{name}': score probabilities must cover rubric indices 0..{}",
+                                levels.len() - 1
+                            ));
+                        }
+                    };
+                    dist_raw.push(val);
+                }
+                let total: f64 = dist_raw.iter().sum();
+                if total <= 0.0 {
+                    return Err(format!(
+                        "question '{name}': rubric distribution sums to {total}"
+                    ));
+                }
+                let dist_norm: Vec<f64> = dist_raw.iter().map(|p| p / total).collect();
+                let score: f64 = dist_norm
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| (i as f64) * p)
+                    .sum();
+                let mut dist_map = HashMap::new();
+                for (i, lvl) in levels.iter().enumerate() {
+                    dist_map.insert(lvl.clone(), NudgeVal::Float(dist_norm[i]));
+                }
+                let mut q_res = HashMap::new();
+                q_res.insert("score".to_string(), NudgeVal::Float(score));
+                q_res.insert("distribution".to_string(), NudgeVal::Map(dist_map));
+                out.insert(name.clone(), NudgeVal::Map(q_res));
+            }
+        }
+    }
+
+    if seen.len() < questions.len() {
+        let missing: Vec<String> = questions
+            .iter()
+            .filter(|(n, _)| !seen.contains(n))
+            .map(|(n, _)| n.clone())
+            .collect();
+        return Err(format!("decision server did not answer: {missing:?}"));
+    }
+
+    if let Some(m) = payload.get("model").and_then(|v| v.as_str()) {
+        for q_val in out.values_mut() {
+            if let NudgeVal::Map(ref mut q_map) = q_val {
+                q_map.insert("model".to_string(), NudgeVal::Str(m.to_string()));
+            }
+        }
+    }
+    if let Some(lvl) = payload.get("level").and_then(|v| v.as_str()) {
+        for q_val in out.values_mut() {
+            if let NudgeVal::Map(ref mut q_map) = q_val {
+                q_map.insert("level".to_string(), NudgeVal::Str(lvl.to_string()));
+            }
+        }
+    }
+
+    Ok(out)
+}
+
+fn valen_decide(
+    command: &str,
+    questions: &[(String, DecisionQ)],
+    state_text: &str,
+    deadline_ms: Option<u64>,
+) -> Result<HashMap<String, NudgeVal>, String> {
+    let argv = split_command(command);
+    if argv.is_empty() {
+        return Err(
+            "decision provider 'valen': empty command in NUDGE_DECISION_SERVERS".to_string(),
+        );
+    }
+
+    let tmp_dir = std::env::temp_dir().join(format!(
+        "nudge_valen_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&tmp_dir)
+        .map_err(|e| format!("decision provider 'valen': failed to create temp dir: {e}"))?;
+
+    let seed = format!(
+        "{}{}",
+        state_text,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    let group_id = format!(
+        "nudge-{}",
+        &nudge_runtime::trace::sha256_hex(seed.as_bytes())[..12]
+    );
+
+    let mut wire_qs = serde_json::Map::new();
+    for (name, q) in questions {
+        let mut q_obj = serde_json::Map::new();
+        match q {
+            DecisionQ::Choice { prompt, options } => {
+                q_obj.insert("type".to_string(), serde_json::json!("choice"));
+                q_obj.insert("instructions".to_string(), serde_json::json!(prompt));
+                let mut crit = serde_json::Map::new();
+                for o in options {
+                    crit.insert(o.clone(), serde_json::json!(o));
+                }
+                q_obj.insert("criteria".to_string(), serde_json::Value::Object(crit));
+            }
+            DecisionQ::Noul { prompt } => {
+                q_obj.insert("type".to_string(), serde_json::json!("choice"));
+                q_obj.insert("instructions".to_string(), serde_json::json!(prompt));
+                let mut crit = serde_json::Map::new();
+                crit.insert("yes".to_string(), serde_json::json!("yes"));
+                crit.insert("no".to_string(), serde_json::json!("no"));
+                q_obj.insert("criteria".to_string(), serde_json::Value::Object(crit));
+            }
+            DecisionQ::Score { prompt, levels } => {
+                q_obj.insert("type".to_string(), serde_json::json!("choice"));
+                q_obj.insert("instructions".to_string(), serde_json::json!(prompt));
+                let mut crit = serde_json::Map::new();
+                for (i, lvl) in levels.iter().enumerate() {
+                    crit.insert(i.to_string(), serde_json::json!(lvl));
+                }
+                q_obj.insert("criteria".to_string(), serde_json::Value::Object(crit));
+            }
+        }
+        wire_qs.insert(name.clone(), serde_json::Value::Object(q_obj));
+    }
+
+    let record = serde_json::json!({
+        "group_id": group_id,
+        "request": {
+            "state": {
+                "messages": [{
+                    "role": "user",
+                    "content": [{
+                        "type": "text",
+                        "text": state_text
+                    }]
+                }]
+            },
+            "questions": wire_qs
+        }
+    });
+
+    let data_path = tmp_dir.join("data.jsonl");
+    let out_path = tmp_dir.join("predictions.jsonl");
+
+    let write_res = std::fs::write(
+        &data_path,
+        format!("{}\n", serde_json::to_string(&record).unwrap_or_default()),
+    );
+    if let Err(e) = write_res {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        return Err(format!(
+            "decision provider 'valen': failed to write input: {e}"
+        ));
+    }
+
+    let timeout_s = (deadline_ms.unwrap_or(30000) / 1000) + 30;
+    let timeout_duration = std::time::Duration::from_secs(timeout_s);
+
+    let mut cmd = std::process::Command::new(&argv[0]);
+    cmd.args(&argv[1..])
+        .arg("--data")
+        .arg(&data_path)
+        .arg("--output")
+        .arg(&out_path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            return Err(format!("decision provider 'valen' failed to start: {e}"));
+        }
+    };
+
+    let start_wait = std::time::Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st,
+            Ok(None) => {
+                if start_wait.elapsed() > timeout_duration {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = std::fs::remove_dir_all(&tmp_dir);
+                    return Err(format!(
+                        "decision provider 'valen' timed out after {timeout_s} s"
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = std::fs::remove_dir_all(&tmp_dir);
+                return Err(format!("decision provider 'valen' failed: {e}"));
+            }
+        }
+    };
+
+    if !status.success() {
+        let code = status.code().unwrap_or(1);
+        let mut err_msg = String::new();
+        if let Some(mut stderr) = child.stderr.take() {
+            let _ = std::io::Read::read_to_string(&mut stderr, &mut err_msg);
+        }
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        return Err(format!(
+            "decision provider 'valen' failed (exit {code}): {err_msg}"
+        ));
+    }
+
+    let out_content = match std::fs::read_to_string(&out_path) {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            return Err(format!(
+                "decision provider 'valen': unreadable output ({e})"
+            ));
+        }
+    };
+
+    let mut found_rec = None;
+    for line in out_content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            if val.get("group_id").and_then(|v| v.as_str()) == Some(&group_id) {
+                found_rec = Some(val);
+                break;
+            }
+        }
+    }
+
+    let rec = match found_rec {
+        Some(r) => r,
+        None => {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            return Err("decision provider 'valen' returned no prediction for record".to_string());
+        }
+    };
+
+    let Some(targets) = rec.get("targets").and_then(|v| v.as_object()) else {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        return Err("decision provider 'valen': output has no `targets` object".to_string());
+    };
+
+    let mut out = HashMap::new();
+    let asked: HashMap<&str, &DecisionQ> = questions.iter().map(|(n, q)| (n.as_str(), q)).collect();
+
+    for (name, q) in questions {
+        let Some(t_val) = targets.get(name) else {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            return Err(format!(
+                "decision provider 'valen' did not answer question '{name}'"
+            ));
+        };
+        let Some(probs_val) = t_val.get("probabilities").and_then(|v| v.as_object()) else {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            return Err(format!(
+                "question '{name}': valen target has no `probabilities` object"
+            ));
+        };
+
+        match q {
+            DecisionQ::Choice { options, .. } => {
+                if probs_val.len() != options.len()
+                    || !options.iter().all(|o| probs_val.contains_key(o))
+                {
+                    let _ = std::fs::remove_dir_all(&tmp_dir);
+                    return Err(format!(
+                        "question '{name}': valen probabilities must cover the declared options exactly"
+                    ));
+                }
+                let mut dist_raw = HashMap::new();
+                let mut total = 0.0;
+                for (k, v) in probs_val {
+                    let p = match v.as_f64() {
+                        Some(f) if !f.is_nan() && (0.0..=1.0).contains(&f) => f,
+                        _ => {
+                            let _ = std::fs::remove_dir_all(&tmp_dir);
+                            return Err(format!(
+                                "question '{name}': probabilities out of range or NaN"
+                            ));
+                        }
+                    };
+                    dist_raw.insert(k.clone(), p);
+                    total += p;
+                }
+                if total <= 0.0 {
+                    let _ = std::fs::remove_dir_all(&tmp_dir);
+                    return Err(format!(
+                        "question '{name}': probability distribution sums to {total}"
+                    ));
+                }
+                let mut dist_norm = HashMap::new();
+                let mut winner = "";
+                let mut max_p = -1.0;
+                for o in options {
+                    let p_norm = dist_raw[o] / total;
+                    if p_norm > max_p {
+                        max_p = p_norm;
+                        winner = o.as_str();
+                    }
+                    dist_norm.insert(o.clone(), NudgeVal::Float(p_norm));
+                }
+                let k = options.len();
+                let confidence = if k > 1 {
+                    ((max_p - 1.0 / (k as f64)) / (1.0 - 1.0 / (k as f64))).max(0.0)
+                } else {
+                    1.0
+                };
+                let mut q_res = HashMap::new();
+                q_res.insert("winner".to_string(), NudgeVal::Str(winner.to_string()));
+                q_res.insert("p".to_string(), NudgeVal::Float(max_p));
+                q_res.insert("distribution".to_string(), NudgeVal::Map(dist_norm));
+                q_res.insert("confidence".to_string(), NudgeVal::Float(confidence));
+                out.insert(name.clone(), NudgeVal::Map(q_res));
+            }
+            DecisionQ::Noul { .. } => {
+                if probs_val.len() != 2
+                    || !probs_val.contains_key("yes")
+                    || !probs_val.contains_key("no")
+                {
+                    let _ = std::fs::remove_dir_all(&tmp_dir);
+                    return Err(format!(
+                        "question '{name}': noul maps to yes/no criteria in valen"
+                    ));
+                }
+                let p_yes = match probs_val.get("yes").and_then(|v| v.as_f64()) {
+                    Some(f) if !f.is_nan() && (0.0..=1.0).contains(&f) => f,
+                    _ => {
+                        let _ = std::fs::remove_dir_all(&tmp_dir);
+                        return Err(format!(
+                            "question '{name}': probabilities out of range or NaN"
+                        ));
+                    }
+                };
+                let p_no = match probs_val.get("no").and_then(|v| v.as_f64()) {
+                    Some(f) if !f.is_nan() && (0.0..=1.0).contains(&f) => f,
+                    _ => {
+                        let _ = std::fs::remove_dir_all(&tmp_dir);
+                        return Err(format!(
+                            "question '{name}': probabilities out of range or NaN"
+                        ));
+                    }
+                };
+                let total = p_yes + p_no;
+                if total <= 0.0 {
+                    let _ = std::fs::remove_dir_all(&tmp_dir);
+                    return Err(format!(
+                        "question '{name}': probability distribution sums to {total}"
+                    ));
+                }
+                let mut q_res = HashMap::new();
+                q_res.insert("p".to_string(), NudgeVal::Float(p_yes / total));
+                out.insert(name.clone(), NudgeVal::Map(q_res));
+            }
+            DecisionQ::Score { levels, .. } => {
+                if probs_val.len() != levels.len() {
+                    let _ = std::fs::remove_dir_all(&tmp_dir);
+                    return Err(format!(
+                        "question '{name}': score probabilities must cover rubric indices 0..{}",
+                        levels.len() - 1
+                    ));
+                }
+                let mut dist_raw = Vec::with_capacity(levels.len());
+                for i in 0..levels.len() {
+                    let k = i.to_string();
+                    let p = match probs_val.get(&k).and_then(|v| v.as_f64()) {
+                        Some(f) if !f.is_nan() && f >= 0.0 => f,
+                        _ => {
+                            let _ = std::fs::remove_dir_all(&tmp_dir);
+                            return Err(format!(
+                                "question '{name}': score probabilities must cover rubric indices 0..{}",
+                                levels.len() - 1
+                            ));
+                        }
+                    };
+                    dist_raw.push(p);
+                }
+                let total: f64 = dist_raw.iter().sum();
+                if total <= 0.0 {
+                    let _ = std::fs::remove_dir_all(&tmp_dir);
+                    return Err(format!(
+                        "question '{name}': rubric distribution sums to {total}"
+                    ));
+                }
+                let dist_norm: Vec<f64> = dist_raw.iter().map(|p| p / total).collect();
+                let score: f64 = dist_norm
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| (i as f64) * p)
+                    .sum();
+                let mut dist_map = HashMap::new();
+                for (i, lvl) in levels.iter().enumerate() {
+                    dist_map.insert(lvl.clone(), NudgeVal::Float(dist_norm[i]));
+                }
+                let mut q_res = HashMap::new();
+                q_res.insert("score".to_string(), NudgeVal::Float(score));
+                q_res.insert("distribution".to_string(), NudgeVal::Map(dist_map));
+                out.insert(name.clone(), NudgeVal::Map(q_res));
+            }
+        }
+    }
+
+    let extra: Vec<String> = targets
+        .keys()
+        .filter(|k| !asked.contains_key(k.as_str()))
+        .cloned()
+        .collect();
+    if !extra.is_empty() {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        return Err(format!(
+            "decision provider 'valen' answered unasked questions: {extra:?}"
+        ));
+    }
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    Ok(out)
 }
 
 /// Public API: Execute a Nudge program from entry point with arguments.
@@ -6671,5 +7627,454 @@ data: [DONE]\n\n";
         let _env_vm = EnvReset::set("NUDGE_VM", "1");
         let prog_res = run_program(&items, "main", &[]).expect("run_program VM=1 should succeed");
         assert_eq!(prog_res, NudgeVal::Str("tech".to_string()));
+    }
+
+    #[test]
+    fn test_decision_missing_servers_fails_loudly() {
+        let _env_prov = EnvReset::remove("NUDGE_PROVIDER");
+        let _env_servers = EnvReset::remove("NUDGE_DECISION_SERVERS");
+
+        let src = r#"
+            fn triage(t: string) -> string {
+                let d = decide {
+                    dept: "choose team" choose [billing, tech]
+                }
+                on t
+                with { model: "laya:test" }
+                d.dept.winner
+            }
+            fn main() -> string {
+                triage("hello")
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let res = run_program(&items, "main", &[]);
+        assert!(res.is_err());
+        let err = res.err().unwrap();
+        assert!(err.contains("error[E-decision-0001]"), "{err}");
+        assert!(
+            err.contains("decision provider 'laya' is not configured"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn test_decision_unconfigured_provider_fails_loudly() {
+        let _env_prov = EnvReset::remove("NUDGE_PROVIDER");
+        let _env_servers = EnvReset::set(
+            "NUDGE_DECISION_SERVERS",
+            r#"{"other": {"base_url": "http://127.0.0.1:8000"}}"#,
+        );
+
+        let src = r#"
+            fn triage(t: string) -> string {
+                let d = decide {
+                    dept: "choose team" choose [billing, tech]
+                }
+                on t
+                with { model: "laya:test" }
+                d.dept.winner
+            }
+            fn main() -> string {
+                triage("hello")
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let res = run_program(&items, "main", &[]);
+        assert!(res.is_err());
+        let err = res.err().unwrap();
+        assert!(err.contains("error[E-decision-0002]"), "{err}");
+        assert!(
+            err.contains("decision provider 'laya' needs a base_url or command"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn test_decision_empty_valen_command_fails_loudly() {
+        let _env_prov = EnvReset::remove("NUDGE_PROVIDER");
+        let _env_servers =
+            EnvReset::set("NUDGE_DECISION_SERVERS", r#"{"valen": {"command": "   "}}"#);
+
+        let src = r#"
+            fn triage(t: string) -> string {
+                let d = decide {
+                    dept: "choose team" choose [billing, tech]
+                }
+                on t
+                with { model: "valen:default" }
+                d.dept.winner
+            }
+            fn main() -> string {
+                triage("hello")
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let res = run_program(&items, "main", &[]);
+        assert!(res.is_err());
+        let err = res.err().unwrap();
+        assert!(
+            err.contains("decision provider 'valen': empty command in NUDGE_DECISION_SERVERS"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn test_decision_http_laya_e2e_and_cache() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+        let port = listener.local_addr().unwrap().port();
+
+        let server_thread = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept connection");
+            let mut buf = [0u8; 4096];
+            let n = stream.read(&mut buf).expect("read request");
+            let req_str = String::from_utf8_lossy(&buf[..n]);
+            assert!(req_str.contains("POST /v1/systemone HTTP/1.1"));
+            assert!(
+                req_str.contains("\"state\":{\"text\":\"urgent issue\"}")
+                    || req_str.contains("\"urgent issue\"")
+            );
+            assert!(req_str.contains("\"dept\""));
+
+            let resp_body = serde_json::json!({
+                "answers": {
+                    "dept": {
+                        "type": "choice",
+                        "choice": "tech",
+                        "probabilities": {
+                            "billing": 0.2,
+                            "tech": 0.8
+                        },
+                        "confidence": 0.6
+                    },
+                    "urgent": {
+                        "type": "noul",
+                        "noul": 0.95
+                    },
+                    "severity": {
+                        "type": "score",
+                        "probabilities": {
+                            "0": 0.1,
+                            "1": 0.2,
+                            "2": 0.7
+                        }
+                    }
+                }
+            });
+            let body_str = serde_json::to_string(&resp_body).unwrap();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body_str.len(),
+                body_str
+            );
+            stream.write_all(resp.as_bytes()).unwrap();
+        });
+
+        let temp_dir = std::env::temp_dir().join(format!("nudge_test_laya_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let cache_file = temp_dir.join("cache.json");
+        let trace_file = temp_dir.join("trace.jsonl");
+
+        let _env_cache = EnvReset::set("NUDGE_DECISION_CACHE", cache_file.to_str().unwrap());
+        let _scope = nudge_runtime::trace::testing::scope(Some(trace_file.clone()), None);
+        let _env_prov = EnvReset::remove("NUDGE_PROVIDER");
+        let servers_json = format!(r#"{{"laya": {{"base_url": "http://127.0.0.1:{port}"}}}}"#);
+        let _env_servers = EnvReset::set("NUDGE_DECISION_SERVERS", &servers_json);
+
+        let src = r#"
+            fn triage(t: string) -> string {
+                let d = decide {
+                    dept: "choose team" choose [billing, tech],
+                    urgent: "is urgent?" yes/no,
+                    severity: "score 0-2" score [low, med, high]
+                }
+                on t
+                with { model: "laya:multilingual" }
+                d.dept.winner
+            }
+            fn main() -> string {
+                triage("urgent issue")
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        // 1. Cold run: hits HTTP mock server
+        let res1 = run_program(&items, "main", &[]).expect("run 1");
+        assert_eq!(res1, NudgeVal::Str("tech".to_string()));
+        server_thread.join().unwrap();
+        nudge_runtime::trace::flush_sink().unwrap();
+
+        assert!(cache_file.exists());
+
+        // 2. Warm run: server is already closed, hits cache!
+        let res2 = run_program(&items, "main", &[]).expect("run 2 (cached)");
+        assert_eq!(res2, NudgeVal::Str("tech".to_string()));
+        nudge_runtime::trace::flush_sink().unwrap();
+
+        // Verify traces
+        let trace_content = std::fs::read_to_string(&trace_file).unwrap();
+        let dec_records: Vec<serde_json::Value> = trace_content
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .filter(|r| r.get("kind").and_then(|v| v.as_str()) == Some("decision.call"))
+            .collect();
+        assert_eq!(dec_records.len(), 2);
+        assert_eq!(
+            dec_records[0].get("provider").and_then(|v| v.as_str()),
+            Some("laya")
+        );
+        assert!(dec_records[0].get("cache").is_none());
+        assert_eq!(
+            dec_records[1].get("cache").and_then(|v| v.as_str()),
+            Some("hit")
+        );
+        assert_eq!(
+            dec_records[1].get("latency_ms").and_then(|v| v.as_u64()),
+            Some(0)
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_decision_valen_command_e2e() {
+        if std::process::Command::new("python3")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+
+        let temp_dir =
+            std::env::temp_dir().join(format!("nudge_test_valen_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        let script_path = temp_dir.join("mock_valen.py");
+        let script_src = r#"import json, sys
+
+data_path = sys.argv[sys.argv.index("--data") + 1]
+out_path = sys.argv[sys.argv.index("--output") + 1]
+
+with open(data_path, "r", encoding="utf-8") as f:
+    records = [json.loads(line) for line in f if line.strip()]
+
+out_records = []
+for rec in records:
+    gid = rec.get("group_id")
+    out_rec = {
+        "group_id": gid,
+        "targets": {
+            "dept": {
+                "probabilities": {
+                    "billing": 0.1,
+                    "tech": 0.9
+                }
+            },
+            "urgent": {
+                "probabilities": {
+                    "yes": 0.88,
+                    "no": 0.12
+                }
+            },
+            "severity": {
+                "probabilities": {
+                    "0": 0.1,
+                    "1": 0.3,
+                    "2": 0.6
+                }
+            }
+        }
+    }
+    out_records.append(out_rec)
+
+with open(out_path, "w", encoding="utf-8") as f:
+    for r in out_records:
+        f.write(json.dumps(r) + "\n")
+"#;
+        std::fs::write(&script_path, script_src).unwrap();
+
+        let _env_prov = EnvReset::remove("NUDGE_PROVIDER");
+        let cmd = format!("python3 {}", script_path.display());
+        let servers_json = format!(r#"{{"valen": {{"command": "{cmd}"}}}}"#);
+        let _env_servers = EnvReset::set("NUDGE_DECISION_SERVERS", &servers_json);
+
+        let src = r#"
+            fn triage(t: string) -> string {
+                let d = decide {
+                    dept: "choose team" choose [billing, tech],
+                    urgent: "is urgent?" yes/no,
+                    severity: "score" score [low, med, high]
+                }
+                on t
+                with { model: "valen:default" }
+                d.dept.winner
+            }
+            fn main() -> string {
+                triage("need server reboot")
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let res = run_program(&items, "main", &[]).expect("run valen");
+        assert_eq!(res, NudgeVal::Str("tech".to_string()));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_decision_deadline_strict_fails_on_overrun() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+        let port = listener.local_addr().unwrap().port();
+
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let resp_body = serde_json::json!({
+                "answers": {
+                    "dept": {
+                        "type": "choice",
+                        "choice": "tech",
+                        "probabilities": { "billing": 0.0, "tech": 1.0 }
+                    }
+                }
+            });
+            let body_str = serde_json::to_string(&resp_body).unwrap();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body_str.len(),
+                body_str
+            );
+            let _ = stream.write_all(resp.as_bytes());
+        });
+
+        let _env_prov = EnvReset::remove("NUDGE_PROVIDER");
+        let servers_json = format!(r#"{{"laya": {{"base_url": "http://127.0.0.1:{port}"}}}}"#);
+        let _env_servers = EnvReset::set("NUDGE_DECISION_SERVERS", &servers_json);
+        let _env_strict = EnvReset::set("NUDGE_DECISION_STRICT", "1");
+
+        let src = r#"
+            fn triage(t: string) -> string {
+                let d = decide {
+                    dept: "choose team" choose [billing, tech]
+                }
+                on t
+                with { model: "laya:fast", deadline: 20 }
+                d.dept.winner
+            }
+            fn main() -> string {
+                triage("hello")
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let res = run_program(&items, "main", &[]);
+        assert!(res.is_err());
+        let err = res.err().unwrap();
+        assert!(err.contains("over the 20 ms deadline"), "{err}");
+    }
+
+    #[test]
+    fn test_decision_deadline_soft_annotates_and_traces() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+        let port = listener.local_addr().unwrap().port();
+
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf);
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            let resp_body = serde_json::json!({
+                "answers": {
+                    "dept": {
+                        "type": "choice",
+                        "choice": "tech",
+                        "probabilities": { "billing": 0.0, "tech": 1.0 }
+                    }
+                }
+            });
+            let body_str = serde_json::to_string(&resp_body).unwrap();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body_str.len(),
+                body_str
+            );
+            let _ = stream.write_all(resp.as_bytes());
+        });
+
+        let temp_dir = std::env::temp_dir().join(format!("nudge_test_soft_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let trace_file = temp_dir.join("trace.jsonl");
+
+        let _scope = nudge_runtime::trace::testing::scope(Some(trace_file.clone()), None);
+        let _env_prov = EnvReset::remove("NUDGE_PROVIDER");
+        let servers_json = format!(r#"{{"laya": {{"base_url": "http://127.0.0.1:{port}"}}}}"#);
+        let _env_servers = EnvReset::set("NUDGE_DECISION_SERVERS", &servers_json);
+        let _env_strict = EnvReset::remove("NUDGE_DECISION_STRICT");
+
+        let src = r#"
+            fn triage(t: string) -> string {
+                let d = decide {
+                    dept: "choose team" choose [billing, tech]
+                }
+                on t
+                with { model: "laya:fast", deadline: 10 }
+                d.dept.winner
+            }
+            fn main() -> string {
+                triage("hello")
+            }
+        "#;
+        let tokens = lex(src).expect("lex");
+        let items = parse(tokens).expect("parse");
+
+        let res = run_program(&items, "main", &[]).expect("soft overrun should not fail");
+        assert_eq!(res, NudgeVal::Str("tech".to_string()));
+        nudge_runtime::trace::flush_sink().unwrap();
+
+        let trace_content = std::fs::read_to_string(&trace_file).unwrap();
+        let dec_records: Vec<serde_json::Value> = trace_content
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .filter(|r| r.get("kind").and_then(|v| v.as_str()) == Some("decision.call"))
+            .collect();
+        assert_eq!(dec_records.len(), 1);
+        assert_eq!(
+            dec_records[0].get("outcome").and_then(|v| v.as_str()),
+            Some("deadline_missed")
+        );
+        let answers_obj = dec_records[0]
+            .get("answers")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        let dept_ans = answers_obj.get("dept").and_then(|v| v.as_object()).unwrap();
+        assert_eq!(
+            dept_ans.get("deadline_missed").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
