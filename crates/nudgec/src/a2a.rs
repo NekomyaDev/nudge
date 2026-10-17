@@ -32,6 +32,8 @@ fn ty_name(t: &TypeExpr) -> String {
             "{name}[{}]",
             args.iter().map(ty_name).collect::<Vec<_>>().join(", ")
         ),
+        TypeExpr::Optional(inner) => format!("{}?", ty_name(inner)),
+        TypeExpr::Union(variants) => variants.iter().map(ty_name).collect::<Vec<_>>().join(" | "),
     }
 }
 

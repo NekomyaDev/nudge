@@ -827,7 +827,7 @@ impl Parser {
     }
 
     // ── types ───────────────────────────────────────────────────────
-    fn parse_type(&mut self) -> PResult<TypeExpr> {
+    fn parse_primary_type(&mut self) -> PResult<TypeExpr> {
         let mut ty = match self.peek() {
             Tok::Ident(name) => {
                 let name = name.clone();
@@ -868,10 +868,21 @@ impl Parser {
                 self.leave(g);
                 TypeExpr::Record(fields)
             }
+            Tok::None => {
+                self.bump();
+                TypeExpr::Named("none".into())
+            }
             Tok::LParen => {
                 self.bump();
-                self.expect(&Tok::RParen, "unit type '()'")?;
-                TypeExpr::Named("()".into())
+                if self.eat(&Tok::RParen) {
+                    TypeExpr::Named("()".into())
+                } else {
+                    let g = self.enter()?;
+                    let inner = self.parse_type()?;
+                    self.expect(&Tok::RParen, "')' after type")?;
+                    self.leave(g);
+                    inner
+                }
             }
             other => {
                 let other = format!("{other:?}");
@@ -890,7 +901,28 @@ impl Parser {
             self.expect(&Tok::RParen, "')'")?;
             ty = TypeExpr::Refine(Box::new(ty), rname, args);
         }
+        // optional suffix: ?
+        if self.eat(&Tok::Question) {
+            ty = TypeExpr::Optional(Box::new(ty));
+        }
         Ok(ty)
+    }
+
+    fn parse_type(&mut self) -> PResult<TypeExpr> {
+        let first = self.parse_primary_type()?;
+        if self.eat(&Tok::Bar) {
+            let mut variants = vec![first];
+            loop {
+                let next = self.parse_primary_type()?;
+                variants.push(next);
+                if !self.eat(&Tok::Bar) {
+                    break;
+                }
+            }
+            Ok(TypeExpr::Union(variants))
+        } else {
+            Ok(first)
+        }
     }
 
     // ── expressions (precedence low → high, design §12) ─────────────
@@ -1775,6 +1807,33 @@ mod tests {
                         assert_eq!(fields.len(), 2);
                         assert!(
                             matches!(fields[1].1, TypeExpr::Refine(_, ref r, _) if r == "range")
+                        );
+                    }
+                    other => panic!("expected record type, got {other:?}"),
+                }
+            }
+            other => panic!("expected type alias, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_optional_and_union_types() {
+        let src = "type Config = { title: string?, count: int | string, tags: [string]? | none }";
+        let items = parse_str(src);
+        match &items[0] {
+            Item::TypeAlias { name, ty } => {
+                assert_eq!(name, "Config");
+                match ty {
+                    TypeExpr::Record(fields) => {
+                        assert_eq!(fields.len(), 3);
+                        assert!(
+                            matches!(fields[0].1, TypeExpr::Optional(ref inner) if matches!(**inner, TypeExpr::Named(ref n) if n == "string"))
+                        );
+                        assert!(
+                            matches!(fields[1].1, TypeExpr::Union(ref variants) if variants.len() == 2)
+                        );
+                        assert!(
+                            matches!(fields[2].1, TypeExpr::Union(ref variants) if variants.len() == 2 && matches!(variants[0], TypeExpr::Optional(_)))
                         );
                     }
                     other => panic!("expected record type, got {other:?}"),

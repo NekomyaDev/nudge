@@ -21,7 +21,8 @@ pub enum TypeExpr {
     Record(Vec<(String, TypeExpr)>),          // {k: T, ...}
     Refine(Box<TypeExpr>, String, Vec<Expr>), // float @range(0, 1)
     Generic(String, Vec<TypeExpr>),           // Task[T]
-                                              // TODO: Optional (T?) and union (T | U) — lexer/parser support lands with the type checker
+    Optional(Box<TypeExpr>),                  // T?
+    Union(Vec<TypeExpr>),                     // T | U
 }
 
 impl fmt::Display for TypeExpr {
@@ -49,6 +50,11 @@ impl fmt::Display for TypeExpr {
                         .collect::<Vec<_>>()
                         .join(", ")
                 )
+            }
+            TypeExpr::Optional(inner) => write!(f, "{inner}?"),
+            TypeExpr::Union(types) => {
+                let inner: Vec<String> = types.iter().map(|t| t.to_string()).collect();
+                write!(f, "{}", inner.join(" | "))
             }
         }
     }

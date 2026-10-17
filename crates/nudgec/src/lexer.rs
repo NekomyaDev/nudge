@@ -60,9 +60,10 @@ pub enum Tok {
     Dot,
     Semi,
     At,
-    Arrow, // ->
-    Pipe,  // |>
-    Bar,   // |
+    Arrow,    // ->
+    Pipe,     // |>
+    Bar,      // |
+    Question, // ?
     Assign,
     PlusEq,
     MinusEq,
@@ -364,6 +365,7 @@ pub fn lex(src: &str) -> Result<Vec<Spanned>, LexError> {
                         ';' => (Tok::Semi, 1),
                         '@' => (Tok::At, 1),
                         '|' => (Tok::Bar, 1),
+                        '?' => (Tok::Question, 1),
                         '=' => (Tok::Assign, 1),
                         '+' => (Tok::Plus, 1),
                         '-' => (Tok::Minus, 1),

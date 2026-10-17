@@ -4898,6 +4898,19 @@ fn type_schema_json(
             }
             _ => json!({"type": "object", "description": name}),
         },
+        TypeExpr::Optional(inner) => json!({
+            "anyOf": [
+                type_schema_json(inner, aliases, depth + 1),
+                {"type": "null"}
+            ]
+        }),
+        TypeExpr::Union(variants) => {
+            let schemas: Vec<serde_json::Value> = variants
+                .iter()
+                .map(|v| type_schema_json(v, aliases, depth + 1))
+                .collect();
+            json!({"anyOf": schemas})
+        }
     }
 }
 
@@ -5021,6 +5034,25 @@ pub fn convert_tool_output(
             ) && args.len() == 1 =>
         {
             convert_tool_output(&args[0], aliases, text)
+        }
+        TypeExpr::Optional(inner) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() || trimmed == "null" || trimmed == "none" {
+                NudgeVal::Unit
+            } else {
+                convert_tool_output(inner, aliases, text)
+            }
+        }
+        TypeExpr::Union(variants) => {
+            for v in variants {
+                let res = convert_tool_output(v, aliases, text);
+                if !matches!(res, NudgeVal::Str(_))
+                    || matches!(v, TypeExpr::Named(s) if s == "string")
+                {
+                    return res;
+                }
+            }
+            NudgeVal::Str(text.to_string())
         }
         _ => NudgeVal::Str(text.to_string()),
     }

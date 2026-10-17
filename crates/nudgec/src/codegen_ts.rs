@@ -652,6 +652,12 @@ fn ty_ts(t: &TypeExpr, aliases: &HashSet<String>) -> String {
             }
             _ => format!("/* {name} */ any"),
         },
+        TypeExpr::Optional(inner) => format!("{} | null", ty_ts(inner, aliases)),
+        TypeExpr::Union(variants) => variants
+            .iter()
+            .map(|v| ty_ts(v, aliases))
+            .collect::<Vec<_>>()
+            .join(" | "),
     }
 }
 
@@ -740,6 +746,17 @@ fn schema_ts(
             }
             _ => format!("{{\"type\": \"object\", \"description\": \"{name}\"}}"),
         },
+        TypeExpr::Optional(inner) => format!(
+            "{{\"anyOf\": [{}, {{\"type\": \"null\"}}]}}",
+            schema_ts(inner, aliases, sigs)
+        ),
+        TypeExpr::Union(variants) => {
+            let schemas: Vec<String> = variants
+                .iter()
+                .map(|v| schema_ts(v, aliases, sigs))
+                .collect();
+            format!("{{\"anyOf\": [{}]}}", schemas.join(", "))
+        }
     }
 }
 

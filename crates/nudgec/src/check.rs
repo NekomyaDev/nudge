@@ -48,6 +48,8 @@ enum Ty {
     Stage(Box<Ty>, VerificationStage),
     View,
     Task(Box<Ty>),
+    Optional(Box<Ty>),
+    Union(Vec<Ty>),
 }
 
 impl fmt::Display for Ty {
@@ -76,6 +78,11 @@ impl fmt::Display for Ty {
             },
             Ty::View => write!(f, "View"),
             Ty::Task(inner) => write!(f, "Task[{inner}]"),
+            Ty::Optional(inner) => write!(f, "{inner}?"),
+            Ty::Union(variants) => {
+                let inner: Vec<String> = variants.iter().map(|t| t.to_string()).collect();
+                write!(f, "{}", inner.join(" | "))
+            }
         }
     }
 }
@@ -233,6 +240,13 @@ fn resolve(
                 Ty::Unknown
             }
         },
+        TypeExpr::Optional(inner) => Ty::Optional(Box::new(resolve(inner, g, visiting, errs))),
+        TypeExpr::Union(variants) => Ty::Union(
+            variants
+                .iter()
+                .map(|v| resolve(v, g, visiting, errs))
+                .collect(),
+        ),
     }
 }
 
@@ -335,6 +349,21 @@ fn assignable(src: &Ty, dst: &Ty) -> bool {
     if src == dst {
         return true;
     }
+    if let Ty::Union(src_variants) = src {
+        return src_variants.iter().all(|s| assignable(s, dst));
+    }
+    if let Ty::Union(dst_variants) = dst {
+        return dst_variants.iter().any(|u| assignable(src, u));
+    }
+    if let Ty::Optional(inner) = dst {
+        if matches!(src, Ty::None_) {
+            return true;
+        }
+        if let Ty::Optional(s_inner) = src {
+            return assignable(s_inner, inner);
+        }
+        return assignable(src, inner);
+    }
     match (src, dst) {
         (Ty::Int, Ty::Float) => true, // numeric widening
         (Ty::List(a), Ty::List(b)) => assignable(a, b),
@@ -381,6 +410,11 @@ fn elem_of(t: &Ty) -> Ty {
             Ty::Unknown => Ty::Unknown,
             other => Ty::Confidence(Box::new(other), *c),
         },
+        Ty::Optional(inner) => elem_of(inner),
+        Ty::Union(variants) => {
+            let elems: Vec<Ty> = variants.iter().map(elem_of).collect();
+            Ty::Union(elems)
+        }
         _ => Ty::Unknown,
     }
 }
@@ -3298,6 +3332,45 @@ mod tests {
 
     fn check_src(src: &str) -> Vec<CheckError> {
         check(&parse(lex(src).unwrap()).unwrap())
+    }
+
+    #[test]
+    fn optional_type_assignment() {
+        // assigning none to string? passes
+        let errs = check_src("fn f() -> string? { none }");
+        assert!(errs.is_empty(), "got {errs:?}");
+
+        // assigning hello to string? passes
+        let errs = check_src("fn f() -> string? { \"hello\" }");
+        assert!(errs.is_empty(), "got {errs:?}");
+
+        // assigning in let binding
+        let errs = check_src("fn f() { let x: string? = none\nlet y: string? = \"hello\" }");
+        assert!(errs.is_empty(), "got {errs:?}");
+    }
+
+    #[test]
+    fn union_type_assignment() {
+        // assigning 10 to int | string passes
+        let errs = check_src("fn f() -> int | string { 10 }");
+        assert!(errs.is_empty(), "got {errs:?}");
+
+        // assigning hi to int | string passes
+        let errs = check_src("fn f() -> int | string { \"hi\" }");
+        assert!(errs.is_empty(), "got {errs:?}");
+
+        // assigning true to int | string fails with E0201
+        let errs = check_src("fn f() -> int | string { true }");
+        assert!(
+            errs.iter().any(|e| e.code == "E0201"),
+            "expected E0201, got {errs:?}"
+        );
+
+        let errs = check_src("fn f() { let x: int | string = true }");
+        assert!(
+            errs.iter().any(|e| e.code == "E0201"),
+            "expected E0201, got {errs:?}"
+        );
     }
 
     #[test]

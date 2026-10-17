@@ -799,6 +799,14 @@ fn schema_py(t: &TypeExpr, aliases: &HashSet<String>) -> String {
             }
             _ => format!("{{\"type\": \"object\", \"description\": \"{name}\"}}"),
         },
+        TypeExpr::Optional(inner) => format!(
+            "{{\"anyOf\": [{}, {{\"type\": \"null\"}}]}}",
+            schema_py(inner, aliases)
+        ),
+        TypeExpr::Union(variants) => {
+            let schemas: Vec<String> = variants.iter().map(|v| schema_py(v, aliases)).collect();
+            format!("{{\"anyOf\": [{}]}}", schemas.join(", "))
+        }
     }
 }
 
