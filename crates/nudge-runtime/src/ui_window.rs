@@ -1,7 +1,7 @@
 //! Real native OS window backend for Nudge's UI using winit 0.30 and softbuffer 0.4.
 #![cfg(feature = "native-gui")]
 
-use crate::font8x8::FONT_8X8_BASIC;
+use crate::font8x8::get_glyph;
 use crate::ui::{TextInputState, UiElement};
 use std::collections::HashMap;
 use std::num::NonZeroU32;
@@ -124,12 +124,7 @@ pub fn draw_char(
     color: u32,
     scale: usize,
 ) {
-    let code = if (ch as u32) < 128 {
-        ch as usize
-    } else {
-        b'?' as usize
-    };
-    let glyph = FONT_8X8_BASIC[code];
+    let glyph = get_glyph(ch);
 
     for (row, &byte) in glyph.iter().enumerate() {
         for col in 0..8 {
@@ -182,6 +177,81 @@ pub fn draw_text(
 // -----------------------------------------------------------------------------
 // Layout Engine
 // -----------------------------------------------------------------------------
+
+/// Wraps text cleanly on word boundaries (whitespace) if lines exceed `max_width_px`.
+/// Preserves explicit newlines `\n`.
+pub fn wrap_text(content: &str, max_width_px: i32, char_width_px: i32) -> String {
+    let char_w = char_width_px.max(1);
+    let max_chars = (max_width_px / char_w).max(1) as usize;
+
+    let mut result_lines = Vec::new();
+
+    for paragraph in content.split('\n') {
+        let total_chars = paragraph.chars().count();
+        if total_chars <= max_chars {
+            result_lines.push(paragraph.to_string());
+            continue;
+        }
+
+        let words: Vec<&str> = paragraph.split_whitespace().collect();
+        if words.is_empty() {
+            result_lines.push(String::new());
+            continue;
+        }
+
+        let mut current_line = String::new();
+        let mut current_len = 0usize;
+
+        for word in words {
+            let word_len = word.chars().count();
+
+            // If a single word exceeds max_chars, it must be hard-broken
+            if word_len > max_chars {
+                if !current_line.is_empty() {
+                    result_lines.push(current_line);
+                    current_line = String::new();
+                    current_len = 0;
+                }
+
+                let mut word_chunk = String::new();
+                let mut chunk_len = 0usize;
+                for ch in word.chars() {
+                    word_chunk.push(ch);
+                    chunk_len += 1;
+                    if chunk_len == max_chars {
+                        result_lines.push(word_chunk);
+                        word_chunk = String::new();
+                        chunk_len = 0;
+                    }
+                }
+                if !word_chunk.is_empty() {
+                    current_line = word_chunk;
+                    current_len = chunk_len;
+                }
+                continue;
+            }
+
+            if current_line.is_empty() {
+                current_line = word.to_string();
+                current_len = word_len;
+            } else if current_len + 1 + word_len <= max_chars {
+                current_line.push(' ');
+                current_line.push_str(word);
+                current_len += 1 + word_len;
+            } else {
+                result_lines.push(current_line);
+                current_line = word.to_string();
+                current_len = word_len;
+            }
+        }
+
+        if !current_line.is_empty() {
+            result_lines.push(current_line);
+        }
+    }
+
+    result_lines.join("\n")
+}
 
 #[allow(clippy::only_used_in_recursion)]
 pub fn layout_element(
@@ -254,7 +324,25 @@ pub fn layout_element(
             (total_w, total_h)
         }
         "text" => {
-            let content = elem.text.clone().unwrap_or_else(|| elem.get_text());
+            let raw_content = elem.text.clone().unwrap_or_else(|| elem.get_text());
+            let explicit_wrap = elem.props.get("wrap").map(|s| s.as_str());
+            let target_w = if max_w > 80 { max_w } else { 540 };
+            let should_wrap = if explicit_wrap == Some("true") {
+                true
+            } else if explicit_wrap == Some("false") {
+                false
+            } else {
+                raw_content
+                    .split('\n')
+                    .any(|l| (l.chars().count() as i32) * 16 > target_w)
+            };
+
+            let content = if should_wrap {
+                wrap_text(&raw_content, target_w, 16)
+            } else {
+                raw_content
+            };
+
             let lines = content.split('\n').count().max(1) as i32;
             let max_line_len = content
                 .split('\n')
@@ -287,7 +375,7 @@ pub fn layout_element(
                         t
                     }
                 });
-            let text_w = (content.len() as i32) * 16;
+            let text_w = (content.chars().count() as i32) * 16;
             let w = (text_w + 32).max(80);
             let h = 36;
             boxes.push(LayoutBox {
@@ -340,6 +428,37 @@ pub fn layout_element(
     }
 }
 
+/// Helper to determine which button in `boxes` contains the cursor coordinates `pos`.
+pub fn find_hovered_button_in_boxes(
+    boxes: &[LayoutBox],
+    scroll_x: i32,
+    scroll_y: i32,
+    pos: (i32, i32),
+) -> Option<String> {
+    let (mx, my) = pos;
+    for (i, lbox) in boxes.iter().enumerate() {
+        if lbox.tag == "button" {
+            let rx = lbox.rect.x - scroll_x;
+            let ry = lbox.rect.y - scroll_y;
+            let screen_rect = Rect {
+                x: rx,
+                y: ry,
+                w: lbox.rect.w,
+                h: lbox.rect.h,
+            };
+            if screen_rect.contains(mx, my) {
+                return Some(
+                    lbox.id
+                        .clone()
+                        .or_else(|| lbox.on_click.clone())
+                        .unwrap_or_else(|| format!("__btn_{i}")),
+                );
+            }
+        }
+    }
+    None
+}
+
 // -----------------------------------------------------------------------------
 // Application Handler and Event Loop
 // -----------------------------------------------------------------------------
@@ -353,6 +472,7 @@ pub struct NativeApp<D: UiDispatcher> {
     pub width: u32,
     pub height: u32,
     pub cursor_pos: (i32, i32),
+    pub hovered_id: Option<String>,
     pub layout_boxes: Vec<LayoutBox>,
     pub render_count: usize,
     pub test_runner: Option<fn(&mut NativeApp<D>, &ActiveEventLoop)>,
@@ -380,6 +500,7 @@ impl<D: UiDispatcher> NativeApp<D> {
             width,
             height,
             cursor_pos: (0, 0),
+            hovered_id: None,
             layout_boxes: Vec::new(),
             render_count: 0,
             test_runner: None,
@@ -409,6 +530,21 @@ impl<D: UiDispatcher> NativeApp<D> {
         self.scroll_x = (self.scroll_x + dx).clamp(0, max_x);
         self.scroll_y = (self.scroll_y + dy).clamp(0, max_y);
         self.render();
+    }
+
+    pub fn find_hovered_button(&self, pos: (i32, i32)) -> Option<String> {
+        find_hovered_button_in_boxes(&self.layout_boxes, self.scroll_x, self.scroll_y, pos)
+    }
+
+    pub fn handle_cursor_moved(&mut self, pos: (i32, i32)) -> bool {
+        self.cursor_pos = pos;
+        let new_hovered = self.find_hovered_button(pos);
+        if new_hovered != self.hovered_id {
+            self.hovered_id = new_hovered;
+            true
+        } else {
+            false
+        }
     }
 
     pub fn render(&mut self) {
@@ -475,6 +611,12 @@ impl<D: UiDispatcher> NativeApp<D> {
         self.scroll_x = self.scroll_x.clamp(0, max_scroll_x);
 
         let (mx, my) = self.cursor_pos;
+        self.hovered_id = find_hovered_button_in_boxes(
+            &self.layout_boxes,
+            self.scroll_x,
+            self.scroll_y,
+            self.cursor_pos,
+        );
 
         // Render each layout box with viewport scroll offset & clipping
         for lbox in &self.layout_boxes {
@@ -539,7 +681,7 @@ impl<D: UiDispatcher> NativeApp<D> {
                         0xFF60A5FA, // lighter border
                     );
                     if let Some(ref text) = lbox.text {
-                        let text_w = (text.len() as i32) * 16;
+                        let text_w = (text.chars().count() as i32) * 16;
                         let tx = rx + ((lbox.rect.w - text_w) / 2).max(8);
                         let ty = ry + ((lbox.rect.h - 16) / 2).max(4);
                         draw_text(&mut buffer, stride, h_usize, tx, ty, text, 0xFFFFFFFF, 2);
@@ -1138,9 +1280,10 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
                 self.render();
             }
             WindowEvent::CursorMoved { position, .. } => {
-                self.cursor_pos = (position.x as i32, position.y as i32);
-                if let Some(win) = &self.window {
-                    win.request_redraw();
+                if self.handle_cursor_moved((position.x as i32, position.y as i32)) {
+                    if let Some(win) = &self.window {
+                        win.request_redraw();
+                    }
                 }
             }
             WindowEvent::MouseInput {
@@ -1672,5 +1815,136 @@ mod tests {
             "final state in interpreter must be 1"
         );
         println!("[desktop-gui-test] Desktop acceptance test successfully completed!");
+    }
+
+    #[test]
+    fn test_unicode_glyphs_rendered_distinct_from_question_mark() {
+        let question_glyph = crate::font8x8::get_glyph('?');
+        let blank_glyph = [0u8; 8];
+
+        let test_chars = [
+            'ğ', 'ü', 'ş', 'ö', 'ç', 'ı', 'é', '•', '€', 'Ğ', 'Ü', 'Ş', 'Ö', 'Ç', 'İ',
+        ];
+        for &ch in &test_chars {
+            let glyph = crate::font8x8::get_glyph(ch);
+            assert_ne!(glyph, blank_glyph, "glyph for '{ch}' must not be blank");
+            assert_ne!(
+                glyph, question_glyph,
+                "glyph for '{ch}' must not render as '?'"
+            );
+
+            // Also test rasterizing into a framebuffer
+            let mut fb = vec![0u32; 16 * 16];
+            draw_char(&mut fb, 16, 16, 0, 0, ch, 0xFFFFFFFF, 1);
+            let lit_pixels = fb.iter().filter(|&&p| p == 0xFFFFFFFF).count();
+            assert!(
+                lit_pixels > 0,
+                "rasterized character '{ch}' must have lit pixels"
+            );
+        }
+    }
+
+    #[test]
+    fn test_cursor_moved_redraw_optimization() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "Test".into(),
+                width: 400,
+                height: 300,
+            },
+            dummy,
+        );
+
+        // Add a button at (50, 50) with width 100, height 40
+        app.layout_boxes = vec![LayoutBox {
+            rect: Rect {
+                x: 50,
+                y: 50,
+                w: 100,
+                h: 40,
+            },
+            tag: "button".into(),
+            id: Some("test_btn".into()),
+            text: Some("Click".into()),
+            on_click: Some("click".into()),
+            on_change: None,
+            on_key: None,
+        }];
+
+        // Initially at (0, 0) - not hovering
+        assert_eq!(app.find_hovered_button((0, 0)), None);
+        assert_eq!(app.hovered_id, None);
+
+        // Moving within empty space (0,0) -> (10, 10): hover state unchanged (None -> None)
+        let redraw_needed = app.handle_cursor_moved((10, 10));
+        assert!(
+            !redraw_needed,
+            "moving in empty space must NOT trigger redraw"
+        );
+        assert_eq!(app.hovered_id, None);
+
+        // Moving into button (60, 60): hover state changes (None -> Some("test_btn"))
+        let redraw_needed = app.handle_cursor_moved((60, 60));
+        assert!(redraw_needed, "entering button MUST trigger redraw");
+        assert_eq!(app.hovered_id.as_deref(), Some("test_btn"));
+
+        // Moving WITHIN the button (60, 60) -> (80, 70): hover state unchanged
+        let redraw_needed = app.handle_cursor_moved((80, 70));
+        assert!(
+            !redraw_needed,
+            "moving within same button must NOT trigger redraw"
+        );
+        assert_eq!(app.hovered_id.as_deref(), Some("test_btn"));
+
+        // Exiting the button (80, 70) -> (200, 200): hover state changes (Some -> None)
+        let redraw_needed = app.handle_cursor_moved((200, 200));
+        assert!(redraw_needed, "exiting button MUST trigger redraw");
+        assert_eq!(app.hovered_id, None);
+
+        // Moving in empty space again
+        let redraw_needed = app.handle_cursor_moved((250, 250));
+        assert!(
+            !redraw_needed,
+            "moving in empty space again must NOT trigger redraw"
+        );
+    }
+
+    #[test]
+    fn test_text_word_wrapping_within_bounds() {
+        let long_message = "This is a long user message in the chat conversation that exceeds the standard window width";
+        let wrapped = wrap_text(long_message, 200, 16);
+        let lines: Vec<&str> = wrapped.split('\n').collect();
+        assert!(lines.len() > 1, "long text must wrap into multiple lines");
+        for line in &lines {
+            let line_px = (line.chars().count() as i32) * 16;
+            assert!(
+                line_px <= 200,
+                "wrapped line '{line}' (px={line_px}) exceeds max width 200px"
+            );
+        }
+
+        // Test layout_element on a text element
+        let mut elem = UiElement::new("text");
+        elem.text = Some(long_message.to_string());
+        elem.props.insert("wrap".into(), "true".into());
+
+        let mut boxes = Vec::new();
+        let (_w, h) = layout_element(&elem, 10, 10, 200, &mut boxes);
+        assert_eq!(boxes.len(), 1);
+        assert!(boxes[0].rect.w <= 200, "box width must not exceed 200px");
+        assert!(
+            h > 20,
+            "wrapped height must exceed single-line height of 20px"
+        );
+        assert_eq!(h, (lines.len() as i32) * 20);
+        assert_eq!(boxes[0].rect.h, h);
     }
 }

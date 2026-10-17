@@ -130,3 +130,199 @@ pub const FONT_8X8_BASIC: [[u8; 8]; 128] = [
     [0x76, 0xDC, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], // 126 '~'
     [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], // 127 del
 ];
+
+const fn compose_accent(base: char, r0: u8, r1: u8) -> [u8; 8] {
+    let orig = FONT_8X8_BASIC[base as usize];
+    [r0, r1, orig[2], orig[3], orig[4], orig[5], orig[6], orig[7]]
+}
+
+const fn compose_upper_accent(base: char, r0: u8) -> [u8; 8] {
+    let orig = FONT_8X8_BASIC[base as usize];
+    [
+        r0,
+        orig[0],
+        orig[1],
+        orig[2],
+        orig[3],
+        orig[4],
+        orig[5] | orig[6],
+        0x00,
+    ]
+}
+
+const fn compose_cedilla(base: char) -> [u8; 8] {
+    let orig = FONT_8X8_BASIC[base as usize];
+    [
+        orig[0], orig[1], orig[2], orig[3], orig[4], orig[5], orig[6], 0x18,
+    ]
+}
+
+fn fallback_ascii_base(ch: char) -> Option<char> {
+    match ch {
+        'À'..='Å' | 'Ā'..='Ą' => Some('A'),
+        'à'..='å' | 'ā'..='ą' => Some('a'),
+        'Ç' | 'Ć'..='Č' => Some('C'),
+        'ç' | 'ć'..='č' => Some('c'),
+        'Ď' | 'Đ' => Some('D'),
+        'ď' | 'đ' => Some('d'),
+        'È'..='Ë' | 'Ē'..='Ě' => Some('E'),
+        'è'..='ë' | 'ē'..='ě' => Some('e'),
+        'Ĝ'..='Ġ' => Some('G'),
+        'ĝ'..='ġ' => Some('g'),
+        'Ĥ' | 'Ħ' => Some('H'),
+        'ĥ' | 'ħ' => Some('h'),
+        'Ì'..='Ï' | 'Ī'..='İ' => Some('I'),
+        'ì'..='ï' | 'ī'..='ı' => Some('i'),
+        'Ĵ' => Some('J'),
+        'ĵ' => Some('j'),
+        'Ķ' => Some('K'),
+        'ķ' => Some('k'),
+        'Ĺ'..='Ł' => Some('L'),
+        'ĺ'..='ł' => Some('l'),
+        'Ñ' | 'Ń'..='Ň' => Some('N'),
+        'ñ' | 'ń'..='ň' => Some('n'),
+        'Ò'..='Ö' | 'Ō'..='Ő' => Some('O'),
+        'ò'..='ö' | 'ō'..='ő' => Some('o'),
+        'Ŕ'..='Ř' => Some('R'),
+        'ŕ'..='ř' => Some('r'),
+        'Ś'..='Š' => Some('S'),
+        'ś'..='š' => Some('s'),
+        'Ţ'..='Ť' => Some('T'),
+        'ţ'..='ť' => Some('t'),
+        'Ù'..='Ü' | 'Ũ'..='Ű' => Some('U'),
+        'ù'..='ü' | 'ũ'..='ű' => Some('u'),
+        'Ŵ' => Some('W'),
+        'ŵ' => Some('w'),
+        'Ý' | 'Ŷ' | 'Ÿ' => Some('Y'),
+        'ý' | 'ŷ' | 'ÿ' => Some('y'),
+        'Ź'..='Ž' => Some('Z'),
+        'ź'..='ž' => Some('z'),
+        _ => None,
+    }
+}
+
+/// Lookup or compose an 8x8 monochrome bitmap glyph for `ch`.
+/// Supports ASCII, Latin-1 Supplement, Turkish characters, common accents, and punctuation.
+pub fn get_glyph(ch: char) -> [u8; 8] {
+    if (ch as u32) < 128 {
+        return FONT_8X8_BASIC[ch as usize];
+    }
+
+    match ch {
+        // Turkish specific
+        'ç' => compose_cedilla('c'),
+        'Ç' => compose_cedilla('C'),
+        'ş' => compose_cedilla('s'),
+        'Ş' => compose_cedilla('S'),
+        'ı' => [0x00, 0x00, 0x38, 0x18, 0x18, 0x18, 0x3C, 0x00],
+        'İ' => [0x18, 0x00, 0x7E, 0x18, 0x18, 0x18, 0x7E, 0x00],
+        'ğ' => [0x24, 0x18, 0x76, 0xCC, 0xCC, 0x7C, 0x0C, 0xF8],
+        'Ğ' => [0x24, 0x18, 0x3C, 0x66, 0xC0, 0xCE, 0x66, 0x3E],
+        'ö' => compose_accent('o', 0x24, 0x00),
+        'Ö' => [0x24, 0x00, 0x38, 0x6C, 0xC6, 0xC6, 0x6C, 0x38],
+        'ü' => compose_accent('u', 0x24, 0x00),
+        'Ü' => [0x24, 0x00, 0x66, 0x66, 0x66, 0x66, 0x66, 0x3C],
+
+        // Latin-1 / Western European accents (lowercase)
+        'é' => compose_accent('e', 0x10, 0x08),
+        'è' => compose_accent('e', 0x08, 0x10),
+        'ê' => compose_accent('e', 0x18, 0x24),
+        'ë' => compose_accent('e', 0x24, 0x00),
+        'á' => compose_accent('a', 0x10, 0x08),
+        'à' => compose_accent('a', 0x08, 0x10),
+        'â' => compose_accent('a', 0x18, 0x24),
+        'ä' => compose_accent('a', 0x24, 0x00),
+        'ã' => compose_accent('a', 0x34, 0x1A),
+        'å' => compose_accent('a', 0x18, 0x00),
+        'í' => compose_accent('i', 0x10, 0x08),
+        'ì' => compose_accent('i', 0x08, 0x10),
+        'î' => compose_accent('i', 0x18, 0x24),
+        'ï' => compose_accent('i', 0x24, 0x00),
+        'ó' => compose_accent('o', 0x10, 0x08),
+        'ò' => compose_accent('o', 0x08, 0x10),
+        'ô' => compose_accent('o', 0x18, 0x24),
+        'õ' => compose_accent('o', 0x34, 0x1A),
+        'ú' => compose_accent('u', 0x10, 0x08),
+        'ù' => compose_accent('u', 0x08, 0x10),
+        'û' => compose_accent('u', 0x18, 0x24),
+        'ñ' => compose_accent('n', 0x34, 0x1A),
+        'ý' => compose_accent('y', 0x10, 0x08),
+        'ÿ' => compose_accent('y', 0x24, 0x00),
+
+        // Latin-1 / Western European accents (uppercase)
+        'É' => compose_upper_accent('E', 0x10),
+        'È' => compose_upper_accent('E', 0x08),
+        'Ê' => compose_upper_accent('E', 0x18),
+        'Ë' => compose_upper_accent('E', 0x24),
+        'Á' => compose_upper_accent('A', 0x10),
+        'À' => compose_upper_accent('A', 0x08),
+        'Â' => compose_upper_accent('A', 0x18),
+        'Ä' => compose_upper_accent('A', 0x24),
+        'Ã' => compose_upper_accent('A', 0x34),
+        'Å' => compose_upper_accent('A', 0x18),
+        'Í' => compose_upper_accent('I', 0x10),
+        'Ì' => compose_upper_accent('I', 0x08),
+        'Î' => compose_upper_accent('I', 0x18),
+        'Ï' => compose_upper_accent('I', 0x24),
+        'Ó' => compose_upper_accent('O', 0x10),
+        'Ò' => compose_upper_accent('O', 0x08),
+        'Ô' => compose_upper_accent('O', 0x18),
+        'Õ' => compose_upper_accent('O', 0x34),
+        'Ú' => compose_upper_accent('U', 0x10),
+        'Ù' => compose_upper_accent('U', 0x08),
+        'Û' => compose_upper_accent('U', 0x18),
+        'Ñ' => compose_upper_accent('N', 0x34),
+        'Ý' => compose_upper_accent('Y', 0x10),
+
+        // Ligatures and specials
+        'ß' => [0x3C, 0x66, 0x66, 0x7C, 0x66, 0x66, 0xDC, 0x00],
+        'æ' => [0x00, 0x00, 0x77, 0x2A, 0x7F, 0x6A, 0x3B, 0x00],
+        'Æ' => [0x1F, 0x35, 0x65, 0x7D, 0x65, 0x65, 0xE7, 0x00],
+        'œ' => [0x00, 0x00, 0x7E, 0xDB, 0xDF, 0xDB, 0x7E, 0x00],
+        'Œ' => [0x7F, 0x63, 0x6B, 0x7B, 0x6B, 0x63, 0x7F, 0x00],
+        'ø' => [0x00, 0x02, 0x7C, 0xC6, 0xD6, 0xC6, 0x7C, 0x40],
+        'Ø' => [0x02, 0x7C, 0xC6, 0xD6, 0xD6, 0xC6, 0x7C, 0x40],
+
+        // Common symbols and punctuation
+        '•' => [0x00, 0x00, 0x18, 0x3C, 0x3C, 0x18, 0x00, 0x00], // U+2022 bullet
+        '€' => [0x1C, 0x32, 0x7C, 0x20, 0x7C, 0x32, 0x1C, 0x00], // U+20AC euro
+        '£' => [0x1C, 0x26, 0x20, 0x78, 0x20, 0x20, 0x7E, 0x00], // U+00A3 pound
+        '¥' => [0x66, 0x66, 0x3C, 0x7E, 0x18, 0x7E, 0x18, 0x00], // U+00A5 yen
+        '©' => [0x3C, 0x42, 0x99, 0xA1, 0x99, 0x42, 0x3C, 0x00], // U+00A9 copyright
+        '®' => [0x3C, 0x42, 0xB9, 0xB5, 0xB9, 0x42, 0x3C, 0x00], // U+00AE registered
+        '™' => [0x00, 0xAF, 0xAA, 0xAA, 0xAA, 0xAA, 0x00, 0x00], // U+2122 trademark
+        '“' => [0x36, 0x36, 0x12, 0x00, 0x00, 0x00, 0x00, 0x00], // U+201C left double quote
+        '”' => [0x36, 0x36, 0x6C, 0x00, 0x00, 0x00, 0x00, 0x00], // U+201D right double quote
+        '‘' => [0x18, 0x18, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00], // U+2018 left single quote
+        '’' => [0x18, 0x18, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00], // U+2019 right single quote
+        '—' => [0x00, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00, 0x00], // U+2014 em dash
+        '–' => [0x00, 0x00, 0x00, 0x7E, 0x00, 0x00, 0x00, 0x00], // U+2013 en dash
+        '…' => [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x54, 0x00], // U+2026 ellipsis
+        '«' => [0x00, 0x36, 0x6C, 0xD8, 0x6C, 0x36, 0x00, 0x00], // U+00AB left guillemet
+        '»' => [0x00, 0xD8, 0x6C, 0x36, 0x6C, 0xD8, 0x00, 0x00], // U+00BB right guillemet
+        '°' => [0x18, 0x24, 0x24, 0x18, 0x00, 0x00, 0x00, 0x00], // U+00B0 degree
+        '±' => [0x18, 0x18, 0x7E, 0x18, 0x18, 0x00, 0x7E, 0x00], // U+00B1 plus-minus
+        '×' => [0x00, 0x66, 0x3C, 0x18, 0x3C, 0x66, 0x00, 0x00], // U+00D7 multiply
+        '÷' => [0x18, 0x00, 0x00, 0x7E, 0x00, 0x00, 0x18, 0x00], // U+00F7 divide
+        'µ' => [0x00, 0x00, 0x66, 0x66, 0x66, 0x7E, 0x60, 0x60], // U+00B5 micro
+        '¿' => [0x18, 0x00, 0x18, 0x18, 0x0C, 0xC6, 0x7C, 0x00], // U+00BF inverted ?
+        '¡' => [0x18, 0x00, 0x18, 0x18, 0x3C, 0x3C, 0x18, 0x00], // U+00A1 inverted !
+        '§' => [0x3C, 0x66, 0x3C, 0x66, 0x3C, 0x66, 0x3C, 0x00], // U+00A7 section
+        '¶' => [0x7E, 0xFE, 0xEE, 0xEE, 0xFE, 0x0E, 0x0E, 0x00], // U+00B6 pilcrow
+        '✓' | '✔' => [0x00, 0x02, 0x06, 0x8C, 0xD8, 0x70, 0x20, 0x00], // U+2713, U+2714
+        '✗' | '✕' => [0x00, 0x82, 0x44, 0x28, 0x10, 0x28, 0x44, 0x82], // U+2717, U+2715
+        '←' => [0x00, 0x10, 0x30, 0x7F, 0x30, 0x10, 0x00, 0x00], // U+2190 left arrow
+        '→' => [0x00, 0x08, 0x0C, 0xFE, 0x0C, 0x08, 0x00, 0x00], // U+2192 right arrow
+        '↑' => [0x00, 0x18, 0x3C, 0x7E, 0x18, 0x18, 0x18, 0x00], // U+2191 up arrow
+        '↓' => [0x00, 0x18, 0x18, 0x18, 0x7E, 0x3C, 0x18, 0x00], // U+2193 down arrow
+
+        // Fallback for other accented characters: map to ASCII base letter
+        other => {
+            if let Some(base) = fallback_ascii_base(other) {
+                FONT_8X8_BASIC[base as usize]
+            } else {
+                FONT_8X8_BASIC[b'?' as usize]
+            }
+        }
+    }
+}
