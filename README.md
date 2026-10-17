@@ -529,9 +529,16 @@ AI agents frequently handle sensitive tokens, authorization headers, private key
 | `NUDGE_STORE_PATH` | native | Storage file location for persistent typed key-value data | `<workspace>/.nudge/store.json` |
 | `NUDGE_UI_HEADLESS` | native | Force UI window operations to run headlessly in memory (`1` or `true`) | `0` |
 | `NUDGE_TOOL_GRANTS` | both | Execution-layer JSON tool policy (e.g. `{"web_search": ["*"]}`). Fails closed | None |
+| `NUDGE_PROCESS_GRANTS` | native | Fail-closed JSON execution policy for `proc.*` commands and arguments | None (denied) |
+| `NUDGE_PROCESS_TIMEOUT` | native | Default child-process execution timeout in milliseconds for `proc.*` | `30000` |
+| `NUDGE_FS_WATCH_TIMEOUT` | native | Default polling and wait timeout in milliseconds for `fs.watch` | `30000` |
+| `NUDGE_ENABLE_ANTIGRAVITY` | native | Opt-in toggle to activate the Antigravity provider (`1` or `true`) | `0` |
+| `NUDGE_AUTH_ANTIGRAVITY` | native | Direct bearer token for Antigravity provider authentication | None |
+| `NUDGE_AUTH_GITHUB_COPILOT` | native | Direct token override for GitHub Copilot provider authentication | None |
 | `NUDGE_MCP_SERVERS` | both | JSON registry mapping MCP server names to stdio commands | None |
-| `NUDGE_DECISION_SERVERS` | python/TS | JSON registry for decision model endpoints (e.g. `{"laya": {"base_url": "..."}}`) | None |
-| `NUDGE_DECISION_CACHE` | python/TS | Cache file path for persisted decision model distributions | None |
+| `NUDGE_MCP_TIMEOUT_MS` | native | Per-request read deadline and hung-session timeout for MCP servers | `30000` |
+| `NUDGE_DECISION_SERVERS` | both | JSON registry for decision model endpoints (e.g. `{"laya": {"base_url": "..."}}`) | None |
+| `NUDGE_DECISION_CACHE` | both | Cache file path for persisted decision model distributions | None |
 | `NUDGE_COMPUTER_SERVERS` | both | JSON registry for computer use bridges (subprocess JSONL or HTTP) | None |
 | `NUDGE_COMPUTER_PROVIDER` | both | Selected bridge for computer actions (`fake`, or registered server name) | `fake` |
 | `NUDGE_COMPUTER_KILL` | both | Hard kill switch: `1` immediately refuses all computer operations | `0` |

@@ -326,11 +326,17 @@ python3 out/hello.py
 | `NUDGE_PRICING` | 真实提供者的 JSON 价格表：`{"my-model": [1.0, 2.0]}`（每 1M 输入/输出 token 的美元价格）。扩展内置价格表 |
 | `NUDGE_RETRY_TRANSIENT` | 对瞬时提供者错误（429/5xx）的重试次数，默认 3；`0` 禁用 |
 | `NUDGE_TOOL_GRANTS` | 执行层工具策略（JSON）：`{"web_search": ["*"], "kb/*": ["retrieve"], "shell": []}` —— 未授权的工具会抛出 `ToolDenied` 并记录拒绝（`outcome: "denied"`）；有策略即默认拒绝 |
+| `NUDGE_PROCESS_GRANTS` | `proc.*` 命令与参数的故障关闭（fail-closed）执行策略（JSON）：`{"git": ["status"]}` |
+| `NUDGE_PROCESS_TIMEOUT` | `proc.*` 子进程的默认执行超时（毫秒，默认 `30000`） |
+| `NUDGE_FS_WATCH_TIMEOUT` | `fs.watch` 的默认轮询与等待超时（毫秒，默认 `30000`） |
+| `NUDGE_ENABLE_ANTIGRAVITY` | 激活 Antigravity 提供商的选择性开关（`1` 或 `true`） |
+| `NUDGE_AUTH_ANTIGRAVITY` / `NUDGE_AUTH_GITHUB_COPILOT` | Antigravity 与 GitHub Copilot 提供商的直接令牌凭证 |
 | `NUDGE_GUARD` | 输出防护：`pii` 会掩盖模型输出中的密钥、邮箱、IP 和长数字串；启用的防护会写入 trace（`guard: [...]`）—— 掩盖可审计，绝不静默 |
 | `NUDGE_BACKOFF_BASE` | 指数退避基数（秒），默认 5s、25s、125s |
 | `NUDGE_DECISION_CACHE` | 决策缓存路径：真实提供者的已验证答案跨运行持久化（重放优先） |
 | `NUDGE_API_KEY` / `NUDGE_BASE_URL` | OpenAI 兼容提供商的凭证和端点 |
 | `NUDGE_MCP_SERVERS` | MCP 服务器注册表 JSON（见上文） |
+| `NUDGE_MCP_TIMEOUT_MS` | MCP 服务器单次请求读取截止时间与挂起会话超时（毫秒，默认 `30000`） |
 | `NUDGE_COMPUTER_SERVERS` | 计算机桥接注册表（JSON）：`{"cu": {"command": "python3 tools/cu_bridge.py"}}`（子进程 JSONL）或 `{"cu": {"base_url": "http://localhost:9333"}}`（HTTP） |
 | `NUDGE_COMPUTER_PROVIDER` | 处理 `computer.*` 调用的注册桥接（默认：`fake` —— 确定性内存桌面，测试 $0） |
 | `NUDGE_COMPUTER_KILL` | `1` 拒绝所有计算机操作（紧急开关）并释放按住的鼠标键 |
