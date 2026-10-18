@@ -16,7 +16,7 @@ pub struct Lesson {
 pub const LESSONS: &[Lesson] = &[
     Lesson {
         name: "hello",
-        title: "1/7 - Your first LLM call",
+        title: "1/8 - Your first LLM call",
         body: r#"Nudge compiles typed LLM calls into plain Python/TypeScript.
 
 An `llm"""..."""` block is a prompt with {interpolation} holes; `with {}`
@@ -41,7 +41,7 @@ Try:
     },
     Lesson {
         name: "types",
-        title: "2/7 - Typed outputs (schemas)",
+        title: "2/8 - Typed outputs (schemas)",
         body: r#"Free-text LLM output is a bug factory. In Nudge you declare a
 record type and pin it with `schema:` — the runtime validates every
 response against the type and repairs or rejects mismatches.
@@ -70,7 +70,7 @@ fn triage(body: string) -> Ticket uses LLM {
     },
     Lesson {
         name: "decide",
-        title: "3/7 - Typed decisions (decide{})",
+        title: "3/8 - Typed decisions (decide{})",
         body: r#"`decide{}` asks a *decision model* (the JEV family: Laya, Jev, Valen)
 typed questions about a state — one batched call, answers with
 probabilities and confidence. A decision is an effect like LLM: tracked,
@@ -107,7 +107,7 @@ fn main() -> Triage uses Decision {
     },
     Lesson {
         name: "policy",
-        title: "4/7 - Confidence policies (route{})",
+        title: "4/8 - Confidence policies (route{})",
         body: r#"raw model output should not reach users unchecked. `route{}` is a
 policy switch: arms carry conditions (confidence thresholds, winner
 equality) and an `otherwise` fallback. The compiler unifies the arm
@@ -158,7 +158,7 @@ test "triage stays deterministic and policy picks an arm" {
     },
     Lesson {
         name: "test",
-        title: "5/7 - $0 tests and property fuzzing",
+        title: "5/8 - $0 tests and property fuzzing",
         body: r#"test blocks run against the fake provider: deterministic, $0, no API
 keys — your whole suite runs on every save.
 
@@ -190,7 +190,7 @@ test "injection corpus never crashes the checker" {
     },
     Lesson {
         name: "trace",
-        title: "6/7 - Traces, replay and regressions",
+        title: "6/8 - Traces, replay and regressions",
         body: r#"Set NUDGE_TRACE=<file> and every LLM call, tool call and decision
 lands in an NTF trace (an open, frozen-v1 JSONL format — no vendor
 lock-in). Then:
@@ -209,7 +209,7 @@ gate. Next: `nudgec init my-agent --list` and ship something."#,
     },
     Lesson {
         name: "ui",
-        title: "7/7 - Interactive UI & Agents",
+        title: "7/8 - Interactive UI & Agents",
         body: r#"Agents often require human oversight, review stations, and interactive
 interfaces. Nudge provides typed UI primitives (`view`, `column`, `row`,
 `text`, `button`, `input`) declared in code and managed by stateful agents.
@@ -304,6 +304,61 @@ test "approval station mounts headlessly and executes actions" {
 "#,
         ),
     },
+    Lesson {
+        name: "a2a",
+        title: "8/8 - Agent-to-Agent (A2A) Peer Serving",
+        body: r#"Agents cannot live in isolation. Nudge compiles agent definitions directly into
+network-addressable Agent-to-Agent (A2A v2.0) protocol peers.
+
+The compiler extracts an Agent Card (`agent.json`) describing the agent's identity,
+capabilities, and exposed skills. Running `nudgec a2a-serve` starts a high-performance
+native Rust HTTP and JSON-RPC 2.0 server with multi-threaded task execution,
+background cancellation, and security boundaries.
+
+Key commands:
+  nudgec a2a <file.ndg>                 # export Agent Card to out/<name>.agent.json
+  nudgec a2a-serve <file.ndg> --port N  # serve native A2A peer on port N
+
+Endpoints served:
+  GET  /.well-known/agent.json          # A2A Agent Card metadata
+  GET  /health                          # server status and peer health
+  POST /skills/<name>                   # call an exposed skill synchronously
+  POST /tasks                           # create a task (supports "async": true)
+  GET  /tasks/<id>                      # query task execution status
+  POST /rpc                             # standard A2A JSON-RPC 2.0 (agent.card, task.create, task.get, task.cancel)
+
+Try:
+  nudgec check a2a.ndg
+  nudgec a2a a2a.ndg
+  nudgec a2a-serve a2a.ndg --port 9000"#,
+        program: Some(
+            r#"agent MathAgent {
+    state {
+        total_ops: int = 0
+    }
+
+    fn calculate(a: int, b: int) -> int {
+        state.total_ops += 1
+        a + b
+    }
+
+    fn summarize(topic: string) -> string uses LLM {
+        state.total_ops += 1
+        llm"""Summarize this topic in one concise sentence: {topic}"""
+        with { model: "fake:default" }
+    }
+}
+
+fn main() {
+}
+
+test "math agent calculates sum" {
+    assert MathAgent.calculate(15, 27) == 42
+    assert MathAgent.state.total_ops == 1
+}
+"#,
+        ),
+    },
 ];
 
 pub fn run(rest: &[String]) -> Result<(), String> {
@@ -350,8 +405,8 @@ mod tests {
     }
 
     #[test]
-    fn seven_lessons_with_unique_names_and_helpful_titles() {
-        assert_eq!(LESSONS.len(), 7);
+    fn eight_lessons_with_unique_names_and_helpful_titles() {
+        assert_eq!(LESSONS.len(), 8);
         let mut names: Vec<_> = LESSONS.iter().map(|l| l.name).collect();
         names.sort_unstable();
         names.dedup();
