@@ -96,6 +96,8 @@ pub struct TextInputState {
     pub text: String,
     pub cursor: usize,
     pub selection_anchor: Option<usize>,
+    pub undo_stack: Vec<(String, usize)>,
+    pub redo_stack: Vec<(String, usize)>,
 }
 
 impl TextInputState {
@@ -106,6 +108,8 @@ impl TextInputState {
             text,
             cursor,
             selection_anchor: None,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 
@@ -113,7 +117,43 @@ impl TextInputState {
         self.text.chars().count()
     }
 
+    pub fn push_undo_snapshot(&mut self) {
+        self.undo_stack.push((self.text.clone(), self.cursor));
+        if self.undo_stack.len() > 50 {
+            self.undo_stack.remove(0);
+        }
+        self.redo_stack.clear();
+    }
+
+    pub fn undo(&mut self) -> bool {
+        if let Some((prev_text, prev_cursor)) = self.undo_stack.pop() {
+            self.redo_stack.push((self.text.clone(), self.cursor));
+            self.text = prev_text;
+            self.cursor = prev_cursor.min(self.char_len());
+            self.selection_anchor = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn redo(&mut self) -> bool {
+        if let Some((next_text, next_cursor)) = self.redo_stack.pop() {
+            self.undo_stack.push((self.text.clone(), self.cursor));
+            if self.undo_stack.len() > 50 {
+                self.undo_stack.remove(0);
+            }
+            self.text = next_text;
+            self.cursor = next_cursor.min(self.char_len());
+            self.selection_anchor = None;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn set_text(&mut self, text: impl Into<String>) {
+        self.push_undo_snapshot();
         self.text = text.into();
         self.cursor = self.cursor.min(self.char_len());
         self.selection_anchor = None;
@@ -153,7 +193,7 @@ impl TextInputState {
         }
     }
 
-    pub fn insert_str(&mut self, s: &str) {
+    fn insert_str_raw(&mut self, s: &str) {
         self.delete_selection();
         let prefix: String = self.text.chars().take(self.cursor).collect();
         let suffix: String = self.text.chars().skip(self.cursor).collect();
@@ -163,12 +203,21 @@ impl TextInputState {
         self.selection_anchor = None;
     }
 
+    pub fn insert_str(&mut self, s: &str) {
+        self.push_undo_snapshot();
+        self.insert_str_raw(s);
+    }
+
     pub fn insert_char(&mut self, c: char) {
         let mut buf = [0u8; 4];
         self.insert_str(c.encode_utf8(&mut buf));
     }
 
     pub fn backspace(&mut self) -> bool {
+        if !self.has_selection() && self.cursor == 0 {
+            return false;
+        }
+        self.push_undo_snapshot();
         if self.delete_selection() {
             return true;
         }
@@ -186,6 +235,10 @@ impl TextInputState {
     }
 
     pub fn delete(&mut self) -> bool {
+        if !self.has_selection() && self.cursor >= self.char_len() {
+            return false;
+        }
+        self.push_undo_snapshot();
         if self.delete_selection() {
             return true;
         }
@@ -381,6 +434,7 @@ impl TextInputState {
     pub fn cut(&mut self) -> Option<String> {
         let txt = self.selected_text();
         if txt.is_some() {
+            self.push_undo_snapshot();
             self.delete_selection();
         }
         txt
@@ -391,7 +445,8 @@ impl TextInputState {
     }
 
     pub fn paste(&mut self, s: &str) {
-        self.insert_str(s);
+        self.push_undo_snapshot();
+        self.insert_str_raw(s);
     }
 }
 
@@ -1068,5 +1123,113 @@ mod tests {
         let (start2, end2) = input.selection_range().unwrap();
         assert_eq!(input.line_and_col_of(start2), (0, 2));
         assert_eq!(input.line_and_col_of(end2), (2, 2));
+    }
+
+    #[test]
+    fn test_text_input_undo_redo_typing() {
+        let mut input = TextInputState::new("hello");
+        assert_eq!(input.text, "hello");
+        assert_eq!(input.cursor, 5);
+        assert!(input.undo_stack.is_empty());
+        assert!(input.redo_stack.is_empty());
+
+        input.insert_str(" world");
+        assert_eq!(input.text, "hello world");
+        assert_eq!(input.cursor, 11);
+        assert_eq!(input.undo_stack.len(), 1);
+
+        // Undo typing
+        assert!(input.undo());
+        assert_eq!(input.text, "hello");
+        assert_eq!(input.cursor, 5);
+        assert_eq!(input.redo_stack.len(), 1);
+
+        // Redo typing
+        assert!(input.redo());
+        assert_eq!(input.text, "hello world");
+        assert_eq!(input.cursor, 11);
+        assert!(input.redo_stack.is_empty());
+
+        // Redo again returns false
+        assert!(!input.redo());
+    }
+
+    #[test]
+    fn test_text_input_undo_redo_backspace() {
+        let mut input = TextInputState::new("hello");
+        assert!(input.backspace());
+        assert_eq!(input.text, "hell");
+        assert_eq!(input.cursor, 4);
+
+        // Undo backspace
+        assert!(input.undo());
+        assert_eq!(input.text, "hello");
+        assert_eq!(input.cursor, 5);
+
+        // Redo backspace
+        assert!(input.redo());
+        assert_eq!(input.text, "hell");
+        assert_eq!(input.cursor, 4);
+    }
+
+    #[test]
+    fn test_text_input_undo_redo_delete_cut_paste() {
+        let mut input = TextInputState::new("test");
+        input.cursor = 0;
+        assert!(input.delete());
+        assert_eq!(input.text, "est");
+        assert!(input.undo());
+        assert_eq!(input.text, "test");
+        assert!(input.redo());
+        assert_eq!(input.text, "est");
+
+        // Cut with selection
+        input.select_all();
+        let cut = input.cut();
+        assert_eq!(cut.as_deref(), Some("est"));
+        assert_eq!(input.text, "");
+        assert!(input.undo());
+        assert_eq!(input.text, "est");
+        assert!(input.redo());
+        assert_eq!(input.text, "");
+
+        // Paste
+        input.paste("pasted");
+        assert_eq!(input.text, "pasted");
+        assert!(input.undo());
+        assert_eq!(input.text, "");
+        assert!(input.redo());
+        assert_eq!(input.text, "pasted");
+
+        // Set text
+        input.set_text("reset");
+        assert_eq!(input.text, "reset");
+        assert!(input.undo());
+        assert_eq!(input.text, "pasted");
+        assert!(input.redo());
+        assert_eq!(input.text, "reset");
+    }
+
+    #[test]
+    fn test_text_input_undo_stack_cap_and_multiple_steps() {
+        let mut input = TextInputState::new("");
+        for i in 0..60 {
+            input.insert_str(&format!("{i},"));
+        }
+        // Stack must be capped at 50 snapshots
+        assert_eq!(input.undo_stack.len(), 50);
+
+        // Can undo 50 times
+        for _ in 0..50 {
+            assert!(input.undo());
+        }
+        // 51st undo fails
+        assert!(!input.undo());
+
+        // Can redo 50 times back
+        for _ in 0..50 {
+            assert!(input.redo());
+        }
+        assert!(!input.redo());
     }
 }

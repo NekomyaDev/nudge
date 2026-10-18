@@ -940,6 +940,24 @@ impl<D: UiDispatcher> NativeApp<D> {
                             value_changed = true;
                         }
                     }
+                    Key::Character(s) if s.eq_ignore_ascii_case("z") => {
+                        let st = self.ensure_input_state(focused_id, initial);
+                        if shift {
+                            st.redo();
+                            value_changed = true;
+                            key_name = "Redo".into();
+                        } else {
+                            st.undo();
+                            value_changed = true;
+                            key_name = "Undo".into();
+                        }
+                    }
+                    Key::Character(s) if s.eq_ignore_ascii_case("y") => {
+                        let st = self.ensure_input_state(focused_id, initial);
+                        st.redo();
+                        value_changed = true;
+                        key_name = "Redo".into();
+                    }
                     Key::Named(NamedKey::Home) => {
                         let st = self.ensure_input_state(focused_id, initial);
                         st.move_doc_start(shift);
@@ -1182,6 +1200,33 @@ impl<D: UiDispatcher> NativeApp<D> {
 
     /// Programmatically send a key (e.g. "Enter", "Backspace", "ArrowLeft").
     pub fn send_key(&mut self, key_str: &str) {
+        if key_str == "Undo" || key_str == "Ctrl+z" || key_str == "Ctrl+Z" {
+            let prev_ctrl = self.ctrl_pressed;
+            let prev_shift = self.shift_pressed;
+            self.ctrl_pressed = true;
+            self.shift_pressed = false;
+            self.handle_key_input(&Key::Character("z".into()), None);
+            self.ctrl_pressed = prev_ctrl;
+            self.shift_pressed = prev_shift;
+            return;
+        }
+        if key_str == "Redo"
+            || key_str == "Ctrl+y"
+            || key_str == "Ctrl+Y"
+            || key_str == "Ctrl+Shift+z"
+            || key_str == "Ctrl+Shift+Z"
+        {
+            let prev_ctrl = self.ctrl_pressed;
+            let prev_shift = self.shift_pressed;
+            self.ctrl_pressed = true;
+            self.shift_pressed = key_str.starts_with("Ctrl+Shift");
+            let key_char = if self.shift_pressed { "z" } else { "y" };
+            self.handle_key_input(&Key::Character(key_char.into()), None);
+            self.ctrl_pressed = prev_ctrl;
+            self.shift_pressed = prev_shift;
+            return;
+        }
+
         let (key, text) = match key_str {
             "Backspace" => (Key::Named(NamedKey::Backspace), None),
             "Delete" => (Key::Named(NamedKey::Delete), None),
@@ -1946,5 +1991,112 @@ mod tests {
         );
         assert_eq!(h, (lines.len() as i32) * 20);
         assert_eq!(boxes[0].rect.h, h);
+    }
+
+    #[test]
+    fn test_native_app_send_key_undo_redo_and_dispatch_change() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "Test".into(),
+                width: 400,
+                height: 300,
+            },
+            dummy,
+        );
+
+        app.layout_boxes = vec![LayoutBox {
+            rect: Rect {
+                x: 10,
+                y: 10,
+                w: 200,
+                h: 30,
+            },
+            tag: "input".into(),
+            id: Some("test_input".into()),
+            text: Some("initial".into()),
+            on_click: None,
+            on_change: Some("change_handler".into()),
+            on_key: Some("key_handler".into()),
+        }];
+
+        assert!(app.focus_input("test_input"));
+        assert_eq!(app.focused_id.as_deref(), Some("test_input"));
+
+        // Type into the input
+        app.type_into_focused(" edit");
+        assert_eq!(
+            app.text_inputs.get("test_input").unwrap().text,
+            "initial edit"
+        );
+        assert_eq!(app.dispatcher.notes, "initial edit");
+
+        // Send Undo key
+        app.send_key("Undo");
+        assert_eq!(app.text_inputs.get("test_input").unwrap().text, "initial");
+        assert_eq!(app.dispatcher.notes, "initial");
+        assert_eq!(app.dispatcher.last_key, "Ctrl+Undo");
+
+        // Send Redo key
+        app.send_key("Redo");
+        assert_eq!(
+            app.text_inputs.get("test_input").unwrap().text,
+            "initial edit"
+        );
+        assert_eq!(app.dispatcher.notes, "initial edit");
+        assert_eq!(app.dispatcher.last_key, "Ctrl+Redo");
+
+        // Test Backspace then Undo then Redo
+        app.send_key("Backspace");
+        assert_eq!(
+            app.text_inputs.get("test_input").unwrap().text,
+            "initial edi"
+        );
+        assert_eq!(app.dispatcher.notes, "initial edi");
+
+        app.send_key("Undo");
+        assert_eq!(
+            app.text_inputs.get("test_input").unwrap().text,
+            "initial edit"
+        );
+        assert_eq!(app.dispatcher.notes, "initial edit");
+
+        app.send_key("Redo");
+        assert_eq!(
+            app.text_inputs.get("test_input").unwrap().text,
+            "initial edi"
+        );
+        assert_eq!(app.dispatcher.notes, "initial edi");
+
+        // Test Ctrl+z and Ctrl+y aliases
+        app.send_key("Ctrl+z");
+        assert_eq!(
+            app.text_inputs.get("test_input").unwrap().text,
+            "initial edit"
+        );
+        app.send_key("Ctrl+y");
+        assert_eq!(
+            app.text_inputs.get("test_input").unwrap().text,
+            "initial edi"
+        );
+
+        // Test Ctrl+Shift+z alias
+        app.send_key("Ctrl+z");
+        assert_eq!(
+            app.text_inputs.get("test_input").unwrap().text,
+            "initial edit"
+        );
+        app.send_key("Ctrl+Shift+z");
+        assert_eq!(
+            app.text_inputs.get("test_input").unwrap().text,
+            "initial edi"
+        );
     }
 }
