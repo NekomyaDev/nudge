@@ -250,6 +250,62 @@ pub fn report(results_src: &str, min_accuracy: Option<f64>) -> String {
     out
 }
 
+/// C2: compare two eval runs in structured JSON format.
+pub fn compare_json(a_src: &str, b_src: &str) -> String {
+    let parse_rows = |src: &str| -> std::collections::BTreeMap<usize, bool> {
+        let mut m = std::collections::BTreeMap::new();
+        for line in src.lines().filter(|l| !l.trim().is_empty()) {
+            if let Ok(rec) = parse(line) {
+                if let Some(row) = rec.get("row").and_then(Json::as_num) {
+                    m.insert(
+                        row as usize,
+                        matches!(rec.get("ok"), Some(Json::Bool(true))),
+                    );
+                }
+            }
+        }
+        m
+    };
+    let a = parse_rows(a_src);
+    let b = parse_rows(b_src);
+    let acc = |m: &std::collections::BTreeMap<usize, bool>| {
+        if m.is_empty() {
+            (0usize, 0usize)
+        } else {
+            (m.values().filter(|v| **v).count(), m.len())
+        }
+    };
+    let (ap, at) = acc(&a);
+    let (bp, bt) = acc(&b);
+
+    let mut improved = Vec::new();
+    let mut regressed = Vec::new();
+    for (row, aok) in &a {
+        match b.get(row) {
+            Some(bok) if !*aok && *bok => improved.push(*row),
+            Some(bok) if *aok && !*bok => regressed.push(*row),
+            _ => {}
+        }
+    }
+
+    let payload = serde_json::json!({
+        "base": {
+            "passed": ap,
+            "total": at,
+            "accuracy": if at > 0 { ap as f64 / at as f64 } else { 0.0 },
+        },
+        "candidate": {
+            "passed": bp,
+            "total": bt,
+            "accuracy": if bt > 0 { bp as f64 / bt as f64 } else { 0.0 },
+        },
+        "improved_rows": improved,
+        "regressed_rows": regressed,
+        "net_improvement": (bp as i64) - (ap as i64),
+    });
+    serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string())
+}
+
 /// C2: compare two eval runs (same dataset, different model/prompt/
 /// program) — the rows that flipped are the whole story.
 pub fn compare(a_src: &str, b_src: &str) -> String {
@@ -398,6 +454,25 @@ mod tests {
     fn compare_of_identical_runs_is_calm() {
         let a = r#"{"row": 1, "ok": true, "expected": "x", "got": "x"}"#;
         assert!(compare(a, a).contains("no row-level changes"));
+    }
+
+    #[test]
+    fn compare_json_format() {
+        let a = r#"{"row": 1, "ok": false, "expected": "x", "got": "y"}
+{"row": 2, "ok": true, "expected": "y", "got": "y"}
+"#;
+        let b = r#"{"row": 1, "ok": true, "expected": "x", "got": "x"}
+{"row": 2, "ok": false, "expected": "y", "got": "z"}
+"#;
+        let json_str = compare_json(a, b);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("compare_json should produce valid JSON");
+        assert_eq!(parsed["base"]["passed"], 1);
+        assert_eq!(parsed["candidate"]["passed"], 1);
+        let imp = parsed["improved_rows"].as_array().expect("improved_rows");
+        assert_eq!(imp, &vec![serde_json::json!(1)]);
+        let reg = parsed["regressed_rows"].as_array().expect("regressed_rows");
+        assert_eq!(reg, &vec![serde_json::json!(2)]);
     }
 
     #[test]
