@@ -136,6 +136,57 @@ fn preview(j: &Json, width: usize) -> String {
 
 /// One human-readable report. Both traces are parsed leniently (invalid
 /// lines are skipped) — schema enforcement is `trace-check`'s job.
+/// Compare two traces and return structured JSON comparison with regressions.
+pub fn diff_json(a_text: &str, b_text: &str) -> String {
+    let a = parse_trace(a_text);
+    let b = parse_trace(b_text);
+    let ta = totals(&a);
+    let tb = totals(&b);
+    let why = regressions(a_text, b_text);
+
+    let payload = serde_json::json!({
+        "base": {
+            "records": a.len(),
+            "llm_calls": ta.llm,
+            "tool_calls": ta.tools,
+            "decision_calls": ta.decisions,
+            "tokens": {
+                "in": ta.tin as u64,
+                "out": ta.tout as u64,
+                "total": (ta.tin + ta.tout) as u64,
+            },
+            "cost_usd": ta.cost,
+            "repairs": ta.repairs,
+            "decision_latency_ms": ta.latency,
+            "computer_latency_ms": ta.computer_latency,
+        },
+        "candidate": {
+            "records": b.len(),
+            "llm_calls": tb.llm,
+            "tool_calls": tb.tools,
+            "decision_calls": tb.decisions,
+            "tokens": {
+                "in": tb.tin as u64,
+                "out": tb.tout as u64,
+                "total": (tb.tin + tb.tout) as u64,
+            },
+            "cost_usd": tb.cost,
+            "repairs": tb.repairs,
+            "decision_latency_ms": tb.latency,
+            "computer_latency_ms": tb.computer_latency,
+        },
+        "deltas": {
+            "cost_usd": tb.cost - ta.cost,
+            "tokens": (tb.tin + tb.tout) - (ta.tin + ta.tout),
+            "repairs": (tb.repairs as i64) - (ta.repairs as i64),
+            "decision_latency_ms": tb.latency - ta.latency,
+        },
+        "has_regression": !why.is_empty(),
+        "regressions": why,
+    });
+    serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string())
+}
+
 pub fn diff(a_text: &str, b_text: &str) -> String {
     let a = parse_trace(a_text);
     let b = parse_trace(b_text);
@@ -445,5 +496,23 @@ mod tests {
             "{r}"
         );
         assert!(r.contains("#2 computer.act — only in A"), "{r}");
+    }
+
+    #[test]
+    fn diff_json_format_and_regressions() {
+        let a = r#"{"kind": "llm.call", "model": "m", "cost_usd": 0.001, "tokens": {"in": 10, "out": 10}, "outcome": "ok"}
+"#;
+        let b = r#"{"kind": "llm.call", "model": "m", "cost_usd": 0.002, "tokens": {"in": 20, "out": 20}, "outcome": "ok"}
+"#;
+        let json_str = diff_json(a, b);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("diff_json should produce valid JSON");
+        assert_eq!(parsed["has_regression"], true);
+        assert!(!parsed["regressions"]
+            .as_array()
+            .expect("regressions")
+            .is_empty());
+        assert_eq!(parsed["base"]["cost_usd"], 0.001);
+        assert_eq!(parsed["candidate"]["cost_usd"], 0.002);
     }
 }
