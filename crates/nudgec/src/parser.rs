@@ -2791,7 +2791,9 @@ test "budget" {
         match &items2[0] {
             Item::TypeAlias { name, ty } => {
                 assert_eq!(name, "Scored");
-                assert!(matches!(ty, TypeExpr::Optional(inner) if matches!(inner.as_ref(), TypeExpr::Refine(..))));
+                assert!(
+                    matches!(ty, TypeExpr::Optional(inner) if matches!(inner.as_ref(), TypeExpr::Refine(..)))
+                );
             }
             other => panic!("expected TypeAlias, got {other:?}"),
         }
@@ -2802,7 +2804,9 @@ test "budget" {
         match &items3[0] {
             Item::TypeAlias { name, ty } => {
                 assert_eq!(name, "OptList");
-                assert!(matches!(ty, TypeExpr::Optional(inner) if matches!(inner.as_ref(), TypeExpr::List(elem) if matches!(elem.as_ref(), TypeExpr::Optional(_)))));
+                assert!(
+                    matches!(ty, TypeExpr::Optional(inner) if matches!(inner.as_ref(), TypeExpr::List(elem) if matches!(elem.as_ref(), TypeExpr::Optional(_))))
+                );
             }
             other => panic!("expected TypeAlias, got {other:?}"),
         }

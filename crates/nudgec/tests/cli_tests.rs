@@ -51,7 +51,10 @@ fn test_fn(s: string) -> string uses LLM {
     assert_eq!(parsed2["functions"][0]["name"], "test_fn");
 
     // Missing file: nudgec cost
-    let out3 = Command::new(nudgec_bin()).arg("cost").output().expect("run cost");
+    let out3 = Command::new(nudgec_bin())
+        .arg("cost")
+        .output()
+        .expect("run cost");
     assert_eq!(out3.status.code(), Some(64));
 
     // Missing file with flag: nudgec cost --json
@@ -119,7 +122,10 @@ fn test_cli_explain_json_and_flag_positions() {
     assert_eq!(parsed2["llm_calls"], 1);
 
     // Missing file: nudgec explain
-    let out3 = Command::new(nudgec_bin()).arg("explain").output().expect("run explain");
+    let out3 = Command::new(nudgec_bin())
+        .arg("explain")
+        .output()
+        .expect("run explain");
     assert_eq!(out3.status.code(), Some(64));
 
     // Unknown flag fail-closed

@@ -139,7 +139,9 @@ fn main() {
             } else if arg == "--fail-on-regression" {
                 fail_on_reg = true;
             } else if arg == "--help" || arg == "-h" {
-                println!("usage: nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]");
+                println!(
+                    "usage: nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]"
+                );
                 process::exit(0);
             } else if arg.starts_with('-') {
                 eprintln!("error: unknown flag '{arg}'");

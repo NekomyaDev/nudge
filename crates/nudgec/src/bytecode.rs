@@ -1261,13 +1261,22 @@ mod tests {
         "#;
         let items = parse_src(src);
         let res = compile_checked(&items);
-        assert!(res.is_err(), "compile_checked with type mismatch should fail");
+        assert!(
+            res.is_err(),
+            "compile_checked with type mismatch should fail"
+        );
         let err = res.err().unwrap();
-        assert!(err.contains("error[E0201]"), "expected E0201 in error: {err}");
+        assert!(
+            err.contains("error[E0201]"),
+            "expected E0201 in error: {err}"
+        );
 
         // Raw compile should succeed emitting the bytecode
         let raw_res = compile(&items);
-        assert!(raw_res.is_ok(), "raw compile preserves AST for runtime error verification");
+        assert!(
+            raw_res.is_ok(),
+            "raw compile preserves AST for runtime error verification"
+        );
     }
 
     #[test]
@@ -1280,9 +1289,15 @@ mod tests {
         "#;
         let items = parse_src(src);
         let res = compile_checked(&items);
-        assert!(res.is_err(), "compile_checked with unknown identifier should fail");
+        assert!(
+            res.is_err(),
+            "compile_checked with unknown identifier should fail"
+        );
         let err = res.err().unwrap();
-        assert!(err.contains("error[E0101]"), "expected E0101 in error: {err}");
+        assert!(
+            err.contains("error[E0101]"),
+            "expected E0101 in error: {err}"
+        );
     }
 
     #[test]
@@ -1316,7 +1331,9 @@ mod tests {
 
         // Under Checked mode, type checking rejects assigning to immutable variable E0201 / E0101
         let checked = compile_with_options(&items, Some("f"), CompileMode::Checked);
-        assert!(checked.is_err(), "checked compilation should reject immutable assignment");
+        assert!(
+            checked.is_err(),
+            "checked compilation should reject immutable assignment"
+        );
     }
 }
-
