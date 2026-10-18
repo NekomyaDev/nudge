@@ -72,6 +72,121 @@ fn weakest_answer(rec: &Json) -> Option<(String, String, f64)> {
 }
 
 /// One human-readable report.
+/// Parse recorded trace text and return a structured JSON summary.
+pub fn explain_json(text: &str) -> String {
+    let recs = parse_trace(text);
+    let mut llm = 0usize;
+    let mut tools = 0usize;
+    let mut decisions = 0usize;
+    let mut tin = 0.0;
+    let mut tout = 0.0;
+    let mut cost = 0.0;
+    let mut repairs = 0usize;
+    let mut cache_hits = 0usize;
+    let mut lat_total = 0.0;
+    let mut review: Vec<String> = Vec::new();
+    let mut failures: Vec<String> = Vec::new();
+
+    for (idx, r) in recs.iter().enumerate() {
+        let line_no = idx + 1;
+        match s(r, "kind").as_str() {
+            "llm.call" => {
+                llm += 1;
+                let (i, o) = tokens_in_out(r);
+                tin += i;
+                tout += o;
+                cost += num(r, "cost_usd");
+                if num(r, "repair_round") > 0.0 {
+                    repairs += 1;
+                }
+                let outcome = s(r, "outcome");
+                if outcome == "error" {
+                    failures.push(format!(
+                        "llm.call #{line_no} model={} {}",
+                        s(r, "model"),
+                        preview(r.get("error").unwrap_or(r), 90),
+                    ));
+                }
+                if let Some(conf) = r.get("confidence").and_then(Json::as_num) {
+                    if conf < 0.5 {
+                        review.push(format!(
+                            "llm.call #{line_no} model={} confidence={conf:.2} {}",
+                            s(r, "model"),
+                            preview(r.get("output").unwrap_or(r), 60),
+                        ));
+                    }
+                }
+            }
+            "tool.call" => {
+                tools += 1;
+                if s(r, "outcome") == "error" {
+                    let tool = {
+                        let t = s(r, "tool");
+                        if t.is_empty() {
+                            s(r, "fn")
+                        } else {
+                            t
+                        }
+                    };
+                    let server = s(r, "server");
+                    let server_part = if server.is_empty() {
+                        String::new()
+                    } else {
+                        format!("server={server} ")
+                    };
+                    failures.push(format!(
+                        "tool.call #{line_no} {server_part}tool={tool} {}",
+                        preview(r.get("error").unwrap_or(r), 90),
+                    ));
+                }
+            }
+            "decision.call" => {
+                decisions += 1;
+                let lat = num(r, "latency_ms");
+                lat_total += lat;
+                if s(r, "cache") == "hit" {
+                    cache_hits += 1;
+                }
+                let outcome = s(r, "outcome");
+                if outcome != "ok" {
+                    failures.push(format!(
+                        "decision.call #{line_no} model={} outcome={outcome}",
+                        s(r, "model"),
+                    ));
+                }
+                if let Some((q, metric, v)) = weakest_answer(r) {
+                    if v < 0.5 {
+                        review.push(format!(
+                            "decision.call #{line_no} model={} question '{q}' {metric}={v:.2}",
+                            s(r, "model"),
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let payload = serde_json::json!({
+        "total_records": recs.len(),
+        "llm_calls": llm,
+        "tool_calls": tools,
+        "decision_calls": decisions,
+        "tokens": {
+            "in": tin as u64,
+            "out": tout as u64,
+        },
+        "cost_usd": cost,
+        "repairs": repairs,
+        "cache_hits": cache_hits,
+        "decision_latency_ms_total": lat_total,
+        "decision_latency_ms_avg": if decisions > 0 { lat_total / decisions as f64 } else { 0.0 },
+        "failures": failures,
+        "low_confidence_reviews": review,
+    });
+    serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string())
+}
+
 pub fn explain(text: &str) -> String {
     let recs = parse_trace(text);
     let mut out = String::new();
@@ -214,7 +329,7 @@ pub fn explain(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::explain;
+    use super::{explain, explain_json};
 
     fn llm(conf: Option<f64>) -> String {
         let c = conf
@@ -286,5 +401,26 @@ mod tests {
         let rep = explain(&trace);
         assert!(rep.contains("cache hits 1"), "{rep}");
         assert!(rep.contains("2 record(s)"), "{rep}");
+    }
+
+    #[test]
+    fn explain_json_format_validity() {
+        let mut d = decision(0.9, "billing", "ok");
+        d = d.replace(
+            r#""provider": "laya""#,
+            r#""provider": "laya", "cache": "hit""#,
+        );
+        let trace = [
+            d,
+            r#"{"kind": "fn.return", "fn": "f", "output": "x"}"#.to_string(),
+        ]
+        .join("\n");
+        let json_str = explain_json(&trace);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("explain_json should produce valid JSON");
+        assert_eq!(parsed["total_records"], 2);
+        assert_eq!(parsed["decision_calls"], 1);
+        assert_eq!(parsed["cache_hits"], 1);
+        assert!(parsed["failures"].as_array().is_some());
     }
 }
