@@ -79,6 +79,7 @@ pub fn run_cli(
     fname: &str,
     path: &str,
     min_acc: Option<f64>,
+    json_mode: bool,
 ) -> i32 {
     use std::fs;
     use std::process::Command;
@@ -132,7 +133,11 @@ pub fn run_cli(
             return 1;
         }
     };
-    print!("{}", report(&results, min_acc));
+    if json_mode {
+        println!("{}", report_json(&results, min_acc));
+    } else {
+        print!("{}", report(&results, min_acc));
+    }
     if let Some(min) = min_acc {
         let r = summarize(&results, Some(min));
         let total = r.passed + r.failed;
@@ -146,9 +151,14 @@ pub fn run_cli(
     0
 }
 
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct EvalReport {
     pub passed: usize,
     pub failed: usize,
+    pub total: usize,
+    pub accuracy: f64,
     pub failures: Vec<String>,
 }
 
@@ -204,8 +214,19 @@ pub fn summarize(results_src: &str, min_accuracy: Option<f64>) -> EvalReport {
     EvalReport {
         passed,
         failed,
+        total,
+        accuracy: if total > 0 {
+            passed as f64 / total as f64
+        } else {
+            0.0
+        },
         failures,
     }
+}
+
+pub fn report_json(results_src: &str, min_accuracy: Option<f64>) -> String {
+    let r = summarize(results_src, min_accuracy);
+    serde_json::to_string_pretty(&r).unwrap_or_else(|_| "{}".to_string())
 }
 
 pub fn report(results_src: &str, min_accuracy: Option<f64>) -> String {
@@ -382,5 +403,21 @@ mod tests {
     #[test]
     fn empty_dataset_is_reported_honestly() {
         assert!(report("", None).contains("no rows"));
+    }
+
+    #[test]
+    fn eval_report_json_format() {
+        let rows = r#"{"row": 1, "ok": true, "expected": "a", "got": "a"}
+{"row": 2, "ok": false, "expected": "b", "got": "c"}
+"#;
+        let json_str = report_json(rows, Some(0.8));
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("report_json should produce valid JSON");
+        assert_eq!(parsed["passed"], 1);
+        assert_eq!(parsed["failed"], 1);
+        assert_eq!(parsed["total"], 2);
+        assert_eq!(parsed["accuracy"], 0.5);
+        let failures = parsed["failures"].as_array().expect("failures array");
+        assert!(failures.len() >= 2);
     }
 }
