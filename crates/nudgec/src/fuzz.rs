@@ -180,8 +180,10 @@ pub fn drive(src: &str) {
     let _ = fuzz_one(src);
 }
 
+use serde::{Deserialize, Serialize};
+
 /// Information recorded when a fuzzed input causes an unexpected panic.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FuzzPanic {
     pub seed: u64,
     pub reproducing_seed: u64,
@@ -201,7 +203,7 @@ impl std::fmt::Display for FuzzPanic {
 }
 
 /// Summary report returned by `run_fuzzer`.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FuzzReport {
     pub total_iterations: usize,
     pub iterations: usize,
@@ -225,6 +227,10 @@ impl FuzzReport {
 
     pub fn clean_rejections_and_completions(&self) -> usize {
         self.clean_rejections_completions
+    }
+
+    pub fn to_json(&self) -> String {
+        serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".to_string())
     }
 }
 
@@ -457,5 +463,16 @@ mod tests {
             report.to_string(),
             "fuzzed 10 inputs across lex/parse/check/codegen: 1 panics, 9 clean rejections/completions"
         );
+    }
+
+    #[test]
+    fn test_fuzz_report_to_json_validity() {
+        let seeds = vec!["fn main() -> int { 42 }".to_string()];
+        let report = run_fuzzer(&seeds, 5, 12345).expect("run_fuzzer");
+        let json_str = report.to_json();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("fuzz report to_json must produce valid JSON");
+        assert_eq!(parsed["total_iterations"], 5);
+        assert!(parsed["panics"].as_array().is_some());
     }
 }
