@@ -5309,4 +5309,96 @@ fn f(c: bool) -> string uses IO {
             );
         }
     }
+
+    #[test]
+    fn test_union_and_optional_edge_cases_and_fail_closed() {
+        // Union widening: int | string <: int | string | bool
+        let errs = check_src(r#"
+fn get_val() -> int | string { 42 }
+fn f() -> int | string | bool {
+    let x: int | string | bool = get_val()
+    x
+}
+"#);
+        assert!(errs.is_empty(), "expected clean check, got {errs:?}");
+
+        // Union narrowing rejection: int | string | bool NOT <: int | string
+        let errs = check_src(r#"
+fn get_val() -> int | string | bool { 42 }
+fn f() -> int | string {
+    let x: int | string = get_val()
+    x
+}
+"#);
+        assert!(
+            errs.iter().any(|e| e.code == "E0201"),
+            "expected E0201 on union narrowing, got {errs:?}"
+        );
+
+        // Assigning none to optional union (int | string)? passes
+        let errs = check_src("fn f() -> (int | string)? { none }");
+        assert!(errs.is_empty(), "expected clean check, got {errs:?}");
+
+        // Assigning int or string to (int | string)? passes
+        let errs = check_src("fn f() -> (int | string)? { 10 }");
+        assert!(errs.is_empty(), "expected clean check, got {errs:?}");
+        let errs = check_src("fn f() -> (int | string)? { \"hello\" }");
+        assert!(errs.is_empty(), "expected clean check, got {errs:?}");
+
+        // Assigning bool to (int | string)? fails E0201
+        let errs = check_src("fn f() -> (int | string)? { true }");
+        assert!(errs.iter().any(|e| e.code == "E0201"), "expected E0201, got {errs:?}");
+
+        // Assigning none to non-optional union fails E0201
+        let errs = check_src("fn f() -> int | string { none }");
+        assert!(errs.iter().any(|e| e.code == "E0201"), "expected E0201, got {errs:?}");
+
+        // Assigning none to non-optional int fails E0201
+        let errs = check_src("fn f() -> int { none }");
+        assert!(errs.iter().any(|e| e.code == "E0201"), "expected E0201, got {errs:?}");
+
+        // Assigning none to int | none passes
+        let errs = check_src("fn f() -> int | none { none }");
+        assert!(errs.is_empty(), "expected clean check, got {errs:?}");
+
+        // Assigning none to union with optional variant passes
+        let errs = check_src("fn f() -> int | string? { none }");
+        assert!(errs.is_empty(), "expected clean check, got {errs:?}");
+        let errs = check_src("fn f() -> int? | string { none }");
+        assert!(errs.is_empty(), "expected clean check, got {errs:?}");
+
+        // Equality check with optional and none passes
+        let errs = check_src("fn f(x: int?) -> bool { x == none }");
+        assert!(errs.is_empty(), "expected clean check, got {errs:?}");
+        let errs = check_src("fn f(x: string?) -> bool { x != none }");
+        assert!(errs.is_empty(), "expected clean check, got {errs:?}");
+
+        // Equality check non-optional int with none fails E0201
+        let errs = check_src("fn f(x: int) -> bool { x == none }");
+        assert!(errs.iter().any(|e| e.code == "E0201"), "expected E0201, got {errs:?}");
+
+        // Arithmetic on optional int fails E0201 fail-closed
+        let errs = check_src("fn f(x: int?) -> int { x + 1 }");
+        assert!(errs.iter().any(|e| e.code == "E0201"), "expected E0201, got {errs:?}");
+
+        // Arithmetic on union int | string fails E0201 fail-closed
+        let errs = check_src("fn f(x: int | string) -> int { x + 1 }");
+        assert!(errs.iter().any(|e| e.code == "E0201"), "expected E0201, got {errs:?}");
+
+        // List subtyping: [int] <: [int?] passes
+        let errs = check_src("fn f(xs: [int]) -> [int?] { xs }");
+        assert!(errs.is_empty(), "expected clean check, got {errs:?}");
+
+        // List subtyping: [int?] NOT <: [int] fails E0201
+        let errs = check_src("fn f(xs: [int?]) -> [int] { xs }");
+        assert!(errs.iter().any(|e| e.code == "E0201"), "expected E0201, got {errs:?}");
+
+        // List subtyping: [int] <: [int | string] passes
+        let errs = check_src("fn f(xs: [int]) -> [int | string] { xs }");
+        assert!(errs.is_empty(), "expected clean check, got {errs:?}");
+
+        // List subtyping: [int | string] NOT <: [int] fails E0201
+        let errs = check_src("fn f(xs: [int | string]) -> [int] { xs }");
+        assert!(errs.iter().any(|e| e.code == "E0201"), "expected E0201, got {errs:?}");
+    }
 }

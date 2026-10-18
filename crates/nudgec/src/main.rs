@@ -129,15 +129,26 @@ fn main() {
     }
     // `trace-diff` takes two trace files; `--fail-on-regression` turns the
     // report into a CI gate (exit 1 when the candidate regresses)
-    if args.len() >= 4 && args[1] == "trace-diff" {
-        let json_mode = args.iter().any(|a| a == "--json");
-        let fail_on_reg = args.iter().any(|a| a == "--fail-on-regression");
-        let files: Vec<&String> = args
-            .iter()
-            .skip(2)
-            .filter(|a| *a != "--json" && *a != "--fail-on-regression")
-            .collect();
-        if files.len() < 2 {
+    if args.len() >= 2 && args[1] == "trace-diff" {
+        let mut json_mode = false;
+        let mut fail_on_reg = false;
+        let mut files = Vec::new();
+        for arg in &args[2..] {
+            if arg == "--json" {
+                json_mode = true;
+            } else if arg == "--fail-on-regression" {
+                fail_on_reg = true;
+            } else if arg == "--help" || arg == "-h" {
+                println!("usage: nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]");
+                process::exit(0);
+            } else if arg.starts_with('-') {
+                eprintln!("error: unknown flag '{arg}'");
+                process::exit(64);
+            } else {
+                files.push(arg.as_str());
+            }
+        }
+        if files.len() != 2 {
             eprintln!(
                 "usage: nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]"
             );
@@ -281,18 +292,223 @@ fn main() {
         return;
     }
     // `explain` turns a recorded trace into a human report
-    if args.len() >= 3 && args[1] == "explain" {
-        let json_mode = args.iter().any(|a| a == "--json");
-        let file = args.iter().skip(2).find(|a| *a != "--json");
-        if let Some(f) = file {
-            let src = read_src(f);
-            if json_mode {
-                println!("{}", traceexplain::explain_json(&src));
+    if args.len() >= 2 && args[1] == "explain" {
+        let mut json_mode = false;
+        let mut file = None;
+        for arg in &args[2..] {
+            if arg == "--json" {
+                json_mode = true;
+            } else if arg == "--help" || arg == "-h" {
+                println!("usage: nudgec explain <t.jsonl> [--json]");
+                process::exit(0);
+            } else if arg.starts_with('-') {
+                eprintln!("error: unknown flag '{arg}'");
+                process::exit(64);
+            } else if file.is_none() {
+                file = Some(arg.as_str());
             } else {
-                print!("{}", traceexplain::explain(&src));
+                eprintln!("error: unexpected positional argument '{arg}'");
+                process::exit(64);
             }
-            return;
         }
+        let Some(f) = file else {
+            eprintln!("usage: nudgec explain <t.jsonl> [--json]");
+            process::exit(64);
+        };
+        let src = read_src(f);
+        if json_mode {
+            println!("{}", traceexplain::explain_json(&src));
+        } else {
+            print!("{}", traceexplain::explain(&src));
+        }
+        return;
+    }
+    // `cost` produces a static cost report per function
+    if args.len() >= 2 && args[1] == "cost" {
+        let mut json_mode = false;
+        let mut file = None;
+        for arg in &args[2..] {
+            if arg == "--json" {
+                json_mode = true;
+            } else if arg == "--help" || arg == "-h" {
+                println!("usage: nudgec cost <file.ndg> [--json]");
+                process::exit(0);
+            } else if arg.starts_with('-') {
+                eprintln!("error: unknown flag '{arg}'");
+                process::exit(64);
+            } else if file.is_none() {
+                file = Some(arg.as_str());
+            } else {
+                eprintln!("error: unexpected positional argument '{arg}'");
+                process::exit(64);
+            }
+        }
+        let Some(f) = file else {
+            eprintln!("usage: nudgec cost <file.ndg> [--json]");
+            process::exit(64);
+        };
+        let src = read_src(f);
+        match compile(&src) {
+            Ok(items) => {
+                let errs = check::check(&items);
+                if !errs.is_empty() {
+                    for e in &errs {
+                        eprintln!("error[{}]: {}", e.code, e.msg);
+                        print_hint(e.code);
+                    }
+                    process::exit(1);
+                }
+                if json_mode {
+                    println!("{}", cost::report_json(&items));
+                } else {
+                    print!("{}", cost::report(&items));
+                }
+                return;
+            }
+            Err((msg, at)) => {
+                eprintln!("error[E0002]: {msg} at byte {at}");
+                print_hint("E0002");
+                process::exit(1);
+            }
+        }
+    }
+    // `compare` compares two eval results
+    if args.len() >= 2 && args[1] == "compare" {
+        let mut json_mode = false;
+        let mut files = Vec::new();
+        for arg in &args[2..] {
+            if arg == "--json" {
+                json_mode = true;
+            } else if arg == "--help" || arg == "-h" {
+                println!("usage: nudgec compare <results_a.jsonl> <results_b.jsonl> [--json]");
+                process::exit(0);
+            } else if arg.starts_with('-') {
+                eprintln!("error: unknown flag '{arg}'");
+                process::exit(64);
+            } else {
+                files.push(arg.as_str());
+            }
+        }
+        if files.len() != 2 {
+            eprintln!("usage: nudgec compare <results_a.jsonl> <results_b.jsonl> [--json]");
+            process::exit(64);
+        }
+        let a = read_src(files[0]);
+        let b = read_src(files[1]);
+        if json_mode {
+            println!("{}", evalcmd::compare_json(&a, &b));
+        } else {
+            print!("{}", evalcmd::compare(&a, &b));
+        }
+        return;
+    }
+    // `eval` runs a fn over a JSONL dataset, scores it, optional CI gate
+    if args.len() >= 2 && args[1] == "eval" {
+        let mut file = None;
+        let mut dataset = None;
+        let mut fname = String::from("main");
+        let mut path = String::new();
+        let mut min_acc = None;
+        let mut json_mode = false;
+        let mut i = 2;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--json" => {
+                    json_mode = true;
+                }
+                "--dataset" | "-d" => {
+                    i += 1;
+                    if let Some(d) = args.get(i) {
+                        dataset = Some(d.clone());
+                    } else {
+                        eprintln!("error: --dataset requires a path");
+                        process::exit(64);
+                    }
+                }
+                "--fn" | "-f" => {
+                    i += 1;
+                    if let Some(f) = args.get(i) {
+                        fname = f.clone();
+                    } else {
+                        eprintln!("error: --fn requires a function name");
+                        process::exit(64);
+                    }
+                }
+                "--path" | "-p" => {
+                    i += 1;
+                    if let Some(p) = args.get(i) {
+                        path = p.clone();
+                    } else {
+                        eprintln!("error: --path requires a dotted path");
+                        process::exit(64);
+                    }
+                }
+                "--min-accuracy" | "-a" => {
+                    i += 1;
+                    if let Some(a) = args.get(i).and_then(|v| v.parse::<f64>().ok()) {
+                        min_acc = Some(a);
+                    } else {
+                        eprintln!("error: --min-accuracy requires a number");
+                        process::exit(64);
+                    }
+                }
+                "--help" | "-h" => {
+                    println!("usage: nudgec eval <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8] [--json]");
+                    process::exit(0);
+                }
+                arg if arg.starts_with('-') => {
+                    eprintln!("error: unknown eval argument '{arg}'");
+                    process::exit(64);
+                }
+                pos => {
+                    if file.is_none() {
+                        file = Some(pos.to_string());
+                    } else {
+                        eprintln!("error: unexpected positional argument '{pos}'");
+                        process::exit(64);
+                    }
+                }
+            }
+            i += 1;
+        }
+        let Some(file_str) = file else {
+            eprintln!("usage: nudgec eval <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8] [--json]");
+            process::exit(64);
+        };
+        let Some(dataset) = dataset else {
+            eprintln!("error: eval needs --dataset <rows.jsonl>");
+            process::exit(64);
+        };
+        let src = read_src(&file_str);
+        let items = match compile(&src) {
+            Ok(items) => {
+                let errs = check::check(&items);
+                if !errs.is_empty() {
+                    for e in &errs {
+                        match e.span {
+                            Some(sp) => {
+                                let (l, c) = line_col(&src, sp.start);
+                                eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
+                            }
+                            None => eprintln!("error[{}]: {}", e.code, e.msg),
+                        }
+                        print_hint(e.code);
+                    }
+                    process::exit(1);
+                }
+                print_lints(&items);
+                items
+            }
+            Err((msg, at)) => {
+                eprintln!("error[E0002]: {msg} at byte {at}");
+                print_hint("E0002");
+                process::exit(1);
+            }
+        };
+        let code = evalcmd::run_cli(
+            &items, &file_str, &dataset, &fname, &path, min_acc, json_mode,
+        );
+        process::exit(code);
     }
     // `debug` speaks DAP over stdio over a recorded trace (no file arg parsing)
     if args.len() == 3 && args[1] == "debug" {
@@ -368,7 +584,7 @@ fn main() {
                         });
                 }
                 "--help" | "-h" => {
-                    println!("usage: nudgec fuzz [file.ndg] [--iterations N] [--seed S]");
+                    println!("usage: nudgec fuzz [file.ndg] [--iterations N] [--seed S] [--json]");
                     process::exit(0);
                 }
                 arg if arg.starts_with('-') => {
@@ -425,21 +641,38 @@ fn main() {
             }
         }
     }
+    let lint_file = if args[1] == "lint" {
+        args.iter().skip(2).find(|a| !a.starts_with('-')).cloned()
+    } else {
+        None
+    };
+    let run_file = if args[1] == "run" {
+        let mut file = None;
+        let mut i = 2;
+        while i < args.len() {
+            if args[i] == "--fn" || args[i] == "-f" {
+                i += 1;
+            } else if !args[i].starts_with('-') {
+                file = Some(args[i].clone());
+                break;
+            }
+            i += 1;
+        }
+        file
+    } else {
+        None
+    };
     // policy-sweep takes the trace plus flags (len > 3); everything else
     // is exactly <cmd> <file>
     if args.len() != 3
         && args[1] != "policy-sweep"
-        && args[1] != "cost"
         && args[1] != "serve"
         && args[1] != "a2a-serve"
         && args[1] != "mcp"
-        && args[1] != "eval"
-        && args[1] != "compare"
         && args[1] != "runs"
         && args[1] != "lint"
         && args[1] != "run"
         && args[1] != "build"
-        && args[1] != "fuzz"
     {
         usage();
     }
@@ -470,6 +703,16 @@ fn main() {
         String::new()
     } else if args[1] == "build" {
         match &build_file {
+            Some(f) => read_src(f),
+            None => usage(),
+        }
+    } else if args[1] == "lint" {
+        match &lint_file {
+            Some(f) => read_src(f),
+            None => usage(),
+        }
+    } else if args[1] == "run" {
+        match &run_file {
             Some(f) => read_src(f),
             None => usage(),
         }
@@ -557,38 +800,6 @@ fn main() {
                 process::exit(1);
             }
         },
-        // design §13: static cost report (v0.4) — parse, count llm call
-        // sites per fn under flat fake pricing
-        "cost" => {
-            let json_mode = args.iter().any(|a| a == "--json");
-            match compile(&src) {
-                Ok(items) => {
-                    // run the checker first: duplicate fn names would silently
-                    // overwrite each other's entries in the cost map, and
-                    // type-invalid programs shouldn't produce a cost report
-                    let errs = check::check(&items);
-                    if !errs.is_empty() {
-                        for e in &errs {
-                            {
-                                eprintln!("error[{}]: {}", e.code, e.msg);
-                                print_hint(e.code);
-                            }
-                        }
-                        process::exit(1);
-                    }
-                    if json_mode {
-                        println!("{}", cost::report_json(&items));
-                    } else {
-                        print!("{}", cost::report(&items));
-                    }
-                }
-                Err((msg, at)) => {
-                    eprintln!("error[E0002]: {msg} at byte {at}");
-                    print_hint("E0002");
-                    process::exit(1);
-                }
-            }
-        }
         // design §14: TypeScript backend (v0.3c) — same pipeline, TS emit
         "build-ts" => match compile(&src) {
             Ok(items) => {
@@ -867,101 +1078,6 @@ fn main() {
                 }
             }
         }
-        // design §6 (v1.0): validate a trace against the frozen v1 schema
-        "eval" => {
-            // C1: run a fn over a JSONL dataset, score it, optional CI gate
-            if args.len() < 3 {
-                eprintln!("usage: nudgec eval <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8]");
-                process::exit(64);
-            }
-            let items = match compile(&src) {
-                Ok(items) => {
-                    let errs = check::check(&items);
-                    if !errs.is_empty() {
-                        for e in &errs {
-                            match e.span {
-                                Some(sp) => {
-                                    let (l, c) = line_col(&src, sp.start);
-                                    eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
-                                }
-                                None => eprintln!("error[{}]: {}", e.code, e.msg),
-                            }
-                            print_hint(e.code);
-                        }
-                        process::exit(1);
-                    }
-                    print_lints(&items);
-                    items
-                }
-                Err((msg, at)) => {
-                    eprintln!("error[E0002]: {msg} at byte {at}");
-                    print_hint("E0002");
-                    process::exit(1);
-                }
-            };
-            let mut dataset: Option<String> = None;
-            let mut fname = String::from("main");
-            let mut path = String::new();
-            let mut min_acc: Option<f64> = None;
-            let mut json_mode = false;
-            let mut i = 3usize;
-            while i < args.len() {
-                match args[i].as_str() {
-                    "--json" => {
-                        json_mode = true;
-                    }
-                    "--dataset" | "-d" => {
-                        i += 1;
-                        dataset = args.get(i).cloned();
-                    }
-                    "--fn" | "-f" => {
-                        i += 1;
-                        fname = args.get(i).cloned().unwrap_or_default();
-                    }
-                    "--path" | "-p" => {
-                        i += 1;
-                        path = args.get(i).cloned().unwrap_or_default();
-                    }
-                    "--min-accuracy" | "-a" => {
-                        i += 1;
-                        min_acc = args.get(i).and_then(|v| v.parse::<f64>().ok());
-                    }
-                    other => {
-                        eprintln!("error: unknown eval argument '{other}'");
-                        process::exit(64);
-                    }
-                }
-                i += 1;
-            }
-            let Some(dataset) = dataset else {
-                eprintln!("error: eval needs --dataset <rows.jsonl>");
-                process::exit(64);
-            };
-            let code = evalcmd::run_cli(
-                &items, &args[2], &dataset, &fname, &path, min_acc, json_mode,
-            );
-            process::exit(code);
-        }
-        "compare" => {
-            // C2: two eval runs, row-level flips
-            let json_mode = args.iter().any(|a| a == "--json");
-            let files: Vec<&String> = args.iter().skip(2).filter(|a| *a != "--json").collect();
-            if files.len() != 2 {
-                eprintln!("usage: nudgec compare <results_a.jsonl> <results_b.jsonl> [--json]");
-                process::exit(64);
-            }
-            if json_mode {
-                println!(
-                    "{}",
-                    evalcmd::compare_json(&read_src(files[0]), &read_src(files[1]))
-                );
-            } else {
-                print!(
-                    "{}",
-                    evalcmd::compare(&read_src(files[0]), &read_src(files[1]))
-                );
-            }
-        }
         "runs" => {
             // C8: inspect the local run store
             let detail = if args.len() == 4 && args[2] == "--run" {
@@ -1218,7 +1334,8 @@ fn main() {
             nudge_runtime::trace::enable_default_sink();
             let mut entry = "main".to_string();
             let mut raw_args = Vec::new();
-            let mut i = 3;
+            let mut file_seen = false;
+            let mut i = 2;
             while i < args.len() {
                 match args[i].as_str() {
                     "--fn" | "-f" => {
@@ -1231,7 +1348,11 @@ fn main() {
                         }
                     }
                     _ => {
-                        raw_args.push(args[i].clone());
+                        if !file_seen && run_file.as_deref() == Some(&args[i]) {
+                            file_seen = true;
+                        } else {
+                            raw_args.push(args[i].clone());
+                        }
                     }
                 }
                 i += 1;

@@ -2763,4 +2763,60 @@ test "budget" {
             other => panic!("expected Item::Fn, got {other:?}"),
         }
     }
+
+    #[test]
+    fn test_parse_optional_and_union_edge_cases() {
+        // Parenthesized union made optional: (int | string)?
+        let src = "type Val = (int | string)?";
+        let items = parse_str(src);
+        match &items[0] {
+            Item::TypeAlias { name, ty } => {
+                assert_eq!(name, "Val");
+                match ty {
+                    TypeExpr::Optional(inner) => match inner.as_ref() {
+                        TypeExpr::Union(variants) => {
+                            assert_eq!(variants.len(), 2);
+                        }
+                        other => panic!("expected Union, got {other:?}"),
+                    },
+                    other => panic!("expected Optional, got {other:?}"),
+                }
+            }
+            other => panic!("expected TypeAlias, got {other:?}"),
+        }
+
+        // Parenthesized refined type made optional: (int @range(0, 10))?
+        let src2 = "type Scored = (int @range(0, 10))?";
+        let items2 = parse_str(src2);
+        match &items2[0] {
+            Item::TypeAlias { name, ty } => {
+                assert_eq!(name, "Scored");
+                assert!(matches!(ty, TypeExpr::Optional(inner) if matches!(inner.as_ref(), TypeExpr::Refine(..))));
+            }
+            other => panic!("expected TypeAlias, got {other:?}"),
+        }
+
+        // List of optionals made optional: [string?]?
+        let src3 = "type OptList = [string?]?";
+        let items3 = parse_str(src3);
+        match &items3[0] {
+            Item::TypeAlias { name, ty } => {
+                assert_eq!(name, "OptList");
+                assert!(matches!(ty, TypeExpr::Optional(inner) if matches!(inner.as_ref(), TypeExpr::List(elem) if matches!(elem.as_ref(), TypeExpr::Optional(_)))));
+            }
+            other => panic!("expected TypeAlias, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_malformed_union_and_optional_fail_closed() {
+        // Trailing bar
+        assert!(crate::compile("type Broken = int |").is_err());
+        // Leading bar
+        assert!(crate::compile("type Broken = | int").is_err());
+        // Double bar
+        assert!(crate::compile("type Broken = int | | string").is_err());
+        // Unclosed paren
+        assert!(crate::compile("type Broken = (int | string").is_err());
+    }
 }

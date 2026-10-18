@@ -1066,21 +1066,65 @@ fn check_expr_effects(expr: &Expr, tool_names: &[String]) -> Result<(), String> 
     }
 }
 
+/// Compilation mode specifying whether to run static type checking prior to bytecode emission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompileMode {
+    /// Emit bytecode directly without checking types (default for VM differential parity testing).
+    Raw,
+    /// Run static type checking (`crate::check::check`) and reject programs with type errors.
+    Checked,
+}
+
 /// Compiles pure Nudge AST items into a runnable `Program`.
 ///
 /// Returns an error if the entry function or unsupported construct is encountered.
 pub fn compile(items: &[ast::Item]) -> Result<Program, String> {
-    compile_internal(items, None)
+    compile_internal(items, None, CompileMode::Raw)
 }
 
 /// Compiles pure Nudge AST items into a runnable `Program` targeting a specific entry function.
 ///
 /// If `entry` itself is effectful, returns an error so caller can fall back to interpreter.
 pub fn compile_with_entry(items: &[ast::Item], entry: &str) -> Result<Program, String> {
-    compile_internal(items, Some(entry))
+    compile_internal(items, Some(entry), CompileMode::Raw)
 }
 
-fn compile_internal(items: &[ast::Item], expected_entry: Option<&str>) -> Result<Program, String> {
+/// Compiles pure Nudge AST items into a runnable `Program` with static type checking enforced.
+///
+/// Returns formatted diagnostics (`error[code]: msg`) if static analysis finds any issues.
+pub fn compile_checked(items: &[ast::Item]) -> Result<Program, String> {
+    compile_internal(items, None, CompileMode::Checked)
+}
+
+/// Compiles pure Nudge AST items targeting a specific entry function with static type checking enforced.
+pub fn compile_checked_with_entry(items: &[ast::Item], entry: &str) -> Result<Program, String> {
+    compile_internal(items, Some(entry), CompileMode::Checked)
+}
+
+/// Compiles pure Nudge AST items with explicit control over compilation mode and entry function.
+pub fn compile_with_options(
+    items: &[ast::Item],
+    expected_entry: Option<&str>,
+    mode: CompileMode,
+) -> Result<Program, String> {
+    compile_internal(items, expected_entry, mode)
+}
+
+fn compile_internal(
+    items: &[ast::Item],
+    expected_entry: Option<&str>,
+    mode: CompileMode,
+) -> Result<Program, String> {
+    if mode == CompileMode::Checked {
+        let check_errs = crate::check::check(items);
+        if !check_errs.is_empty() {
+            let msgs: Vec<String> = check_errs
+                .iter()
+                .map(|e| format!("error[{}]: {}", e.code, e.msg))
+                .collect();
+            return Err(msgs.join("\n"));
+        }
+    }
     let mut tool_names = Vec::new();
 
     // First pass: validate agent and collect tool names
@@ -1195,3 +1239,84 @@ fn compile_internal(items: &[ast::Item], expected_entry: Option<&str>) -> Result
         delegated_exprs,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::lex;
+    use crate::parser::parse;
+
+    fn parse_src(src: &str) -> Vec<ast::Item> {
+        let tokens = lex(src).expect("lex should succeed");
+        parse(tokens).expect("parse should succeed")
+    }
+
+    #[test]
+    fn test_bytecode_compile_checked_type_error_fails_loudly() {
+        // Return type mismatch (returns string instead of int) -> E0201
+        let src = r#"
+            fn f() -> int {
+                "not an int"
+            }
+        "#;
+        let items = parse_src(src);
+        let res = compile_checked(&items);
+        assert!(res.is_err(), "compile_checked with type mismatch should fail");
+        let err = res.err().unwrap();
+        assert!(err.contains("error[E0201]"), "expected E0201 in error: {err}");
+
+        // Raw compile should succeed emitting the bytecode
+        let raw_res = compile(&items);
+        assert!(raw_res.is_ok(), "raw compile preserves AST for runtime error verification");
+    }
+
+    #[test]
+    fn test_bytecode_compile_checked_unknown_identifier_fails_loudly() {
+        // Undeclared identifier -> E0101
+        let src = r#"
+            fn f() -> int {
+                unknown_variable_xyz
+            }
+        "#;
+        let items = parse_src(src);
+        let res = compile_checked(&items);
+        assert!(res.is_err(), "compile_checked with unknown identifier should fail");
+        let err = res.err().unwrap();
+        assert!(err.contains("error[E0101]"), "expected E0101 in error: {err}");
+    }
+
+    #[test]
+    fn test_bytecode_compile_checked_valid_pure_program_succeeds() {
+        let src = r#"
+            fn add(a: int, b: int) -> int {
+                a + b
+            }
+            fn main() -> int {
+                add(10, 20)
+            }
+        "#;
+        let items = parse_src(src);
+        let prog = compile_checked_with_entry(&items, "main").expect("valid program compiles");
+        assert_eq!(prog.functions.len(), 2);
+    }
+
+    #[test]
+    fn test_bytecode_compile_with_options_raw_vs_checked() {
+        let src = r#"
+            fn f() -> int {
+                let x = 42
+                x = 100
+                x
+            }
+        "#;
+        let items = parse_src(src);
+        // Under Raw mode, compilation succeeds so runtime VM parity can test the immutable assignment error
+        let raw = compile_with_options(&items, Some("f"), CompileMode::Raw);
+        assert!(raw.is_ok(), "raw compilation should succeed");
+
+        // Under Checked mode, type checking rejects assigning to immutable variable E0201 / E0101
+        let checked = compile_with_options(&items, Some("f"), CompileMode::Checked);
+        assert!(checked.is_err(), "checked compilation should reject immutable assignment");
+    }
+}
+

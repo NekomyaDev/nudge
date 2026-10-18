@@ -118,13 +118,37 @@ pub fn run_cli(
         eprintln!("error: cannot write {}: {e}", driver.display());
         return 1;
     }
-    match Command::new("python3").arg(&driver).status() {
-        Ok(st) if st.success() => {}
-        Ok(st) => return st.code().unwrap_or(1),
+    let mut cmd = Command::new("python3");
+    cmd.arg(&driver);
+    if std::env::var("PYTHONPATH")
+        .map(|s| s.is_empty())
+        .unwrap_or(true)
+    {
+        for candidate in &["runtime", "../runtime", "../../runtime"] {
+            let p = std::path::Path::new(candidate);
+            if p.join("nudge_runtime").is_dir() {
+                if let Ok(abs_rt) = p.canonicalize() {
+                    cmd.env("PYTHONPATH", abs_rt);
+                    break;
+                }
+            }
+        }
+    }
+    let out = match cmd.output() {
+        Ok(out) => out,
         Err(e) => {
             eprintln!("error: cannot run python3: {e}");
             return 1;
         }
+    };
+    if !out.status.success() {
+        let err_text = String::from_utf8_lossy(&out.stderr);
+        eprintln!("{err_text}");
+        return out.status.code().unwrap_or(1);
+    }
+    if !json_mode {
+        let text = String::from_utf8_lossy(&out.stdout);
+        print!("{text}");
     }
     let results = match fs::read_to_string(&results_path) {
         Ok(s) => s,
