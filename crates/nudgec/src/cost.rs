@@ -232,6 +232,81 @@ pub fn report(items: &[Item]) -> String {
     out
 }
 
+/// Structured JSON cost report for CI tools and machine consumption.
+pub fn report_json(items: &[Item]) -> String {
+    let mut fns: Vec<(String, String, &[Stmt])> = Vec::new();
+    for item in items {
+        match item {
+            Item::Fn { name, body, .. } => fns.push((name.clone(), name.clone(), body)),
+            Item::Agent {
+                name,
+                fns: agent_fns,
+                ..
+            } => {
+                for f in agent_fns {
+                    if let Item::Fn {
+                        name: fn_name,
+                        body,
+                        ..
+                    } = f
+                    {
+                        fns.push((format!("{name}.{fn_name}"), fn_name.clone(), body));
+                    }
+                }
+            }
+            Item::Test { .. }
+            | Item::TypeAlias { .. }
+            | Item::Tool { .. }
+            | Item::View { .. }
+            | Item::Window { .. }
+            | Item::AuthProvider { .. }
+            | Item::Account { .. } => {}
+        }
+    }
+
+    let mut direct: HashMap<&str, Count> = HashMap::new();
+    let mut graph: HashMap<&str, Vec<(String, bool)>> = HashMap::new();
+    for (display, _, body) in &fns {
+        let mut c = Count::default();
+        for st in body.iter() {
+            count_stmt(st, false, &mut c);
+        }
+        direct.insert(display.as_str(), c);
+        let mut edges = Vec::new();
+        for st in body.iter() {
+            collect_calls_stmt(st, false, &mut edges);
+        }
+        graph.insert(display.as_str(), edges);
+    }
+
+    let mut fn_records = Vec::new();
+    let mut total = Count::default();
+    for (display, _, _) in &fns {
+        let c = &direct[display.as_str()];
+        let t = transitive(display.as_str(), &direct, &graph);
+        fn_records.push(serde_json::json!({
+            "name": display,
+            "sites": c.sites,
+            "direct_min_usd": c.sites as f64 * FAKE_CALL_COST,
+            "direct_max_usd": c.max_calls as f64 * FAKE_CALL_COST,
+            "transitive_min_usd": t.sites as f64 * FAKE_CALL_COST,
+            "transitive_max_usd": t.max_calls as f64 * FAKE_CALL_COST,
+            "dynamic": c.dynamic || t.dynamic,
+        }));
+        total.add(c);
+    }
+
+    let payload = serde_json::json!({
+        "pricing": "fake",
+        "call_cost_usd": FAKE_CALL_COST,
+        "total_sites": total.sites,
+        "total_min_usd": total.sites as f64 * FAKE_CALL_COST,
+        "total_max_usd": total.max_calls as f64 * FAKE_CALL_COST,
+        "functions": fn_records,
+    });
+    serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string())
+}
+
 /// Direct count + every llm site reachable through the call graph
 /// (cycle-safe; each fn counted once). An edge crossed inside a
 /// `par map` body makes the transitive count collection-size-dependent.
@@ -690,5 +765,25 @@ agent B {
         assert_eq!(caller.direct_max, 0.0);
         assert_eq!(caller.transitive_min, 0.001);
         assert_eq!(caller.transitive_max, 0.002);
+    }
+
+    #[test]
+    fn cost_report_json_format() {
+        let src = r#"
+            fn f() -> string uses LLM {
+                llm"""f""" with { model: "m" }
+            }
+            fn main() -> string uses LLM {
+                f()
+            }
+        "#;
+        let items = parse(lex(src).unwrap()).unwrap();
+        let json_str = report_json(&items);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("report_json should produce valid JSON");
+        assert_eq!(parsed["pricing"], "fake");
+        assert_eq!(parsed["call_cost_usd"], 0.001);
+        let funcs = parsed["functions"].as_array().expect("functions array");
+        assert_eq!(funcs.len(), 2);
     }
 }
