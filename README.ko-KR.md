@@ -149,7 +149,7 @@ nudgec build-ts hello.ndg             # emits out/hello.ts
 | 기능 | 제공 내용 | 섹션 |
 |:---|:---|:---|
 | **타입화된 LLM 호출** | 출력 스키마가 언어 타입으로 동작하며, 위반 시 자동 복구 트리거 | [Nudge 미리보기](#nudge-미리보기) |
-| **제어 흐름 및 데이터** | `if/else`, `for` 루프, 레코드 리터럴 `{k: v}`, 인덱싱, 가변 지역 변수 | [제어 흐름 및 데이터](#제어-흐름-및-데이터) |
+| **제어 흐름 및 타입** | `if/else`, `for` 루프, 레코드 리터럴 `{k: v}`, 인덱싱, 가변 지역 변수, Optional (`T?`), Union (`T \| U`) | [제어 흐름 및 데이터](#제어-흐름-및-데이터) |
 | **타입화된 Effect** | 컴파일 타임에 추적 및 검사되는 10가지 기지 Effect | [타입화된 Effect](#타입화된-effect) |
 | **워크스페이스 및 저장소** | 샌드박스화된 파일시스템 + 타입 안전 영구 Key-Value 저장소 | [격리된 워크스페이스 및 영구 저장소](#격리된-워크스페이스-및-영구-저장소) |
 | **로컬 UI** | 타입화된 뷰, 윈도우, 헤드리스 테스트, 네이티브 OS 데스크톱 창 | [로컬 UI](#로컬-ui) |
@@ -193,6 +193,8 @@ fn process_scores(raw: [int]) -> { total: int, count: int } {
 - **인덱싱:** 컬렉션 및 레코드에 대한 인덱스 기반 접근 (`items[0]`, `map["key"]`). 범위를 벗어난 오류는 `E0705`로 명확하게 실패합니다.
 - **가변 지역 변수:** 명시적인 `let mut name = init` 변수 선언과 재할당 (`name = next`).
 - **루프 한계선:** 루프는 무한 실행을 방지하기 위해 `NUDGE_MAX_LOOP_ITERATIONS`(기본값 10,000)으로 제한되며 초과 시 `E0703`을 발생시킵니다.
+- **Optional 타입 (`T?`):** `?`로 표기되는 널 가능 타입(예: `string?`, `int?`, `(int | string)?`). 값이 없는 경우 `none` 값을 가지며 `== none` 및 `!= none`으로 비교합니다. 검증되지 않은 사용은 Fail-Closed 방식으로 `E0201` 에러가 발생합니다.
+- **Union 타입 (`T | U`):** 지정된 여러 대체 타입 중 하나를 허용하는 정적 유니온 타입(예: `int | string`, `string | bool`). 컴파일 타임의 타입 확장 검사 및 엄격한 축소 거부(`E0201`)를 지원하며, LLM 출력 스키마, JSON 직렬화, 코드 생성 타깃에서 완벽히 지원됩니다.
 
 ### 타입화된 Effect
 
@@ -466,8 +468,8 @@ nudgec run search_agent.ndg
 # 공개 사양에 부합하는지 trace 무결성 검증
 nudgec trace-check trace.jsonl
 
-# 두 trace를 비교하여 비용 또는 동작 변경 사항 식별
-nudgec trace-diff baseline.jsonl candidate.jsonl --fail-on-regression
+# 두 trace를 비교하여 비용 또는 동작 변경 사항 식별 (--json 플래그로 머신 리더블 리포트 출력)
+nudgec trace-diff baseline.jsonl candidate.jsonl --fail-on-regression --json
 ```
 
 **GitHub Action (`action.yml`):** API 키 없이 $0 비용으로 푸시마다 CI에서 에이전트를 테스트:
@@ -491,10 +493,16 @@ jobs:
 
 ### 개발자 툴
 
-- **로컬 Trace 뷰어:** `nudgec trace-view <trace.jsonl>` 명령으로 시각적 실행 타임라인, 토큰 지출 내역, 복구 하이라이트를 표시하는 로컬 웹 UI를 구동합니다.
-- **실행 분석기:** `nudgec explain <trace.jsonl>` 명령으로 실패 항목, 토큰 소모량, 낮은 신뢰도의 의사결정을 요약한 사람이 읽기 쉬운 CLI 리포트를 출력합니다.
-- **포매터 및 감시기:** `nudgec fmt <file.ndg>`는 코드를 안전하게 정렬하며, `nudgec check <file.ndg> --watch`는 파일 저장 시마다 실시간 타입 검사를 수행합니다.
-- **정적 HTML 내보내기:** `nudgec trace-html trace.jsonl -o report.html` 명령으로 자체 완결형 대화형 감사 리포트를 생성합니다.
+- **정적 비용 산정기:** `nudgec cost <file.ndg> [--json]` 명령으로 컴파일 타임에 함수별 최악의 토큰 비용 및 예산 경계를 계산합니다.
+- **프로퍼티 및 퍼즈 테스트:** `nudgec fuzz [file.ndg] [--iterations N] [--seed S] [--json]` 명령으로 변이 입력을 통한 퍼즈 테스트 및 불변 프로퍼티 검증을 수행합니다.
+- **데이터셋 평가:** `nudgec eval <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8] [--json]` 명령으로 JSONL 데이터셋에 대해 함수를 벤치마킹하고 목표 정확도에 따라 CI를 제어합니다.
+- **평가 비교:** `nudgec compare <results_a.jsonl> <results_b.jsonl> [--json]` 명령으로 두 평가 실행 결과를 비교하여 정확도 또는 성능 퇴행을 감지합니다.
+- **실행 분석기:** `nudgec explain <trace.jsonl> [--json]` 명령으로 실패 항목, 토큰 소모량, 낮은 신뢰도의 의사결정을 요약한 사람이 읽기 쉬운 CLI 리포트 또는 JSON 분석을 출력합니다.
+- **Trace 디프 비교:** `nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]` 명령으로 두 실행 trace를 비교하여 퇴행을 감지하며 게이트 설정 시 종료 코드 1을 반환합니다.
+- **규정 준수 감사:** `nudgec audit <trace.jsonl> [--json]` 명령으로 NTF trace를 EU AI Act 규정 준수 기준(투명성, 거버넌스, 미마스킹 시크릿, 위험 메트릭)에 따라 감사 리포트를 생성합니다.
+- **로컬 Trace 뷰어:** `nudgec trace-view <trace.jsonl> [--port N] [--no-open]` 명령으로 시각적 실행 타임라인, 토큰 지출 내역, 복구 하이라이트를 표시하는 로컬 웹 UI를 구동합니다.
+- **포매터 및 감시기:** `nudgec fmt <file.ndg> [--check]`는 코드를 안전하게 정렬하며, `nudgec check <file.ndg> --watch`는 파일 저장 시마다 실시간 타입 검사를 수행합니다.
+- **정적 HTML 내보내기:** `nudgec trace-html <trace.jsonl> [-o report.html]` 명령으로 자체 완결형 대화형 감사 리포트를 생성합니다.
 
 ### VS Code 확장
 

@@ -6,16 +6,16 @@
 
 <p align="center">
   <strong>不要解析你的代理，引导它们。</strong><br>
-  一个类型化、可重放、预算感知的 LLM 代理编程语言。<br>
-  编译为 Python 和 TypeScript。
+  面向 AI 智能体的类型安全、可重放、具备预算感知的编程语言。<br>
+  原生字节码运行时与独立编译器。可编译为 Python 和 TypeScript。
 </p>
 
 <p align="center">
-  <img alt="版本" src="https://img.shields.io/badge/版本-1.5-blue">
-  <img alt="许可证" src="https://img.shields.io/badge/许可证-Apache--2.0-green">
-  <img alt="平台" src="https://img.shields.io/badge/平台-Linux%20%7C%20macOS%20%7C%20Windows-green">
-  <img alt="目标" src="https://img.shields.io/badge/目标-Python%20%7C%20TypeScript-yellow">
-  <a href="https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang"><img alt="VS Code" src="https://img.shields.io/badge/VS%20Code-Nudge%20语言-007ACC?logo=visualstudiocode"></a>
+  <img alt="Version" src="https://img.shields.io/badge/version-1.5-blue">
+  <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-green">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-green">
+  <img alt="Target" src="https://img.shields.io/badge/target-Native%20%7C%20Python%20%7C%20TypeScript%20%7C%20WASM-yellow">
+  <a href="https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang"><img alt="VS Code" src="https://img.shields.io/badge/VS%20Code-Nudge%20Language-007ACC?logo=visualstudiocode"></a>
   <a href="https://snyk.io"><img alt="Snyk Verified" src="https://img.shields.io/badge/Snyk-Verified%20Secure-4C556A?logo=snyk"></a>
 </p>
 
@@ -35,23 +35,23 @@
 
 ## 为什么选择 Nudge？
 
-生产环境的代理仍然由胶水代码拼凑而成：手动解析的提示链、try/except 包装的工具调用、没有重放、没有成本控制、没有回归测试。库只是修补症状。**Nudge 从问题真正所在的层面解决：语言层面。**
+生产环境中的智能体大多仍依赖胶水代码维系：手动解析提示词字符串、使用 try/except 包裹工具调用、缺乏重放能力、不可预知的成本，以及缺失回归测试。库只是在问题发生后修补表象。**Nudge 从问题真正发生的层面进行解决：语言本身。**
 
-| 痛点 | 库 | Nudge |
-|---|---|---|
-| 无类型的 LLM 输出 | 运行时验证 | 模式是类型 — 编译时证明 |
-| 隐藏的副作用 | 不可见 | 每个签名中的 `uses LLM, Tool, IO` |
-| 没有回归测试 | 事后添加记录/重放 | 每次运行产生跟踪；每个跟踪都是测试 |
-| 成本意外 | 事后仪表板 | 预算是编译器+运行时强制执行的契约 |
-| 异步扇出混乱 | 手动 asyncio | `par map / race / all`，编译时竞态安全 |
+| 痛点 | 常规开发库 | Nudge |
+|:---|:---|:---|
+| 无类型的 LLM 输出 | 运行时验证 | 模式是语言一等类型，编译期证明 |
+| 隐式副作用 | 不透明 | 签名中声明 10 种显式类型化 Effect (`uses LLM, Tool, IO, ...`) |
+| 缺乏回归测试 | 依靠外挂录制与回放 | 每次运行都写入 NTF 跟踪，每个跟踪都是确定性的 $0 测试 |
+| 意外成本失控 | 收到账单后才监控 | 预算是编译器和运行时强制执行的硬性契约 |
+| 混乱的并发逻辑 | 手动异步循环 | 原生 `par map / race / all`，具备编译期竞态安全保证 |
 
-## Nudge 代码示例
+## Nudge 代码体验
 
-```
+```nudge
 type Finding = { claim: string, source: Url, confidence: float @range(0, 1) }
 
 fn analyze(q: string, hits: [SearchResult]) -> [Finding] uses LLM {
-    llm"""从 {hits} 中提取关于 {q} 的可验证发现"""
+    llm"""Extract verifiable findings about {q} from: {hits}"""
     with { schema: [Finding], model: "anthropic:sonnet-4.6",
            budget: 0.03 USD, retry: 2 with repair }
 }
@@ -62,49 +62,23 @@ test "stays within budget on recorded trace" {
 }
 ```
 
-编译器证明模式匹配、推断效果并计算静态成本边界。运行时将每次调用记录到可寻址的跟踪中，你可以 diff、提交和重放。
-
-## 功能特性
-
-<div align="center">
-
-| 功能 | 描述 |
-|:---:|:---|
-| **类型化 LLM 调用** | 输出模式是语言类型；违规触发自动修复 |
-| **效果系统** | 纯函数 / `LLM` / `Tool` / `IO` / `Decision` / `Computer` 效果推断并显示在签名中 |
-| **确定性重放** | 完整、混合和实时模式；跟踪是 git 友好的 JSONL |
-| **预算契约** | 每次调用、每次运行和每次修复的 USD 上限，带静态估算 |
-| **检查点恢复** | 崩溃后，从最后一个检查点 `nudge resume` |
-| **原生并行** | `par map`、`par race`、`par all`，编译时竞态安全 |
-| **提示 Clippy** | 编译器 lint 你的 `llm"""` 块：模糊指令、缺失契约 |
-| **MCP 和 Python 互操作** | 通过 stdio 消费真实 MCP 服务器；可使用任何 pip 包 |
-| **真实提供商** | OpenAI / Gemini / Groq / MiMo / Mistral / Anthropic / Ollama |
-| **跟踪查看器** | 本地 Web UI：时间线、token、成本、修复高亮 |
-| **跟踪差异** | 比较两个跟踪："编辑提示后什么改变了？" |
-| **计算机操作（Computer Use）** | `computer.observe` + 类型化动作：把机器变成可重放的效果 —— 语言掌控控制权，模型掌控感知 |
-| **类型化决策** | `decide { … choose / yes/no / score }`：JEV 系列批量决策，带分布、置信度、时限 |
-| **属性测试** | `for_all x in gen { … }`：对智能体逻辑做模糊测试（含注入语料），自动收缩失败用例 |
-| **Nudge CI** | GitHub Action：每次推送上的智能体回归测试，$0 |
-| **NTF** | 开放 trace 格式（冻结 v1）+ 一致性套件 —— 可重放的日志 |
-| **A2A 和 LSP 和 OTel** | 内置，非外挂 |
-
-</div>
+编译器证明模式匹配、推断副作用并约束最坏情况成本。运行时将每次调用记录到基于内容寻址的跟踪中，你可以进行 diff、提交到版本库，并以 $0 成本进行重放。
 
 ## 快速开始
 
-### 安装
+### 1. 安装 Nudge
 
-**一键安装（推荐）：**
+**一键安装脚本（推荐）：**
 
 ```sh
 # Linux / macOS
 curl -fsSL https://raw.githubusercontent.com/NekomyaDev/nudge/main/install.sh | bash
 
-# Windows（以管理员身份运行 PowerShell）
+# Windows (以管理员身份运行 PowerShell)
 irm https://raw.githubusercontent.com/NekomyaDev/nudge/main/install.ps1 | iex
 ```
 
-**包管理器：**
+**包管理器与容器：**
 
 ```sh
 # Snap (Linux)
@@ -114,54 +88,11 @@ sudo snap install nudge --classic
 docker run -it --rm -v $(pwd):/workspace nekomyadev/nudge nudgec --help
 ```
 
-**GUI 安装器（双击）：**
+Linux、macOS 和 Windows 的预编译二进制文件也可以在 [Releases](https://github.com/NekomyaDev/nudge/releases) 页面获取。
 
-- **Windows：** 下载 [`install.bat`](https://github.com/NekomyaDev/nudge/releases/download/v1.2.0/install.bat) 并双击
-- **macOS：** 下载 [`install.command`](https://github.com/NekomyaDev/nudge/releases/download/v1.2.0/install.command) 并双击
+### 2. 60 秒极速初体验（原生，无需 API Key，$0 成本）
 
-**手动安装：**
-
-从 [Releases](https://github.com/NekomyaDev/nudge/releases) 页面下载：
-
-| 平台 | 文件 |
-|:---|:---|
-| Linux x86_64 | `nudgec-v1.2.0-linux-x86_64.tar.gz` |
-| macOS x86_64 | `nudgec-v1.2.0-macos-x86_64.tar.gz` |
-| macOS Apple Silicon | `nudgec-v1.2.0-macos-aarch64.tar.gz` |
-| Windows x86_64 | `nudgec-v1.2.0-windows-x86_64.zip` |
-
-```sh
-# Linux/macOS
-tar xzf nudgec-*.tar.gz
-chmod +x nudgec
-sudo mv nudgec /usr/local/bin/
-
-# Windows
-# 解压 zip 并添加到 PATH
-```
-
-### 或者来个 10 分钟导览
-
-```sh
-nudgec learn          # 六节终端课程：hello、types、decide、policy、test、trace
-nudgec learn decide   # 直接跳到类型化决策
-```
-
-### 或者脚手架一个项目
-
-```sh
-nudgec init my-agent --list        # 浏览模板（hello、triage、rag-agent 等）
-nudgec init my-agent --template triage
-cd my-agent && nudgec check my-agent.ndg && nudgec build my-agent.ndg
-```
-
-### 你的第一个 Nudge 程序
-
-安装生成的代码所导入的 Python 运行时：
-
-```sh
-pip install nudge-runtime   # 纯标准库，无依赖
-```
+无需 Python，无需 Node.js，无需 API 密钥。Nudge 内置原生栈式虚拟机和内存确定性仿真提供商：
 
 ```sh
 # 创建程序
@@ -169,229 +100,250 @@ cat > hello.ndg << 'EOF'
 type Greeting = { message: string, timestamp: string }
 
 fn greet(name: string) -> Greeting uses LLM {
-    llm"""为 {name} 创建一个问候。返回 message 和 timestamp。"""
+    llm"""Create a greeting for {name}. Return message and timestamp."""
     with { schema: Greeting, model: "anthropic:sonnet-4.6", budget: 0.01 USD }
+}
+
+fn main() -> Greeting uses LLM {
+    greet("World")
 }
 EOF
 
-# 类型检查
+# 类型检查程序
 nudgec check hello.ndg
 
-# 编译为 Python
-nudgec build hello.ndg
+# 在原生 Bytecode VM 上直接运行（$0 成本，无需密钥）
+nudgec run hello.ndg
 
-# 运行（无需 API 密钥 - 使用假提供商）
+# 运行离线回归测试
+nudgec test hello.ndg
+```
+
+### 3. 交互式课程与项目脚手架
+
+```sh
+# 终端内的交互式教学课程 (hello, types, decide, policy, test, trace)
+nudgec learn
+
+# 基于就绪模板生成项目脚手架 (triage, chatbot, rag-agent 等)
+nudgec init my-agent --template triage
+cd my-agent && nudgec check my-agent.ndg && nudgec run my-agent.ndg
+```
+
+### 4. 编译至 Python 或 TypeScript（可选）
+
+如需集成部署到现有的 Python 或 TypeScript 服务中：
+
+```sh
+# Python 目标
+pip install nudge-runtime          # 仅依赖标准库，零外部依赖
+nudgec build hello.ndg              # 生成 out/hello.py
 python3 out/hello.py
+
+# TypeScript 目标
+nudgec build-ts hello.ndg             # 生成 out/hello.ts
 ```
 
-默认情况下，所有内容都针对确定性假提供商运行：**无需 API 密钥，无需 token 消耗。**
+## 核心特性一览
 
-### 你的第一个决策（5 分钟）
-
-`decide{}` 就某个状态向决策模型提出类型化的问题 —— 一次批量调用，
-答案带概率和置信度。先从假提供商开始（无需服务器、无需密钥）：
-
-```sh
-cat > first-decision.ndg << 'NDEOF'
-fn route_ticket(t: string) -> string uses Decision {
-    let d = decide {
-        dept: "which team handles this?" choose [billing, technical, security],
-        urgent: "is this urgent?" yes/no
-    }
-    on t
-    route { auto:  d.dept.winner when d.dept.confidence > 0.5,
-            human: "escalate to a human" otherwise }
-}
-NDEOF
-
-nudgec check first-decision.ndg && nudgec build first-decision.ndg
-python3 out/first-decision.py   # 确定性、$0、离线
-```
-
-要使用**真实**决策模型（Laya / Jev 家族）回答，只需一行把注册表指向
-运行中的 `/v1/systemone` 服务器：
-
-```sh
-export NUDGE_DECISION_SERVERS='{"laya": {"base_url": "http://localhost:8000"}}'
-```
-
-对照真实 Laya 0.3.20 编码器的实测（同一程序、3 个问题）：
-`dept=technical p=0.866`、`churn=0.768`、`urgency=1.91` —— **每次决策
-约 51 毫秒**（含 HTTP），约为托管 Jev API 的 5 倍快。每个决策都会连同
-其延迟写入 NTF trace，重放为 $0，而 `NUDGE_DECISION_CACHE` 让你永远
-不会为同一个决策付两次费。参见[类型化决策](#类型化决策-v14)。
-
-## 真实示例
-
-看看用 Nudge 能构建什么：
-
-| 示例 | 描述 | 特性 |
+| 特性 | 提供能力 | 章节 |
 |:---|:---|:---|
-| [AI 聊天机器人](examples/chatbot/) | 带记忆的对话代理 | 类型化 LLM、重放、预算 |
-| [代码审查器](examples/code-reviewer/) | 代码质量分析器 | 结构化输出、评分 |
-| [研究代理](examples/research_agent.ndg) | 多来源研究验收测试用例 | 置信度评分、Par map |
-| [数据分析器](examples/data-analyzer/) | 数据模式识别 | 洞察、建议 |
-| [翻译器](examples/translator/) | 多语言翻译 | 质量评分、并行 |
-| [分类器](examples/classifier/) | 工单分类与模型路由 | 路由模型选择、批处理 |
-| [RAG 代理](examples/rag-agent/) | 带引用的检索增强回答 | MCP 工具检索、有据回答 |
-| [地牢爬行者](examples/dungeon-crawler/) | 回合制 RPG 地牢游戏 | 纯 Nudge、有状态英雄、战斗 |
-| [计算机自动化](examples/computer-automation/) | 观察 → 决策 → 操作的桌面循环 | 计算机操作、重放、漂移检查 |
+| **类型化 LLM 调用** | 输出模式即语言类型，违规自动触发多轮修复 | [Nudge 代码体验](#nudge-代码体验) |
+| **控制流与类型** | `if/else`、`for` 循环、记录字面量 `{k: v}`、索引、可变局部变量、Optional (`T?`)、Union (`T \| U`) | [控制流与数据](#控制流与数据) |
+| **类型化 Effect** | 编译期追踪与验证的 10 种已知 Effect | [类型化 Effect](#类型化-effect) |
+| **Workspace 与 Store** | 沙箱隔离的作用域文件系统 + 类型化持久键值存储 | [作用域 Workspace 与持久化 Store](#作用域-workspace-与持久化-store) |
+| **本地 UI** | 类型化视图、窗口、Headless 测试与原生桌面窗口 | [本地 UI](#本地-ui) |
+| **任务与并发** | 任务 spawn/join、协作式取消、安全 `par race`、预算即时释放 | [任务生命周期与并发](#任务生命周期与并发) |
+| **提供商认证** | Fail-closed RFC 8628 OAuth 设备流，严禁外部 token 爬取 | [提供商认证](#提供商认证) |
+| **类型化决策** | 状态批量分类、Yes/No 判断、评分规则 (`/v1/systemone`) | [类型化决策](#类型化决策) |
+| **计算机操作** | 屏幕观察、类型化动作、应用白名单、硬性终止开关 | [计算机操作 (Computer Use)](#计算机操作-computer-use) |
+| **Bytecode VM** | 默认栈式虚拟机引擎（纯计算加速约 70 倍，深度递归安全） | [Bytecode VM 引擎](#bytecode-vm-引擎) |
+| **独立原生 Agent** | 无需 Cargo 的单一二进制打包（在线约 2.09MB，离线重放约 832KB） | [独立原生 Agent (无需 Cargo)](#独立原生-agent-无需-cargo) |
+| **WebAssembly** | WASI 离线重放（约 526KB），在线宿主工具桥接 | [WebAssembly 目标](#webassembly-目标) |
+| **确定性 Trace** | 开放 NTF v1 格式、$0 成本重放、CI 回归门禁、Trace 比较 | [确定性 Trace 与 Agent CI](#确定性-trace-与-agent-ci) |
+| **隐私脱敏** | 核心卡口默认自动脱敏敏感秘钥与 PII 数据 | [隐私与 Trace 墨消脱敏](#隐私与-trace-墨消脱敏) |
 
-```sh
-# 试试任何示例
-cd examples/chatbot
-nudgec check chatbot.ndg && nudgec build chatbot.ndg
-python3 out/chatbot.py
-```
+## 语言与核心能力
 
-## 🛡️ 安全与企业级稳定性
+### 控制流与数据
 
-Nudge 采用“默认安全”（Secure-by-Design）的原则从头构建，确保自主智能代理的执行永远不会破坏您的系统或耗尽预算。
-
-* **Snyk 官方认证:** Nudge 已入选 **Snyk 安全开发者计划 (Snyk Secure Developer Program)**。在企业安全试点支持下，我们的整个生态系统均受到全天候持续安全监控。
-* **编译期安全防护:** 防止松散的提示词模式将恶意输入或格式错误的类型注入到下游工具中。
-* **硬性硬编码预算边界:** 原生防止耗尽 API 额度与钱包资源的无限工具循环调用。
-
----
-
-## 原生独立执行引擎与去 Python 依赖路线图
-
-虽然 Nudge 目前通过转译为 Python 和 TypeScript 实现生态兼容，但 Nudge 正在积极推进成为**完全独立自足的原生编程语言**，实现零 Python/Node.js 依赖运行：
-
-- **第一阶段（进行中）：纯 Nudge AST 解释器（`nudgec run`）** — 在 Rust 内直接执行纯 Nudge 程序（状态机、算法、游戏），毫秒级极速冷启动。
-- **第二阶段：Rust 原生 AI 与工具运行时** — 内嵌 Tokio + Reqwest (rustls) HTTP/SSE 客户端、确定性 NTF 跟踪回放与原生 MCP stdio 通信。
-- **第三阶段：字节码 VM 与单二进制导出（`nudgec build --standalone`）** — 将代理应用打包为纯独立可执行文件分发。
-- **第四阶段：将 Python 解耦为可选互操作插件** — 仅在显式声明时按需加载 Python 桥接（`use python "pandas" as pd`）。
-
-详细技术 RFC 详见 [`docs/native-runtime-roadmap.md`](docs/native-runtime-roadmap.md)。
-
-## 后端对等性
-
-| 功能 | Python | TypeScript |
-|:---|:---:|:---:|
-| 类型化调用、模式验证、修复 | ✅ | ✅ |
-| 跟踪、重放、预算墙 | ✅ | ✅ |
-| `par map/all/race` + 分支标签 | ✅ | ✅ |
-| 流式传输（`stream let`） | ✅ | ✅ |
-| 真实提供商 | ✅ | ⬜ |
-| 类型化决策（`decide{}`） | ✅ | ✅ |
-| 计算机操作（`computer.*`） | ✅ | 仅假提供者 |
-| MCP 工具、检查点/恢复、OTel | ✅ | ⬜ |
-
-## MCP 集成
-
-声明 `impl: mcp("server").tool` 的工具通过 stdio 与真实的 MCP 服务器通信。本节记录截至 v1.2.1 的契约。
-
-### 声明和调用 MCP 工具
+Nudge 提供开发者熟悉的结构化编程语法，并附带确定性安全边界：
 
 ```nudge
-type Result = { url: string, title: string }
+fn process_scores(raw: [int]) -> { total: int, count: int } {
+    let mut total = 0
+    let mut count = 0
 
-tool web_search(query: string) -> [Result] {
-    impl: mcp("search").web_search(query)
-    side_effects: none
+    for (score, idx) in raw {
+        if score >= 50 {
+            total = total + score
+            count = count + 1
+        } else {
+            // 忽略未通过的分数
+        }
+    }
+
+    { total: total, count: count }
+}
+```
+
+- **条件分支:** 支持多语句分支块的 `if/else` 与 `else if` 表达式。
+- **循环迭代:** 顺序循环 `for item in coll` 与带索引循环 `for (item, idx) in coll`。
+- **结构化数据:** 静态类型的记录字面量 `{ field1: expr1, field2: expr2 }` 及字段访问 (`obj.field`)。
+- **索引访问:** 集合与记录的索引访问 (`items[0]`, `map["key"]`)。越界错误以 `E0705` 形式明确报错。
+- **可变局部变量:** 显式变量声明 `let mut name = init` 及重新赋值 (`name = next`)。
+- **循环次数上限:** 循环受 `NUDGE_MAX_LOOP_ITERATIONS`（默认 10,000）约束，防止无限循环失控，超限报错 `E0703`。
+- **Optional 可选类型 (`T?`):** 使用 `?` 表示的可空类型（如 `string?`, `int?`, `(int | string)?`）。值缺失时为 `none`，使用 `== none` 与 `!= none` 进行判空检查。未经检查的非法使用将 fail-closed 报错 `E0201`。
+- **Union 联合类型 (`T | U`):** 静态联合类型（如 `int | string` 或 `string | bool`），允许匹配其中的任一类型。支持编译期类型拓宽检查与严格的类型收窄拒绝 (`E0201`)。在 LLM 结构化输出模式、JSON 序列化和代码生成目标中均得到完整支持。
+
+### 类型化 Effect
+
+每个副作用都在函数签名中明确声明，并由编译器严格验证：
+
+```nudge
+fn run_pipeline() -> bool uses LLM, Tool, Workspace, Store {
+    // 调用未声明的副作用将触发编译器错误 E0301
+}
+```
+
+Nudge 定义了 10 种已知 Effect (`crates/nudgec/src/check.rs`):
+- `LLM`: 调用大语言模型补全或流式输出。
+- `Tool`: 调用外部 MCP 或注册工具。
+- `IO`: 宿主输入输出操作 (`print`, `println`)。
+- `Decision`: 通过 `decide{}` 查询决策模型。
+- `Computer`: 通过 `computer.*` 与桌面环境及可访问性树交互。
+- `Workspace`: 沙箱工作区内的作用域读写操作。
+- `WorkspaceDelete`: 工作区内的破坏性文件或目录删除。
+- `Store`: 通过 `store.*` 进行类型化持久键值存储操作。
+- `UI`: 创建、挂载或分发图形界面事件。
+- `Auth`: 访问经认证的提供商资源（支持作用域 `Auth(account)`）。
+
+无 `uses` 子句的函数在编译期被证明为纯函数。未知的 Effect 将被编译器以 `E0302` 拒绝。
+
+### 作用域 Workspace 与持久化 Store
+
+本地智能体需要在不破坏系统安全的前提下操作文件并跨运行保持状态：
+
+```nudge
+record Config {
+    theme: string,
+    max_entries: int
 }
 
-fn main() -> string uses Tool {
-    let hits = web_search("nudge lang")
-    hits[0].title        # 工具结果支持 .field 访问（v1.2.1）
+fn update_workspace_file(path: string, new_content: string) -> bool uses Workspace, Store {
+    // 1. 作用域文件系统访问 (禁止路径穿越与符号链接逃逸)
+    if workspace.exists(path) {
+        workspace.write(path, new_content)   // 原子写入: 临时暂存, fsync, 重命名
+    }
+
+    // 2. 类型化持久存储 (进程重启与系统重启后依然存在)
+    store.set("app_config", Config { theme: "dark", max_entries: 100 })
+    true
 }
 ```
 
-编译器将每次调用降为工具声明的参数。自 v1.2.1 起，参数作为**命名的 `arguments` 对象**（`{"query": "nudge lang"}`）传递给 MCP 服务器——这正是 MCP `tools/call` 所期望的；基于 FastMCP 等框架的服务器会拒绝旧的位置参数格式。
+- **沙箱化 Workspace (`workspace.*`):** 所有文件操作均限制在显式工作区根目录中（通过 `--workspace` 或 `NUDGE_WORKSPACE_DIR` 配置，默认为当前目录）。拦截路径穿越 (`../`) 及指向工作区外部的符号链接。写操作具备崩溃一致性（先写临时文件后原子重命名）。
+- **删除权限分离:** 删除文件或目录必须显式声明专用 `WorkspaceDelete` 副作用 (`uses WorkspaceDelete`)，防止常规写入例程误删目录。
+- **持久化键值存储 (`store.*`):** 强类型数据存储保存于 `<workspace>/.nudge/store.json`（或 `NUDGE_STORE_PATH`）。与运行中临时检查点不同，此数据存储跨不同进程执行与重启持久保留。
 
-### 服务器注册表
+### 进程控制与文件监控
 
-实时 MCP 调用从 `NUDGE_MCP_SERVERS` 环境变量（JSON）解析服务器：
+构建驱动构建与测试运行器、语言服务器及实时重载工具链的智能体，同样遵循严格的副作用与授权纪律：
 
-```sh
-export NUDGE_MCP_SERVERS='{"search": {"command": "mcp-server-websearch"}}'
-python3 out/hello.py
+```nudge
+fn watch_and_rebuild() -> bool uses FsWatch, Process {
+    // 1. 作用域受限的有界文件监控 (杜绝无限挂起)
+    let changes = fs.watch("src", 5000)          // 目录/路径 + 超时毫秒数
+
+    // 2. 受控子进程: 命令程序与参数数组完全独立传递 (杜绝 shell 注入)
+    let handle = proc.spawn("cargo", ["build", "--quiet"], 60000)
+    let out = proc.await(handle)
+    proc.alive(handle) == false
+}
 ```
 
-- `command` 可以是字符串（shell 解析）或 argv 列表。
-- 调用注册表中缺少服务器的工具会**快速失败**并给出明确错误。
-- 注册表条目**没有** `command` 时，该工具在实时模式下返回 `[]`（未配置传输）——但调用仍会记录在跟踪中，因此重放有效。
-- 未知工具或服务器错误会引发异常；没有任何东西会默默伪造结果。
-- 报告 `isError` 的 MCP 服务器会以服务器内容引发 `RuntimeError`。
-- 可解析为 JSON 的文本内容会解码返回；其他内容类型原样返回。
+- **文件监控 (`fs.watch`, `FsWatch` 副作用):** 监控工作区路径的变更事件，受超时时间约束（永远不会无限期阻塞），严格限制在工作区根目录下。未声明的调用会被静态检查拦截 (`E0301`)。
+- **受控子进程 (`proc.*`, `Process` 副作用):** `proc.spawn(cmd, argv, timeout_ms)` / `proc.run(...)` / `proc.await` / `proc.kill` / `proc.alive`。命令名与参数数组分开传递，不经过 shell 执行，杜绝 shell 注入漏洞。进程生命周期受控 (`E0921`)，杜绝孤儿进程（任务退出或取消时自动回收子进程）。执行默认 fail-closed: 除非经 `NUDGE_PROCESS_GRANTS` 授权，否则默认全部拒绝 (`E0920`，工作区越界 `E0922`)。
 
-### 重放语义
+### 本地 UI
 
-完全重放（`NUDGE_REPLAY=trace.jsonl`）从跟踪中模拟 llm 和工具调用。程序发出的调用**多于**跟踪所含数量时会以 `ReplayMismatch` 失败——没有静默的空结果模拟。使用 `NUDGE_RESUME` 在实时提供商上继续越过已记录的前缀。
+在 Nudge 中直接构建原生人机协同界面、审批工作台与交互式审查面板：
 
-## 环境变量
+```nudge
+type ReviewState = { prompt: string, approved: bool }
 
-编译后的 Nudge 程序读取的一切都来自这些变量：
+view ReviewCard(state: ReviewState) -> View {
+    column(padding = 16, gap = 12) [
+        text("Agent Review Station", size = 18, bold = true),
+        text("Request: " + state.prompt),
+        row(gap = 8) [
+            button("Approve", on_click = approve_action),
+            button("Reject", on_click = reject_action)
+        ]
+    ]
+}
 
-| 变量 | 用途 |
-|:---|:---|
-| `NUDGE_PROVIDER` | 提供商覆盖（`fake`、`openai`、`anthropic` 等）。`fake` 合成模式有效的输出——无需 API 密钥 |
-| `NUDGE_DECISION_SERVERS` | 决策提供者注册表（JSON）：`{"laya": {"base_url": "http://localhost:8000"}}`。未配置的命名提供者会报错——绝不静默回退到 fake |
-| `NUDGE_PRICING` | 真实提供者的 JSON 价格表：`{"my-model": [1.0, 2.0]}`（每 1M 输入/输出 token 的美元价格）。扩展内置价格表 |
-| `NUDGE_RETRY_TRANSIENT` | 对瞬时提供者错误（429/5xx）的重试次数，默认 3；`0` 禁用 |
-| `NUDGE_TOOL_GRANTS` | 执行层工具策略（JSON）：`{"web_search": ["*"], "kb/*": ["retrieve"], "shell": []}` —— 未授权的工具会抛出 `ToolDenied` 并记录拒绝（`outcome: "denied"`）；有策略即默认拒绝 |
-| `NUDGE_PROCESS_GRANTS` | `proc.*` 命令与参数的故障关闭（fail-closed）执行策略（JSON）：`{"git": ["status"]}` |
-| `NUDGE_PROCESS_TIMEOUT` | `proc.*` 子进程的默认执行超时（毫秒，默认 `30000`） |
-| `NUDGE_FS_WATCH_TIMEOUT` | `fs.watch` 的默认轮询与等待超时（毫秒，默认 `30000`） |
-| `NUDGE_ENABLE_ANTIGRAVITY` | 激活 Antigravity 提供商的选择性开关（`1` 或 `true`） |
-| `NUDGE_AUTH_ANTIGRAVITY` / `NUDGE_AUTH_GITHUB_COPILOT` | Antigravity 与 GitHub Copilot 提供商的直接令牌凭证 |
-| `NUDGE_GUARD` | 输出防护：`pii` 会掩盖模型输出中的密钥、邮箱、IP 和长数字串；启用的防护会写入 trace（`guard: [...]`）—— 掩盖可审计，绝不静默 |
-| `NUDGE_BACKOFF_BASE` | 指数退避基数（秒），默认 5s、25s、125s |
-| `NUDGE_DECISION_CACHE` | 决策缓存路径：真实提供者的已验证答案跨运行持久化（重放优先） |
-| `NUDGE_API_KEY` / `NUDGE_BASE_URL` | OpenAI 兼容提供商的凭证和端点 |
-| `NUDGE_MCP_SERVERS` | MCP 服务器注册表 JSON（见上文） |
-| `NUDGE_MCP_TIMEOUT_MS` | MCP 服务器单次请求读取截止时间与挂起会话超时（毫秒，默认 `30000`） |
-| `NUDGE_COMPUTER_SERVERS` | 计算机桥接注册表（JSON）：`{"cu": {"command": "python3 tools/cu_bridge.py"}}`（子进程 JSONL）或 `{"cu": {"base_url": "http://localhost:9333"}}`（HTTP） |
-| `NUDGE_COMPUTER_PROVIDER` | 处理 `computer.*` 调用的注册桥接（默认：`fake` —— 确定性内存桌面，测试 $0） |
-| `NUDGE_COMPUTER_KILL` | `1` 拒绝所有计算机操作（紧急开关）并释放按住的鼠标键 |
-| `NUDGE_COMPUTER_DRIFT` | `1` 在重放期间实时重新观察并附加机械 `Drift` 差异 —— 动作保持空运行 |
-| `NUDGE_COMPUTER_SCENARIO` | 假桌面的 JSON 场景 + `advance_on` —— 为测试编写 UI 脚本 |
-| `NUDGE_COMPUTER_STRICT` | `1` 把软性 `deadline_missed` 变成 `ComputerTimeout` 错误 |
-| `NUDGE_TRACE` | 运行时将 JSONL 跟踪写入此路径 |
-| `NUDGE_REPLAY` | 加载并重放跟踪（`NUDGE_REPLAY_MODE=all` 为工具+llm，`llm` 为仅 llm） |
-| `NUDGE_RESUME` | 从检查点继续崩溃的运行，消耗已记录的跟踪前缀 |
-| `NUDGE_RUN_ID` | 检查点/运行目录 id（默认：`run-<pid>`） |
-| `NUDGE_BUDGET` / `NUDGE_REPAIR_BUDGET` | 跨 `par` 扇出强制执行的运行级美元上限 |
-| `NUDGE_OTEL` | 用于 span 导出的 OTel 端点 |
-| `NUDGE_FAKE_FAIL_FIRST` | 让假提供商前 k 次尝试失败——用于测试修复循环 |
-| `NUDGE_ALLOW_FAKE_RESUME` | 显式允许 `NUDGE_RESUME` 在假提供商上继续 |
+agent ReviewStation {
+    state {
+        prompt: string = "Execute deploy script",
+        approved: bool = false
+    }
 
-说明：
+    fn approve_action() uses UI, IO {
+        state.approved = true
+        io.println("Action approved")
+    }
 
-- 程序的入口点是**无参数**的 `fn main()` — v1.2.x 不读取 argv 和 stdin。外部数据通过 MCP 工具进入。
-- 假提供商是确定性的且模式感知；正是它使 `nudgec test` 和 CI 示例无需密钥即可运行。
+    fn reject_action() uses UI {
+        state.approved = false
+    }
 
-## 从源码构建
-
-需要 Rust 1.75+（stable）：
-
-```bash
-git clone https://github.com/NekomyaDev/nudge.git
-cd nudge
-cargo build --release -p nudgec   # 编译器二进制位于 target/release/nudgec
-cargo test --workspace            # 编译器 + 虚拟机测试
+    window MainWindow {
+        title: "Nudge Review Station",
+        width: 500,
+        height: 300,
+        content: ReviewCard(state)
+    }
+}
 ```
 
-Python 运行时是独立的（纯标准库，无依赖）：
+- **双模执行支持:**
+  - **Headless 无头测试:** `mount_headless()` 与 `dispatch_click()` 完全在内存中对 UI 树与状态转换进行求值，无需打开真实窗口，在 CI 中以 $0 成本执行。
+  - **原生桌面 GUI:** 在开启 `native-gui` Cargo 特性编译时，`window.open()` 将通过 `winit` 和 `softbuffer` 创建原生桌面窗口。
+- **无头降级机制:** 设置 `NUDGE_UI_HEADLESS=1` 或在 Trace 重放模式 (`NUDGE_REPLAY`) 下，窗口调用将自动路由至 Headless 引擎。
 
-```bash
-pip install nudge-runtime         # 来自 PyPI
-# 或从本仓库：
-pip install ./runtime
+### 任务生命周期与并发
+
+通过正式的任务状态管理与协作式取消机制协调并发智能体分支：
+
+```nudge
+fn race_models(prompt: string) -> string uses LLM {
+    // par race 自动取消竞态失败的分支
+    par race {
+        fast: query_fast_model(prompt),
+        deep: query_deep_model(prompt)
+    }
+}
 ```
 
-## NTF — 开放 trace 格式
+- **协作式取消:** 当竞态胜出判定后，失败分支会在循环、流和副作用边界处安全中断，避免在后台继续消耗 token 预算。
+- **预算保护:** 取消任务后，`NUDGE_BUDGET` 下未使用的预算预留会立即释放。
+- **权限快速闭锁:** 被取消的任务会立刻失去进一步调用工具 (`Tool`) 或计算机操作 (`Computer`) 的执行权限。
+- **任务原语:** 提供 `task.spawn`, `task.join`, `task.status`, `task.cancel` 等显式任务管理能力。
 
-trace 是 JSONL 记录（`llm.call` / `tool.call` / `fn.return`），采用**冻结的 v1 模式**：
-只允许增量变更，由 `nudgec trace-check` 验证。规范见
-[docs/ntf-spec.md](docs/ntf-spec.md)，[`conformance/`](conformance/)
-是可供任何生产者/消费者测试的用例集。LangChain 桥接
-（[`bridges/langchain_ntf.py`](bridges/langchain_ntf.py)）可把其他框架的运行转换为 NTF。
+### 提供商认证
 
-## 类型化决策（v1.4）
+深度集成于语言与运行时的安全凭证管理机制：
 
-Nudge 把来自**任何**来源的不确定性编译成可控程序 — LLM 生成或决策模型，共享同一套 effect 系统、trace 与重放。决策使用 `/v1/systemone` 线上协议（Laya `laya.serve` 与 TypeSafe Jev API 同协议）：
+- **Fail-Closed 认证体系:** 函数通过 `uses Auth` 或 `uses Auth(account)` 显式声明鉴权依赖，未授权调用直接失败。
+- **杜绝外部 Token 爬取:** Nudge 绝不读取第三方工具的私有 token 缓存或外部凭证库。
+- **原生 RFC 8628 设备流:** 通过 OAuth 2.0 Device Authorization Grant 进行交互式终端授权，凭证安全存储于 `~/.nudge/credentials.json` (文件权限 0600)。
+- **提供商安全门禁:** 提供商必须满足可验证的安全契约 (缺失凭证报错 `E-auth-0401`，作用域不足报错 `E-auth-0403`，禁用提供商报错 `E-auth-0404`)。
+- **未验证授权的提供商保持关闭 (安全门禁):** 官方第三方使用授权未经证明的提供商默认 fail-closed。例如 `antigravity`: 虽然包含 OAuth 流程与实现，但由于尚未获得官方独立第三方调用许可，该门禁保持禁用 (`E-auth-0404`)。模拟测试或 CI 通过不能代表合规授权。经用户显式确认并承担风险后，可通过 `NUDGE_ENABLE_ANTIGRAVITY=1` 手动开启。
+
+### 类型化决策
+
+通过 `/v1/systemone` 协议编译来自决策模型（如 Laya 与 Jev 系列）的确定性：
 
 ```nudge
 fn triage(t: string) -> string uses Decision {
@@ -401,88 +353,254 @@ fn triage(t: string) -> string uses Decision {
         urgency: "how urgent is this?" score [low, soon, critical]
     }
     on t
-    with { model: "laya:multilingual", deadline: 50 }
+    with { model: "laya:multilingual", deadline: 50 }   // 50ms 延迟预算
+    route {
+        auto: resolve(d.dept.winner) when d.dept.confidence > 0.8,
+        review: escalate(d) otherwise
+    }
 }
 ```
 
-- 每个 `decide` 块一次批量调用；答案携带 `winner/p/distribution/confidence`。
-- **假决策提供者**（默认）生成确定性的种子分布 — 测试保持 $0。
-- 真实提供者：`NUDGE_DECISION_SERVERS='{"laya": {"base_url": ...}}'`（HTTP `/v1/systemone`）或 `{"valen": {"command": "python -m valen.inference ..."}}`（子进程 JSONL）。
-- 决策进入 NTF trace（`decision.call`，含 `latency_ms`）；重放 $0；`trace-diff --fail-on-regression` 门禁延迟回退。
-- `nudgec policy-sweep` 在已录制的分布上重切阈值 — 零模型调用。
+- **批量并行求值:** 单次调用即可同时评估所有问题，返回胜出项、概率分布与置信度。
+- **零成本测试:** 默认的仿真决策提供商合成确定性的伪随机分布，支持 $0 成本测试。
+- **在线提供商接入:** 通过 `NUDGE_DECISION_SERVERS='{"laya": {"base_url": "http://localhost:8000"}}'` 接入本地或远程服务。
+- **决策缓存:** `NUDGE_DECISION_CACHE=<path>` 跨运行缓存已验证的决策答案，杜绝重复计费。
+- **策略扫描 (Policy Sweeps):** 运行 `nudgec policy-sweep trace.jsonl --question dept --thresholds 0.5,0.8` 在已录制分布上评估阈值调整，无需调用模型。详情阅读[决策文档](docs/decision.md)。
 
-完整契约见 [docs/decision.md](docs/decision.md)。
+### 计算机操作 (Computer Use)
 
-## 计算机操作（v1.5）
-
-机器成为类型化 effect，享有与其他调用相同的保证。语言掌控控制与安全 —— 应用白名单、时限、紧急开关、重放；模型掌控感知与判断：
+借助类型化的观察与动作掌控桌面环境，语言掌管控制与安全性，模型专职负责感知：
 
 ```nudge
-fn run(app: string) -> bool uses Computer, Decision {
+fn automate_app(app: string) -> bool uses Computer, Decision {
     let obs = computer.observe(app, allow = [app], deadline = 30000)
-    let sane = decide {
-        looks_right: "does this screen show the expected app?" yes/no
+    let check = decide {
+        ready: "is the target button visible?" yes/no
     } on obs.tree
     with { deadline: 100 }
+
     let r = route {
-        press: computer.click(1, allow = [app]) when sane.looks_right.p > 0.4,
-        quit:  computer.key("Escape", allow = [app]) otherwise
+        click: computer.click(1, allow = [app]) when check.ready.p > 0.5,
+        close: computer.key("Escape", allow = [app]) otherwise
     }
     r.ok
 }
 ```
 
-- `computer.observe(app)` 返回类型化 `Observation`（`tree`、`elements`、可选 `screenshot`）；`computer.click/type/key/scroll/set_value/drag/perform/paste` 返回带调度回执的 `ActionResult`（`action_sent` —— 只有 `false` 才能安全重试）。
-- **重放绝不重复触发动作** —— 它们以空运行审计的方式执行。`NUDGE_COMPUTER_DRIFT=1` 时运行时实时重新观察并附加机械 `Drift` 差异（树 diff + 截图哈希）；解读是模型的工作。
-- 桥接强制执行加固不变量：单一控制器租约、拒绝过期元素索引（`stale_state` 而非盲点）、退出时 `abort` 以免中断的拖拽保持按下。
-- 默认的**假提供者**是确定性虚拟桌面（`NUDGE_COMPUTER_SCENARIO` 编写场景脚本），整个循环在 `nudgec test` 中 $0 运行。真实桌面通过参考 JSONL 桥接（`tools/cu_bridge.py` —— X11 上的 AT-SPI + xdotool）或任何说同一契约的 HTTP 传输连接。
+- **类型化原语:** `computer.observe` 返回 `Observation` 记录（可访问性树、UI 元素、可选屏幕截图）。操作动作 (`click`, `type`, `key`, `scroll`, `set_value`, `drag`, `paste`) 返回包含调度回执的 `ActionResult`。
+- **重放安全性:** Trace 重放绝不会重复触发物理操作。开启 `NUDGE_COMPUTER_DRIFT=1` 时，运行时将在线重新观察并计算机械漂移 (`Drift`) 差异，而不实际派发点击或按键。
+- **安全加固:** 应用白名单控制 (`allow: [app]`)、控制器租约锁、过期元素索引拒绝 (`stale_state`)，以及硬性急停开关 (`NUDGE_COMPUTER_KILL=1`)。
+- **确定性桌面测试:** 默认仿真提供商在内存中模拟 UI 场景 (`NUDGE_COMPUTER_SCENARIO`)，实现 $0 端到端测试。详情阅读[计算机操作文档](docs/computer-use.md)。
 
-完整 RFC 与线上契约：[docs/computer-use.md](docs/computer-use.md)。
+## 原生底层架构
 
-## Agent CI（GitHub Action）
+### Bytecode VM 引擎
 
-每次推送时对智能体做回归测试 — 回放已录制的 trace，**零 token**、**无需 API 密钥**。添加 `.github/workflows/agents.yml`：
+纯函数、数据转换与路径分支在专用栈式字节码虚拟机上执行 (`crates/nudgec/src/bytecode.rs` 与 `vm.rs`):
+
+- **超高纯计算性能:** 纯计算代码执行速度比 AST 树遍历解释器快约 70 倍。
+- **深度递归安全:** 托管调用栈帧有效防止递归算法引发操作系统栈溢出崩溃。
+- **透明副作用委托:** 带有副作用的表达式 (`llm`, `tool`, `computer`, `workspace`) 通过 `DelegateCall` 和 `DelegateExpr` 从虚拟机无缝委托至运行时求值器。
+- **默认执行引擎:** `nudgec run` 与独立二进制默认由字节码虚拟机驱动。设置 `NUDGE_VM=0` 可回退到 AST 解释器。
+
+### 独立原生 Agent (无需 Cargo)
+
+将你的 Agent 打包为单一独立的自包含原生可执行文件，构建现场无需任何开发工具链依赖：
+
+```sh
+# 将 Agent 打包为独立二进制文件
+nudgec build --standalone my-agent.ndg -o bin/my-agent
+
+# 在宿主环境直接运行 (无需 Python、Node.js 或 Rust 环境)
+./bin/my-agent
+```
+
+- **AST 印章技术:** `nudgec` 对源码进行类型检查，将 AST 包序列化为 bincode，并在数毫秒内追加到预编译的 `nudge-agent` 运行时二进制尾部（以 `NDGAGNT1` 标识结尾）。
+- **两种运行时规格:**
+  - **Full 完整版（约 2.09MB，默认）:** 支持在线调用的运行时，内嵌基于 `ureq` + `rustls` 的 HTTP/TLS 协议栈，可直接连接实时 LLM 与 MCP 服务器。
+  - **Replay 离线版（约 832KB）:** 精简运行时，剔除网络协议栈，所有操作均从录制的 NTF 跟踪中读取，$0 成本离线运行。
+- **运行时自动定位:** 优先通过 `NUDGE_AGENT_RUNTIME` 环境变量指定，或自动查找与 `nudgec` 同级的运行时文件。详情阅读[独立打包文档](docs/standalone.md)。
+
+### WebAssembly 目标
+
+将智能体部署至浏览器沙箱、边缘运行时（如 Cloudflare Workers、Fastly）以及 WASI 环境：
+
+- **WASI 离线重放 (`nudge-replay-wasi`):** 在约 526KB 的 `.wasm` 模块中通过 `wasmtime` 离线重放 NTF 跟踪，输出结果与原生运行完全逐字节一致：
+  ```sh
+  wasmtime run --dir . nudge-replay-wasi.wasm bundle.json trace.jsonl
+  ```
+- **在线宿主工具桥接:** 运行于浏览器或边缘 JavaScript 环境的 Agent 可通过标准化的 `nudge_host_tool_call` 导入契约发起真实工具调用（已在 Node WASI 环境验证，见 `examples/wasm-host/`）。
+- **沙箱安全保障:** 在 `wasm32` 目标上严格隔离网络 socket 与操作系统进程派发，确保安全受限运行。详情阅读[WebAssembly 文档](docs/wasm.md)。
+
+## 工具链与生态集成
+
+### MCP 集成
+
+声明通过标准输入输出 (stdio) 与 Model Context Protocol (MCP) 服务器交互的工具：
+
+```nudge
+type SearchResult = { url: string, title: string }
+
+tool web_search(query: string) -> [SearchResult] {
+    impl: mcp("search").web_search(query)
+    side_effects: none
+}
+
+fn main() -> [SearchResult] uses Tool {
+    web_search("nudge language")
+}
+```
+
+通过 `NUDGE_MCP_SERVERS` 配置在线服务器：
+
+```sh
+export NUDGE_MCP_SERVERS='{"search": {"command": "mcp-server-websearch"}}'
+nudgec run search_agent.ndg
+```
+
+参数以具名 JSON 参数对象传递，完全兼容 FastMCP 与标准 MCP 服务器。服务不可用时快速失败并给出清晰诊断。
+
+### 确定性 Trace 与 Agent CI
+
+每次运行均会输出符合开放 NTF v1 规范的 JSONL 跟踪文件，记录所有副作用交互：
+
+```sh
+# 验证 trace 跟踪文件是否符合公开标准规范
+nudgec trace-check trace.jsonl
+
+# 比较两份 trace 跟踪文件以发现成本或行为变更 (--json 输出机器可读报告)
+nudgec trace-diff baseline.jsonl candidate.jsonl --fail-on-regression --json
+```
+
+**GitHub Action (`action.yml`):** 每次代码 push 时在 CI 中以 $0 成本测试智能体，无需配置任何 API 密钥：
 
 ```yaml
 name: agents
 on: [push, pull_request]
 jobs:
-  agents:
+  test-agents:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: NekomyaDev/nudge@v1
         with:
-          files: |
-            agents/**/*.ndg
+          files: "agents/**/*.ndg"
+          trace-diff: "baseline.jsonl candidate.jsonl"
 ```
 
-输入：`files`（必填，支持通配符）、`version`（固定 nudgec 版本）、
-`check-only`（跳过回放），以及 `trace-diff: "baseline.jsonl candidate.jsonl"` —
-回归门禁：当候选 trace 花费更多、修复更多或把成功调用变成失败时，使构建失败。
+冻结的 NTF 规范位于 [docs/ntf-spec.md](docs/ntf-spec.md)，包含完整测试套件 [`conformance/`](conformance/) 以及针对 LangChain、CrewAI 与 LangGraph 的适配桥接器。
 
-## VS Code 扩展
+### 开发者工具
 
-安装 [Nudge Language](https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang) 扩展以获得：
+- **静态成本估算器:** `nudgec cost <file.ndg> [--json]` 在编译期计算各函数的最坏情况 token 消耗与预算边界。
+- **属性与 Fuzz 测试:** `nudgec fuzz [file.ndg] [--iterations N] [--seed S] [--json]` 执行基于变异的模糊测试与不变量属性验证。
+- **数据集评估评测:** `nudgec eval <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8] [--json]` 针对 JSONL 数据集评估测试智能体函数，并支持按准确率门禁阻断 CI。
+- **评测对比工具:** `nudgec compare <results_a.jsonl> <results_b.jsonl> [--json]` 比较两轮数据集评测结果，快速发现准确率或性能回归。
+- **运行解释器:** `nudgec explain <trace.jsonl> [--json]` 输出人类可读的终端摘要或结构化 JSON 分析，突出失败、token 消耗与低置信度决策。
+- **Trace 差异对比:** `nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]` 对比两份运行 trace 以检测行为回归，开启门禁时遇回归以状态码 1 退出。
+- **合规审计分析:** `nudgec audit <trace.jsonl> [--json]` 审计 NTF trace 是否符合欧盟人工智能法案 (EU AI Act) 合规要求（透明度、可治理性、未脱敏秘钥检测、风险阈值）。
+- **本地 Trace 查看器:** `nudgec trace-view <trace.jsonl> [--port N] [--no-open]` 启动本地 Web UI，可视化展示执行时间线、token 支出与自我修复步骤。
+- **代码格式化与监控:** `nudgec fmt <file.ndg> [--check]` 安全格式化代码，`nudgec check <file.ndg> --watch` 在每次保存时自动进行类型检查。
+- **静态 HTML 导出:** `nudgec trace-html <trace.jsonl> [-o report.html]` 导出完全自包含的交互式审计报表。
 
-- 语法高亮
-- 代码片段
-- 通过 `nudgec lsp` 的实时诊断
-- 悬停信息
-- 跳转到定义
+### VS Code 扩展
 
-## 隐私说明
+安装 [Nudge Language Extension](https://marketplace.visualstudio.com/items?itemName=Nekomya.nudge-lang) 获得语法高亮、代码片段、悬浮文档支持，以及由 `nudgec lsp` 驱动的实时类型诊断。
 
-跟踪逐字记录提示、模型输出和工具结果 — 它们可能包含机密或个人数据。将跟踪文件视为敏感工件；编辑挂钩已在路线图上。
+## 隐私与 Trace 墨消脱敏
 
-## 许可证
+AI 智能体经常处理敏感的 token、鉴权头、私钥以及用户个人身份信息 (PII)。Nudge 通过 fail-closed 的 trace 脱敏流水线守护你的数据隐私：
 
-Apache-2.0 — 参见 [LICENSE](LICENSE)。
+- **单点核心卡口:** 脱敏在记录被序列化写入磁盘或内存缓冲区之前的 `TraceWriter::emit` 处统一完成。所有记录类型 (`llm.call`, `tool.call`, `decision.call`, `computer.*`, `fn.return`) 均在这一关口统一遮蔽。
+- **默认 Fail-Closed 开启:** Trace 敏感信息脱敏默认处于激活状态 (`NUDGE_TRACE_REDACT=1`)。仅在显式本地调试时设置 `NUDGE_TRACE_REDACT=0`。
+- **`NUDGE_TRACE_REDACT=0` 是安全边界而非便利开关:** 关闭脱敏将导致秘钥、API Key、认证头以及个人数据以**明文**形式直接写入 trace 文件。这是该关闭开关经测试验证的既定行为，绝不可在 CI、公开提交的产物或基于 Nudge 的应用日志收集环境中使用。下游消费者必须将 `NUDGE_TRACE_REDACT=0` 的存在视为安全警告标志。
+- **自动检测秘钥模式:** 自动识别并屏蔽以 `_KEY`, `_SECRET`, `_TOKEN`, `_PASSWORD`, `_PAT` 结尾或包含 `AUTH` 的环境变量值（长度达到 6 位及以上）。
+- **多层正则模式遮蔽:** 强力过滤 Bearer token、认证请求头、键值凭据对、私钥块以及各厂商 token 前缀（OpenAI `sk-...`, Anthropic `sk-ant-...`, GitHub `ghp_...`, AWS `AKIA...`, Slack `xox...`）。
+- **密码学重放不变性:** 基于内容寻址的 `request_hash` 是基于**脱敏前**的原始输入计算的。这确保了脱敏后的 trace 在离线重放时依然能实现 O(1) 逐字节精确命中，且无需将任何敏感凭证持久化至磁盘。
 
-Nudge 已开源：编译器（`crates/nudgec`）、字节码虚拟机（`crates/nudge-runtime`）、Python 运行时（`runtime/`）和 VS Code 扩展（`editors/vscode/`）的源代码都在本仓库中。欢迎贡献 — 参见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+## 环境变量
+
+| 变量名 | 生效范围 | 用途说明 | 默认值 |
+|:---|:---|:---|:---|
+| `NUDGE_PROVIDER` | 全部 | 当前 LLM 提供商 (`fake`, `openai`, `anthropic`, `gemini`, `groq`, `ollama`) | `fake` |
+| `NUDGE_VM` | 原生 | 字节码虚拟机执行引擎开关 (`1` 为默认开启 VM, `0` 回退至 AST 解释器) | `1` |
+| `NUDGE_DEFAULT_MODEL` | 原生 | 当 `with` 块未显式指定模型时的默认模型标识 | 提供商默认 |
+| `NUDGE_API_KEY` / `NUDGE_BASE_URL` | 全部 | OpenAI 兼容接口的凭证密钥与基础请求端点 | 无 |
+| `NUDGE_PRICING` | 全部 | 自定义定价 JSON 映射表: `{"model": [usd_per_1M_in, usd_per_1M_out]}` | 内置定价表 |
+| `NUDGE_GUARD` | Python/TS | 输出安全守卫 (`pii` 自动过滤 LLM 输出中的秘钥、邮箱、IP) | 无 |
+| `NUDGE_BUDGET` | 全部 | 单次运行的全局 USD 花费上限，跨并发分支严格执行 | 无 |
+| `NUDGE_REPAIR_BUDGET` | Python | 修复重试轮次的累计 USD 支出上限 | 无 |
+| `NUDGE_MAX_LOOP_ITERATIONS` | 原生 | 循环顺序执行的最大迭代次数，超限报错 `E0703` | `10000` |
+| `NUDGE_TRACE` | 全部 | 输出 NTF JSONL 运行跟踪文件的目标路径 | `trace.jsonl` |
+| `NUDGE_REPLAY` | 全部 | 确定性离线重放跟踪文件路径 (`NUDGE_REPLAY_MODE=all` 或 `llm`) | 无 |
+| `NUDGE_RESUME` | 全部 | 崩溃后基于已录制的 trace 前缀从最后一个检查点恢复执行 | 无 |
+| `NUDGE_TRACE_REDACT` | 原生 | 开启单点卡口的密钥与 PII 墨消脱敏 (`1` 或 `0`) | `1` (激活) |
+| `NUDGE_TRACE_REDACT_ENV` | 原生 | 自动脱敏 trace 中出现的敏感环境变量值 | `1` (激活) |
+| `NUDGE_TRACE_REDACT_KEYS` | 原生 | 逗号分隔的附加待脱敏 JSON 对象键名列表 | 无 |
+| `NUDGE_TRACE_REDACT_PATTERNS` | 原生 | 逗号分隔的自定义正则列表或正则规则文件路径 | 无 |
+| `NUDGE_WORKSPACE_DIR` | 原生 | 沙箱 `workspace.*` 操作的根目录权限范围 | 当前目录 |
+| `NUDGE_STORE_PATH` | 原生 | 类型化持久键值数据的保存文件路径 | `<workspace>/.nudge/store.json` |
+| `NUDGE_UI_HEADLESS` | 原生 | 强制 UI 窗口操作在内存中无头静默运行 (`1` 或 `true`) | `0` |
+| `NUDGE_TOOL_GRANTS` | 全部 | 执行层 JSON 工具授权策略 (例如 `{"web_search": ["*"]}`)，默认 fail-closed | 无 |
+| `NUDGE_PROCESS_GRANTS` | 原生 | `proc.*` 命令和参数的 Fail-closed JSON 执行授权策略 | 无 (默认拒绝) |
+| `NUDGE_PROCESS_TIMEOUT` | 原生 | `proc.*` 派发子进程的默认执行超时毫秒数 | `30000` |
+| `NUDGE_FS_WATCH_TIMEOUT` | 原生 | `fs.watch` 轮询和等待的默认超时毫秒数 | `30000` |
+| `NUDGE_ENABLE_ANTIGRAVITY` | 原生 | 激活 Antigravity 提供商的手动授权确认开关 (`1` 或 `true`) | `0` |
+| `NUDGE_AUTH_ANTIGRAVITY` | 原生 | Antigravity 提供商的直传 Bearer 认证 Token | 无 |
+| `NUDGE_AUTH_GITHUB_COPILOT` | 原生 | GitHub Copilot 提供商的直传 Token | 无 |
+| `NUDGE_MCP_SERVERS` | 全部 | 映射 MCP 服务器标识与 stdio 执行命令的 JSON 注册表 | 无 |
+| `NUDGE_MCP_TIMEOUT_MS` | 原生 | MCP 服务器单次请求读取与挂起超时时间毫秒数 | `30000` |
+| `NUDGE_DECISION_SERVERS` | 全部 | 决策模型接口注册表 (例如 `{"laya": {"base_url": "..."}}`) | 无 |
+| `NUDGE_DECISION_CACHE` | 全部 | 持久化决策模型概率分布的缓存文件路径 | 无 |
+| `NUDGE_COMPUTER_SERVERS` | 全部 | 计算机操作桥接服务注册表 (子进程 JSONL 或 HTTP) | 无 |
+| `NUDGE_COMPUTER_PROVIDER` | 全部 | 计算机操作的桥接提供商 (`fake`, 或注册的服务器名) | `fake` |
+| `NUDGE_COMPUTER_KILL` | 全部 | 硬性终止开关: `1` 立即拒绝所有计算机操作调用 | `0` |
+| `NUDGE_COMPUTER_DRIFT` | 全部 | 为 `1` 时，重放期间重新在线观察并输出机械漂移差异 | `0` |
+| `NUDGE_AGENT_RUNTIME` | 原生 | `nudgec build --standalone` 使用的预编译 `nudge-agent` 路径 | 同级二进制 |
+| `NUDGE_CREDENTIALS_PATH` | 原生 | Nudge 认证凭证存储的自定义文件路径 | `~/.nudge/credentials.json` |
+| `NUDGE_OTEL` | Python | OpenTelemetry span 导出文件路径 | 无 |
+| `NUDGE_OTEL_ENDPOINT` | Python | OpenTelemetry HTTP 导出目标端点 | 无 |
+
+`原生` 适用于 Rust 运行时 (`nudgec`/`nudge-runtime`)，`Python/TS` 适用于生成的代码运行时，`全部` 适用于两者。
+
+## 真实应用示例
+
+在 [`examples/`](examples/) 目录探索完整的智能体实现：
+
+| 示例 | 应用场景 | 核心亮点 |
+|:---|:---|:---|
+| [AI 聊天机器人](examples/chatbot/) | 对话交互助理 | 类型化记忆模式、确定性重放、预算硬约束 |
+| [工单分拣分类器](examples/triage-agent/) | 客户服务分类 | 批量 `decide{}` 决策块、置信度阈值、路由策略 |
+| [代码审查器](examples/code-reviewer/) | 软件工程质检 | 结构化语法诊断、自动化评分规则 |
+| [深度研究智能体](examples/research_agent.ndg) | 多源信息综合 | `par map` 并行检索、置信度评分 |
+| [桌面自动化](examples/computer-automation/) | 桌面操作智能体 | 屏幕观察、可访问性树分析、漂移验证 |
+| [RAG 检索增强智能体](examples/rag-agent/) | 知识库检索与生成 | MCP stdio 检索工具绑定、事实依据引用抽取 |
+| [属性 Fuzz 测试](examples/property-fuzz/) | 智能体安全测试 | `for_all` 不变量测试、提示词注入模糊测试 |
+| [地牢探险游戏](examples/dungeon-crawler/) | 状态机模拟演练 | 纯 Nudge 编写、Agent 状态迁移、回合制战斗 |
+
+## 许可证与源码构建
+
+Nudge 采用 **Apache-2.0** 开源许可证。详见 [LICENSE](LICENSE)。
+
+### 源码构建
+
+构建编译器需要 Rust 1.75+ (stable):
+
+```sh
+git clone https://github.com/NekomyaDev/nudge.git
+cd nudge
+cargo build --release -p nudgec   # 编译器二进制位于 target/release/nudgec
+cargo test --workspace            # 运行编译器、VM 及运行时完整测试套件
+```
+
+Python 运行时位于 `runtime/` 目录（仅依赖标准库，零外部第三方依赖）:
+
+```sh
+pip install ./runtime
+```
 
 ---
 
 <p align="center">
-  由 <a href="https://github.com/NekomyaDev">NekomyaDev</a> 用 ❤️ 制作
+  Made with love by <a href="https://github.com/NekomyaDev">NekomyaDev</a>
 </p>

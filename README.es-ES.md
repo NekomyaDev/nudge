@@ -149,7 +149,7 @@ nudgec build-ts hello.ndg             # emits out/hello.ts
 | Característica | Qué ofrece | Sección |
 |:---|:---|:---|
 | **Llamadas LLM tipadas** | El schema de salida es un tipo y las violaciones disparan auto-reparación | [Un vistazo a Nudge](#un-vistazo-a-nudge) |
-| **Flujo de control y datos** | `if/else`, bucles `for`, literales de registro `{k: v}`, indexación, variables locales mutables | [Flujo de control y datos](#flujo-de-control-y-datos) |
+| **Flujo de control y tipos** | `if/else`, bucles `for`, literales de registro `{k: v}`, indexación, variables locales mutables, Opcional (`T?`), Unión (`T \| U`) | [Flujo de control y datos](#flujo-de-control-y-datos) |
 | **Effects tipados** | 10 effects conocidos rastreados y comprobados en tiempo de compilación | [Effects tipados](#effects-tipados) |
 | **Workspace y Store** | Sistema de archivos en sandbox acotado + almacenamiento clave-valor persistente tipado | [Workspace y Store](#workspace-acotado-y-store-persistente) |
 | **UI local** | Vistas tipadas, ventanas, tests headless y ventana de escritorio nativa del SO | [UI local](#ui-local) |
@@ -193,6 +193,8 @@ fn process_scores(raw: [int]) -> { total: int, count: int } {
 - **Indexación:** acceso indexado en colecciones y registros (`items[0]`, `map["key"]`). Los errores de límites fallan de forma limpia con `E0705`.
 - **Variables locales mutables:** variables explícitas con `let mut name = init` y reasignación (`name = next`).
 - **Límites de bucles:** los bucles están limitados por `NUDGE_MAX_LOOP_ITERATIONS` (por defecto 10.000) para evitar ejecuciones descontroladas, emitiendo `E0703` si se supera el límite.
+- **Tipos opcionales (`T?`):** tipos anulables representados con `?` (como `string?`, `int?`, `(int | string)?`), donde los valores ausentes toman `none`. Las comprobaciones de igualdad usan `== none` y `!= none`. El uso no comprobado falla cerrado con `E0201`.
+- **Tipos de unión (`T | U`):** tipos estáticos de unión alternativa (como `int | string` o `string | bool`). Admite comprobaciones de ensanchamiento en tiempo de compilación y rechazo estricto de estrechamiento (`E0201`). Totalmente compatible con esquemas estructurados de LLM, serialización JSON y generación de código.
 
 ### Effects tipados
 
@@ -466,8 +468,8 @@ Cada ejecución genera una traza JSONL abierta en formato NTF v1 capturando toda
 # Verify trace integrity against the open specification
 nudgec trace-check trace.jsonl
 
-# Compare two traces to identify cost or behavior changes
-nudgec trace-diff baseline.jsonl candidate.jsonl --fail-on-regression
+# Compare two traces to identify cost or behavior changes (--json emite informes procesables por máquina)
+nudgec trace-diff baseline.jsonl candidate.jsonl --fail-on-regression --json
 ```
 
 **GitHub Action (`action.yml`):** prueba agentes en CI en cada push con coste $0 y sin claves de API:
@@ -490,10 +492,16 @@ La especificación congelada de NTF se encuentra en [docs/ntf-spec.md](docs/ntf-
 
 ### Herramientas para desarrolladores
 
-- **Visor de trazas local:** `nudgec trace-view <trace.jsonl>` inicia una interfaz web local con líneas de tiempo de ejecución visuales, gasto de tokens y detalles de reparaciones.
-- **Explicador de ejecución:** `nudgec explain <trace.jsonl>` genera un resumen legible en CLI destacando fallos, consumo de tokens y decisiones de baja confianza.
-- **Formateador y watcher:** `nudgec fmt <file.ndg>` formatea el código con seguridad y `nudgec check <file.ndg> --watch` comprueba los tipos en cada guardado.
-- **Exportación HTML estática:** `nudgec trace-html trace.jsonl -o report.html` exporta informes interactivos de auditoría completamente autónomos.
+- **Estimador de coste estático:** `nudgec cost <file.ndg> [--json]` calcula en tiempo de compilación los costes de tokens y presupuestos en el peor de los casos por función.
+- **Pruebas de propiedades y fuzzing:** `nudgec fuzz [file.ndg] [--iterations N] [--seed S] [--json]` ejecuta pruebas de fuzzing basadas en mutaciones y verificación de propiedades.
+- **Evaluación de conjuntos de datos:** `nudgec eval <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8] [--json]` evalúa funciones frente a datasets JSONL y bloquea CI según la precisión requerida.
+- **Comparación de evaluaciones:** `nudgec compare <results_a.jsonl> <results_b.jsonl> [--json]` compara dos ejecuciones de evaluación para detectar regresiones de precisión o rendimiento.
+- **Explicador de ejecución:** `nudgec explain <trace.jsonl> [--json]` genera un resumen CLI legible para humanos o un análisis JSON detallando fallos, consumo de tokens y decisiones de baja confianza.
+- **Diferencias de trazas:** `nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]` compara dos trazas para identificar regresiones, saliendo con código 1 ante regresiones en CI.
+- **Auditoría de cumplimiento:** `nudgec audit <trace.jsonl> [--json]` audita una traza NTF según los requisitos de la Ley de IA de la UE (transparencia, gobernanza, secretos no redactados, métricas de riesgo).
+- **Visor de trazas local:** `nudgec trace-view <trace.jsonl> [--port N] [--no-open]` inicia una interfaz web local con líneas de tiempo de ejecución visuales, gasto de tokens y detalles de reparaciones.
+- **Formateador y watcher:** `nudgec fmt <file.ndg> [--check]` formatea el código con seguridad y `nudgec check <file.ndg> --watch` comprueba los tipos en cada guardado.
+- **Exportación HTML estática:** `nudgec trace-html <trace.jsonl> [-o report.html]` exporta informes interactivos de auditoría completamente autónomos.
 
 ### Extensión para VS Code
 

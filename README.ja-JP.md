@@ -149,7 +149,7 @@ nudgec build-ts hello.ndg             # emits out/hello.ts
 | 機能 | 提供される価値 | セクション |
 |:---|:---|:---|
 | **型付きLLM呼び出し** | 出力スキーマが型として機能し、違反時は自動修復をトリガー | [Nudge を体験する](#nudge-を体験する) |
-| **制御フローとデータ** | `if/else`、`for` ループ、レコードリテラル `{k: v}`、インデックス参照、ミュータブルローカル変数 | [制御フローとデータ](#制御フローとデータ) |
+| **制御フローと型システム** | `if/else`、`for` ループ、レコードリテラル `{k: v}`、インデックス参照、ミュータブルローカル変数、Optional (`T?`)、Union (`T \| U`) | [制御フローとデータ](#制御フローとデータ) |
 | **型付きEffect** | コンパイル時に追跡・検査される10種類の既知のEffect | [型付きEffect](#型付きeffect) |
 | **ワークスペースとストア** | サンドボックス化されたファイルシステム + 型付き永続Key-Valueストア | [スコープ付きワークスペースと永続ストア](#スコープ付きワークスペースと永続ストア) |
 | **ローカルUI** | 型付きView、ウィンドウ、ヘッドレステスト、OSネイティブデスクトップウィンドウ | [ローカルUI](#ローカルui) |
@@ -193,6 +193,8 @@ fn process_scores(raw: [int]) -> { total: int, count: int } {
 - **インデックス参照:** コレクションやレコードに対するインデックスアクセス (`items[0]`, `map["key"]`)。境界外エラーは `E0705` としてクリーンに失敗します。
 - **ミュータブルローカル変数:** 明示的な `let mut name = init` 変数宣言と再代入 (`name = next`)。
 - **ループ上限:** ループは暴走を防ぐために `NUDGE_MAX_LOOP_ITERATIONS`（デフォルト10,000）で制限されており、上限超過時は `E0703` を発生させます。
+- **Optional 型 (`T?`):** `?` で表される null 許容型（`string?`、`int?`、`(int | string)?` など）。値が存在しない場合は `none` となり、`== none` および `!= none` で判定します。未チェックの使用は fail-closed で `E0201` エラーとなります。
+- **Union 型 (`T | U`):** 指定した複数の型候補を受け入れる静的 Union 型（`int | string` や `string | bool` など）。コンパイル時の型の拡大（widening）チェックと厳密な型の絞り込み拒否（`E0201`）を強制します。LLM 出力スキーマ、JSON 直列化、コード生成ターゲットで完全サポートされています。
 
 ### 型付きEffect
 
@@ -466,8 +468,8 @@ nudgec run search_agent.ndg
 # オープン仕様に準拠しているかトレースの整合性を検証
 nudgec trace-check trace.jsonl
 
-# 2つのトレースを比較し、コストや動作の変化を特定
-nudgec trace-diff baseline.jsonl candidate.jsonl --fail-on-regression
+# 2つのトレースを比較し、コストや動作の変化を特定（--json で機械可読レポートを出力）
+nudgec trace-diff baseline.jsonl candidate.jsonl --fail-on-regression --json
 ```
 
 **GitHub Action (`action.yml`):** APIキー不要、$0コストでプッシュごとにCI上でエージェントをテスト：
@@ -491,10 +493,16 @@ jobs:
 
 ### 開発者ツール
 
-- **ローカルトレースビューア:** `nudgec trace-view <trace.jsonl>` により、実行タイムライン、トークン消費量、修復ハイライトを可視化するローカルWeb UIを起動。
-- **実行解説ツール:** `nudgec explain <trace.jsonl>` は、失敗、トークン消費、低信頼度判定をハイライトした人間可読のCLIサマリーを出力。
-- **フォーマッタとウォッチャー:** `nudgec fmt <file.ndg>` はコードを安全に整形し、`nudgec check <file.ndg> --watch` は保存ごとに型検査を実行。
-- **静的HTMLエクスポート:** `nudgec trace-html trace.jsonl -o report.html` により、自己完結型の対話型監査レポートを出力。
+- **静的コスト見積もり:** `nudgec cost <file.ndg> [--json]` コンパイル時に各関数の最悪ケースのトークンコストと予算境界を算出します。
+- **プロパティおよびファズテスト:** `nudgec fuzz [file.ndg] [--iterations N] [--seed S] [--json]` 変異入力を用いたファズテストと不変プロパティ検証を実行します。
+- **データセット評価:** `nudgec eval <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8] [--json]` JSONL データセットに対してエージェント関数を評価し、精度しきい値で CI をゲートします。
+- **評価結果の比較:** `nudgec compare <results_a.jsonl> <results_b.jsonl> [--json]` 2つの評価実行結果を比較し、精度や性能のリグレッションを検出します。
+- **実行サマリー（Run Explainer）:** `nudgec explain <trace.jsonl> [--json]` 失敗、トークン消費量、低確信度の判断を強調した人間が読める CLI サマリーまたは JSON 分析を出力します。
+- **トレース差分比較:** `nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]` 2つの実行トレースを比較してリグレッションを検出し、ゲート時は終了コード 1 を返します。
+- **コンプライアンス監査:** `nudgec audit <trace.jsonl> [--json]` NTF トレースを欧州 AI 法（EU AI Act）の要件（透明性、ガバナンス、未墨消しシークレット、リスク指標）に照らして監査します。
+- **ローカルトレースビューア:** `nudgec trace-view <trace.jsonl> [--port N] [--no-open]` 実行タイムライン、トークン消費、修復ハイライトを表示するローカル Web UI を起動します。
+- **フォーマッタおよびウォッチャー:** `nudgec fmt <file.ndg> [--check]` 安全にコードを整形し、`nudgec check <file.ndg> --watch` で保存ごとに型検査を実行します。
+- **静的 HTML エクスポート:** `nudgec trace-html <trace.jsonl> [-o report.html]` 単一ファイル形式の対話型監査レポートを出力します。
 
 ### VS Code 拡張機能
 

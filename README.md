@@ -149,7 +149,7 @@ nudgec build-ts hello.ndg             # emits out/hello.ts
 | Feature | What It Delivers | Section |
 |:---|:---|:---|
 | **Typed LLM Calls** | Output schema is a type, and violations trigger automatic repair | [A Taste of Nudge](#a-taste-of-nudge) |
-| **Control Flow & Data** | `if/else`, `for` loops, record literals `{k: v}`, indexing, mutable locals | [Control Flow & Data](#control-flow--data) |
+| **Control Flow & Types** | `if/else`, `for` loops, record literals `{k: v}`, indexing, mutable locals, Optional (`T?`), Union (`T \| U`) | [Control Flow & Data](#control-flow--data) |
 | **Typed Effects** | 10 known effects tracked and checked at compile time | [Typed Effects](#typed-effects) |
 | **Workspace & Store** | Sandboxed scoped filesystem + typed persistent key-value store | [Workspace & Store](#scoped-workspace--persistent-store) |
 | **Local UI** | Typed views, windows, headless tests, and native OS desktop window | [Local UI](#local-ui) |
@@ -193,6 +193,8 @@ fn process_scores(raw: [int]) -> { total: int, count: int } {
 - **Indexing:** indexed access on collections and records (`items[0]`, `map["key"]`). Bounds errors fail cleanly with `E0705`.
 - **Mutable Locals:** explicit `let mut name = init` variables with reassignment (`name = next`).
 - **Loop Bounds:** loops are bound by `NUDGE_MAX_LOOP_ITERATIONS` (default 10,000) to prevent runaway execution, raising `E0703` on overrun.
+- **Optional Types (`T?`):** nullable values represented with `?` (such as `string?`, `int?`, `(int | string)?`), where absent values take `none`. Equality checks use `== none` and `!= none`. Unchecked usage fails closed with `E0201`.
+- **Union Types (`T | U`):** static alternative types (such as `int | string` or `string | bool`). Supports compile-time widening checks and strict narrowing rejection (`E0201`). Fully supported in LLM schemas, JSON serialization, and code generation targets.
 
 ### Typed Effects
 
@@ -466,8 +468,8 @@ Every run emits an open NTF v1 JSONL trace capturing all effect interactions:
 # Verify trace integrity against the open specification
 nudgec trace-check trace.jsonl
 
-# Compare two traces to identify cost or behavior changes
-nudgec trace-diff baseline.jsonl candidate.jsonl --fail-on-regression
+# Compare two traces to identify cost or behavior changes (--json emits machine-readable reports)
+nudgec trace-diff baseline.jsonl candidate.jsonl --fail-on-regression --json
 ```
 
 **GitHub Action (`action.yml`):** test agents in CI on every push at $0 cost with zero API keys:
@@ -490,10 +492,16 @@ The frozen NTF specification lives at [docs/ntf-spec.md](docs/ntf-spec.md), with
 
 ### Developer Tools
 
-- **Local Trace Viewer:** `nudgec trace-view <trace.jsonl>` starts a local web UI with visual execution timelines, token expenditure, and repair highlights.
-- **Run Explainer:** `nudgec explain <trace.jsonl>` produces a human-readable CLI summary highlighting failures, token consumption, and low-confidence decisions.
-- **Formatter & Watcher:** `nudgec fmt <file.ndg>` safely formats code, and `nudgec check <file.ndg> --watch` type-checks on every save.
-- **Static HTML Export:** `nudgec trace-html trace.jsonl -o report.html` exports self-contained interactive audit reports.
+- **Static Cost Estimator:** `nudgec cost <file.ndg> [--json]` calculates static worst-case token costs and budgets per function at compile time.
+- **Property & Fuzz Testing:** `nudgec fuzz [file.ndg] [--iterations N] [--seed S] [--json]` executes mutation-based fuzz testing and property verification.
+- **Dataset Evaluation:** `nudgec eval <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8] [--json]` benchmarks functions against JSONL datasets and gates CI on target accuracy.
+- **Evaluation Comparison:** `nudgec compare <results_a.jsonl> <results_b.jsonl> [--json]` compares two evaluation runs to detect performance or accuracy regressions.
+- **Run Explainer:** `nudgec explain <trace.jsonl> [--json]` produces a human-readable CLI summary or JSON analysis highlighting failures, token consumption, and low-confidence decisions.
+- **Trace Diffing:** `nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]` compares two execution traces to detect regressions, exiting with code 1 on regression when gated.
+- **Compliance Audit:** `nudgec audit <trace.jsonl> [--json]` audits an NTF trace against EU AI Act compliance criteria (transparency, governance, unredacted secrets, risk metrics).
+- **Local Trace Viewer:** `nudgec trace-view <trace.jsonl> [--port N] [--no-open]` starts a local web UI with visual execution timelines, token expenditure, and repair highlights.
+- **Formatter & Watcher:** `nudgec fmt <file.ndg> [--check]` safely formats code, and `nudgec check <file.ndg> --watch` type-checks on every save.
+- **Static HTML Export:** `nudgec trace-html <trace.jsonl> [-o report.html]` exports self-contained interactive audit reports.
 
 ### VS Code Extension
 

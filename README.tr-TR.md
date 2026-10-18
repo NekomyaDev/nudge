@@ -149,7 +149,7 @@ nudgec build-ts hello.ndg             # emits out/hello.ts
 | Özellik | Ne Sağlar | Bölüm |
 |:---|:---|:---|
 | **Tipli LLM Çağrıları** | Çıktı schema'sı bir tiptir ve ihlaller otomatik onarımı tetikler | [Nudge'a Bir Bakış](#nudgea-bir-bakış) |
-| **Kontrol Akışı ve Veri** | `if/else`, `for` döngüleri, record sabitleri `{k: v}`, indeksleme, değişebilir yerel değişkenler | [Kontrol Akışı ve Veri](#kontrol-akışı-ve-veri) |
+| **Kontrol Akışı ve Tipler** | `if/else`, `for` döngüleri, record sabitleri `{k: v}`, indeksleme, değişebilir yerel değişkenler, Opsiyonel (`T?`), Union (`T \| U`) | [Kontrol Akışı ve Veri](#kontrol-akışı-ve-veri) |
 | **Tipli Effect'ler** | Derleme zamanında takip edilen ve denetlenen bilinen 10 effect | [Tipli Effect'ler](#tipli-effectler) |
 | **Workspace ve Store** | Korumalı alanlı kapsamlı dosya sistemi + tipli kalıcı anahtar-değer deposu | [Kapsamlı Workspace ve Kalıcı Store](#kapsamlı-workspace-ve-kalıcı-store) |
 | **Yerel Arayüz (Local UI)** | Tipli görünümler, pencereler, headless testler ve yerel işletim sistemi masaüstü penceresi | [Yerel Arayüz (Local UI)](#yerel-arayüz-local-ui) |
@@ -193,6 +193,8 @@ fn process_scores(raw: [int]) -> { total: int, count: int } {
 - **İndeksleme:** Koleksiyonlar ve record'lar üzerinde indeksli erişim (`items[0]`, `map["key"]`). Sınır dışı hataları `E0705` ile temiz bir şekilde sonlanır.
 - **Değişebilir Yerel Değişkenler:** Yeniden atama yapılabilen (`name = next`) açık `let mut name = init` değişkenleri.
 - **Döngü Sınırları:** Kontrolden çıkan çalıştırmaları önlemek için döngüler `NUDGE_MAX_LOOP_ITERATIONS` (varsayılan 10.000) ile sınırlandırılmıştır ve aşım durumunda `E0703` hatası verir.
+- **Opsiyonel Tipler (`T?`):** `?` ile ifade edilen null olabilen tipler (örneğin `string?`, `int?`, `(int | string)?`). Değer yoksa `none` olur; `== none` ve `!= none` ile kontrol edilir. Denetlenmeyen kullanımlar fail-closed olarak `E0201` hatası verir.
+- **Union Tipleri (`T | U`):** Belirtilen alternatif tipleri kabul eden statik union tipleri (örneğin `int | string` veya `string | bool`). Derleme zamanı genişletme denetimlerini ve katı daraltma reddini (`E0201`) destekler; LLM çıktı şemalarında, JSON serileştirmede ve kod üretiminde tam olarak desteklenir.
 
 ### Tipli Effect'ler
 
@@ -466,8 +468,8 @@ Her çalıştırma, tüm effect etkileşimlerini yakalayan açık bir NTF v1 JSO
 # Verify trace integrity against the open specification
 nudgec trace-check trace.jsonl
 
-# Compare two traces to identify cost or behavior changes
-nudgec trace-diff baseline.jsonl candidate.jsonl --fail-on-regression
+# Compare two traces to identify cost or behavior changes (--json makine tarafından okunabilir rapor üretir)
+nudgec trace-diff baseline.jsonl candidate.jsonl --fail-on-regression --json
 ```
 
 **GitHub Action (`action.yml`):** Ajanları her push işleminde sıfır API anahtarıyla ve 0$ maliyetle CI'da test edin:
@@ -490,10 +492,16 @@ Dondurulmuş NTF spesifikasyonu [docs/ntf-spec.md](docs/ntf-spec.md) adresinde y
 
 ### Geliştirici Araçları
 
-- **Yerel Trace Görüntüleyici:** `nudgec trace-view <trace.jsonl>`, görsel yürütme zaman çizelgeleri, token harcamaları ve onarım vurguları içeren yerel bir web arayüzü başlatır.
-- **Çalıştırma Açıklayıcısı (Run Explainer):** `nudgec explain <trace.jsonl>`, hataları, token tüketimini ve düşük güvenilirlikli kararları vurgulayan insan tarafından okunabilir bir CLI özeti üretir.
-- **Formatlayıcı ve İzleyici:** `nudgec fmt <file.ndg>` kodu güvenli bir şekilde formatlar ve `nudgec check <file.ndg> --watch` her kaydetmede tip kontrolü yapar.
-- **Statik HTML Dışa Aktarma:** `nudgec trace-html trace.jsonl -o report.html`, bağımsız ve etkileşimli denetim raporları dışa aktarır.
+- **Statik Maliyet Tahmincisi:** `nudgec cost <file.ndg> [--json]`, derleme zamanında fonksiyon başına en kötü durum token maliyetlerini ve bütçelerini hesaplar.
+- **Özellik ve Fuzz Testi:** `nudgec fuzz [file.ndg] [--iterations N] [--seed S] [--json]`, mutasyon tabanlı fuzz testlerini ve özellik doğrulamasını çalıştırır.
+- **Veri Kümesi Değerlendirmesi:** `nudgec eval <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8] [--json]`, fonksiyonları JSONL veri kümelerine karşı kıyaslar ve CI'ı doğruluk eşiğine göre kilitler.
+- **Değerlendirme Karşılaştırması:** `nudgec compare <results_a.jsonl> <results_b.jsonl> [--json]`, performans veya doğruluk gerilemelerini tespit etmek için iki değerlendirme çalıştırmasını karşılaştırır.
+- **Çalıştırma Açıklayıcısı:** `nudgec explain <trace.jsonl> [--json]`, hataları, token tüketimini ve düşük güvenilirlikli kararları vurgulayan insan tarafından okunabilir bir CLI özeti veya JSON analizi üretir.
+- **Trace Diff Alma:** `nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]`, regresyonları tespit etmek için iki çalıştırma trace'ini karşılaştırır; kilitlendiğinde regresyonda kod 1 ile çıkar.
+- **Uyumluluk Denetimi:** `nudgec audit <trace.jsonl> [--json]`, bir NTF trace'ini AB Yapay Zeka Yasası uyumluluk kriterlerine (şeffaflık, yönetişim, sansürlenmemiş sırlar, risk metrikleri) göre denetler.
+- **Yerel Trace Görüntüleyici:** `nudgec trace-view <trace.jsonl> [--port N] [--no-open]`, görsel yürütme zaman çizelgeleri, token harcamaları ve onarım vurguları içeren yerel bir web arayüzü başlatır.
+- **Formatlayıcı ve İzleyici:** `nudgec fmt <file.ndg> [--check]`, kodu güvenli bir şekilde formatlar ve `nudgec check <file.ndg> --watch` her kaydetmede tip kontrolü yapar.
+- **Statik HTML Dışa Aktarma:** `nudgec trace-html <trace.jsonl> [-o report.html]`, bağımsız ve etkileşimli denetim raporları dışa aktarır.
 
 ### VS Code Eklentisi
 
