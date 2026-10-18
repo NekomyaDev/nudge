@@ -1115,6 +1115,7 @@ fn compile_internal(
     expected_entry: Option<&str>,
     mode: CompileMode,
 ) -> Result<Program, String> {
+    #[cfg(feature = "compiler")]
     if mode == CompileMode::Checked {
         let check_errs = crate::check::check(items);
         if !check_errs.is_empty() {
@@ -1125,6 +1126,9 @@ fn compile_internal(
             return Err(msgs.join("\n"));
         }
     }
+    #[cfg(not(feature = "compiler"))]
+    let _ = mode;
+
     let mut tool_names = Vec::new();
 
     // First pass: validate agent and collect tool names
