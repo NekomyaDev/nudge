@@ -1,0 +1,17 @@
+# Maintainer: NekomyaDev <neko@nekomya.dev>
+pkgname=nudge-bin
+pkgver=1.2.1
+pkgrel=1
+pkgdesc="Typed, replayable, budget-aware programming language for AI agents"
+arch=('x86_64')
+url="https://github.com/NekomyaDev/nudge"
+license=('Apache-2.0')
+provides=('nudge' 'nudgec')
+conflicts=('nudge' 'nudgec')
+source_x86_64=("${url}/releases/download/v${pkgver}/nudgec-v${pkgver}-linux-x86_64.tar.gz")
+sha256sums_x86_64=('8bb5b0c057c8018abe8bed811bb6a45994a4df4f0fe62f85a832218439df9d9c')
+
+package() {
+    install -Dm755 "${srcdir}/nudgec" "${pkgdir}/usr/bin/nudgec"
+    ln -sf /usr/bin/nudgec "${pkgdir}/usr/bin/nudge"
+}

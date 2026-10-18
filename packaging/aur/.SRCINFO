@@ -1,0 +1,15 @@
+pkgbase = nudge-bin
+	pkgdesc = Typed, replayable, budget-aware programming language for AI agents
+	pkgver = 1.2.1
+	pkgrel = 1
+	url = https://github.com/NekomyaDev/nudge
+	arch = x86_64
+	license = Apache-2.0
+	provides = nudge
+	provides = nudgec
+	conflicts = nudge
+	conflicts = nudgec
+	source_x86_64 = https://github.com/NekomyaDev/nudge/releases/download/v1.2.1/nudgec-v1.2.1-linux-x86_64.tar.gz
+	sha256sums_x86_64 = 8bb5b0c057c8018abe8bed811bb6a45994a4df4f0fe62f85a832218439df9d9c
+
+pkgname = nudge-bin
