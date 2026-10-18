@@ -52,6 +52,11 @@ pub const TEMPLATES: &[(&str, &str, &str)] = &[
         "for_all property tests over generators",
         include_str!("../../../examples/property-fuzz/property-fuzz.ndg"),
     ),
+    (
+        "ui",
+        "interactive approval station with typed UI and headless testing",
+        include_str!("../../../examples/approval-station/main.ndg"),
+    ),
 ];
 
 pub fn list() {
@@ -140,6 +145,10 @@ pub fn run_in(base: &std::path::Path, rest: &[String]) -> Result<(), String> {
             "examples/triage-agent".to_string(),
             "../examples/triage-agent/".to_string(),
         ),
+        "ui" => (
+            "examples/approval-station".to_string(),
+            "../examples/approval-station/".to_string(),
+        ),
         other => (format!("examples/{other}"), format!("../examples/{other}/")),
     };
     let readme = format!(
@@ -211,6 +220,22 @@ mod tests {
             std::fs::read_to_string(base_hello.join("hello_demo/README.md")).unwrap();
         assert!(readme_hello.contains("examples/hello_llm.ndg"));
         let _ = std::fs::remove_dir_all(&base_hello);
+
+        let base_ui = tmpdir("scaffold_ui");
+        run_in(
+            &base_ui,
+            &[
+                "ui_demo".to_string(),
+                "--template".to_string(),
+                "ui".to_string(),
+            ],
+        )
+        .unwrap();
+        let program_ui = base_ui.join("ui_demo/ui_demo.ndg");
+        assert!(program_ui.exists(), "ui program file written");
+        let readme_ui = std::fs::read_to_string(base_ui.join("ui_demo/README.md")).unwrap();
+        assert!(readme_ui.contains("examples/approval-station"));
+        let _ = std::fs::remove_dir_all(&base_ui);
     }
 
     #[test]
