@@ -1,5 +1,5 @@
 //! Frozen trace format validator (design §6, v1.0): the v1 record schema is
-//! **frozen** — `nudgec trace-check <trace.jsonl>` validates every line
+//! **frozen** -- `nudgec trace-check <trace.jsonl> [--json]` validates every line
 //! against it. Unknown versions report E0601; additive fields are allowed,
 //! removed/renamed fields are not.
 
@@ -217,6 +217,20 @@ pub fn validate(text: &str) -> Vec<String> {
     errs
 }
 
+/// Machine-readable validation report in JSON:
+/// `{"valid": bool, "records": usize, "errors": Vec<String>}`.
+pub fn validate_json(text: &str) -> String {
+    let errors = validate(text);
+    let valid = errors.is_empty();
+    let records = text.lines().filter(|l| !l.trim().is_empty()).count();
+    let payload = serde_json::json!({
+        "valid": valid,
+        "records": records,
+        "errors": errors,
+    });
+    serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,6 +250,34 @@ mod tests {
             r#"{"v": 1, "seq": 3, "kind": "fn.return", "fn": "main", "output": {"x": 1}}"#,
         );
         assert_eq!(validate(&text), Vec::<String>::new());
+    }
+
+    #[test]
+    fn validate_json_valid_and_invalid_traces() {
+        let valid_trace = format!(
+            "{}\n{}\n{}\n",
+            llm_line(1),
+            r#"{"v": 1, "seq": 2, "kind": "tool.call", "tool": "web_search", "input": ["q"], "output": [], "server": "search"}"#,
+            r#"{"v": 1, "seq": 3, "kind": "fn.return", "fn": "main", "output": {"x": 1}}"#,
+        );
+        let valid_json_str = validate_json(&valid_trace);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&valid_json_str).expect("validate_json emits valid json");
+        assert_eq!(parsed["valid"], true);
+        assert_eq!(parsed["records"], 3);
+        assert_eq!(parsed["errors"].as_array().unwrap().len(), 0);
+
+        let invalid_trace = format!(
+            "{}\n{}\n",
+            r#"{"v": 2, "seq": 1, "kind": "llm.call"}"#,
+            r#"{"v": 1, "seq": 5, "kind": "unknown.kind"}"#,
+        );
+        let invalid_json_str = validate_json(&invalid_trace);
+        let parsed_inv: serde_json::Value =
+            serde_json::from_str(&invalid_json_str).expect("validate_json emits valid json");
+        assert_eq!(parsed_inv["valid"], false);
+        assert_eq!(parsed_inv["records"], 2);
+        assert!(!parsed_inv["errors"].as_array().unwrap().is_empty());
     }
 
     /// The NTF conformance corpus (docs/ntf-spec.md) — every case must

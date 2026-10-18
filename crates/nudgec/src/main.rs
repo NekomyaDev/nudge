@@ -7,7 +7,8 @@
 //!   nudgec cost  <file.ndg> [--json]  static cost report per fn (v0.4, design §13)
 //!   nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn
 //!   nudgec resume <run_id>    continue a crashed run from its last checkpoint (design §7)
-//!   nudgec trace-check <t.jsonl> validate a trace against the frozen v1 schema (v1.0, design §6)
+//!   nudgec trace-check <t.jsonl> [--json] validate a trace against the frozen v1 schema (v1.0, design §6)
+//!   nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8] [--json]
 //!   nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json (v1.0, design §9)
 //!   nudgec a2a-serve <file.ndg> [--port N]  serve agent as an A2A protocol peer (v2.0)
 //!   nudgec lsp                serve the Language Server Protocol over stdio (v1.0, design §10)
@@ -25,7 +26,7 @@ use std::{env, fs, process};
 
 fn print_usage_to(to_stderr: bool) {
     let msg = format!(
-        "nudgec {} — the Nudge compiler\nusage:\n  nudgec fmt   <file.ndg> [--check]   normalize indentation, trim trailing ws, collapse blanks\n  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)\n  nudgec learn [lesson]     the language in eight terminal lessons (run bare for the index)\n  nudgec lex   <file.ndg>   dump token stream\n  nudgec parse <file.ndg>   dump AST\n  nudgec check <file.ndg>   type-check (E0101–E0302)\n  nudgec build <file.ndg> [--standalone] [-o <output>] [--fn <entry>]  check, emit Python (or native binary with --standalone)\n  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts\n  nudgec check <file.ndg> --watch   re-check on every file change (Ctrl-C to stop)\n  nudgec cost  <file.ndg> [--json]   static cost report per fn\n  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn\n  nudgec run  <file.ndg> [--fn <name>] [args...]  execute a program fn on the bytecode VM (or the interpreter)\n  nudgec resume <run_id>    continue a crashed run from its last checkpoint\n  nudgec trace-check <t.jsonl> validate a trace against the frozen v1 schema\n  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json\n  nudgec a2a-serve <file.ndg> [--port N]  serve agent as an A2A protocol peer (v2.0)\n  nudgec lsp                serve the Language Server Protocol over stdio\n  nudgec trace-html <t.jsonl> [--out file.html]  static single-file viewer (no server, works offline)\n  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace\n  nudgec explain <t.jsonl> [--json]    human report over a trace: totals, failures, low-confidence answers\n  nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]  compare traces; gate CI on regression\n  nudgec audit <trace.jsonl> [--json]       compliance audit report over an NTF trace (EU AI Act)\n  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8]\n  nudgec compare <results_a.jsonl> <results_b.jsonl> [--json]  two eval runs: which rows flipped\n  nudgec runs  [--run <run_id>]   list recorded agent runs / show one run's state and trace\n  nudgec mcp   <file.ndg> [--fns a,b]   expose program fns as MCP tools over stdio\n  nudgec serve <file.ndg> [--fn <name>] [--port N]   run a program fn as a local HTTP API (POST /run, GET /health)\n  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8] [--json]  score a program over a dataset\n  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)\n  nudgec fuzz  [file.ndg] [--iterations N] [--seed S] [--json]  fuzz the compiler pipeline with mutated inputs (v1.6)",
+        "nudgec {} -- the Nudge compiler\nusage:\n  nudgec fmt   <file.ndg> [--check]   normalize indentation, trim trailing ws, collapse blanks\n  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)\n  nudgec learn [lesson]     the language in eight terminal lessons (run bare for the index)\n  nudgec lex   <file.ndg>   dump token stream\n  nudgec parse <file.ndg>   dump AST\n  nudgec check <file.ndg>   type-check (E0101–E0302)\n  nudgec build <file.ndg> [--standalone] [-o <output>] [--fn <entry>]  check, emit Python (or native binary with --standalone)\n  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts\n  nudgec check <file.ndg> --watch   re-check on every file change (Ctrl-C to stop)\n  nudgec cost  <file.ndg> [--json]   static cost report per fn\n  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn\n  nudgec run  <file.ndg> [--fn <name>] [args...]  execute a program fn on the bytecode VM (or the interpreter)\n  nudgec resume <run_id>    continue a crashed run from its last checkpoint\n  nudgec trace-check <t.jsonl> [--json] validate a trace against the frozen v1 schema\n  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json\n  nudgec a2a-serve <file.ndg> [--port N]  serve agent as an A2A protocol peer (v2.0)\n  nudgec lsp                serve the Language Server Protocol over stdio\n  nudgec trace-html <t.jsonl> [--out file.html]  static single-file viewer (no server, works offline)\n  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace\n  nudgec explain <t.jsonl> [--json]    human report over a trace: totals, failures, low-confidence answers\n  nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]  compare traces; gate CI on regression\n  nudgec audit <trace.jsonl> [--json]       compliance audit report over an NTF trace (EU AI Act)\n  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8] [--json]\n  nudgec compare <results_a.jsonl> <results_b.jsonl> [--json]  two eval runs: which rows flipped\n  nudgec runs  [--run <run_id>]   list recorded agent runs / show one run's state and trace\n  nudgec mcp   <file.ndg> [--fns a,b]   expose program fns as MCP tools over stdio\n  nudgec serve <file.ndg> [--fn <name>] [--port N]   run a program fn as a local HTTP API (POST /run, GET /health)\n  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8] [--json]  score a program over a dataset\n  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)\n  nudgec fuzz  [file.ndg] [--iterations N] [--seed S] [--json]  fuzz the compiler pipeline with mutated inputs (v1.6)",
         env!("CARGO_PKG_VERSION")
     );
     if to_stderr {
@@ -374,6 +375,144 @@ fn main() {
             }
         }
     }
+    // `trace-check` validates a trace against the frozen v1 schema
+    if args.len() >= 2 && args[1] == "trace-check" {
+        let mut json_mode = false;
+        let mut file = None;
+        for arg in &args[2..] {
+            if arg == "--json" {
+                json_mode = true;
+            } else if arg == "--help" || arg == "-h" {
+                println!("usage: nudgec trace-check <trace.jsonl> [--json]");
+                process::exit(0);
+            } else if arg.starts_with('-') {
+                eprintln!("error: unknown flag '{arg}'");
+                process::exit(64);
+            } else if file.is_none() {
+                file = Some(arg.as_str());
+            } else {
+                eprintln!("error: unexpected positional argument '{arg}'");
+                process::exit(64);
+            }
+        }
+        let Some(f) = file else {
+            eprintln!("usage: nudgec trace-check <trace.jsonl> [--json]");
+            process::exit(64);
+        };
+        let src = read_src(f);
+        if json_mode {
+            let out = tracecheck::validate_json(&src);
+            println!("{out}");
+            let problems = tracecheck::validate(&src);
+            if !problems.is_empty() {
+                process::exit(1);
+            }
+        } else {
+            let problems = tracecheck::validate(&src);
+            if problems.is_empty() {
+                let n = src.lines().filter(|l| !l.trim().is_empty()).count();
+                eprintln!("-- trace OK ({n} record(s), frozen v1 schema)");
+            } else {
+                for p in &problems {
+                    eprintln!("error: {p}");
+                }
+                process::exit(1);
+            }
+        }
+        return;
+    }
+    // `policy-sweep` re-cuts decision thresholds over recorded distributions
+    if args.len() >= 2 && args[1] == "policy-sweep" {
+        let mut json_mode = false;
+        let mut file = None;
+        let mut question = String::new();
+        let mut metric = "confidence".to_string();
+        let mut thresholds: Vec<f64> = vec![0.5, 0.8, 0.95];
+        let mut i = 2;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--json" => {
+                    json_mode = true;
+                }
+                "--help" | "-h" => {
+                    println!(
+                        "usage: nudgec policy-sweep <trace.jsonl> --question <name> [--metric confidence|p] [--thresholds 0.5,0.8] [--json]"
+                    );
+                    process::exit(0);
+                }
+                "--question" | "-q" => {
+                    i += 1;
+                    if let Some(q) = args.get(i) {
+                        question = q.clone();
+                    } else {
+                        eprintln!("error: --question requires a question name");
+                        process::exit(64);
+                    }
+                }
+                "--metric" | "-m" => {
+                    i += 1;
+                    if let Some(m) = args.get(i) {
+                        metric = m.clone();
+                    } else {
+                        eprintln!("error: --metric requires a metric name");
+                        process::exit(64);
+                    }
+                }
+                "--thresholds" | "-t" => {
+                    i += 1;
+                    if let Some(t_str) = args.get(i) {
+                        thresholds = t_str
+                            .split(',')
+                            .filter_map(|v| v.trim().parse().ok())
+                            .collect();
+                    } else {
+                        eprintln!("error: --thresholds requires a comma-separated list of numbers");
+                        process::exit(64);
+                    }
+                }
+                arg if arg.starts_with('-') => {
+                    eprintln!(
+                        "unknown policy-sweep flag '{arg}' (use --question, --metric, --thresholds, --json)"
+                    );
+                    process::exit(64);
+                }
+                pos => {
+                    if file.is_none() {
+                        file = Some(pos.to_string());
+                    } else {
+                        eprintln!("error: unexpected positional argument '{pos}'");
+                        process::exit(64);
+                    }
+                }
+            }
+            i += 1;
+        }
+        let Some(f) = file else {
+            eprintln!(
+                "usage: nudgec policy-sweep <trace.jsonl> --question <name> [--metric confidence|p] [--thresholds 0.5,0.8] [--json]"
+            );
+            process::exit(64);
+        };
+        if question.is_empty() {
+            eprintln!(
+                "usage: nudgec policy-sweep <trace.jsonl> --question <name> [--metric confidence|p] [--thresholds 0.5,0.8] [--json]"
+            );
+            process::exit(64);
+        }
+        let src = read_src(&f);
+        if json_mode {
+            println!(
+                "{}",
+                policysweep::sweep_json(&src, &question, &metric, &thresholds)
+            );
+        } else {
+            print!(
+                "{}",
+                policysweep::sweep(&src, &question, &metric, &thresholds)
+            );
+        }
+        return;
+    }
     // `compare` compares two eval results
     if args.len() >= 2 && args[1] == "compare" {
         let mut json_mode = false;
@@ -664,10 +803,8 @@ fn main() {
     } else {
         None
     };
-    // policy-sweep takes the trace plus flags (len > 3); everything else
-    // is exactly <cmd> <file>
+    // len > 3 for multi-arg commands; everything else is exactly <cmd> <file>
     if args.len() != 3
-        && args[1] != "policy-sweep"
         && args[1] != "serve"
         && args[1] != "a2a-serve"
         && args[1] != "mcp"
@@ -1273,59 +1410,6 @@ fn main() {
                     file
                 );
             }
-        }
-        "trace-check" => {
-            let problems = tracecheck::validate(&src);
-            if problems.is_empty() {
-                let n = src.lines().filter(|l| !l.trim().is_empty()).count();
-                eprintln!("-- trace OK ({n} record(s), frozen v1 schema)");
-            } else {
-                for p in &problems {
-                    eprintln!("error: {p}");
-                }
-                process::exit(1);
-            }
-        }
-        // v1.4: policy sweep — re-cut decision thresholds over recorded
-        // distributions; zero model calls (design §11.5)
-        "policy-sweep" => {
-            let src = read_src(&args[2]);
-            let mut question = String::new();
-            let mut metric = "confidence".to_string();
-            let mut thresholds: Vec<f64> = vec![0.5, 0.8, 0.95];
-            let mut i = 3; // args[2] is the trace file
-            while i < args.len() {
-                match args[i].as_str() {
-                    "--question" | "-q" => {
-                        i += 1;
-                        question = args.get(i).cloned().unwrap_or_default();
-                    }
-                    "--metric" | "-m" => {
-                        i += 1;
-                        metric = args.get(i).cloned().unwrap_or(metric);
-                    }
-                    "--thresholds" | "-t" => {
-                        i += 1;
-                        thresholds = args
-                            .get(i)
-                            .map(|s| s.split(',').filter_map(|v| v.trim().parse().ok()).collect())
-                            .unwrap_or(thresholds);
-                    }
-                    other => {
-                        eprintln!("unknown policy-sweep flag '{other}' (use --question, --metric, --thresholds)");
-                        process::exit(64);
-                    }
-                }
-                i += 1;
-            }
-            if question.is_empty() {
-                eprintln!("usage: nudgec policy-sweep <trace.jsonl> --question <name> [--metric confidence|p] [--thresholds 0.5,0.8]");
-                process::exit(64);
-            }
-            print!(
-                "{}",
-                policysweep::sweep(&src, &question, &metric, &thresholds)
-            );
         }
         // design §9 (v1.0): A2A agent-card export — one card per agent
         // block, or a single card wrapping the file's top-level fns

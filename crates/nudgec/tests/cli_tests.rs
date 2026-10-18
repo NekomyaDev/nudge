@@ -443,3 +443,252 @@ fn main() -> int {
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn test_cli_trace_check_json_and_flag_positions() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "nudge_test_cli_trace_check_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let valid_trace_path = temp_dir.join("valid_trace.jsonl");
+    fs::write(
+        &valid_trace_path,
+        r#"{"v":1,"seq":1,"kind":"llm.call","model":"m","params":{},"input":"p","output":"o","tokens":{"in":1,"out":1},"cost_usd":0.001,"repair_round":0,"outcome":"ok","provider":"fake"}
+{"v":1,"seq":2,"kind":"tool.call","tool":"web_search","input":["q"],"output":[],"server":"search"}
+{"v":1,"seq":3,"kind":"fn.return","fn":"main","output":{"x":1}}
+"#,
+    )
+    .expect("write valid trace");
+
+    let invalid_trace_path = temp_dir.join("invalid_trace.jsonl");
+    fs::write(
+        &invalid_trace_path,
+        r#"{"v":2,"seq":1,"kind":"llm.call"}
+{"v":1,"seq":5,"kind":"unknown.kind"}
+"#,
+    )
+    .expect("write invalid trace");
+
+    // Flag after file: nudgec trace-check valid_trace.jsonl --json
+    let out1 = Command::new(nudgec_bin())
+        .arg("trace-check")
+        .arg(&valid_trace_path)
+        .arg("--json")
+        .output()
+        .expect("run trace-check");
+    assert!(out1.status.success());
+    let parsed1: serde_json::Value =
+        serde_json::from_slice(&out1.stdout).expect("valid json output");
+    assert_eq!(parsed1["valid"], true);
+    assert_eq!(parsed1["records"], 3);
+    assert!(parsed1["errors"].as_array().unwrap().is_empty());
+
+    // Flag before file: nudgec trace-check --json valid_trace.jsonl
+    let out2 = Command::new(nudgec_bin())
+        .arg("trace-check")
+        .arg("--json")
+        .arg(&valid_trace_path)
+        .output()
+        .expect("run trace-check");
+    assert!(out2.status.success());
+    let parsed2: serde_json::Value =
+        serde_json::from_slice(&out2.stdout).expect("valid json output");
+    assert_eq!(parsed2["valid"], true);
+    assert_eq!(parsed2["records"], 3);
+
+    // Standard mode without --json on valid trace exits 0 and prints OK to stderr
+    let out3 = Command::new(nudgec_bin())
+        .arg("trace-check")
+        .arg(&valid_trace_path)
+        .output()
+        .expect("run trace-check");
+    assert!(out3.status.success());
+    let stderr3 = String::from_utf8_lossy(&out3.stderr);
+    assert!(stderr3.contains("-- trace OK (3 record(s), frozen v1 schema)"));
+
+    // Invalid trace with --json emits JSON and exits 1
+    let out4 = Command::new(nudgec_bin())
+        .arg("trace-check")
+        .arg(&invalid_trace_path)
+        .arg("--json")
+        .output()
+        .expect("run trace-check");
+    assert_eq!(out4.status.code(), Some(1));
+    let parsed4: serde_json::Value =
+        serde_json::from_slice(&out4.stdout).expect("valid json output");
+    assert_eq!(parsed4["valid"], false);
+    assert_eq!(parsed4["records"], 2);
+    assert!(!parsed4["errors"].as_array().unwrap().is_empty());
+
+    // Invalid trace without --json exits 1
+    let out5 = Command::new(nudgec_bin())
+        .arg("trace-check")
+        .arg(&invalid_trace_path)
+        .output()
+        .expect("run trace-check");
+    assert_eq!(out5.status.code(), Some(1));
+
+    // Missing file: nudgec trace-check
+    let out6 = Command::new(nudgec_bin())
+        .arg("trace-check")
+        .output()
+        .expect("run trace-check");
+    assert_eq!(out6.status.code(), Some(64));
+
+    // Missing file with flag: nudgec trace-check --json
+    let out7 = Command::new(nudgec_bin())
+        .arg("trace-check")
+        .arg("--json")
+        .output()
+        .expect("run trace-check");
+    assert_eq!(out7.status.code(), Some(64));
+
+    // Unknown flag fail-closed: nudgec trace-check file.jsonl --badflag
+    let out8 = Command::new(nudgec_bin())
+        .arg("trace-check")
+        .arg(&valid_trace_path)
+        .arg("--badflag")
+        .output()
+        .expect("run trace-check");
+    assert_eq!(out8.status.code(), Some(64));
+
+    // Help includes --json
+    let out9 = Command::new(nudgec_bin())
+        .arg("trace-check")
+        .arg("--help")
+        .output()
+        .expect("run trace-check help");
+    assert!(out9.status.success());
+    let help_text = String::from_utf8_lossy(&out9.stdout);
+    assert!(help_text.contains("[--json]"));
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_cli_policy_sweep_json_and_flag_positions() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "nudge_test_cli_policy_sweep_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let trace_path = temp_dir.join("decisions.jsonl");
+    fs::write(
+        &trace_path,
+        r#"{"v":1,"seq":1,"kind":"decision.call","model":"m","provider":"laya","questions":{},"answers":{"dept":{"winner":"a","p":0.900,"distribution":{},"confidence":0.900}},"latency_ms":30.0,"outcome":"ok"}
+{"v":1,"seq":2,"kind":"decision.call","model":"m","provider":"laya","questions":{},"answers":{"dept":{"winner":"a","p":0.750,"distribution":{},"confidence":0.750}},"latency_ms":35.0,"outcome":"ok"}
+{"v":1,"seq":3,"kind":"decision.call","model":"m","provider":"laya","questions":{},"answers":{"dept":{"winner":"a","p":0.550,"distribution":{},"confidence":0.550}},"latency_ms":40.0,"outcome":"ok"}
+{"v":1,"seq":4,"kind":"decision.call","model":"m","provider":"laya","questions":{},"answers":{"dept":{"winner":"a","p":0.200,"distribution":{},"confidence":0.200}},"latency_ms":90.0,"outcome":"deadline_missed"}
+"#,
+    )
+    .expect("write decisions trace");
+
+    // Flag after args: nudgec policy-sweep decisions.jsonl --question dept --thresholds 0.5,0.8 --json
+    let out1 = Command::new(nudgec_bin())
+        .arg("policy-sweep")
+        .arg(&trace_path)
+        .arg("--question")
+        .arg("dept")
+        .arg("--thresholds")
+        .arg("0.5,0.8")
+        .arg("--json")
+        .output()
+        .expect("run policy-sweep");
+    assert!(out1.status.success());
+    let parsed1: serde_json::Value =
+        serde_json::from_slice(&out1.stdout).expect("valid json output");
+    assert_eq!(parsed1["question"], "dept");
+    assert_eq!(parsed1["metric"], "confidence");
+    assert_eq!(parsed1["total_records"], 4);
+    assert_eq!(parsed1["records"], 4);
+    assert_eq!(parsed1["distribution"][0]["threshold"], 0.5);
+    assert_eq!(parsed1["distribution"][0]["coverage"], 0.75);
+    assert_eq!(parsed1["distribution"][0]["records"], 3);
+    assert_eq!(parsed1["distribution"][1]["threshold"], 0.8);
+    assert_eq!(parsed1["distribution"][1]["coverage"], 0.25);
+    assert_eq!(parsed1["distribution"][1]["records"], 1);
+
+    // Flag before file: nudgec policy-sweep --json decisions.jsonl --question dept
+    let out2 = Command::new(nudgec_bin())
+        .arg("policy-sweep")
+        .arg("--json")
+        .arg(&trace_path)
+        .arg("--question")
+        .arg("dept")
+        .output()
+        .expect("run policy-sweep");
+    assert!(out2.status.success());
+    let parsed2: serde_json::Value =
+        serde_json::from_slice(&out2.stdout).expect("valid json output");
+    assert_eq!(parsed2["question"], "dept");
+    assert_eq!(parsed2["total_records"], 4);
+
+    // Standard mode without --json prints text
+    let out3 = Command::new(nudgec_bin())
+        .arg("policy-sweep")
+        .arg(&trace_path)
+        .arg("--question")
+        .arg("dept")
+        .arg("--thresholds")
+        .arg("0.5,0.8")
+        .output()
+        .expect("run policy-sweep");
+    assert!(out3.status.success());
+    let text3 = String::from_utf8_lossy(&out3.stdout);
+    assert!(text3.contains("4 recorded decision(s)"));
+
+    // Missing required --question: exits 64
+    let out4 = Command::new(nudgec_bin())
+        .arg("policy-sweep")
+        .arg(&trace_path)
+        .output()
+        .expect("run policy-sweep");
+    assert_eq!(out4.status.code(), Some(64));
+
+    // Missing file: exits 64
+    let out5 = Command::new(nudgec_bin())
+        .arg("policy-sweep")
+        .output()
+        .expect("run policy-sweep");
+    assert_eq!(out5.status.code(), Some(64));
+
+    // Missing file with flags: exits 64
+    let out6 = Command::new(nudgec_bin())
+        .arg("policy-sweep")
+        .arg("--json")
+        .arg("--question")
+        .arg("dept")
+        .output()
+        .expect("run policy-sweep");
+    assert_eq!(out6.status.code(), Some(64));
+
+    // Unknown flag fail-closed: exits 64
+    let out7 = Command::new(nudgec_bin())
+        .arg("policy-sweep")
+        .arg(&trace_path)
+        .arg("--question")
+        .arg("dept")
+        .arg("--badflag")
+        .output()
+        .expect("run policy-sweep");
+    assert_eq!(out7.status.code(), Some(64));
+
+    // Help includes --json
+    let out8 = Command::new(nudgec_bin())
+        .arg("policy-sweep")
+        .arg("--help")
+        .output()
+        .expect("run policy-sweep help");
+    assert!(out8.status.success());
+    let help_text = String::from_utf8_lossy(&out8.stdout);
+    assert!(help_text.contains("[--json]"));
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
