@@ -857,3 +857,288 @@ fn greet(name: string) -> string {
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn test_cli_lex_json_and_flag_positions() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "nudge_test_cli_lex_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    fs::create_dir_all(&temp_dir).expect("create temp dir");
+
+    let valid_path = temp_dir.join("valid.ndg");
+    fs::write(
+        &valid_path,
+        r#"fn greet(name: string) -> string {
+    "Hello "
+}
+"#,
+    )
+    .expect("write valid.ndg");
+
+    let invalid_path = temp_dir.join("invalid.ndg");
+    fs::write(&invalid_path, "let x = \"unterminated string").expect("write invalid.ndg");
+
+    // 1. Valid file with flag after file: nudgec lex valid.ndg --json
+    let out1 = Command::new(nudgec_bin())
+        .arg("lex")
+        .arg(&valid_path)
+        .arg("--json")
+        .output()
+        .expect("run lex");
+    assert!(out1.status.success());
+    let parsed1: serde_json::Value =
+        serde_json::from_slice(&out1.stdout).expect("valid json output");
+    assert_eq!(parsed1["ok"], true);
+    assert!(parsed1["tokens_count"].as_u64().unwrap() > 0);
+    let tokens = parsed1["tokens"].as_array().expect("tokens array");
+    assert_eq!(tokens[0]["kind"], "Fn");
+    assert_eq!(tokens[0]["text"], "fn");
+    assert_eq!(tokens[0]["start"], 0);
+    assert_eq!(tokens[0]["end"], 2);
+
+    // 2. Valid file with flag before file: nudgec lex --json valid.ndg
+    let out2 = Command::new(nudgec_bin())
+        .arg("lex")
+        .arg("--json")
+        .arg(&valid_path)
+        .output()
+        .expect("run lex");
+    assert!(out2.status.success());
+    let parsed2: serde_json::Value =
+        serde_json::from_slice(&out2.stdout).expect("valid json output");
+    assert_eq!(parsed2["ok"], true);
+    assert_eq!(parsed2["tokens_count"], parsed1["tokens_count"]);
+
+    // 3. Valid file standard lex (no --json) exits 0 and prints formatted token lines
+    let out3 = Command::new(nudgec_bin())
+        .arg("lex")
+        .arg(&valid_path)
+        .output()
+        .expect("run lex");
+    assert!(out3.status.success());
+    let stdout3 = String::from_utf8_lossy(&out3.stdout);
+    assert!(stdout3.contains("Fn"));
+    assert!(stdout3.contains("0..2"));
+
+    // 4. Failing file (lex error) with --json exits 1 and emits structured JSON
+    let out4 = Command::new(nudgec_bin())
+        .arg("lex")
+        .arg(&invalid_path)
+        .arg("--json")
+        .output()
+        .expect("run lex");
+    assert_eq!(out4.status.code(), Some(1));
+    let parsed4: serde_json::Value =
+        serde_json::from_slice(&out4.stdout).expect("valid json output");
+    assert_eq!(parsed4["ok"], false);
+    assert_eq!(parsed4["error"]["code"], "E0001");
+    assert_eq!(parsed4["error"]["line"], 1);
+    assert_eq!(parsed4["error"]["col"], 9);
+    assert_eq!(parsed4["error"]["at"], 8);
+    assert!(parsed4["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("unterminated"));
+
+    // 5. Failing file without --json exits 1 and prints human error to stderr
+    let out5 = Command::new(nudgec_bin())
+        .arg("lex")
+        .arg(&invalid_path)
+        .output()
+        .expect("run lex");
+    assert_eq!(out5.status.code(), Some(1));
+    let stderr5 = String::from_utf8_lossy(&out5.stderr);
+    assert!(stderr5.contains("error[E0001]"));
+
+    // 6. Missing file exits 64
+    let out6 = Command::new(nudgec_bin())
+        .arg("lex")
+        .output()
+        .expect("run lex");
+    assert_eq!(out6.status.code(), Some(64));
+    let stderr6 = String::from_utf8_lossy(&out6.stderr);
+    assert!(stderr6.contains("usage: nudgec lex <file.ndg> [--json]"));
+
+    // 7. Missing file with --json exits 64
+    let out7 = Command::new(nudgec_bin())
+        .arg("lex")
+        .arg("--json")
+        .output()
+        .expect("run lex");
+    assert_eq!(out7.status.code(), Some(64));
+    let stderr7 = String::from_utf8_lossy(&out7.stderr);
+    assert!(stderr7.contains("usage: nudgec lex <file.ndg> [--json]"));
+
+    // 8. Unknown flag exits 64
+    let out8 = Command::new(nudgec_bin())
+        .arg("lex")
+        .arg(&valid_path)
+        .arg("--badflag")
+        .output()
+        .expect("run lex");
+    assert_eq!(out8.status.code(), Some(64));
+    let stderr8 = String::from_utf8_lossy(&out8.stderr);
+    assert!(stderr8.contains("unknown flag '--badflag'"));
+
+    // 9. Help flag exits 0 with usage
+    let out9 = Command::new(nudgec_bin())
+        .arg("lex")
+        .arg("--help")
+        .output()
+        .expect("run lex");
+    assert!(out9.status.success());
+    let stdout9 = String::from_utf8_lossy(&out9.stdout);
+    assert!(stdout9.contains("usage: nudgec lex <file.ndg> [--json]"));
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_cli_parse_json_and_flag_positions() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "nudge_test_cli_parse_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    fs::create_dir_all(&temp_dir).expect("create temp dir");
+
+    let valid_path = temp_dir.join("valid.ndg");
+    fs::write(
+        &valid_path,
+        r#"fn greet(name: string) -> string {
+    "Hello "
+}
+"#,
+    )
+    .expect("write valid.ndg");
+
+    let syntax_err_path = temp_dir.join("syntax_err.ndg");
+    fs::write(&syntax_err_path, "fn bad syntax").expect("write syntax_err.ndg");
+
+    // 1. Valid file with flag after file: nudgec parse valid.ndg --json
+    let out1 = Command::new(nudgec_bin())
+        .arg("parse")
+        .arg(&valid_path)
+        .arg("--json")
+        .output()
+        .expect("run parse");
+    assert!(out1.status.success());
+    let parsed1: serde_json::Value =
+        serde_json::from_slice(&out1.stdout).expect("valid json output");
+    assert_eq!(parsed1["ok"], true);
+    assert_eq!(parsed1["items_count"], 1);
+    let items1 = parsed1["items"].as_array().expect("items array");
+    assert_eq!(items1.len(), 1);
+    assert_eq!(items1[0]["Fn"]["name"], "greet");
+
+    // 2. Valid file with flag before file: nudgec parse --json valid.ndg
+    let out2 = Command::new(nudgec_bin())
+        .arg("parse")
+        .arg("--json")
+        .arg(&valid_path)
+        .output()
+        .expect("run parse");
+    assert!(out2.status.success());
+    let parsed2: serde_json::Value =
+        serde_json::from_slice(&out2.stdout).expect("valid json output");
+    assert_eq!(parsed2["ok"], true);
+    assert_eq!(parsed2["items_count"], 1);
+
+    // 3. Valid file standard parse (no --json) exits 0 and prints items and parsed count
+    let out3 = Command::new(nudgec_bin())
+        .arg("parse")
+        .arg(&valid_path)
+        .output()
+        .expect("run parse");
+    assert!(out3.status.success());
+    let stdout3 = String::from_utf8_lossy(&out3.stdout);
+    assert!(stdout3.contains("Fn"));
+    let stderr3 = String::from_utf8_lossy(&out3.stderr);
+    assert!(stderr3.contains("-- parsed 1 item(s) OK"));
+
+    // 4. Failing file (syntax error) with --json exits 1 and emits structured JSON
+    let out4 = Command::new(nudgec_bin())
+        .arg("parse")
+        .arg(&syntax_err_path)
+        .arg("--json")
+        .output()
+        .expect("run parse");
+    assert_eq!(out4.status.code(), Some(1));
+    let parsed4: serde_json::Value =
+        serde_json::from_slice(&out4.stdout).expect("valid json output");
+    assert_eq!(parsed4["ok"], false);
+    assert_eq!(parsed4["error"]["code"], "E0002");
+    assert_eq!(parsed4["error"]["line"], 1);
+    assert!(parsed4["error"]["col"].as_u64().unwrap() >= 1);
+    assert!(parsed4["error"]["message"].is_string());
+
+    // 5. Failing file without --json exits 1 and prints human error to stderr
+    let out5 = Command::new(nudgec_bin())
+        .arg("parse")
+        .arg(&syntax_err_path)
+        .output()
+        .expect("run parse");
+    assert_eq!(out5.status.code(), Some(1));
+    let stderr5 = String::from_utf8_lossy(&out5.stderr);
+    assert!(stderr5.contains("error[E0002]"));
+
+    // 6. Missing file exits 64
+    let out6 = Command::new(nudgec_bin())
+        .arg("parse")
+        .output()
+        .expect("run parse");
+    assert_eq!(out6.status.code(), Some(64));
+    let stderr6 = String::from_utf8_lossy(&out6.stderr);
+    assert!(stderr6.contains("usage: nudgec parse <file.ndg> [--json]"));
+
+    // 7. Missing file with --json exits 64
+    let out7 = Command::new(nudgec_bin())
+        .arg("parse")
+        .arg("--json")
+        .output()
+        .expect("run parse");
+    assert_eq!(out7.status.code(), Some(64));
+    let stderr7 = String::from_utf8_lossy(&out7.stderr);
+    assert!(stderr7.contains("usage: nudgec parse <file.ndg> [--json]"));
+
+    // 8. Unknown flag exits 64
+    let out8 = Command::new(nudgec_bin())
+        .arg("parse")
+        .arg(&valid_path)
+        .arg("--badflag")
+        .output()
+        .expect("run parse");
+    assert_eq!(out8.status.code(), Some(64));
+    let stderr8 = String::from_utf8_lossy(&out8.stderr);
+    assert!(stderr8.contains("unknown flag '--badflag'"));
+
+    // 9. Help flag exits 0 with usage
+    let out9 = Command::new(nudgec_bin())
+        .arg("parse")
+        .arg("--help")
+        .output()
+        .expect("run parse");
+    assert!(out9.status.success());
+    let stdout9 = String::from_utf8_lossy(&out9.stdout);
+    assert!(stdout9.contains("usage: nudgec parse <file.ndg> [--json]"));
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_cli_usage_includes_json_for_lex_and_parse() {
+    let out = Command::new(nudgec_bin())
+        .arg("--help")
+        .output()
+        .expect("run --help");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("nudgec lex   <file.ndg> [--json]   dump token stream"));
+    assert!(stdout.contains("nudgec parse <file.ndg> [--json]   dump AST"));
+}

@@ -1,6 +1,6 @@
 //! nudgec — the Nudge compiler driver.
-//!   nudgec lex   <file.ndg>   dump token stream
-//!   nudgec parse <file.ndg>   dump AST
+//!   nudgec lex   <file.ndg> [--json]   dump token stream
+//!   nudgec parse <file.ndg> [--json]   dump AST
 //!   nudgec check <file.ndg> [--json] [--watch]  type-check (E0101–E0302)
 //!   nudgec build <file.ndg>   check, then emit Python to out/<name>.py
 //!   nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts (v0.3c)
@@ -18,7 +18,7 @@
 
 use nudgec::{
     a2a, ast, check, codegen, codegen_ts, compile, cost, dap, eval, evalcmd, fmt, fuzz, hints,
-    init, json, learn, lexer, lint, lsp, mcpserver, policysweep, runs, serve, standalone,
+    init, json, learn, lexer, lint, lsp, mcpserver, parser, policysweep, runs, serve, standalone,
     traceaudit, tracecheck, tracediff, traceexplain, traceview, watch,
 };
 
@@ -26,7 +26,7 @@ use std::{env, fs, process};
 
 fn print_usage_to(to_stderr: bool) {
     let msg = format!(
-        "nudgec {} -- the Nudge compiler\nusage:\n  nudgec fmt   <file.ndg> [--check]   normalize indentation, trim trailing ws, collapse blanks\n  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)\n  nudgec learn [lesson]     the language in eight terminal lessons (run bare for the index)\n  nudgec lex   <file.ndg>   dump token stream\n  nudgec parse <file.ndg>   dump AST\n  nudgec check <file.ndg> [--json] [--watch]   type-check (E0101–E0302)\n  nudgec build <file.ndg> [--standalone] [-o <output>] [--fn <entry>]  check, emit Python (or native binary with --standalone)\n  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts\n  nudgec cost  <file.ndg> [--json]   static cost report per fn\n  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn\n  nudgec run  <file.ndg> [--fn <name>] [args...]  execute a program fn on the bytecode VM (or the interpreter)\n  nudgec resume <run_id>    continue a crashed run from its last checkpoint\n  nudgec trace-check <t.jsonl> [--json] validate a trace against the frozen v1 schema\n  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json\n  nudgec a2a-serve <file.ndg> [--port N]  serve agent as an A2A protocol peer (v2.0)\n  nudgec lsp                serve the Language Server Protocol over stdio\n  nudgec trace-html <t.jsonl> [--out file.html]  static single-file viewer (no server, works offline)\n  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace\n  nudgec explain <t.jsonl> [--json]    human report over a trace: totals, failures, low-confidence answers\n  nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]  compare traces; gate CI on regression\n  nudgec audit <trace.jsonl> [--json]       compliance audit report over an NTF trace (EU AI Act)\n  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8] [--json]\n  nudgec compare <results_a.jsonl> <results_b.jsonl> [--json]  two eval runs: which rows flipped\n  nudgec runs  [--run <run_id>]   list recorded agent runs / show one run's state and trace\n  nudgec mcp   <file.ndg> [--fns a,b]   expose program fns as MCP tools over stdio\n  nudgec serve <file.ndg> [--fn <name>] [--port N]   run a program fn as a local HTTP API (POST /run, GET /health)\n  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8] [--json]  score a program over a dataset\n  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)\n  nudgec fuzz  [file.ndg] [--iterations N] [--seed S] [--json]  fuzz the compiler pipeline with mutated inputs (v1.6)",
+        "nudgec {} -- the Nudge compiler\nusage:\n  nudgec fmt   <file.ndg> [--check]   normalize indentation, trim trailing ws, collapse blanks\n  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)\n  nudgec learn [lesson]     the language in eight terminal lessons (run bare for the index)\n  nudgec lex   <file.ndg> [--json]   dump token stream\n  nudgec parse <file.ndg> [--json]   dump AST\n  nudgec check <file.ndg> [--json] [--watch]   type-check (E0101–E0302)\n  nudgec build <file.ndg> [--standalone] [-o <output>] [--fn <entry>]  check, emit Python (or native binary with --standalone)\n  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts\n  nudgec cost  <file.ndg> [--json]   static cost report per fn\n  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn\n  nudgec run  <file.ndg> [--fn <name>] [args...]  execute a program fn on the bytecode VM (or the interpreter)\n  nudgec resume <run_id>    continue a crashed run from its last checkpoint\n  nudgec trace-check <t.jsonl> [--json] validate a trace against the frozen v1 schema\n  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json\n  nudgec a2a-serve <file.ndg> [--port N]  serve agent as an A2A protocol peer (v2.0)\n  nudgec lsp                serve the Language Server Protocol over stdio\n  nudgec trace-html <t.jsonl> [--out file.html]  static single-file viewer (no server, works offline)\n  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace\n  nudgec explain <t.jsonl> [--json]    human report over a trace: totals, failures, low-confidence answers\n  nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]  compare traces; gate CI on regression\n  nudgec audit <trace.jsonl> [--json]       compliance audit report over an NTF trace (EU AI Act)\n  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8] [--json]\n  nudgec compare <results_a.jsonl> <results_b.jsonl> [--json]  two eval runs: which rows flipped\n  nudgec runs  [--run <run_id>]   list recorded agent runs / show one run's state and trace\n  nudgec mcp   <file.ndg> [--fns a,b]   expose program fns as MCP tools over stdio\n  nudgec serve <file.ndg> [--fn <name>] [--port N]   run a program fn as a local HTTP API (POST /run, GET /health)\n  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8] [--json]  score a program over a dataset\n  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)\n  nudgec fuzz  [file.ndg] [--iterations N] [--seed S] [--json]  fuzz the compiler pipeline with mutated inputs (v1.6)",
         env!("CARGO_PKG_VERSION")
     );
     if to_stderr {
@@ -182,6 +182,111 @@ fn main() {
                     eprintln!("regression: {w}");
                 }
                 process::exit(1);
+            }
+        }
+        return;
+    }
+    // `lex` dumps the token stream (with optional --json)
+    if args.len() >= 2 && args[1] == "lex" {
+        let mut json_mode = false;
+        let mut file = None;
+        for arg in &args[2..] {
+            if arg == "--json" {
+                json_mode = true;
+            } else if arg == "--help" || arg == "-h" {
+                println!("usage: nudgec lex <file.ndg> [--json]");
+                process::exit(0);
+            } else if arg.starts_with('-') {
+                eprintln!("error: unknown flag '{arg}'");
+                process::exit(64);
+            } else if file.is_none() {
+                file = Some(arg.as_str());
+            } else {
+                eprintln!("error: unexpected positional argument '{arg}'");
+                process::exit(64);
+            }
+        }
+        let Some(f) = file else {
+            eprintln!("usage: nudgec lex <file.ndg> [--json]");
+            process::exit(64);
+        };
+        let src = read_src(f);
+        if json_mode {
+            match lexer::lex_json(&src) {
+                Ok(json) => {
+                    println!("{json}");
+                    process::exit(0);
+                }
+                Err(json) => {
+                    println!("{json}");
+                    process::exit(1);
+                }
+            }
+        } else {
+            match lexer::lex(&src) {
+                Ok(tokens) => {
+                    for t in &tokens {
+                        println!("{:>6}..{:<6} {:?}", t.start, t.end, t.tok);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("error[E0001]: {} at byte {}", e.msg, e.at);
+                    print_hint("E0001");
+                    process::exit(1);
+                }
+            }
+        }
+        return;
+    }
+    // `parse` dumps the AST (with optional --json)
+    if args.len() >= 2 && args[1] == "parse" {
+        let mut json_mode = false;
+        let mut file = None;
+        for arg in &args[2..] {
+            if arg == "--json" {
+                json_mode = true;
+            } else if arg == "--help" || arg == "-h" {
+                println!("usage: nudgec parse <file.ndg> [--json]");
+                process::exit(0);
+            } else if arg.starts_with('-') {
+                eprintln!("error: unknown flag '{arg}'");
+                process::exit(64);
+            } else if file.is_none() {
+                file = Some(arg.as_str());
+            } else {
+                eprintln!("error: unexpected positional argument '{arg}'");
+                process::exit(64);
+            }
+        }
+        let Some(f) = file else {
+            eprintln!("usage: nudgec parse <file.ndg> [--json]");
+            process::exit(64);
+        };
+        let src = read_src(f);
+        if json_mode {
+            match parser::parse_json(&src) {
+                Ok(json) => {
+                    println!("{json}");
+                    process::exit(0);
+                }
+                Err(json) => {
+                    println!("{json}");
+                    process::exit(1);
+                }
+            }
+        } else {
+            match compile(&src) {
+                Ok(items) => {
+                    for item in &items {
+                        println!("{item:#?}");
+                    }
+                    eprintln!("-- parsed {} item(s) OK", items.len());
+                }
+                Err((msg, at)) => {
+                    eprintln!("error[E0002]: {msg} at byte {at}");
+                    print_hint("E0002");
+                    process::exit(1);
+                }
             }
         }
         return;
@@ -957,31 +1062,6 @@ fn main() {
     };
 
     match args[1].as_str() {
-        "lex" => match lexer::lex(&src) {
-            Ok(tokens) => {
-                for t in &tokens {
-                    println!("{:>6}..{:<6} {:?}", t.start, t.end, t.tok);
-                }
-            }
-            Err(e) => {
-                eprintln!("error[E0001]: {} at byte {}", e.msg, e.at);
-                print_hint("E0001");
-                process::exit(1);
-            }
-        },
-        "parse" => match compile(&src) {
-            Ok(items) => {
-                for item in &items {
-                    println!("{item:#?}");
-                }
-                eprintln!("-- parsed {} item(s) OK", items.len());
-            }
-            Err((msg, at)) => {
-                eprintln!("error[E0002]: {msg} at byte {at}");
-                print_hint("E0002");
-                process::exit(1);
-            }
-        },
         // design §14: TypeScript backend (v0.3c) — same pipeline, TS emit
         "build-ts" => match compile(&src) {
             Ok(items) => {

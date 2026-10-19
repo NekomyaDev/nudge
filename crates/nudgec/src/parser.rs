@@ -12,10 +12,12 @@
 //! `replay`, … lex as ordinary identifiers; the parser matches them by string
 //! where the grammar expects them, so they remain usable as names.
 
+use serde::{Deserialize, Serialize};
+
 use crate::ast::*;
 use crate::lexer::{Spanned, Tok};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ParseError {
     pub msg: String,
     pub at: usize,
@@ -1786,6 +1788,66 @@ pub fn parse(tokens: Vec<Spanned>) -> PResult<Vec<Item>> {
     Parser::new(tokens).parse_program()
 }
 
+/// JSON representation of a parse error diagnostic.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParseErrorDiagnosticJson {
+    pub code: String,
+    pub message: String,
+    pub at: usize,
+    pub line: usize,
+    pub col: usize,
+}
+
+/// JSON response envelope for successful parsing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParseOutputSuccessJson {
+    pub ok: bool,
+    pub items_count: usize,
+    pub items: Vec<Item>,
+}
+
+/// JSON response envelope for failed parsing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParseOutputErrorJson {
+    pub ok: bool,
+    pub error: ParseErrorDiagnosticJson,
+}
+
+/// Format parsed AST items as pretty JSON string.
+pub fn items_to_json(items: &[Item]) -> String {
+    let payload = ParseOutputSuccessJson {
+        ok: true,
+        items_count: items.len(),
+        items: items.to_vec(),
+    };
+    serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Format parse error as pretty JSON string.
+pub fn parse_error_to_json(msg: &str, at: usize, src: &str) -> String {
+    let (line, col) = crate::check::line_col(src, at);
+    let payload = ParseOutputErrorJson {
+        ok: false,
+        error: ParseErrorDiagnosticJson {
+            code: "E0002".to_string(),
+            message: msg.to_string(),
+            at,
+            line,
+            col,
+        },
+    };
+    serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Parse source code and return a formatted JSON string.
+/// Returns Ok(json) on success, or Err(json) on parse error.
+pub fn parse_json(src: &str) -> Result<String, String> {
+    match crate::compile::compile(src) {
+        Ok(items) => Ok(items_to_json(&items)),
+        Err((msg, at)) => Err(parse_error_to_json(&msg, at, src)),
+    }
+}
+
 // ── tests ────────────────────────────────────────────────────────────
 #[cfg(test)]
 mod tests {
@@ -2822,5 +2884,39 @@ test "budget" {
         assert!(crate::compile("type Broken = int | | string").is_err());
         // Unclosed paren
         assert!(crate::compile("type Broken = (int | string").is_err());
+    }
+
+    #[test]
+    fn test_parse_json_success() {
+        let src = "type UserId = int\nfn add(x: int) -> int { x + 1 }";
+        let res = parse_json(src).expect("parse_json ok");
+        let val: serde_json::Value = serde_json::from_str(&res).expect("valid json");
+        assert_eq!(val["ok"], true);
+        assert_eq!(val["items_count"], 2);
+        let items = val["items"].as_array().expect("items array");
+        assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_json_error() {
+        let src = "fn bad syntax";
+        let err_res = parse_json(src).expect_err("parse_json should fail");
+        let val: serde_json::Value = serde_json::from_str(&err_res).expect("valid json");
+        assert_eq!(val["ok"], false);
+        assert_eq!(val["error"]["code"], "E0002");
+        assert_eq!(val["error"]["line"], 1);
+        assert!(val["error"]["col"].as_u64().unwrap() >= 1);
+        assert!(val["error"]["message"].is_string());
+    }
+
+    #[test]
+    fn test_parse_error_serde() {
+        let err = ParseError {
+            msg: "unexpected token".into(),
+            at: 42,
+        };
+        let json = serde_json::to_string(&err).expect("serialize parse error");
+        let decoded: ParseError = serde_json::from_str(&json).expect("deserialize parse error");
+        assert_eq!(err, decoded);
     }
 }

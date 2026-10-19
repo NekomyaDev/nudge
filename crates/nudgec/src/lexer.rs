@@ -4,7 +4,9 @@
 //! Lexical rules (design §12): source is UTF-8; identifiers are ASCII-only;
 //! string literals may contain arbitrary UTF-8; `//` comments run to EOL.
 
-#[derive(Debug, Clone, PartialEq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Tok {
     // literals
     Ident(String),
@@ -83,7 +85,7 @@ pub enum Tok {
     Eof,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Spanned {
     pub tok: Tok,
     pub start: usize,
@@ -91,7 +93,7 @@ pub struct Spanned {
     pub newline_before: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LexError {
     pub msg: String,
     pub at: usize,
@@ -402,6 +404,156 @@ pub fn lex(src: &str) -> Result<Vec<Spanned>, LexError> {
     Ok(out)
 }
 
+impl Tok {
+    /// Return the canonical identifier name for this token kind.
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            Tok::Ident(_) => "Ident",
+            Tok::Int(_) => "Int",
+            Tok::Float(_) => "Float",
+            Tok::Str(_) => "Str",
+            Tok::Prompt(_) => "Prompt",
+            Tok::Money(_, _) => "Money",
+            Tok::Fn => "Fn",
+            Tok::Let => "Let",
+            Tok::Mut => "Mut",
+            Tok::Type => "Type",
+            Tok::Tool => "Tool",
+            Tok::Agent => "Agent",
+            Tok::State => "State",
+            Tok::Uses => "Uses",
+            Tok::Costs => "Costs",
+            Tok::With => "With",
+            Tok::Par => "Par",
+            Tok::Map => "Map",
+            Tok::All => "All",
+            Tok::Race => "Race",
+            Tok::For => "For",
+            Tok::ForAll => "ForAll",
+            Tok::In => "In",
+            Tok::If => "If",
+            Tok::Else => "Else",
+            Tok::Return => "Return",
+            Tok::Test => "Test",
+            Tok::Assert => "Assert",
+            Tok::Export => "Export",
+            Tok::Use => "Use",
+            Tok::And => "And",
+            Tok::Or => "Or",
+            Tok::True => "True",
+            Tok::False => "False",
+            Tok::None => "None",
+            Tok::Spawn => "Spawn",
+            Tok::LParen => "LParen",
+            Tok::RParen => "RParen",
+            Tok::LBrace => "LBrace",
+            Tok::RBrace => "RBrace",
+            Tok::LBracket => "LBracket",
+            Tok::RBracket => "RBracket",
+            Tok::Comma => "Comma",
+            Tok::Colon => "Colon",
+            Tok::Dot => "Dot",
+            Tok::Semi => "Semi",
+            Tok::At => "At",
+            Tok::Arrow => "Arrow",
+            Tok::Pipe => "Pipe",
+            Tok::Bar => "Bar",
+            Tok::Question => "Question",
+            Tok::Assign => "Assign",
+            Tok::PlusEq => "PlusEq",
+            Tok::MinusEq => "MinusEq",
+            Tok::Plus => "Plus",
+            Tok::Minus => "Minus",
+            Tok::Star => "Star",
+            Tok::Slash => "Slash",
+            Tok::Percent => "Percent",
+            Tok::Bang => "Bang",
+            Tok::EqEq => "EqEq",
+            Tok::NotEq => "NotEq",
+            Tok::Lt => "Lt",
+            Tok::LtEq => "LtEq",
+            Tok::Gt => "Gt",
+            Tok::GtEq => "GtEq",
+            Tok::Eof => "Eof",
+        }
+    }
+}
+
+/// JSON representation of an individual token.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LexTokenJson {
+    pub start: usize,
+    pub end: usize,
+    pub kind: String,
+    pub text: String,
+}
+
+/// JSON error detail for lex errors.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LexErrorJson {
+    pub code: String,
+    pub message: String,
+    pub at: usize,
+    pub line: usize,
+    pub col: usize,
+}
+
+/// JSON response envelope for successful lexing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LexOutputSuccessJson {
+    pub ok: bool,
+    pub tokens_count: usize,
+    pub tokens: Vec<LexTokenJson>,
+}
+
+/// JSON response envelope for failed lexing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LexOutputErrorJson {
+    pub ok: bool,
+    pub error: LexErrorJson,
+}
+
+/// Serialize token stream to JSON string.
+pub fn tokens_to_json(tokens: &[Spanned], src: &str) -> String {
+    let tokens_json: Vec<LexTokenJson> = tokens
+        .iter()
+        .map(|t| LexTokenJson {
+            start: t.start,
+            end: t.end,
+            kind: t.tok.kind_str().to_string(),
+            text: src.get(t.start..t.end).unwrap_or("").to_string(),
+        })
+        .collect();
+    let payload = LexOutputSuccessJson {
+        ok: true,
+        tokens_count: tokens_json.len(),
+        tokens: tokens_json,
+    };
+    serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Lex source code and return a formatted JSON string.
+/// Returns Ok(json) on success, or Err(json) on lexical error.
+pub fn lex_json(src: &str) -> Result<String, String> {
+    match lex(src) {
+        Ok(tokens) => Ok(tokens_to_json(&tokens, src)),
+        Err(e) => {
+            let (line, col) = crate::check::line_col(src, e.at);
+            let payload = LexOutputErrorJson {
+                ok: false,
+                error: LexErrorJson {
+                    code: "E0001".to_string(),
+                    message: e.msg,
+                    at: e.at,
+                    line,
+                    col,
+                },
+            };
+            Err(serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string()))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -542,5 +694,53 @@ mod tests {
         assert!(lex("\"hello\rworld\"").is_err());
         assert!(lex("\"hello\x00world\"").is_err());
         assert!(lex("\"hello\x1fworld\"").is_err());
+    }
+
+    #[test]
+    fn test_tok_serde_round_trip() {
+        let tok = Tok::Money(42.5, "USD".into());
+        let json = serde_json::to_string(&tok).expect("serialize tok");
+        let decoded: Tok = serde_json::from_str(&json).expect("deserialize tok");
+        assert_eq!(tok, decoded);
+
+        let spanned = Spanned {
+            tok: Tok::Fn,
+            start: 0,
+            end: 2,
+            newline_before: true,
+        };
+        let s_json = serde_json::to_string(&spanned).expect("serialize spanned");
+        let s_decoded: Spanned = serde_json::from_str(&s_json).expect("deserialize spanned");
+        assert_eq!(spanned, s_decoded);
+    }
+
+    #[test]
+    fn test_lex_json_success() {
+        let src = "fn add(a: int) -> int { a + 1 }";
+        let res = lex_json(src).expect("lex_json ok");
+        let val: serde_json::Value = serde_json::from_str(&res).expect("valid json");
+        assert_eq!(val["ok"], true);
+        assert!(val["tokens_count"].as_u64().unwrap() > 0);
+        let tokens = val["tokens"].as_array().expect("tokens array");
+        assert_eq!(tokens[0]["kind"], "Fn");
+        assert_eq!(tokens[0]["text"], "fn");
+        assert_eq!(tokens[0]["start"], 0);
+        assert_eq!(tokens[0]["end"], 2);
+    }
+
+    #[test]
+    fn test_lex_json_error() {
+        let src = "let x = \"unterminated";
+        let err_res = lex_json(src).expect_err("lex_json should fail");
+        let val: serde_json::Value = serde_json::from_str(&err_res).expect("valid json");
+        assert_eq!(val["ok"], false);
+        assert_eq!(val["error"]["code"], "E0001");
+        assert_eq!(val["error"]["line"], 1);
+        assert_eq!(val["error"]["col"], 9);
+        assert_eq!(val["error"]["at"], 8);
+        assert!(val["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("unterminated"));
     }
 }
