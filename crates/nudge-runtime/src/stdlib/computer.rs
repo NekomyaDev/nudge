@@ -851,7 +851,10 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
     if !METHODS.contains(&name) {
         return Err(format!("Unknown computer function: {name}"));
     }
-    let op = name.strip_prefix("computer.").unwrap().to_string();
+    let op = name
+        .strip_prefix("computer.")
+        .ok_or_else(|| format!("Invalid computer function prefix: {name}"))?
+        .to_string();
     if std::env::var("NUDGE_COMPUTER_KILL").as_deref() == Ok("1") {
         return Err("ComputerDenied: NUDGE_COMPUTER_KILL=1 refuses all computer work".into());
     }
@@ -983,15 +986,16 @@ fn trace_live_call(
             "elements": json_to_serde(&elements),
             "snapshot_mode": "full",
         });
-        let obj = record.as_object_mut().unwrap();
-        for (key, out) in [
-            ("title", "title"),
-            ("tree", "tree"),
-            ("screenshot_hash", "screenshot_hash"),
-        ] {
-            let v = json_str_field(result, key);
-            if !v.is_empty() {
-                obj.insert(out.into(), serde_json::Value::String(v));
+        if let Some(obj) = record.as_object_mut() {
+            for (key, out) in [
+                ("title", "title"),
+                ("tree", "tree"),
+                ("screenshot_hash", "screenshot_hash"),
+            ] {
+                let v = json_str_field(result, key);
+                if !v.is_empty() {
+                    obj.insert(out.into(), serde_json::Value::String(v));
+                }
             }
         }
         return crate::trace::emit(record);
@@ -1033,23 +1037,24 @@ fn trace_live_call(
             .unwrap_or(true),
         "provider": provider,
     });
-    let obj = record.as_object_mut().unwrap();
-    let error = json_str_field(result, "error");
-    if !error.is_empty() {
-        obj.insert("error".into(), serde_json::Value::String(error));
-    }
-    // the action payload (parity with the Python record's `value` +
-    // `key`/`direction`/`pages`/`to`/`format` fields)
-    for key in ["text", "value"] {
-        if let Some(Json::Str(v)) = request.get(key) {
-            if !v.is_empty() {
-                obj.insert("value".into(), serde_json::Value::String(v.clone()));
+    if let Some(obj) = record.as_object_mut() {
+        let error = json_str_field(result, "error");
+        if !error.is_empty() {
+            obj.insert("error".into(), serde_json::Value::String(error));
+        }
+        // the action payload (parity with the Python record's `value` +
+        // `key`/`direction`/`pages`/`to`/`format` fields)
+        for key in ["text", "value"] {
+            if let Some(Json::Str(v)) = request.get(key) {
+                if !v.is_empty() {
+                    obj.insert("value".into(), serde_json::Value::String(v.clone()));
+                }
             }
         }
-    }
-    for key in ["key", "direction", "pages", "to", "format"] {
-        if let Some(v) = request.get(key) {
-            obj.insert(key.into(), json_to_serde(v));
+        for key in ["key", "direction", "pages", "to", "format"] {
+            if let Some(v) = request.get(key) {
+                obj.insert(key.into(), json_to_serde(v));
+            }
         }
     }
     crate::trace::emit(record)

@@ -1656,10 +1656,14 @@ impl Parser {
                         self.bump();
                         let (coll, kwargs) = if self.at(&Tok::LParen) {
                             let (args, kwargs) = self.parse_call_args()?;
-                            if args.len() != 1 {
-                                return self.err("par map takes exactly one positional collection");
-                            }
-                            (args.into_iter().next().unwrap(), kwargs)
+                            let coll_expr = match args.into_iter().next() {
+                                Some(e) => e,
+                                None => {
+                                    return self
+                                        .err("par map takes exactly one positional collection")
+                                }
+                            };
+                            (coll_expr, kwargs)
                         } else {
                             (self.parse_add()?, Vec::new())
                         };

@@ -352,7 +352,10 @@ impl TaskToken {
         while guard.is_none() {
             guard = cvar.wait(guard).unwrap_or_else(|e| e.into_inner());
         }
-        match guard.as_ref().unwrap() {
+        match guard
+            .as_ref()
+            .ok_or_else(|| "task result missing after wait".to_string())?
+        {
             Ok(val) => Ok(val.clone()),
             Err(e) => {
                 if e.contains("TaskCancelled") || e.contains("E-task-0001") {
@@ -533,10 +536,8 @@ where
     F: FnOnce(&mut HashMap<String, TaskToken>) -> R,
 {
     let mut lock = TASK_REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
-    if lock.is_none() {
-        *lock = Some(HashMap::new());
-    }
-    f(lock.as_mut().unwrap())
+    let reg = lock.get_or_insert_with(HashMap::new);
+    f(reg)
 }
 
 /// Register a task token in the global registry.

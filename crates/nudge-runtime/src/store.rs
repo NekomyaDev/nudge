@@ -203,9 +203,10 @@ impl Store {
         let mut sorted_keys: Vec<&String> = self.entries.keys().collect();
         sorted_keys.sort();
         for k in sorted_keys {
-            let v = self.entries.get(k).unwrap();
-            let json_v = value_to_json(v)?;
-            obj.insert(k.clone(), json_v);
+            if let Some(v) = self.entries.get(k) {
+                let json_v = value_to_json(v)?;
+                obj.insert(k.clone(), json_v);
+            }
         }
         let json_val = serde_json::Value::Object(obj);
         let serialized = serde_json::to_string_pretty(&json_val)

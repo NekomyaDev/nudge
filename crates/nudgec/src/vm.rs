@@ -236,6 +236,14 @@ impl<'a> VM<'a> {
                             a.push_str(&b);
                             self.stack.push(NudgeVal::Str(a));
                         }
+                        (NudgeVal::Str(mut a), b) => {
+                            use std::fmt::Write;
+                            let _ = write!(a, "{b}");
+                            self.stack.push(NudgeVal::Str(a));
+                        }
+                        (a, NudgeVal::Str(b)) => {
+                            self.stack.push(NudgeVal::Str(format!("{a}{b}")));
+                        }
                         (NudgeVal::List(mut a), NudgeVal::List(b)) => {
                             a.extend(b);
                             self.stack.push(NudgeVal::List(a));
@@ -978,6 +986,10 @@ mod tests {
                 let c = a + b
                 let is_smaller = "apple" < "banana"
                 assert is_smaller
+                let num_suffix = "Item #" + 42
+                let num_prefix = 100 + " is the score"
+                assert num_suffix == "Item #42"
+                assert num_prefix == "100 is the score"
                 c
             }
         "#;
