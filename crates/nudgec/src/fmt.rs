@@ -227,4 +227,21 @@ mod tests {
         assert!(err.is_err());
         assert!(err.unwrap_err().contains("cannot format"));
     }
+
+    #[test]
+    fn fmt_handles_nested_blocks_and_crlf_cleanly() {
+        let crlf_src = "fn f() -> int {\r\nlet x = 1\r\nroute {\r\na: x when x > 0,\r\nb: 0 otherwise\r\n}\r\n}\r\n";
+        let out = fmt(crlf_src).unwrap();
+        assert!(!out.contains('\r'), "CRLF must be normalized to clean LF");
+        assert!(out.contains("    let x = 1"));
+        assert!(out.contains("    route {"));
+        assert!(out.contains("        a: x when x > 0,"));
+        assert!(out.contains("        b: 0 otherwise"));
+        assert!(out.contains("    }"));
+        assert!(out.ends_with("}\n"));
+
+        // Idempotency: formatting already formatted text yields identical output
+        let out2 = fmt(&out).unwrap();
+        assert_eq!(out, out2);
+    }
 }
