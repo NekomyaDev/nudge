@@ -341,6 +341,34 @@ fn test_block_runs_against_recorded_trace() {
         stdout.contains("PASS nudge_test_run_stays_within_budget_on_recorded_trace"),
         "stdout: {stdout}"
     );
+
+    // 3. run with --json and verify structured JSON output
+    let output_json = std::process::Command::new("python3")
+        .arg(&driver)
+        .arg("--json")
+        .current_dir(&e.dir)
+        .env("PYTHONPATH", &e.runtime)
+        .env("NUDGE_TEST_FILE", "research_agent.ndg")
+        .env_remove("NUDGE_REPLAY")
+        .output()
+        .unwrap();
+    assert!(
+        output_json.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output_json.stderr)
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&output_json.stdout).expect("valid json output");
+    assert_eq!(parsed["file"], "research_agent.ndg");
+    assert_eq!(parsed["total"], 1);
+    assert_eq!(parsed["passed"], 1);
+    assert_eq!(parsed["failed"], 0);
+    assert_eq!(
+        parsed["tests"][0]["name"],
+        "nudge_test_run_stays_within_budget_on_recorded_trace"
+    );
+    assert_eq!(parsed["tests"][0]["status"], "passed");
+    assert!(parsed["tests"][0]["error"].is_null());
 }
 
 #[test]

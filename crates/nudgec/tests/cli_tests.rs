@@ -1356,3 +1356,224 @@ fn test_cli_fmt_json_and_flag_positions() {
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn test_cli_test_json_and_flag_positions() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "nudge_test_cli_test_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    fs::create_dir_all(&temp_dir).expect("create temp dir");
+
+    let pass_ndg = temp_dir.join("pass.ndg");
+    fs::write(
+        &pass_ndg,
+        r#"
+test "addition works" {
+    assert 10 + 20 == 30
+}
+
+test "string equality" {
+    assert "hello" == "hello"
+}
+"#,
+    )
+    .expect("write pass ndg");
+
+    let fail_ndg = temp_dir.join("fail.ndg");
+    fs::write(
+        &fail_ndg,
+        r#"
+test "subtest pass" {
+    assert 1 == 1
+}
+
+test "subtest fail" {
+    assert 1 == 2
+}
+"#,
+    )
+    .expect("write fail ndg");
+
+    let syntax_err_ndg = temp_dir.join("syntax_err.ndg");
+    fs::write(&syntax_err_ndg, "fn broken( {\n").expect("write syntax error ndg");
+
+    let type_err_ndg = temp_dir.join("type_err.ndg");
+    fs::write(
+        &type_err_ndg,
+        r#"
+fn broken() -> int {
+    "not an int"
+}
+"#,
+    )
+    .expect("write type error ndg");
+
+    // 1. Passing tests with flag after: nudgec test pass.ndg --json
+    let out1 = Command::new(nudgec_bin())
+        .arg("test")
+        .arg(&pass_ndg)
+        .arg("--json")
+        .output()
+        .expect("run test --json");
+    assert_eq!(out1.status.code(), Some(0));
+    let parsed1: serde_json::Value =
+        serde_json::from_slice(&out1.stdout).expect("valid json output");
+    assert_eq!(parsed1["file"], pass_ndg.to_str().unwrap());
+    assert_eq!(parsed1["total"], 2);
+    assert_eq!(parsed1["passed"], 2);
+    assert_eq!(parsed1["failed"], 0);
+    let tests1 = parsed1["tests"].as_array().expect("tests array");
+    assert_eq!(tests1.len(), 2);
+    assert_eq!(tests1[0]["status"], "passed");
+    assert!(tests1[0]["error"].is_null());
+    assert_eq!(tests1[1]["status"], "passed");
+    assert!(tests1[1]["error"].is_null());
+
+    // 2. Passing tests with flag before: nudgec test --json pass.ndg
+    let out2 = Command::new(nudgec_bin())
+        .arg("test")
+        .arg("--json")
+        .arg(&pass_ndg)
+        .output()
+        .expect("run test --json flag before");
+    assert_eq!(out2.status.code(), Some(0));
+    let parsed2: serde_json::Value =
+        serde_json::from_slice(&out2.stdout).expect("valid json output");
+    assert_eq!(parsed2["total"], 2);
+    assert_eq!(parsed2["passed"], 2);
+    assert_eq!(parsed2["failed"], 0);
+
+    // 3. Passing tests without --json (human output backward compatibility)
+    let out3 = Command::new(nudgec_bin())
+        .arg("test")
+        .arg(&pass_ndg)
+        .output()
+        .expect("run test without json");
+    assert_eq!(out3.status.code(), Some(0));
+    let stdout3 = String::from_utf8_lossy(&out3.stdout);
+    assert!(stdout3.contains("PASS nudge_test_addition_works"));
+    assert!(stdout3.contains("PASS nudge_test_string_equality"));
+    assert!(stdout3.contains("2/2 tests passed"));
+
+    // 4. Failing tests with --json: exits 1 and emits structured test results
+    let out4 = Command::new(nudgec_bin())
+        .arg("test")
+        .arg(&fail_ndg)
+        .arg("--json")
+        .output()
+        .expect("run test fail --json");
+    assert_eq!(out4.status.code(), Some(1));
+    let parsed4: serde_json::Value =
+        serde_json::from_slice(&out4.stdout).expect("valid json output");
+    assert_eq!(parsed4["total"], 2);
+    assert_eq!(parsed4["passed"], 1);
+    assert_eq!(parsed4["failed"], 1);
+    let tests4 = parsed4["tests"].as_array().expect("tests array");
+    let pass_item = tests4
+        .iter()
+        .find(|t| t["name"] == "nudge_test_subtest_pass")
+        .expect("find pass test");
+    assert_eq!(pass_item["status"], "passed");
+    assert!(pass_item["error"].is_null());
+    let fail_item = tests4
+        .iter()
+        .find(|t| t["name"] == "nudge_test_subtest_fail")
+        .expect("find fail test");
+    assert_eq!(fail_item["status"], "failed");
+    assert!(fail_item["error"]
+        .as_str()
+        .expect("error string")
+        .contains("AssertionError"));
+
+    // 5. Failing tests without --json (human output backward compatibility)
+    let out5 = Command::new(nudgec_bin())
+        .arg("test")
+        .arg(&fail_ndg)
+        .output()
+        .expect("run test fail without json");
+    assert_eq!(out5.status.code(), Some(1));
+    let stdout5 = String::from_utf8_lossy(&out5.stdout);
+    assert!(stdout5.contains("PASS nudge_test_subtest_pass"));
+    assert!(stdout5.contains("FAIL nudge_test_subtest_fail"));
+    assert!(stdout5.contains("1/2 tests passed"));
+
+    // 6. Compile error with --json: exits 1 and emits structured error JSON
+    let out6 = Command::new(nudgec_bin())
+        .arg("test")
+        .arg(&syntax_err_ndg)
+        .arg("--json")
+        .output()
+        .expect("run test compile err --json");
+    assert_eq!(out6.status.code(), Some(1));
+    let parsed6: serde_json::Value =
+        serde_json::from_slice(&out6.stdout).expect("valid json output");
+    assert_eq!(parsed6["file"], syntax_err_ndg.to_str().unwrap());
+    assert_eq!(parsed6["total"], 0);
+    assert_eq!(parsed6["passed"], 0);
+    assert_eq!(parsed6["failed"], 1);
+    assert_eq!(parsed6["errors"][0]["code"], "E0002");
+    assert!(parsed6["errors"][0]["line"].is_number());
+    assert!(parsed6["errors"][0]["col"].is_number());
+    assert!(parsed6["errors"][0]["message"].is_string());
+
+    // 7. Check error with --json: exits 1 and emits structured error JSON
+    let out7 = Command::new(nudgec_bin())
+        .arg("test")
+        .arg(&type_err_ndg)
+        .arg("--json")
+        .output()
+        .expect("run test check err --json");
+    assert_eq!(out7.status.code(), Some(1));
+    let parsed7: serde_json::Value =
+        serde_json::from_slice(&out7.stdout).expect("valid json output");
+    assert_eq!(parsed7["file"], type_err_ndg.to_str().unwrap());
+    assert_eq!(parsed7["total"], 0);
+    assert_eq!(parsed7["passed"], 0);
+    assert_eq!(parsed7["failed"], 1);
+    assert_eq!(parsed7["errors"][0]["code"], "E0201");
+
+    // 8. Missing file positional argument exits 64 with usage
+    let out8 = Command::new(nudgec_bin())
+        .arg("test")
+        .output()
+        .expect("run test");
+    assert_eq!(out8.status.code(), Some(64));
+    let stderr8 = String::from_utf8_lossy(&out8.stderr);
+    assert!(stderr8.contains("usage: nudgec test <file.ndg> [--json]"));
+
+    let out8_flag = Command::new(nudgec_bin())
+        .arg("test")
+        .arg("--json")
+        .output()
+        .expect("run test");
+    assert_eq!(out8_flag.status.code(), Some(64));
+    let stderr8_flag = String::from_utf8_lossy(&out8_flag.stderr);
+    assert!(stderr8_flag.contains("usage: nudgec test <file.ndg> [--json]"));
+
+    // 9. Unknown flag exits 64
+    let out9 = Command::new(nudgec_bin())
+        .arg("test")
+        .arg(&pass_ndg)
+        .arg("--unknown")
+        .output()
+        .expect("run test unknown flag");
+    assert_eq!(out9.status.code(), Some(64));
+    let stderr9 = String::from_utf8_lossy(&out9.stderr);
+    assert!(stderr9.contains("error: unknown flag '--unknown'"));
+
+    // 10. Help flag exits 0
+    let out10 = Command::new(nudgec_bin())
+        .arg("test")
+        .arg("--help")
+        .output()
+        .expect("run test help");
+    assert_eq!(out10.status.code(), Some(0));
+    let stdout10 = String::from_utf8_lossy(&out10.stdout);
+    assert!(stdout10.contains("usage: nudgec test <file.ndg> [--json]"));
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}

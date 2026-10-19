@@ -5,7 +5,7 @@
 //!   nudgec build <file.ndg>   check, then emit Python to out/<name>.py
 //!   nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts (v0.3c)
 //!   nudgec cost  <file.ndg> [--json]  static cost report per fn (v0.4, design §13)
-//!   nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn
+//!   nudgec test  <file.ndg> [--json]   check, emit, then run every nudge_test_* fn
 //!   nudgec resume <run_id>    continue a crashed run from its last checkpoint (design §7)
 //!   nudgec trace-check <t.jsonl> [--json] validate a trace against the frozen v1 schema (v1.0, design §6)
 //!   nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8] [--json]
@@ -26,7 +26,7 @@ use std::{env, fs, process};
 
 fn print_usage_to(to_stderr: bool) {
     let msg = format!(
-        "nudgec {} -- the Nudge compiler\nusage:\n  nudgec fmt   <file.ndg> [--check] [--json]   normalize indentation, trim trailing ws, collapse blanks\n  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)\n  nudgec learn [lesson]     the language in eight terminal lessons (run bare for the index)\n  nudgec lex   <file.ndg> [--json]   dump token stream\n  nudgec parse <file.ndg> [--json]   dump AST\n  nudgec check <file.ndg> [--json] [--watch]   type-check (E0101–E0302)\n  nudgec build <file.ndg> [--standalone] [-o <output>] [--fn <entry>]  check, emit Python (or native binary with --standalone)\n  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts\n  nudgec cost  <file.ndg> [--json]   static cost report per fn\n  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn\n  nudgec run  <file.ndg> [--fn <name>] [args...]  execute a program fn on the bytecode VM (or the interpreter)\n  nudgec resume <run_id>    continue a crashed run from its last checkpoint\n  nudgec trace-check <t.jsonl> [--json] validate a trace against the frozen v1 schema\n  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json\n  nudgec a2a-serve <file.ndg> [--port N]  serve agent as an A2A protocol peer (v2.0)\n  nudgec lsp                serve the Language Server Protocol over stdio\n  nudgec trace-html <t.jsonl> [--out file.html]  static single-file viewer (no server, works offline)\n  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace\n  nudgec explain <t.jsonl> [--json]    human report over a trace: totals, failures, low-confidence answers\n  nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]  compare traces; gate CI on regression\n  nudgec audit <trace.jsonl> [--json]       compliance audit report over an NTF trace (EU AI Act)\n  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8] [--json]\n  nudgec compare <results_a.jsonl> <results_b.jsonl> [--json]  two eval runs: which rows flipped\n  nudgec runs  [--run <run_id>]   list recorded agent runs / show one run's state and trace\n  nudgec mcp   <file.ndg> [--fns a,b]   expose program fns as MCP tools over stdio\n  nudgec serve <file.ndg> [--fn <name>] [--port N]   run a program fn as a local HTTP API (POST /run, GET /health)\n  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8] [--json]  score a program over a dataset\n  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)\n  nudgec fuzz  [file.ndg] [--iterations N] [--seed S] [--json]  fuzz the compiler pipeline with mutated inputs (v1.6)",
+        "nudgec {} -- the Nudge compiler\nusage:\n  nudgec fmt   <file.ndg> [--check] [--json]   normalize indentation, trim trailing ws, collapse blanks\n  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)\n  nudgec learn [lesson]     the language in eight terminal lessons (run bare for the index)\n  nudgec lex   <file.ndg> [--json]   dump token stream\n  nudgec parse <file.ndg> [--json]   dump AST\n  nudgec check <file.ndg> [--json] [--watch]   type-check (E0101–E0302)\n  nudgec build <file.ndg> [--standalone] [-o <output>] [--fn <entry>]  check, emit Python (or native binary with --standalone)\n  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts\n  nudgec cost  <file.ndg> [--json]   static cost report per fn\n  nudgec test  <file.ndg> [--json]   check, emit, then run every nudge_test_* fn\n  nudgec run  <file.ndg> [--fn <name>] [args...]  execute a program fn on the bytecode VM (or the interpreter)\n  nudgec resume <run_id>    continue a crashed run from its last checkpoint\n  nudgec trace-check <t.jsonl> [--json] validate a trace against the frozen v1 schema\n  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json\n  nudgec a2a-serve <file.ndg> [--port N]  serve agent as an A2A protocol peer (v2.0)\n  nudgec lsp                serve the Language Server Protocol over stdio\n  nudgec trace-html <t.jsonl> [--out file.html]  static single-file viewer (no server, works offline)\n  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace\n  nudgec explain <t.jsonl> [--json]    human report over a trace: totals, failures, low-confidence answers\n  nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]  compare traces; gate CI on regression\n  nudgec audit <trace.jsonl> [--json]       compliance audit report over an NTF trace (EU AI Act)\n  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8] [--json]\n  nudgec compare <results_a.jsonl> <results_b.jsonl> [--json]  two eval runs: which rows flipped\n  nudgec runs  [--run <run_id>]   list recorded agent runs / show one run's state and trace\n  nudgec mcp   <file.ndg> [--fns a,b]   expose program fns as MCP tools over stdio\n  nudgec serve <file.ndg> [--fn <name>] [--port N]   run a program fn as a local HTTP API (POST /run, GET /health)\n  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8] [--json]  score a program over a dataset\n  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)\n  nudgec fuzz  [file.ndg] [--iterations N] [--seed S] [--json]  fuzz the compiler pipeline with mutated inputs (v1.6)",
         env!("CARGO_PKG_VERSION")
     );
     if to_stderr {
@@ -639,6 +639,182 @@ fn main() {
                 eprintln!("error[E0002]: {msg} at byte {at}");
                 print_hint("E0002");
                 process::exit(1);
+            }
+        }
+    }
+    // `test` runs every nudge_test_* function (with optional --json)
+    if args.len() >= 2 && args[1] == "test" {
+        let mut json_mode = false;
+        let mut file = None;
+        for arg in &args[2..] {
+            if arg == "--json" {
+                json_mode = true;
+            } else if arg == "--help" || arg == "-h" {
+                println!("usage: nudgec test <file.ndg> [--json]");
+                process::exit(0);
+            } else if arg.starts_with('-') {
+                eprintln!("error: unknown flag '{arg}'");
+                process::exit(64);
+            } else if file.is_none() {
+                file = Some(arg.as_str());
+            } else {
+                eprintln!("error: unexpected positional argument '{arg}'");
+                process::exit(64);
+            }
+        }
+        let Some(f) = file else {
+            eprintln!("usage: nudgec test <file.ndg> [--json]");
+            process::exit(64);
+        };
+        let src = read_src(f);
+        match compile(&src) {
+            Ok(items) => {
+                let errs = check::check(&items);
+                if !errs.is_empty() {
+                    if json_mode {
+                        let errors: Vec<serde_json::Value> = errs
+                            .iter()
+                            .map(|e| {
+                                let (line, col) = match e.span {
+                                    Some(sp) => {
+                                        let (l, c) = line_col(&src, sp.start);
+                                        (serde_json::json!(l), serde_json::json!(c))
+                                    }
+                                    None => (serde_json::Value::Null, serde_json::Value::Null),
+                                };
+                                serde_json::json!({
+                                    "code": e.code,
+                                    "message": e.msg,
+                                    "line": line,
+                                    "col": col,
+                                })
+                            })
+                            .collect();
+                        let out = serde_json::json!({
+                            "file": f,
+                            "total": 0,
+                            "passed": 0,
+                            "failed": 1,
+                            "errors": errors,
+                        });
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{}".to_string())
+                        );
+                        process::exit(1);
+                    } else {
+                        for e in &errs {
+                            match e.span {
+                                Some(sp) => {
+                                    let (l, c) = line_col(&src, sp.start);
+                                    eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
+                                    print_hint(e.code);
+                                }
+                                None => {
+                                    eprintln!("error[{}]: {}", e.code, e.msg);
+                                    print_hint(e.code);
+                                }
+                            }
+                        }
+                        process::exit(1);
+                    }
+                }
+                if !json_mode {
+                    print_lints(&items);
+                }
+                let py = codegen::emit(&items);
+                let stem = std::path::Path::new(f)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("out");
+                if let Err(e) = fs::create_dir_all("out") {
+                    eprintln!("error: cannot create out/: {e}");
+                    process::exit(1);
+                }
+                let path = std::path::Path::new("out").join(format!("{stem}.py"));
+                if let Err(e) = fs::write(&path, &py) {
+                    eprintln!("error: cannot write {}: {e}", path.display());
+                    process::exit(1);
+                }
+                let abs = match path.canonicalize() {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("error: cannot resolve {}: {e}", path.display());
+                        process::exit(1);
+                    }
+                };
+                let driver = std::path::Path::new("out").join(format!("{stem}_nudge_tests.py"));
+                let escaped_f = f.replace('\\', "\\\\").replace('"', "\\\"");
+                let driver_src = codegen::TEST_DRIVER_PY
+                    .replace("__MODULE__", &abs.to_string_lossy())
+                    .replace("__FILE__", &escaped_f);
+                if let Err(e) = fs::write(&driver, driver_src) {
+                    eprintln!("error: cannot write {}: {e}", driver.display());
+                    process::exit(1);
+                }
+                // cwd stays the user's: relative trace paths in tests resolve
+                // exactly like they will under `nudge test`. NUDGE_PROGRAM
+                // points agent-state registration at the emitted module,
+                // not this driver (resume correctness, design §7).
+                let mut cmd = process::Command::new("python3");
+                cmd.arg(&driver).env("NUDGE_PROGRAM", &abs);
+                if json_mode {
+                    cmd.arg("--json");
+                    cmd.env("NUDGE_TEST_JSON", "1");
+                }
+                cmd.env("NUDGE_TEST_FILE", f);
+                if std::env::var("NUDGE_PROVIDER").is_err() {
+                    cmd.env("NUDGE_PROVIDER", "fake");
+                }
+                if std::env::var("PYTHONPATH")
+                    .map(|s| s.is_empty())
+                    .unwrap_or(true)
+                {
+                    for candidate in &["runtime", "../runtime", "../../runtime"] {
+                        let p = std::path::Path::new(candidate);
+                        if p.join("nudge_runtime").is_dir() {
+                            if let Ok(abs_rt) = p.canonicalize() {
+                                cmd.env("PYTHONPATH", abs_rt);
+                                break;
+                            }
+                        }
+                    }
+                }
+                match cmd.status() {
+                    Ok(status) => process::exit(status.code().unwrap_or(1)),
+                    Err(e) => {
+                        eprintln!("error: cannot run python3: {e}");
+                        process::exit(1);
+                    }
+                }
+            }
+            Err((msg, at)) => {
+                if json_mode {
+                    let (l, c) = line_col(&src, at);
+                    let out = serde_json::json!({
+                        "file": f,
+                        "total": 0,
+                        "passed": 0,
+                        "failed": 1,
+                        "errors": [
+                            {
+                                "code": "E0002",
+                                "message": msg,
+                                "line": l,
+                                "col": c,
+                            }
+                        ]
+                    });
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{}".to_string())
+                    );
+                    process::exit(1);
+                } else {
+                    eprintln!("error[E0002]: {msg} at byte {at}");
+                    print_hint("E0002");
+                    process::exit(1);
+                }
             }
         }
     }
@@ -1278,93 +1454,6 @@ fn main() {
                 }
             }
         }
-        "test" => match compile(&src) {
-            Ok(items) => {
-                let errs = check::check(&items);
-                if !errs.is_empty() {
-                    for e in &errs {
-                        match e.span {
-                            Some(sp) => {
-                                let (l, c) = line_col(&src, sp.start);
-                                {
-                                    eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
-                                    print_hint(e.code);
-                                }
-                            }
-                            None => {
-                                eprintln!("error[{}]: {}", e.code, e.msg);
-                                print_hint(e.code);
-                            }
-                        }
-                    }
-                    process::exit(1);
-                }
-                print_lints(&items);
-                let py = codegen::emit(&items);
-                let stem = std::path::Path::new(&args[2])
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("out");
-                if let Err(e) = fs::create_dir_all("out") {
-                    eprintln!("error: cannot create out/: {e}");
-                    process::exit(1);
-                }
-                let path = std::path::Path::new("out").join(format!("{stem}.py"));
-                if let Err(e) = fs::write(&path, &py) {
-                    eprintln!("error: cannot write {}: {e}", path.display());
-                    process::exit(1);
-                }
-                let abs = match path.canonicalize() {
-                    Ok(p) => p,
-                    Err(e) => {
-                        eprintln!("error: cannot resolve {}: {e}", path.display());
-                        process::exit(1);
-                    }
-                };
-                let driver = std::path::Path::new("out").join(format!("{stem}_nudge_tests.py"));
-                let driver_src =
-                    codegen::TEST_DRIVER_PY.replace("__MODULE__", &abs.to_string_lossy());
-                if let Err(e) = fs::write(&driver, driver_src) {
-                    eprintln!("error: cannot write {}: {e}", driver.display());
-                    process::exit(1);
-                }
-                // cwd stays the user's: relative trace paths in tests resolve
-                // exactly like they will under `nudge test`. NUDGE_PROGRAM
-                // points agent-state registration at the emitted module,
-                // not this driver (resume correctness, design §7).
-                let mut cmd = process::Command::new("python3");
-                cmd.arg(&driver).env("NUDGE_PROGRAM", &abs);
-                if std::env::var("NUDGE_PROVIDER").is_err() {
-                    cmd.env("NUDGE_PROVIDER", "fake");
-                }
-                if std::env::var("PYTHONPATH")
-                    .map(|s| s.is_empty())
-                    .unwrap_or(true)
-                {
-                    for candidate in &["runtime", "../runtime", "../../runtime"] {
-                        let p = std::path::Path::new(candidate);
-                        if p.join("nudge_runtime").is_dir() {
-                            if let Ok(abs_rt) = p.canonicalize() {
-                                cmd.env("PYTHONPATH", abs_rt);
-                                break;
-                            }
-                        }
-                    }
-                }
-                match cmd.status() {
-                    Ok(status) => process::exit(status.code().unwrap_or(1)),
-                    Err(e) => {
-                        eprintln!("error: cannot run python3: {e}");
-                        process::exit(1);
-                    }
-                }
-            }
-            Err((msg, at)) => {
-                eprintln!("error[E0002]: {msg} at byte {at}");
-                print_hint("E0002");
-                process::exit(1);
-            }
-        },
         // design §7: re-execute the registered program replaying the run's
         // recorded trace; once the recorded prefix is exhausted the runtime
         // goes live and appends to the same trace. State writes from the

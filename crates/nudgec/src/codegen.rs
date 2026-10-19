@@ -1371,22 +1371,67 @@ def input(*args, **kwargs):
 /// Shared `nudgec test` driver: load a generated module by path and run
 /// every `nudge_test_*` function, reporting PASS/FAIL per test. Used by both
 /// the `test` subcommand (main.rs) and the e2e tests below.
-pub const TEST_DRIVER_PY: &str = r#"import importlib.util, sys, traceback
+pub const TEST_DRIVER_PY: &str = r#"import importlib.util, json, os, sys, traceback
+
+json_mode = "--json" in sys.argv or os.environ.get("NUDGE_TEST_JSON") == "1"
+file_path = os.environ.get("NUDGE_TEST_FILE")
+if not file_path:
+    file_path = "__FILE__"
+    if file_path == "__" + "FILE__":
+        file_path = "__MODULE__"
+
 spec = importlib.util.spec_from_file_location("nudge_mod", "__MODULE__")
 m = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(m)
-fns = [getattr(m, n) for n in sorted(dir(m)) if n.startswith("nudge_test_")]
-failed = 0
-for f in fns:
-    try:
-        f()
-        print("PASS", f.__name__)
-    except Exception:
-        failed += 1
-        print("FAIL", f.__name__)
-        traceback.print_exc()
-print(f"{len(fns) - failed}/{len(fns)} tests passed")
-sys.exit(1 if failed else 0)
+try:
+    spec.loader.exec_module(m)
+    fns = [getattr(m, n) for n in sorted(dir(m)) if n.startswith("nudge_test_")]
+except Exception:
+    if json_mode:
+        res = {
+            "file": file_path,
+            "total": 0,
+            "passed": 0,
+            "failed": 1,
+            "tests": [],
+            "error": traceback.format_exc(),
+        }
+        print(json.dumps(res, indent=2))
+        sys.exit(1)
+    else:
+        raise
+
+if json_mode:
+    tests = []
+    failed = 0
+    for f in fns:
+        try:
+            f()
+            tests.append({"name": f.__name__, "status": "passed", "error": None})
+        except Exception:
+            failed += 1
+            tests.append({"name": f.__name__, "status": "failed", "error": traceback.format_exc()})
+    passed = len(fns) - failed
+    res = {
+        "file": file_path,
+        "total": len(fns),
+        "passed": passed,
+        "failed": failed,
+        "tests": tests,
+    }
+    print(json.dumps(res, indent=2))
+    sys.exit(1 if failed else 0)
+else:
+    failed = 0
+    for f in fns:
+        try:
+            f()
+            print("PASS", f.__name__)
+        except Exception:
+            failed += 1
+            print("FAIL", f.__name__)
+            traceback.print_exc()
+    print(f"{len(fns) - failed}/{len(fns)} tests passed")
+    sys.exit(1 if failed else 0)
 "#;
 
 #[cfg(test)]
