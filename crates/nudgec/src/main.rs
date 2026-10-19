@@ -582,8 +582,50 @@ fn main() {
         }
     }
     // `trace-html` exports the viewer as a static single file
-    if args.len() >= 3 && args[1] == "trace-html" {
-        let src = read_src(&args[2]);
+    if args.len() >= 2 && args[1] == "trace-html" {
+        if args.iter().skip(2).any(|a| a == "--help" || a == "-h") {
+            println!("usage: nudgec trace-html <trace.jsonl> [--out file.html]");
+            process::exit(0);
+        }
+        let mut trace_file = None;
+        let mut out_file = None;
+        let mut i = 2;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--out" | "-o" => {
+                    i += 1;
+                    if let Some(f) = args.get(i) {
+                        out_file = Some(f.clone());
+                    } else {
+                        eprintln!("error: --out requires a file path");
+                        process::exit(64);
+                    }
+                }
+                arg if arg.starts_with('-') => {
+                    eprintln!("error: unknown flag '{arg}'");
+                    process::exit(64);
+                }
+                pos => {
+                    if trace_file.is_none() {
+                        trace_file = Some(pos.to_string());
+                    } else {
+                        eprintln!("error: unexpected argument '{pos}'");
+                        process::exit(64);
+                    }
+                }
+            }
+            i += 1;
+        }
+
+        let trace_path = match trace_file {
+            Some(p) => p,
+            None => {
+                eprintln!("usage: nudgec trace-html <trace.jsonl> [--out file.html]");
+                process::exit(64);
+            }
+        };
+
+        let src = read_src(&trace_path);
         let problems = tracecheck::validate(&src);
         if !problems.is_empty() {
             for p in &problems {
@@ -592,17 +634,13 @@ fn main() {
             eprintln!("error: trace does not conform to the frozen v1 schema — run `nudgec trace-check` for details");
             process::exit(1);
         }
-        let out = if args.len() == 5 && (args[3] == "--out" || args[3] == "-o") {
-            args[4].clone()
-        } else if args.len() == 3 {
-            std::path::Path::new(&args[2])
+        let out = out_file.unwrap_or_else(|| {
+            std::path::Path::new(&trace_path)
                 .file_stem()
                 .map(|s| format!("{}.html", s.to_string_lossy()))
                 .unwrap_or_else(|| "trace.html".to_string())
-        } else {
-            usage();
-        };
-        let html = traceview::static_html(&src, &args[2]);
+        });
+        let html = traceview::static_html(&src, &trace_path);
         if let Err(e) = fs::write(&out, &html) {
             eprintln!("error: cannot write {out}: {e}");
             process::exit(1);
@@ -614,7 +652,11 @@ fn main() {
         return;
     }
     // `audit` analyzes an NTF trace and produces a compliance report (EU AI Act)
-    if args.len() >= 3 && args[1] == "audit" {
+    if args.len() >= 2 && args[1] == "audit" {
+        if args.iter().skip(2).any(|a| a == "--help" || a == "-h") {
+            println!("usage: nudgec audit <trace.jsonl> [--json]");
+            process::exit(0);
+        }
         let mut json_mode = false;
         let mut target_file = None;
         for arg in &args[2..] {
@@ -1179,36 +1221,64 @@ fn main() {
         );
         process::exit(code);
     }
-    // `debug` speaks DAP over stdio over a recorded trace (no file arg parsing)
-    if args.len() == 3 && args[1] == "debug" {
+    // `debug` speaks DAP over stdio over a recorded trace
+    if args.len() >= 2 && args[1] == "debug" {
+        if args.iter().skip(2).any(|a| a == "--help" || a == "-h") {
+            println!("usage: nudgec debug <trace.jsonl>");
+            process::exit(0);
+        }
+        if args.len() != 3 {
+            eprintln!("usage: nudgec debug <trace.jsonl>");
+            process::exit(64);
+        }
         let src = read_src(&args[2]);
         dap::run(&src);
         return;
     }
     // `trace-view` takes a trace file plus optional --port/--no-open flags
-    if args.len() >= 3 && args[1] == "trace-view" {
+    if args.len() >= 2 && args[1] == "trace-view" {
+        if args.iter().skip(2).any(|a| a == "--help" || a == "-h") {
+            println!("usage: nudgec trace-view <trace.jsonl> [--port N] [--no-open]");
+            process::exit(0);
+        }
         let mut port = traceview::DEFAULT_PORT;
         let mut no_open = false;
-        let mut i = 3;
+        let mut target_file = None;
+        let mut i = 2;
         while i < args.len() {
             match args[i].as_str() {
                 "--no-open" => no_open = true,
-                "--port" => {
+                "--port" | "-p" => {
                     i += 1;
                     port = args.get(i).and_then(|p| p.parse().ok()).unwrap_or_else(|| {
                         eprintln!("error: --port requires a number");
                         process::exit(64);
                     });
                 }
-                other => {
-                    eprintln!("error: unknown flag '{other}'");
+                arg if arg.starts_with('-') => {
+                    eprintln!("error: unknown flag '{arg}'");
                     process::exit(64);
+                }
+                pos => {
+                    if target_file.is_none() {
+                        target_file = Some(pos.to_string());
+                    } else {
+                        eprintln!("error: unexpected argument '{pos}'");
+                        process::exit(64);
+                    }
                 }
             }
             i += 1;
         }
-        let src = read_src(&args[2]);
-        traceview::run(&args[2], &src, port, no_open);
+        let trace_path = match target_file {
+            Some(f) => f,
+            None => {
+                eprintln!("usage: nudgec trace-view <trace.jsonl> [--port N] [--no-open]");
+                process::exit(64);
+            }
+        };
+        let src = read_src(&trace_path);
+        traceview::run(&trace_path, &src, port, no_open);
     }
     // `fuzz` drives mutated inputs through the compiler pipeline (v1.6)
     if args.len() >= 2 && args[1] == "fuzz" {

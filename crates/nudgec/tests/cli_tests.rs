@@ -1726,3 +1726,124 @@ fn main() -> int {
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn test_cli_trace_html_audit_and_trace_view_flag_handling() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "nudge_test_cli_viewer_audit_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let trace_path = temp_dir.join("trace.jsonl");
+    fs::write(
+        &trace_path,
+        r#"{"v":1,"seq":1,"kind":"llm.call","model":"m","params":{},"input":"p","output":"o","tokens":{"in":1,"out":1},"cost_usd":0.001,"repair_round":0,"outcome":"ok","provider":"fake"}
+{"v":1,"seq":2,"kind":"tool.call","tool":"web_search","input":["q"],"output":[],"server":"search"}
+{"v":1,"seq":3,"kind":"fn.return","fn":"main","output":{"x":1}}
+"#,
+    )
+    .expect("write trace");
+
+    // 1. trace-html --help exits 0
+    let out_html_help = Command::new(nudgec_bin())
+        .arg("trace-html")
+        .arg("--help")
+        .output()
+        .expect("trace-html --help");
+    assert_eq!(out_html_help.status.code(), Some(0));
+    let stdout_html_help = String::from_utf8_lossy(&out_html_help.stdout);
+    assert!(stdout_html_help.contains("usage: nudgec trace-html <trace.jsonl> [--out file.html]"));
+
+    // 2. trace-html without args exits 64
+    let out_html_bare = Command::new(nudgec_bin())
+        .arg("trace-html")
+        .output()
+        .expect("trace-html bare");
+    assert_eq!(out_html_bare.status.code(), Some(64));
+
+    // 3. trace-html with custom output flag position: nudgec trace-html --out report.html trace.jsonl
+    let out_report = temp_dir.join("report.html");
+    let out_html_ok = Command::new(nudgec_bin())
+        .arg("trace-html")
+        .arg("--out")
+        .arg(&out_report)
+        .arg(&trace_path)
+        .output()
+        .expect("trace-html with --out before trace");
+    assert_eq!(out_html_ok.status.code(), Some(0));
+    assert!(out_report.exists(), "generated html report exists");
+
+    // 4. audit --help exits 0
+    let out_audit_help = Command::new(nudgec_bin())
+        .arg("audit")
+        .arg("--help")
+        .output()
+        .expect("audit --help");
+    assert_eq!(out_audit_help.status.code(), Some(0));
+    let stdout_audit_help = String::from_utf8_lossy(&out_audit_help.stdout);
+    assert!(stdout_audit_help.contains("usage: nudgec audit <trace.jsonl> [--json]"));
+
+    // 5. audit bare exits 64
+    let out_audit_bare = Command::new(nudgec_bin())
+        .arg("audit")
+        .output()
+        .expect("audit bare");
+    assert_eq!(out_audit_bare.status.code(), Some(64));
+
+    // 6. audit --json flag before trace file
+    let out_audit_json = Command::new(nudgec_bin())
+        .arg("audit")
+        .arg("--json")
+        .arg(&trace_path)
+        .output()
+        .expect("audit --json before trace");
+    assert_eq!(out_audit_json.status.code(), Some(0));
+    let parsed_audit: serde_json::Value =
+        serde_json::from_slice(&out_audit_json.stdout).expect("valid audit json");
+    assert_eq!(
+        parsed_audit["standard"],
+        "EU AI Act (Regulation EU 2024/1689) & NTF v1 Audit Standard"
+    );
+    assert_eq!(parsed_audit["compliant"], true);
+
+    // 7. trace-view --help exits 0
+    let out_view_help = Command::new(nudgec_bin())
+        .arg("trace-view")
+        .arg("--help")
+        .output()
+        .expect("trace-view --help");
+    assert_eq!(out_view_help.status.code(), Some(0));
+    let stdout_view_help = String::from_utf8_lossy(&out_view_help.stdout);
+    assert!(
+        stdout_view_help.contains("usage: nudgec trace-view <trace.jsonl> [--port N] [--no-open]")
+    );
+
+    // 8. trace-view bare exits 64
+    let out_view_bare = Command::new(nudgec_bin())
+        .arg("trace-view")
+        .output()
+        .expect("trace-view bare");
+    assert_eq!(out_view_bare.status.code(), Some(64));
+
+    // 9. debug --help exits 0
+    let out_debug_help = Command::new(nudgec_bin())
+        .arg("debug")
+        .arg("--help")
+        .output()
+        .expect("debug --help");
+    assert_eq!(out_debug_help.status.code(), Some(0));
+    let stdout_debug_help = String::from_utf8_lossy(&out_debug_help.stdout);
+    assert!(stdout_debug_help.contains("usage: nudgec debug <trace.jsonl>"));
+
+    // 10. debug bare exits 64
+    let out_debug_bare = Command::new(nudgec_bin())
+        .arg("debug")
+        .output()
+        .expect("debug bare");
+    assert_eq!(out_debug_bare.status.code(), Some(64));
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
