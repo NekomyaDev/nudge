@@ -1577,3 +1577,151 @@ fn broken() -> int {
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn test_cli_runs_and_auth_json_and_flag_positions() {
+    // 1. nudgec runs --help
+    let out_runs_help = Command::new(nudgec_bin())
+        .arg("runs")
+        .arg("--help")
+        .output()
+        .expect("runs --help");
+    assert_eq!(out_runs_help.status.code(), Some(0));
+    let stdout_runs_help = String::from_utf8_lossy(&out_runs_help.stdout);
+    assert!(stdout_runs_help.contains("usage: nudgec runs [--run <run_id>] [--json]"));
+
+    // 2. nudgec runs --json (lists runs as json)
+    let out_runs_json = Command::new(nudgec_bin())
+        .arg("runs")
+        .arg("--json")
+        .output()
+        .expect("runs --json");
+    assert_eq!(out_runs_json.status.code(), Some(0));
+    let parsed_runs: serde_json::Value =
+        serde_json::from_slice(&out_runs_json.stdout).expect("valid json output for runs");
+    assert_eq!(parsed_runs["ok"], true);
+    assert!(parsed_runs["runs"].is_array());
+
+    // 3. nudgec runs --run unknown_id --json (fails with code 1 and error JSON)
+    let out_run_missing = Command::new(nudgec_bin())
+        .arg("runs")
+        .arg("--run")
+        .arg("definitely_nonexistent_run_404")
+        .arg("--json")
+        .output()
+        .expect("runs --run missing --json");
+    assert_eq!(out_run_missing.status.code(), Some(1));
+    let parsed_missing: serde_json::Value =
+        serde_json::from_slice(&out_run_missing.stdout).expect("valid error json");
+    assert_eq!(parsed_missing["ok"], false);
+    assert_eq!(parsed_missing["run_id"], "definitely_nonexistent_run_404");
+
+    // 4. nudgec runs with unknown flag exits 64
+    let out_runs_bad_flag = Command::new(nudgec_bin())
+        .arg("runs")
+        .arg("--bogus-flag")
+        .output()
+        .expect("runs bad flag");
+    assert_eq!(out_runs_bad_flag.status.code(), Some(64));
+
+    // 5. nudgec auth --help
+    let out_auth_help = Command::new(nudgec_bin())
+        .arg("auth")
+        .arg("--help")
+        .output()
+        .expect("auth --help");
+    assert_eq!(out_auth_help.status.code(), Some(0));
+    let stdout_auth_help = String::from_utf8_lossy(&out_auth_help.stdout);
+    assert!(stdout_auth_help.contains("usage: nudgec auth login [provider]"));
+    assert!(stdout_auth_help.contains("nudgec auth status [--json]"));
+
+    // 6. nudgec auth status --json
+    let out_auth_json = Command::new(nudgec_bin())
+        .arg("auth")
+        .arg("status")
+        .arg("--json")
+        .output()
+        .expect("auth status --json");
+    assert_eq!(out_auth_json.status.code(), Some(0));
+    let parsed_auth: serde_json::Value =
+        serde_json::from_slice(&out_auth_json.stdout).expect("valid auth status json");
+    assert_eq!(parsed_auth["ok"], true);
+    assert!(parsed_auth["credential_store"].is_string());
+
+    // 7. nudgec auth with unknown flag exits 64
+    let out_auth_bad = Command::new(nudgec_bin())
+        .arg("auth")
+        .arg("--bad-option")
+        .output()
+        .expect("auth bad flag");
+    assert_eq!(out_auth_bad.status.code(), Some(64));
+}
+
+#[test]
+fn test_cli_lint_json_and_flag_positions() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "nudge_test_cli_lint_json_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let ndg_path = temp_dir.join("sample.ndg");
+    fs::write(
+        &ndg_path,
+        r#"
+fn main() -> int {
+    42
+}
+"#,
+    )
+    .expect("write ndg");
+
+    // 1. nudgec lint --help
+    let out_help = Command::new(nudgec_bin())
+        .arg("lint")
+        .arg("--help")
+        .output()
+        .expect("lint --help");
+    assert_eq!(out_help.status.code(), Some(0));
+    let stdout_help = String::from_utf8_lossy(&out_help.stdout);
+    assert!(stdout_help.contains("usage: nudgec lint <file.ndg> [--fix] [--json]"));
+
+    // 2. nudgec lint <file.ndg> --json
+    let out_json1 = Command::new(nudgec_bin())
+        .arg("lint")
+        .arg(&ndg_path)
+        .arg("--json")
+        .output()
+        .expect("lint --json");
+    assert_eq!(out_json1.status.code(), Some(0));
+    let parsed1: serde_json::Value =
+        serde_json::from_slice(&out_json1.stdout).expect("valid json output");
+    assert_eq!(parsed1["ok"], true);
+    assert_eq!(parsed1["file"], ndg_path.to_str().unwrap());
+    assert_eq!(parsed1["lints_count"], 0);
+
+    // 3. nudgec lint --json <file.ndg> (flag before file)
+    let out_json2 = Command::new(nudgec_bin())
+        .arg("lint")
+        .arg("--json")
+        .arg(&ndg_path)
+        .output()
+        .expect("lint --json before");
+    assert_eq!(out_json2.status.code(), Some(0));
+    let parsed2: serde_json::Value =
+        serde_json::from_slice(&out_json2.stdout).expect("valid json output");
+    assert_eq!(parsed2["ok"], true);
+
+    // 4. unknown flag exits 64
+    let out_bad = Command::new(nudgec_bin())
+        .arg("lint")
+        .arg(&ndg_path)
+        .arg("--unknown")
+        .output()
+        .expect("lint unknown flag");
+    assert_eq!(out_bad.status.code(), Some(64));
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}

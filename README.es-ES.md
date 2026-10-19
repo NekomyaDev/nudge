@@ -500,7 +500,10 @@ La especificación congelada de NTF se encuentra en [docs/ntf-spec.md](docs/ntf-
 - **Diferencias de trazas:** `nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]` compara dos trazas para identificar regresiones, saliendo con código 1 ante regresiones en CI.
 - **Auditoría de cumplimiento:** `nudgec audit <trace.jsonl> [--json]` audita una traza NTF según los requisitos de la Ley de IA de la UE (transparencia, gobernanza, secretos no redactados, métricas de riesgo).
 - **Visor de trazas local:** `nudgec trace-view <trace.jsonl> [--port N] [--no-open]` inicia una interfaz web local con líneas de tiempo de ejecución visuales, gasto de tokens y detalles de reparaciones.
-- **Formateador y watcher:** `nudgec fmt <file.ndg> [--check]` formatea el código con seguridad y `nudgec check <file.ndg> --watch` comprueba los tipos en cada guardado.
+- **Formateador y watcher:** `nudgec fmt <file.ndg> [--check] [--json]` formatea el código con seguridad y `nudgec check <file.ndg> [--json] --watch` comprueba los tipos en cada guardado.
+- **Linter y autocorrección:** `nudgec lint <file.ndg> [--fix] [--json]` revisa el código en busca de buenas prácticas (presupuestos ilimitados, prompts ambiguos, esquemas sin reparación) y aplica correcciones seguras.
+- **Inspector de almacén de ejecuciones:** `nudgec runs [--run <run_id>] [--json]` inspecciona estados de ejecución persistentes, trazas y puntos de control de agentes.
+- **Gestor de autenticación:** `nudgec auth login [provider]` y `nudgec auth status [--json]` gestionan credenciales OAuth y verifican proveedores de IA conectados.
 - **Exportación HTML estática:** `nudgec trace-html <trace.jsonl> [-o report.html]` exporta informes interactivos de auditoría completamente autónomos.
 
 ### Extensión para VS Code

@@ -501,7 +501,10 @@ jobs:
 - **トレース差分比較:** `nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]` 2つの実行トレースを比較してリグレッションを検出し、ゲート時は終了コード 1 を返します。
 - **コンプライアンス監査:** `nudgec audit <trace.jsonl> [--json]` NTF トレースを欧州 AI 法（EU AI Act）の要件（透明性、ガバナンス、未墨消しシークレット、リスク指標）に照らして監査します。
 - **ローカルトレースビューア:** `nudgec trace-view <trace.jsonl> [--port N] [--no-open]` 実行タイムライン、トークン消費、修復ハイライトを表示するローカル Web UI を起動します。
-- **フォーマッタおよびウォッチャー:** `nudgec fmt <file.ndg> [--check]` 安全にコードを整形し、`nudgec check <file.ndg> --watch` で保存ごとに型検査を実行します。
+- **フォーマッタおよびウォッチャー:** `nudgec fmt <file.ndg> [--check] [--json]` 安全にコードを整形し、`nudgec check <file.ndg> [--json] --watch` で保存ごとに型検査を実行します。
+- **リンターと自動修正:** `nudgec lint <file.ndg> [--fix] [--json]` ベストプラクティス（上限なし予算、曖昧なプロンプト、修復なしスキーマ）を検査し、安全な自動修正を適用します。
+- **実行ストアインスペクタ:** `nudgec runs [--run <run_id>] [--json]` 耐障害性エージェント実行によって記録された永続実行状態、トレース、チェックポイントを確認します。
+- **認証マネージャー:** `nudgec auth login [provider]` および `nudgec auth status [--json]` OAuth 認証情報を管理し、接続済み AI プロバイダーを確認します。
 - **静的 HTML エクスポート:** `nudgec trace-html <trace.jsonl> [-o report.html]` 単一ファイル形式の対話型監査レポートを出力します。
 
 ### VS Code 拡張機能

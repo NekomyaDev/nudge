@@ -500,7 +500,10 @@ Dondurulmuş NTF spesifikasyonu [docs/ntf-spec.md](docs/ntf-spec.md) adresinde y
 - **Trace Diff Alma:** `nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]`, regresyonları tespit etmek için iki çalıştırma trace'ini karşılaştırır; kilitlendiğinde regresyonda kod 1 ile çıkar.
 - **Uyumluluk Denetimi:** `nudgec audit <trace.jsonl> [--json]`, bir NTF trace'ini AB Yapay Zeka Yasası uyumluluk kriterlerine (şeffaflık, yönetişim, sansürlenmemiş sırlar, risk metrikleri) göre denetler.
 - **Yerel Trace Görüntüleyici:** `nudgec trace-view <trace.jsonl> [--port N] [--no-open]`, görsel yürütme zaman çizelgeleri, token harcamaları ve onarım vurguları içeren yerel bir web arayüzü başlatır.
-- **Formatlayıcı ve İzleyici:** `nudgec fmt <file.ndg> [--check]`, kodu güvenli bir şekilde formatlar ve `nudgec check <file.ndg> --watch` her kaydetmede tip kontrolü yapar.
+- **Formatlayıcı ve İzleyici:** `nudgec fmt <file.ndg> [--check] [--json]`, kodu güvenli bir şekilde formatlar ve `nudgec check <file.ndg> [--json] --watch` her kaydetmede tip kontrolü yapar.
+- **Linter ve Otomatik Düzeltme:** `nudgec lint <file.ndg> [--fix] [--json]`, programları en iyi uygulamalar (sınırsız bütçeler, belirsiz prompt'lar, eksik onarımlar) açısından tarar ve güvenli düzeltmeleri uygular.
+- **Çalıştırma Deposu Denetleyicisi:** `nudgec runs [--run <run_id>] [--json]`, dayanıklı ajan çalıştırmaları tarafından oluşturulan kalıcı yürütme durumlarını, trace'leri ve kontrol noktalarını inceler.
+- **Kimlik Doğrulama Yöneticisi:** `nudgec auth login [provider]` ve `nudgec auth status [--json]`, OAuth kimlik bilgilerini yönetir ve bağlı yapay zeka sağlayıcılarını doğrular.
 - **Statik HTML Dışa Aktarma:** `nudgec trace-html <trace.jsonl> [-o report.html]`, bağımsız ve etkileşimli denetim raporları dışa aktarır.
 
 ### VS Code Eklentisi

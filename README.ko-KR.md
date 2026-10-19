@@ -501,7 +501,10 @@ jobs:
 - **Trace 디프 비교:** `nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]` 명령으로 두 실행 trace를 비교하여 퇴행을 감지하며 게이트 설정 시 종료 코드 1을 반환합니다.
 - **규정 준수 감사:** `nudgec audit <trace.jsonl> [--json]` 명령으로 NTF trace를 EU AI Act 규정 준수 기준(투명성, 거버넌스, 미마스킹 시크릿, 위험 메트릭)에 따라 감사 리포트를 생성합니다.
 - **로컬 Trace 뷰어:** `nudgec trace-view <trace.jsonl> [--port N] [--no-open]` 명령으로 시각적 실행 타임라인, 토큰 지출 내역, 복구 하이라이트를 표시하는 로컬 웹 UI를 구동합니다.
-- **포매터 및 감시기:** `nudgec fmt <file.ndg> [--check]`는 코드를 안전하게 정렬하며, `nudgec check <file.ndg> --watch`는 파일 저장 시마다 실시간 타입 검사를 수행합니다.
+- **포매터 및 감시기:** `nudgec fmt <file.ndg> [--check] [--json]`는 코드를 안전하게 정렬하며, `nudgec check <file.ndg> [--json] --watch`는 파일 저장 시마다 실시간 타입 검사를 수행합니다.
+- **린터 및 자동 수정:** `nudgec lint <file.ndg> [--fix] [--json]`는 모범 사례(제한 없는 예산, 모호한 프롬프트, 복구 없는 스키마)를 검사하고 안전한 자동 수정을 적용합니다.
+- **실행 저장소 검사기:** `nudgec runs [--run <run_id>] [--json]`는 복원력 있는 에이전트 실행에 의해 기록된 영구 실행 상태, 트레이스 및 체크포인트를 검사합니다.
+- **인증 관리자:** `nudgec auth login [provider]` 및 `nudgec auth status [--json]`는 OAuth 자격 증명을 관리하고 연결된 AI 공급자를 확인합니다.
 - **정적 HTML 내보내기:** `nudgec trace-html <trace.jsonl> [-o report.html]` 명령으로 자체 완결형 대화형 감사 리포트를 생성합니다.
 
 ### VS Code 확장

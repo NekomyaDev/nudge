@@ -11,6 +11,9 @@
 //!   nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8] [--json]
 //!   nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json (v1.0, design §9)
 //!   nudgec a2a-serve <file.ndg> [--port N]  serve agent as an A2A protocol peer (v2.0)
+//!   nudgec auth  login [provider] | status [--json]  manage OAuth credentials and provider auth
+//!   nudgec lint  <file.ndg> [--fix] [--json]  lint source with optional auto-fix
+//!   nudgec runs  [--run <run_id>] [--json]  inspect recorded agent runs
 //!   nudgec lsp                serve the Language Server Protocol over stdio (v1.0, design §10)
 //!   nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace (v1.2)
 //!   nudgec trace-diff <a.jsonl> <b.jsonl> [--fail-on-regression]  compare two traces; with the flag, exit 1 on regression (v1.2)
@@ -26,7 +29,7 @@ use std::{env, fs, process};
 
 fn print_usage_to(to_stderr: bool) {
     let msg = format!(
-        "nudgec {} -- the Nudge compiler\nusage:\n  nudgec fmt   <file.ndg> [--check] [--json]   normalize indentation, trim trailing ws, collapse blanks\n  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)\n  nudgec learn [lesson]     the language in eight terminal lessons (run bare for the index)\n  nudgec lex   <file.ndg> [--json]   dump token stream\n  nudgec parse <file.ndg> [--json]   dump AST\n  nudgec check <file.ndg> [--json] [--watch]   type-check (E0101–E0302)\n  nudgec build <file.ndg> [--standalone] [-o <output>] [--fn <entry>]  check, emit Python (or native binary with --standalone)\n  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts\n  nudgec cost  <file.ndg> [--json]   static cost report per fn\n  nudgec test  <file.ndg> [--json]   check, emit, then run every nudge_test_* fn\n  nudgec run  <file.ndg> [--fn <name>] [args...]  execute a program fn on the bytecode VM (or the interpreter)\n  nudgec resume <run_id>    continue a crashed run from its last checkpoint\n  nudgec trace-check <t.jsonl> [--json] validate a trace against the frozen v1 schema\n  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json\n  nudgec a2a-serve <file.ndg> [--port N]  serve agent as an A2A protocol peer (v2.0)\n  nudgec lsp                serve the Language Server Protocol over stdio\n  nudgec trace-html <t.jsonl> [--out file.html]  static single-file viewer (no server, works offline)\n  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace\n  nudgec explain <t.jsonl> [--json]    human report over a trace: totals, failures, low-confidence answers\n  nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]  compare traces; gate CI on regression\n  nudgec audit <trace.jsonl> [--json]       compliance audit report over an NTF trace (EU AI Act)\n  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8] [--json]\n  nudgec compare <results_a.jsonl> <results_b.jsonl> [--json]  two eval runs: which rows flipped\n  nudgec runs  [--run <run_id>]   list recorded agent runs / show one run's state and trace\n  nudgec mcp   <file.ndg> [--fns a,b]   expose program fns as MCP tools over stdio\n  nudgec serve <file.ndg> [--fn <name>] [--port N]   run a program fn as a local HTTP API (POST /run, GET /health)\n  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8] [--json]  score a program over a dataset\n  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)\n  nudgec fuzz  [file.ndg] [--iterations N] [--seed S] [--json]  fuzz the compiler pipeline with mutated inputs (v1.6)",
+        "nudgec {} -- the Nudge compiler\nusage:\n  nudgec fmt   <file.ndg> [--check] [--json]   normalize indentation, trim trailing ws, collapse blanks\n  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)\n  nudgec learn [lesson]     the language in eight terminal lessons (run bare for the index)\n  nudgec lex   <file.ndg> [--json]   dump token stream\n  nudgec parse <file.ndg> [--json]   dump AST\n  nudgec check <file.ndg> [--json] [--watch]   type-check (E0101–E0302)\n  nudgec build <file.ndg> [--standalone] [-o <output>] [--fn <entry>]  check, emit Python (or native binary with --standalone)\n  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts\n  nudgec cost  <file.ndg> [--json]   static cost report per fn\n  nudgec test  <file.ndg> [--json]   check, emit, then run every nudge_test_* fn\n  nudgec lint  <file.ndg> [--fix] [--json]    lint source with optional auto-fix\n  nudgec run  <file.ndg> [--fn <name>] [args...]  execute a program fn on the bytecode VM (or the interpreter)\n  nudgec resume <run_id>    continue a crashed run from its last checkpoint\n  nudgec trace-check <t.jsonl> [--json] validate a trace against the frozen v1 schema\n  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json\n  nudgec a2a-serve <file.ndg> [--port N]  serve agent as an A2A protocol peer (v2.0)\n  nudgec auth  login [provider] | status [--json]  manage OAuth credentials and provider auth\n  nudgec lsp                serve the Language Server Protocol over stdio\n  nudgec trace-html <t.jsonl> [--out file.html]  static single-file viewer (no server, works offline)\n  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace\n  nudgec explain <t.jsonl> [--json]    human report over a trace: totals, failures, low-confidence answers\n  nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]  compare traces; gate CI on regression\n  nudgec audit <trace.jsonl> [--json]       compliance audit report over an NTF trace (EU AI Act)\n  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8] [--json]\n  nudgec compare <results_a.jsonl> <results_b.jsonl> [--json]  two eval runs: which rows flipped\n  nudgec runs  [--run <run_id>] [--json]   list recorded agent runs / show one run's state and trace\n  nudgec mcp   <file.ndg> [--fns a,b]   expose program fns as MCP tools over stdio\n  nudgec serve <file.ndg> [--fn <name>] [--port N]   run a program fn as a local HTTP API (POST /run, GET /health)\n  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8] [--json]  score a program over a dataset\n  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)\n  nudgec fuzz  [file.ndg] [--iterations N] [--seed S] [--json]  fuzz the compiler pipeline with mutated inputs (v1.6)",
         env!("CARGO_PKG_VERSION")
     );
     if to_stderr {
@@ -104,39 +107,121 @@ fn main() {
     }
     // `auth` manages credentials and OAuth login (e.g. `nudgec auth login antigravity`)
     if args.len() >= 2 && args[1] == "auth" {
-        if args.len() >= 3 && args[2] == "login" {
-            let provider = args.get(3).map(|s| s.as_str()).unwrap_or("antigravity");
-            match nudge_runtime::auth::login_interactive(provider) {
-                Ok(_) => {
-                    println!("Successfully authenticated with provider '{provider}'.");
+        let mut json_mode = false;
+        let mut subcmd = None;
+        let mut provider = None;
+        let mut i = 2;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--json" => json_mode = true,
+                "--help" | "-h" => {
+                    println!("usage: nudgec auth login [provider]");
+                    println!("       nudgec auth status [--json]");
                     process::exit(0);
                 }
-                Err(e) => {
-                    eprintln!("{e}");
-                    process::exit(1);
+                arg if arg.starts_with('-') => {
+                    eprintln!("error: unknown auth flag '{arg}'");
+                    process::exit(64);
+                }
+                pos => {
+                    if subcmd.is_none() {
+                        subcmd = Some(pos.to_string());
+                    } else if provider.is_none() {
+                        provider = Some(pos.to_string());
+                    } else {
+                        eprintln!("error: unexpected argument '{pos}'");
+                        process::exit(64);
+                    }
                 }
             }
-        } else if args.len() >= 3 && args[2] == "status" {
-            let store = nudge_runtime::auth::CredentialStore::load_default().unwrap_or_default();
-            println!(
-                "Credential store: {}",
-                nudge_runtime::auth::CredentialStore::default_path().display()
-            );
-            if store.providers.is_empty() {
-                println!("  No authenticated providers found.");
-            } else {
-                for (p, cred) in &store.providers {
+            i += 1;
+        }
+
+        match subcmd.as_deref() {
+            Some("login") => {
+                let p = provider.as_deref().unwrap_or("antigravity");
+                match nudge_runtime::auth::login_interactive(p) {
+                    Ok(_) => {
+                        if json_mode {
+                            let out = serde_json::json!({
+                                "ok": true,
+                                "provider": p,
+                                "message": format!("Successfully authenticated with provider '{p}'.")
+                            });
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&out)
+                                    .unwrap_or_else(|_| "{}".to_string())
+                            );
+                        } else {
+                            println!("Successfully authenticated with provider '{p}'.");
+                        }
+                        process::exit(0);
+                    }
+                    Err(e) => {
+                        if json_mode {
+                            let out = serde_json::json!({
+                                "ok": false,
+                                "provider": p,
+                                "error": e
+                            });
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&out)
+                                    .unwrap_or_else(|_| "{}".to_string())
+                            );
+                        } else {
+                            eprintln!("{e}");
+                        }
+                        process::exit(1);
+                    }
+                }
+            }
+            Some("status") => {
+                let store =
+                    nudge_runtime::auth::CredentialStore::load_default().unwrap_or_default();
+                let store_path = nudge_runtime::auth::CredentialStore::default_path();
+                if json_mode {
+                    let mut providers_json = serde_json::Map::new();
+                    for (p, cred) in &store.providers {
+                        providers_json.insert(
+                            p.clone(),
+                            serde_json::json!({
+                                "authenticated": true,
+                                "expired": cred.is_expired(),
+                            }),
+                        );
+                    }
+                    let out = serde_json::json!({
+                        "ok": true,
+                        "credential_store": store_path.display().to_string(),
+                        "providers": providers_json,
+                        "accounts_count": store.accounts.len(),
+                    });
                     println!(
-                        "  provider '{p}': authenticated (expired={})",
-                        cred.is_expired()
+                        "{}",
+                        serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{}".to_string())
                     );
+                } else {
+                    println!("Credential store: {}", store_path.display());
+                    if store.providers.is_empty() {
+                        println!("  No authenticated providers found.");
+                    } else {
+                        for (p, cred) in &store.providers {
+                            println!(
+                                "  provider '{p}': authenticated (expired={})",
+                                cred.is_expired()
+                            );
+                        }
+                    }
                 }
+                process::exit(0);
             }
-            process::exit(0);
-        } else {
-            eprintln!("usage: nudgec auth login [provider]");
-            eprintln!("       nudgec auth status");
-            process::exit(64);
+            _ => {
+                eprintln!("usage: nudgec auth login [provider]");
+                eprintln!("       nudgec auth status [--json]");
+                process::exit(64);
+            }
         }
     }
     // `trace-diff` takes two trace files; `--fail-on-regression` turns the
@@ -1289,6 +1374,10 @@ fn main() {
             None => usage(),
         }
     } else if args[1] == "lint" {
+        if args.len() == 2 || args.iter().skip(2).any(|a| a == "--help" || a == "-h") {
+            println!("usage: nudgec lint <file.ndg> [--fix] [--json]");
+            process::exit(0);
+        }
         match &lint_file {
             Some(f) => read_src(f),
             None => usage(),
@@ -1498,15 +1587,43 @@ fn main() {
         }
         "runs" => {
             // C8: inspect the local run store
-            let detail = if args.len() == 4 && args[2] == "--run" {
-                Some(args[3].as_str())
-            } else if args.len() != 2 {
-                eprintln!("usage: nudgec runs [--run <run_id>]");
-                process::exit(64);
+            let mut json_mode = false;
+            let mut detail = None;
+            let mut i = 2;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--json" => json_mode = true,
+                    "--help" | "-h" => {
+                        println!("usage: nudgec runs [--run <run_id>] [--json]");
+                        process::exit(0);
+                    }
+                    "--run" => {
+                        i += 1;
+                        if let Some(id) = args.get(i) {
+                            detail = Some(id.clone());
+                        } else {
+                            eprintln!("error: --run requires a run_id");
+                            process::exit(64);
+                        }
+                    }
+                    arg if arg.starts_with('-') => {
+                        eprintln!("error: unknown flag '{arg}'");
+                        process::exit(64);
+                    }
+                    pos => {
+                        eprintln!("error: unexpected argument '{pos}'");
+                        process::exit(64);
+                    }
+                }
+                i += 1;
+            }
+            if json_mode {
+                let (code, json_str) = runs::run_json(detail.as_deref());
+                println!("{json_str}");
+                process::exit(code);
             } else {
-                None
-            };
-            process::exit(runs::run(detail));
+                process::exit(runs::run(detail.as_deref()));
+            }
         }
         "serve" => {
             // D1: run a program fn as a local HTTP API (stdlib only)
@@ -1642,43 +1759,104 @@ fn main() {
             }
         }
         "lint" => {
-            // B5: lint with auto-fix
-            let check = args.iter().any(|a| a == "--fix");
-            let file = match args
-                .iter()
-                .skip(1)
-                .find(|a| !a.starts_with('-') && a.as_str() != "lint")
-            {
-                Some(f) => f.clone(),
-                None => usage(),
+            // B5: lint with auto-fix (and optional --json)
+            let mut check_fix = false;
+            let mut json_mode = false;
+            let mut file_opt = None;
+            let mut i = 2;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--fix" => check_fix = true,
+                    "--json" => json_mode = true,
+                    "--help" | "-h" => {
+                        println!("usage: nudgec lint <file.ndg> [--fix] [--json]");
+                        process::exit(0);
+                    }
+                    arg if arg.starts_with('-') => {
+                        eprintln!("error: unknown lint flag '{arg}'");
+                        process::exit(64);
+                    }
+                    pos => {
+                        if file_opt.is_none() {
+                            file_opt = Some(pos.to_string());
+                        } else {
+                            eprintln!("error: unexpected argument '{pos}'");
+                            process::exit(64);
+                        }
+                    }
+                }
+                i += 1;
+            }
+            let file = match file_opt {
+                Some(f) => f,
+                None => {
+                    eprintln!("usage: nudgec lint <file.ndg> [--fix] [--json]");
+                    process::exit(64);
+                }
             };
             let items = match compile(&src) {
                 Ok(items) => items,
                 Err((msg, at)) => {
-                    eprintln!("error[E0002]: {msg} at byte {at}");
-                    print_hint("E0002");
+                    if json_mode {
+                        let out = serde_json::json!({
+                            "ok": false,
+                            "file": file,
+                            "error": format!("error[E0002]: {msg} at byte {at}")
+                        });
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{}".to_string())
+                        );
+                    } else {
+                        eprintln!("error[E0002]: {msg} at byte {at}");
+                        print_hint("E0002");
+                    }
                     process::exit(1);
                 }
             };
             let lints = lint::lint_items(&items);
-            if check {
+            if check_fix {
                 if lints.iter().any(|l| l.fix.is_some()) {
                     let fixed = lint::apply_fixes(&src, &lints);
                     if let Err(e) = fs::write(&file, &fixed) {
-                        eprintln!("error: cannot write {file}: {e}");
+                        if json_mode {
+                            let out = serde_json::json!({
+                                "ok": false,
+                                "file": file,
+                                "error": format!("cannot write {file}: {e}")
+                            });
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&out)
+                                    .unwrap_or_else(|_| "{}".to_string())
+                            );
+                        } else {
+                            eprintln!("error: cannot write {file}: {e}");
+                        }
                         process::exit(1);
                     }
-                    println!(
-                        "{file}: applied fixes — re-run nudgec lint {} to see what's left",
-                        file
-                    );
                     let remaining = lint::lint_items(&compile(&fixed).unwrap_or(items));
-                    for l in &remaining {
-                        eprintln!("warning[{}]: {}", l.code, l.msg);
+                    if json_mode {
+                        println!(
+                            "{}",
+                            lint::lints_json(&file, &remaining, true, remaining.len())
+                        );
+                    } else {
+                        println!(
+                            "{file}: applied fixes — re-run nudgec lint {} to see what's left",
+                            file
+                        );
+                        for l in &remaining {
+                            eprintln!("warning[{}]: {}", l.code, l.msg);
+                        }
                     }
+                } else if json_mode {
+                    println!("{}", lint::lints_json(&file, &lints, false, lints.len()));
                 } else {
                     println!("{file}: nothing to auto-fix");
                 }
+            } else if json_mode {
+                println!("{}", lint::lints_json(&file, &lints, false, lints.len()));
             } else {
                 for l in &lints {
                     eprintln!("warning[{}]: {}", l.code, l.msg);

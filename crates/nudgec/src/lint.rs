@@ -511,6 +511,28 @@ pub fn apply_fixes(src: &str, lints: &[Lint]) -> String {
     out
 }
 
+pub fn lints_json(file: &str, lints: &[Lint], auto_fixed: bool, remaining_count: usize) -> String {
+    let list: Vec<serde_json::Value> = lints
+        .iter()
+        .map(|l| {
+            serde_json::json!({
+                "code": l.code,
+                "message": l.msg,
+                "fixable": l.fix.is_some(),
+            })
+        })
+        .collect();
+    let out = serde_json::json!({
+        "ok": true,
+        "file": file,
+        "lints_count": lints.len(),
+        "lints": list,
+        "auto_fixed": auto_fixed,
+        "remaining_count": remaining_count,
+    });
+    serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{}".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::lexer::lex;

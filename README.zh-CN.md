@@ -500,7 +500,10 @@ jobs:
 - **Trace 差异对比:** `nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]` 对比两份运行 trace 以检测行为回归，开启门禁时遇回归以状态码 1 退出。
 - **合规审计分析:** `nudgec audit <trace.jsonl> [--json]` 审计 NTF trace 是否符合欧盟人工智能法案 (EU AI Act) 合规要求（透明度、可治理性、未脱敏秘钥检测、风险阈值）。
 - **本地 Trace 查看器:** `nudgec trace-view <trace.jsonl> [--port N] [--no-open]` 启动本地 Web UI，可视化展示执行时间线、token 支出与自我修复步骤。
-- **代码格式化与监控:** `nudgec fmt <file.ndg> [--check]` 安全格式化代码，`nudgec check <file.ndg> --watch` 在每次保存时自动进行类型检查。
+- **代码格式化与监控:** `nudgec fmt <file.ndg> [--check] [--json]` 安全格式化代码，`nudgec check <file.ndg> [--json] --watch` 在每次保存时自动进行类型检查。
+- **代码检查与自动修复:** `nudgec lint <file.ndg> [--fix] [--json]` 检查最佳实践（未设定预算、模糊提示词、缺少重试修复）并自动应用安全修复。
+- **运行存储检查器:** `nudgec runs [--run <run_id>] [--json]` 检查持久化智能体运行状态、追踪记录与检查点。
+- **身份验证管理:** `nudgec auth login [provider]` 与 `nudgec auth status [--json]` 管理 OAuth 凭据并验证已连接的 AI 提供商。
 - **静态 HTML 导出:** `nudgec trace-html <trace.jsonl> [-o report.html]` 导出完全自包含的交互式审计报表。
 
 ### VS Code 扩展

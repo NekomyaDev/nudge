@@ -86,6 +86,77 @@ pub fn run(detail: Option<&str>) -> i32 {
     0
 }
 
+pub fn run_json(detail: Option<&str>) -> (i32, String) {
+    if let Some(id) = detail {
+        let dir = runs_dir().join(id);
+        if !dir.is_dir() {
+            let out = serde_json::json!({
+                "ok": false,
+                "error": format!("unknown run_id '{id}' (no {}/)", dir.display()),
+                "run_id": id,
+            });
+            return (
+                1,
+                serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{}".to_string()),
+            );
+        }
+        let program = std::fs::read_to_string(dir.join("program"))
+            .ok()
+            .map(|s| s.trim().to_string());
+        let trace = std::fs::read_to_string(dir.join("trace"))
+            .ok()
+            .map(|s| s.trim().to_string());
+        let checkpoint_raw = std::fs::read_to_string(dir.join("checkpoint.json")).ok();
+        let checkpoint_json = checkpoint_raw
+            .as_deref()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok());
+        let trace_records = if let Some(ref t_path) = trace {
+            std::fs::read_to_string(t_path)
+                .ok()
+                .map(|src| src.lines().filter(|l| !l.trim().is_empty()).count())
+        } else {
+            None
+        };
+
+        let out = serde_json::json!({
+            "ok": true,
+            "run_id": id,
+            "program": program,
+            "trace": trace,
+            "trace_records": trace_records,
+            "checkpoint": checkpoint_json,
+        });
+        (
+            0,
+            serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{}".to_string()),
+        )
+    } else {
+        let ids = run_ids();
+        let mut runs_list = Vec::new();
+        for id in &ids {
+            let dir = runs_dir().join(id);
+            let has_program = dir.join("program").exists();
+            let has_trace = dir.join("trace").exists();
+            let has_checkpoint = dir.join("checkpoint.json").exists();
+            runs_list.push(serde_json::json!({
+                "run_id": id,
+                "has_program": has_program,
+                "has_trace": has_trace,
+                "has_checkpoint": has_checkpoint,
+            }));
+        }
+        let out = serde_json::json!({
+            "ok": true,
+            "total": ids.len(),
+            "runs": runs_list,
+        });
+        (
+            0,
+            serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{}".to_string()),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,5 +171,23 @@ mod tests {
     fn empty_store_lists_nothing() {
         // runs_dir may not exist in the test cwd — must not panic
         let _ = run(None);
+    }
+
+    #[test]
+    fn run_json_smoke_test() {
+        let (code, json_str) = run_json(None);
+        assert_eq!(code, 0);
+        let val: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(val["ok"], true);
+        assert!(val["runs"].is_array());
+
+        let (code_missing, json_missing) = run_json(Some("non_existent_run_id"));
+        assert_eq!(code_missing, 1);
+        let val_missing: serde_json::Value = serde_json::from_str(&json_missing).unwrap();
+        assert_eq!(val_missing["ok"], false);
+        assert!(val_missing["error"]
+            .as_str()
+            .unwrap()
+            .contains("unknown run_id"));
     }
 }

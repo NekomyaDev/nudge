@@ -500,7 +500,10 @@ The frozen NTF specification lives at [docs/ntf-spec.md](docs/ntf-spec.md), with
 - **Trace Diffing:** `nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]` compares two execution traces to detect regressions, exiting with code 1 on regression when gated.
 - **Compliance Audit:** `nudgec audit <trace.jsonl> [--json]` audits an NTF trace against EU AI Act compliance criteria (transparency, governance, unredacted secrets, risk metrics).
 - **Local Trace Viewer:** `nudgec trace-view <trace.jsonl> [--port N] [--no-open]` starts a local web UI with visual execution timelines, token expenditure, and repair highlights.
-- **Formatter & Watcher:** `nudgec fmt <file.ndg> [--check]` safely formats code, and `nudgec check <file.ndg> --watch` type-checks on every save.
+- **Formatter & Watcher:** `nudgec fmt <file.ndg> [--check] [--json]` safely formats code, and `nudgec check <file.ndg> [--json] --watch` type-checks on every save.
+- **Linter & Auto-Fix:** `nudgec lint <file.ndg> [--fix] [--json]` scans programs for best practices (uncapped budgets, vague prompts, missing repairs) and automatically applies safe fixes.
+- **Run Store Inspector:** `nudgec runs [--run <run_id>] [--json]` inspects persistent execution states, traces, and checkpoints created by resilient agent runs.
+- **Authentication Manager:** `nudgec auth login [provider]` and `nudgec auth status [--json]` manage OAuth credentials and verify connected AI providers.
 - **Static HTML Export:** `nudgec trace-html <trace.jsonl> [-o report.html]` exports self-contained interactive audit reports.
 
 ### VS Code Extension
