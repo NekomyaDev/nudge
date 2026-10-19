@@ -26,7 +26,7 @@ use std::{env, fs, process};
 
 fn print_usage_to(to_stderr: bool) {
     let msg = format!(
-        "nudgec {} -- the Nudge compiler\nusage:\n  nudgec fmt   <file.ndg> [--check]   normalize indentation, trim trailing ws, collapse blanks\n  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)\n  nudgec learn [lesson]     the language in eight terminal lessons (run bare for the index)\n  nudgec lex   <file.ndg> [--json]   dump token stream\n  nudgec parse <file.ndg> [--json]   dump AST\n  nudgec check <file.ndg> [--json] [--watch]   type-check (E0101–E0302)\n  nudgec build <file.ndg> [--standalone] [-o <output>] [--fn <entry>]  check, emit Python (or native binary with --standalone)\n  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts\n  nudgec cost  <file.ndg> [--json]   static cost report per fn\n  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn\n  nudgec run  <file.ndg> [--fn <name>] [args...]  execute a program fn on the bytecode VM (or the interpreter)\n  nudgec resume <run_id>    continue a crashed run from its last checkpoint\n  nudgec trace-check <t.jsonl> [--json] validate a trace against the frozen v1 schema\n  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json\n  nudgec a2a-serve <file.ndg> [--port N]  serve agent as an A2A protocol peer (v2.0)\n  nudgec lsp                serve the Language Server Protocol over stdio\n  nudgec trace-html <t.jsonl> [--out file.html]  static single-file viewer (no server, works offline)\n  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace\n  nudgec explain <t.jsonl> [--json]    human report over a trace: totals, failures, low-confidence answers\n  nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]  compare traces; gate CI on regression\n  nudgec audit <trace.jsonl> [--json]       compliance audit report over an NTF trace (EU AI Act)\n  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8] [--json]\n  nudgec compare <results_a.jsonl> <results_b.jsonl> [--json]  two eval runs: which rows flipped\n  nudgec runs  [--run <run_id>]   list recorded agent runs / show one run's state and trace\n  nudgec mcp   <file.ndg> [--fns a,b]   expose program fns as MCP tools over stdio\n  nudgec serve <file.ndg> [--fn <name>] [--port N]   run a program fn as a local HTTP API (POST /run, GET /health)\n  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8] [--json]  score a program over a dataset\n  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)\n  nudgec fuzz  [file.ndg] [--iterations N] [--seed S] [--json]  fuzz the compiler pipeline with mutated inputs (v1.6)",
+        "nudgec {} -- the Nudge compiler\nusage:\n  nudgec fmt   <file.ndg> [--check] [--json]   normalize indentation, trim trailing ws, collapse blanks\n  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)\n  nudgec learn [lesson]     the language in eight terminal lessons (run bare for the index)\n  nudgec lex   <file.ndg> [--json]   dump token stream\n  nudgec parse <file.ndg> [--json]   dump AST\n  nudgec check <file.ndg> [--json] [--watch]   type-check (E0101–E0302)\n  nudgec build <file.ndg> [--standalone] [-o <output>] [--fn <entry>]  check, emit Python (or native binary with --standalone)\n  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts\n  nudgec cost  <file.ndg> [--json]   static cost report per fn\n  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn\n  nudgec run  <file.ndg> [--fn <name>] [args...]  execute a program fn on the bytecode VM (or the interpreter)\n  nudgec resume <run_id>    continue a crashed run from its last checkpoint\n  nudgec trace-check <t.jsonl> [--json] validate a trace against the frozen v1 schema\n  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json\n  nudgec a2a-serve <file.ndg> [--port N]  serve agent as an A2A protocol peer (v2.0)\n  nudgec lsp                serve the Language Server Protocol over stdio\n  nudgec trace-html <t.jsonl> [--out file.html]  static single-file viewer (no server, works offline)\n  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace\n  nudgec explain <t.jsonl> [--json]    human report over a trace: totals, failures, low-confidence answers\n  nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]  compare traces; gate CI on regression\n  nudgec audit <trace.jsonl> [--json]       compliance audit report over an NTF trace (EU AI Act)\n  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8] [--json]\n  nudgec compare <results_a.jsonl> <results_b.jsonl> [--json]  two eval runs: which rows flipped\n  nudgec runs  [--run <run_id>]   list recorded agent runs / show one run's state and trace\n  nudgec mcp   <file.ndg> [--fns a,b]   expose program fns as MCP tools over stdio\n  nudgec serve <file.ndg> [--fn <name>] [--port N]   run a program fn as a local HTTP API (POST /run, GET /health)\n  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8] [--json]  score a program over a dataset\n  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)\n  nudgec fuzz  [file.ndg] [--iterations N] [--seed S] [--json]  fuzz the compiler pipeline with mutated inputs (v1.6)",
         env!("CARGO_PKG_VERSION")
     );
     if to_stderr {
@@ -387,47 +387,114 @@ fn main() {
         }
         return;
     }
-    // `fmt` normalizes indentation; --check reports without writing
-    if args.len() >= 3 && args[1] == "fmt" {
-        let check = args.iter().any(|a| a == "--check");
-        let file = match args
-            .iter()
-            .skip(1)
-            .find(|a| !a.starts_with('-') && a.as_str() != "fmt")
-        {
-            Some(f) => f.clone(),
-            None => usage(),
-        };
-        let src = read_src(&file);
-        let action = || -> Result<bool, String> {
-            if check {
-                fmt::needs_formatting(&src)
+    // `fmt` normalizes indentation; --check reports without writing; --json emits structured JSON
+    if args.len() >= 2 && args[1] == "fmt" {
+        let mut json_mode = false;
+        let mut check_mode = false;
+        let mut file = None;
+        for arg in &args[2..] {
+            if arg == "--json" {
+                json_mode = true;
+            } else if arg == "--check" {
+                check_mode = true;
+            } else if arg == "--help" || arg == "-h" {
+                println!("usage: nudgec fmt <file.ndg> [--check] [--json]");
+                process::exit(0);
+            } else if arg.starts_with('-') {
+                eprintln!("error: unknown flag '{arg}'");
+                process::exit(64);
+            } else if file.is_none() {
+                file = Some(arg.as_str());
             } else {
-                fmt::fmt(&src).map(|out| {
-                    let changed = out != src;
-                    if changed {
-                        fs::write(&file, &out).map_err(|e| format!("cannot write {file}: {e}"))?;
-                    }
-                    Ok(changed)
-                })?
+                eprintln!("error: unexpected positional argument '{arg}'");
+                process::exit(64);
             }
+        }
+        let Some(f) = file else {
+            eprintln!("usage: nudgec fmt <file.ndg> [--check] [--json]");
+            process::exit(64);
         };
-        match action() {
+        let src = match fs::read_to_string(f) {
+            Ok(s) => s,
             Err(e) => {
-                eprintln!("error: {e}");
+                let msg = format!("cannot read {f}: {e}");
+                if json_mode {
+                    println!("{}", fmt::fmt_error_json(f, &msg));
+                } else {
+                    eprintln!("error: {msg}");
+                }
                 process::exit(1);
             }
-            Ok(true) => {
-                if check {
-                    println!("{file}: needs formatting");
-                    process::exit(1);
-                } else {
-                    println!("{file}: formatted");
+        };
+
+        if json_mode {
+            if check_mode {
+                match fmt::check_fmt_json(f, &src) {
+                    Ok(json_str) => {
+                        println!("{json_str}");
+                        let needs = fmt::needs_formatting(&src).unwrap_or(false);
+                        if needs {
+                            process::exit(1);
+                        } else {
+                            process::exit(0);
+                        }
+                    }
+                    Err(e) => {
+                        println!("{}", fmt::fmt_error_json(f, &e));
+                        process::exit(1);
+                    }
+                }
+            } else {
+                match fmt::fmt(&src) {
+                    Ok(out) => {
+                        let changed = out != src;
+                        if changed {
+                            if let Err(e) = fs::write(f, &out) {
+                                let msg = format!("cannot write {f}: {e}");
+                                println!("{}", fmt::fmt_error_json(f, &msg));
+                                process::exit(1);
+                            }
+                        }
+                        println!("{}", fmt::fmt_output_json(f, false, changed));
+                        process::exit(0);
+                    }
+                    Err(e) => {
+                        println!("{}", fmt::fmt_error_json(f, &e));
+                        process::exit(1);
+                    }
                 }
             }
-            Ok(false) => println!("{file}: already formatted"),
+        } else {
+            let action = || -> Result<bool, String> {
+                if check_mode {
+                    fmt::needs_formatting(&src)
+                } else {
+                    fmt::fmt(&src).map(|out| {
+                        let changed = out != src;
+                        if changed {
+                            fs::write(f, &out).map_err(|e| format!("cannot write {f}: {e}"))?;
+                        }
+                        Ok(changed)
+                    })?
+                }
+            };
+            match action() {
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
+                Ok(true) => {
+                    if check_mode {
+                        println!("{f}: needs formatting");
+                        process::exit(1);
+                    } else {
+                        println!("{f}: formatted");
+                    }
+                }
+                Ok(false) => println!("{f}: already formatted"),
+            }
+            return;
         }
-        return;
     }
     // `trace-html` exports the viewer as a static single file
     if args.len() >= 3 && args[1] == "trace-html" {

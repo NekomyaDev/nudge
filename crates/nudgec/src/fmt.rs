@@ -7,6 +7,7 @@
 //! idempotent.
 
 use crate::lexer::{lex, Tok};
+use serde::Serialize;
 
 const INDENT: &str = "    ";
 
@@ -119,6 +120,44 @@ pub fn needs_formatting(src: &str) -> Result<bool, String> {
     Ok(fmt(src)? != src)
 }
 
+#[derive(Serialize)]
+struct FmtOutputJson<'a> {
+    file: &'a str,
+    needs_formatting: bool,
+    changed: bool,
+}
+
+#[derive(Serialize)]
+struct FmtErrorJson<'a> {
+    file: &'a str,
+    error: &'a str,
+}
+
+/// JSON output representation of a format or check-format operation.
+pub fn fmt_output_json(file: &str, needs_formatting: bool, changed: bool) -> String {
+    let payload = FmtOutputJson {
+        file,
+        needs_formatting,
+        changed,
+    };
+    serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// JSON output representation of a format error.
+pub fn fmt_error_json(file: &str, error: &str) -> String {
+    let payload = FmtErrorJson { file, error };
+    serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Returns a JSON string with format check status:
+/// `{"file": file, "needs_formatting": bool, "changed": false}`.
+/// If an error occurs during lexing/formatting, returns `Err(msg)`.
+pub fn check_fmt_json(file: &str, src: &str) -> Result<String, String> {
+    let formatted = fmt(src)?;
+    let needs = formatted != src;
+    Ok(fmt_output_json(file, needs, false))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,5 +205,26 @@ mod tests {
         let src = "fn f() -> int {\n// a comment\n1\n}\n";
         let out = fmt(src).unwrap();
         assert!(out.contains("    // a comment"), "{out}");
+    }
+
+    #[test]
+    fn test_check_fmt_json_reports_status_and_errors() {
+        let dirty = "fn f() -> int {\n1\n}\n";
+        let res = check_fmt_json("dirty.ndg", dirty).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&res).unwrap();
+        assert_eq!(val["file"], "dirty.ndg");
+        assert_eq!(val["needs_formatting"], true);
+        assert_eq!(val["changed"], false);
+
+        let clean = fmt(dirty).unwrap();
+        let res_clean = check_fmt_json("clean.ndg", &clean).unwrap();
+        let val_clean: serde_json::Value = serde_json::from_str(&res_clean).unwrap();
+        assert_eq!(val_clean["file"], "clean.ndg");
+        assert_eq!(val_clean["needs_formatting"], false);
+        assert_eq!(val_clean["changed"], false);
+
+        let err = check_fmt_json("broken.ndg", "llm\"\"\"unterminated prompt");
+        assert!(err.is_err());
+        assert!(err.unwrap_err().contains("cannot format"));
     }
 }

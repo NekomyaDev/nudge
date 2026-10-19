@@ -1141,4 +1141,218 @@ fn test_cli_usage_includes_json_for_lex_and_parse() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("nudgec lex   <file.ndg> [--json]   dump token stream"));
     assert!(stdout.contains("nudgec parse <file.ndg> [--json]   dump AST"));
+    assert!(stdout.contains("nudgec fmt   <file.ndg> [--check] [--json]   normalize indentation, trim trailing ws, collapse blanks"));
+}
+
+#[test]
+fn test_cli_fmt_json_and_flag_positions() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "nudge_test_cli_fmt_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    fs::create_dir_all(&temp_dir).expect("create temp dir");
+
+    let dirty_src = "fn f() -> int {\n1\n}\n";
+    let clean_src = "fn f() -> int {\n    1\n}\n";
+    let invalid_src = "llm\"\"\"unterminated prompt";
+
+    let dirty_path = temp_dir.join("dirty.ndg");
+    let clean_path = temp_dir.join("clean.ndg");
+    let invalid_path = temp_dir.join("invalid.ndg");
+
+    fs::write(&dirty_path, dirty_src).expect("write dirty ndg");
+    fs::write(&clean_path, clean_src).expect("write clean ndg");
+    fs::write(&invalid_path, invalid_src).expect("write invalid ndg");
+
+    // 1. --check and --json on dirty file (flags after file)
+    let out1 = Command::new(nudgec_bin())
+        .arg("fmt")
+        .arg(&dirty_path)
+        .arg("--check")
+        .arg("--json")
+        .output()
+        .expect("run fmt");
+    assert_eq!(out1.status.code(), Some(1));
+    let parsed1: serde_json::Value =
+        serde_json::from_slice(&out1.stdout).expect("valid json output");
+    assert_eq!(parsed1["file"], dirty_path.to_str().unwrap());
+    assert_eq!(parsed1["needs_formatting"], true);
+    assert_eq!(parsed1["changed"], false);
+    assert_eq!(
+        fs::read_to_string(&dirty_path).unwrap(),
+        dirty_src,
+        "check mode must not write file"
+    );
+
+    // 2. --check and --json with flags before file
+    let out2 = Command::new(nudgec_bin())
+        .arg("fmt")
+        .arg("--json")
+        .arg("--check")
+        .arg(&dirty_path)
+        .output()
+        .expect("run fmt");
+    assert_eq!(out2.status.code(), Some(1));
+    let parsed2: serde_json::Value =
+        serde_json::from_slice(&out2.stdout).expect("valid json output");
+    assert_eq!(parsed2["file"], dirty_path.to_str().unwrap());
+    assert_eq!(parsed2["needs_formatting"], true);
+    assert_eq!(parsed2["changed"], false);
+
+    // 3. Interleaved flags: fmt --check file --json
+    let out3 = Command::new(nudgec_bin())
+        .arg("fmt")
+        .arg("--check")
+        .arg(&dirty_path)
+        .arg("--json")
+        .output()
+        .expect("run fmt");
+    assert_eq!(out3.status.code(), Some(1));
+    let parsed3: serde_json::Value =
+        serde_json::from_slice(&out3.stdout).expect("valid json output");
+    assert_eq!(parsed3["file"], dirty_path.to_str().unwrap());
+    assert_eq!(parsed3["needs_formatting"], true);
+    assert_eq!(parsed3["changed"], false);
+
+    // 4. --check and --json on clean file exits 0
+    let out4 = Command::new(nudgec_bin())
+        .arg("fmt")
+        .arg(&clean_path)
+        .arg("--check")
+        .arg("--json")
+        .output()
+        .expect("run fmt");
+    assert_eq!(out4.status.code(), Some(0));
+    let parsed4: serde_json::Value =
+        serde_json::from_slice(&out4.stdout).expect("valid json output");
+    assert_eq!(parsed4["file"], clean_path.to_str().unwrap());
+    assert_eq!(parsed4["needs_formatting"], false);
+    assert_eq!(parsed4["changed"], false);
+
+    // 5. In-place formatting with --json on dirty file
+    let to_format_path = temp_dir.join("to_format.ndg");
+    fs::write(&to_format_path, dirty_src).expect("write to_format ndg");
+    let out5 = Command::new(nudgec_bin())
+        .arg("fmt")
+        .arg(&to_format_path)
+        .arg("--json")
+        .output()
+        .expect("run fmt");
+    assert_eq!(out5.status.code(), Some(0));
+    let parsed5: serde_json::Value =
+        serde_json::from_slice(&out5.stdout).expect("valid json output");
+    assert_eq!(parsed5["file"], to_format_path.to_str().unwrap());
+    assert_eq!(parsed5["needs_formatting"], false);
+    assert_eq!(parsed5["changed"], true);
+    assert_eq!(
+        fs::read_to_string(&to_format_path).unwrap(),
+        clean_src,
+        "file must be formatted on disk"
+    );
+
+    // 6. In-place formatting with --json on already formatted file
+    let out6 = Command::new(nudgec_bin())
+        .arg("fmt")
+        .arg(&clean_path)
+        .arg("--json")
+        .output()
+        .expect("run fmt");
+    assert_eq!(out6.status.code(), Some(0));
+    let parsed6: serde_json::Value =
+        serde_json::from_slice(&out6.stdout).expect("valid json output");
+    assert_eq!(parsed6["file"], clean_path.to_str().unwrap());
+    assert_eq!(parsed6["needs_formatting"], false);
+    assert_eq!(parsed6["changed"], false);
+
+    // 7. Error during formatting with --json exits 1 and emits structured JSON
+    let out7 = Command::new(nudgec_bin())
+        .arg("fmt")
+        .arg(&invalid_path)
+        .arg("--json")
+        .output()
+        .expect("run fmt");
+    assert_eq!(out7.status.code(), Some(1));
+    let parsed7: serde_json::Value =
+        serde_json::from_slice(&out7.stdout).expect("valid json output");
+    assert_eq!(parsed7["file"], invalid_path.to_str().unwrap());
+    assert!(parsed7["error"].as_str().unwrap().contains("cannot format"));
+
+    // 8. Missing file with --json exits 1 and emits structured JSON error
+    let missing_path = temp_dir.join("nonexistent.ndg");
+    let out8 = Command::new(nudgec_bin())
+        .arg("fmt")
+        .arg(&missing_path)
+        .arg("--json")
+        .output()
+        .expect("run fmt");
+    assert_eq!(out8.status.code(), Some(1));
+    let parsed8: serde_json::Value =
+        serde_json::from_slice(&out8.stdout).expect("valid json output");
+    assert_eq!(parsed8["file"], missing_path.to_str().unwrap());
+    assert!(parsed8["error"].as_str().unwrap().contains("cannot read"));
+
+    // 9. Standard mode without --json unchanged
+    let out9_check = Command::new(nudgec_bin())
+        .arg("fmt")
+        .arg(&dirty_path)
+        .arg("--check")
+        .output()
+        .expect("run fmt");
+    assert_eq!(out9_check.status.code(), Some(1));
+    let stdout9_check = String::from_utf8_lossy(&out9_check.stdout);
+    assert!(stdout9_check.contains("needs formatting"));
+
+    let out9_clean = Command::new(nudgec_bin())
+        .arg("fmt")
+        .arg(&clean_path)
+        .arg("--check")
+        .output()
+        .expect("run fmt");
+    assert_eq!(out9_clean.status.code(), Some(0));
+    let stdout9_clean = String::from_utf8_lossy(&out9_clean.stdout);
+    assert!(stdout9_clean.contains("already formatted"));
+
+    // 10. Missing file positional argument exits 64 with usage
+    let out10 = Command::new(nudgec_bin())
+        .arg("fmt")
+        .output()
+        .expect("run fmt");
+    assert_eq!(out10.status.code(), Some(64));
+    let stderr10 = String::from_utf8_lossy(&out10.stderr);
+    assert!(stderr10.contains("usage: nudgec fmt <file.ndg> [--check] [--json]"));
+
+    let out10_flag = Command::new(nudgec_bin())
+        .arg("fmt")
+        .arg("--json")
+        .output()
+        .expect("run fmt");
+    assert_eq!(out10_flag.status.code(), Some(64));
+    let stderr10_flag = String::from_utf8_lossy(&out10_flag.stderr);
+    assert!(stderr10_flag.contains("usage: nudgec fmt <file.ndg> [--check] [--json]"));
+
+    // 11. Unknown flag exits 64
+    let out11 = Command::new(nudgec_bin())
+        .arg("fmt")
+        .arg(&clean_path)
+        .arg("--unknown")
+        .output()
+        .expect("run fmt");
+    assert_eq!(out11.status.code(), Some(64));
+    let stderr11 = String::from_utf8_lossy(&out11.stderr);
+    assert!(stderr11.contains("error: unknown flag '--unknown'"));
+
+    // 12. Help flag exits 0
+    let out12 = Command::new(nudgec_bin())
+        .arg("fmt")
+        .arg("--help")
+        .output()
+        .expect("run fmt");
+    assert_eq!(out12.status.code(), Some(0));
+    let stdout12 = String::from_utf8_lossy(&out12.stdout);
+    assert!(stdout12.contains("usage: nudgec fmt <file.ndg> [--check] [--json]"));
+
+    let _ = fs::remove_dir_all(&temp_dir);
 }
