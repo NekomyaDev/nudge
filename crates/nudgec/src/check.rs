@@ -1952,7 +1952,8 @@ fn check_expr_pos(
                         }
                     } else if prefix == "math" {
                         match name.as_str() {
-                            "abs" | "floor" | "ceil" | "round" | "sqrt" | "sin" | "cos" | "tan" | "exp" | "ln" => {
+                            "abs" | "floor" | "ceil" | "round" | "sqrt" | "sin" | "cos" | "tan"
+                            | "exp" | "ln" => {
                                 if args.is_empty() {
                                     errs.push(CheckError {
                                         span: None,
@@ -1973,7 +1974,9 @@ fn check_expr_pos(
                         match name.as_str() {
                             "length" | "to_int" => return Ty::Int,
                             "to_float" => return Ty::Float,
-                            "upper" | "lower" | "trim" | "replace" | "substring" | "to_string" => return Ty::Str,
+                            "upper" | "lower" | "trim" | "replace" | "substring" | "to_string" => {
+                                return Ty::Str
+                            }
                             "contains" => return Ty::Bool,
                             "split" => return Ty::List(Box::new(Ty::Str)),
                             "index_of" => return Ty::Int,
@@ -5604,6 +5607,8 @@ fn f() -> int | string {
         // arity check: math.abs takes 1 argument
         let bad_math = "fn bad() -> float { math.abs() }";
         let errs = check_src(bad_math);
-        assert!(errs.iter().any(|e| e.code == "E0201" && e.msg.contains("math.abs")));
+        assert!(errs
+            .iter()
+            .any(|e| e.code == "E0201" && e.msg.contains("math.abs")));
     }
 }
