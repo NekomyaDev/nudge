@@ -29,9 +29,8 @@ fn line_col(src: &str, at: usize) -> (usize, usize) {
                     let valid_len = e.valid_up_to();
                     if valid_len > 0 {
                         std::str::from_utf8(&bytes[i..i + valid_len])
-                            .unwrap()
-                            .chars()
-                            .next()
+                            .ok()
+                            .and_then(|s| s.chars().next())
                             .unwrap_or('\u{FFFD}')
                     } else {
                         '\u{FFFD}'
@@ -768,5 +767,22 @@ mod tests {
             read_frame(&mut cur).as_deref(),
             Some("{\"jsonrpc\":\"2.0\"}")
         );
+    }
+
+    #[test]
+    fn line_col_handles_utf8_multibyte_and_invalid_bytes_without_panic() {
+        let src = "fn test() {\n    let emoji = \"🚀\"\n    let kanji = \"日本語\"\n}\n";
+        // Verify line_col doesn't panic on character boundaries or beyond EOF
+        let (l, c) = line_col(src, src.len());
+        assert_eq!(l, 4);
+        assert_eq!(c, 0);
+
+        let (l_start, c_start) = line_col(src, 0);
+        assert_eq!(l_start, 0);
+        assert_eq!(c_start, 0);
+
+        // Clamping check
+        let (l_overflow, _) = line_col(src, src.len() + 100);
+        assert_eq!(l_overflow, 4);
     }
 }
