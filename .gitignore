@@ -9,6 +9,7 @@ node_modules/
 __pycache__/
 *.pyc
 /trace.jsonl
+crates/**/trace.jsonl
 !conformance/cases/**/trace.jsonl
 .nudge/store/
 traces/local/
