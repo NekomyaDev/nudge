@@ -14,6 +14,7 @@
 //! Deferred: optional/union types, flow analysis.
 
 use crate::ast::*;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 
@@ -3297,6 +3298,78 @@ fn is_builtin_type_name(n: &str) -> bool {
     matches!(n, "string" | "int" | "float" | "bool" | "none")
 }
 
+/// Diagnostic report item for machine-readable JSON output.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CheckDiagnosticJson {
+    pub code: String,
+    pub message: String,
+    pub line: Option<usize>,
+    pub col: Option<usize>,
+    pub span: Option<Span>,
+}
+
+/// Structured type-checker report returned by `check_json`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CheckOutputJson {
+    pub ok: bool,
+    pub items_count: usize,
+    pub errors_count: usize,
+    pub errors: Vec<CheckDiagnosticJson>,
+}
+
+/// 1-based line:col of a byte offset, for diagnostics.
+pub fn line_col(src: &str, at: usize) -> (usize, usize) {
+    let mut line = 1;
+    let mut col = 1;
+    let at = at.min(src.len());
+    for (byte_idx, ch) in src.char_indices() {
+        if byte_idx >= at {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
+/// Check a whole program and serialize the diagnostics report as structured JSON.
+pub fn check_json(items: &[Item], src: &str) -> String {
+    let errs = check(items);
+    let ok = errs.is_empty();
+    let errors: Vec<CheckDiagnosticJson> = errs
+        .into_iter()
+        .map(|e| {
+            let (line, col) = match e.span {
+                Some(sp) => {
+                    let (l, c) = line_col(src, sp.start);
+                    (Some(l), Some(c))
+                }
+                None => (None, None),
+            };
+            CheckDiagnosticJson {
+                code: e.code.to_string(),
+                message: e.msg,
+                line,
+                col,
+                span: e.span,
+            }
+        })
+        .collect();
+
+    let output = CheckOutputJson {
+        ok,
+        items_count: items.len(),
+        errors_count: errors.len(),
+        errors,
+    };
+
+    serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string())
+}
+
 // ── tests ────────────────────────────────────────────────────────────
 #[cfg(test)]
 mod tests {
@@ -5428,5 +5501,50 @@ fn f() -> int | string {
             errs.iter().any(|e| e.code == "E0201"),
             "expected E0201, got {errs:?}"
         );
+    }
+
+    #[test]
+    fn test_check_json_valid_and_invalid() {
+        // Valid program
+        let valid_src = "fn add(a: int, b: int) -> int { a + b }";
+        let valid_items = parse(lex(valid_src).unwrap()).unwrap();
+        let valid_json_str = check_json(&valid_items, valid_src);
+        let valid_val: serde_json::Value = serde_json::from_str(&valid_json_str).unwrap();
+        assert_eq!(valid_val["ok"], true);
+        assert_eq!(valid_val["items_count"], 1);
+        assert_eq!(valid_val["errors_count"], 0);
+        assert!(valid_val["errors"].as_array().unwrap().is_empty());
+
+        // Invalid program with span (type mismatch E0201)
+        let invalid_src = "fn f() -> int\n    costs < 10 {\n    1\n}";
+        let invalid_items = parse(lex(invalid_src).unwrap()).unwrap();
+        let invalid_json_str = check_json(&invalid_items, invalid_src);
+        let invalid_val: serde_json::Value = serde_json::from_str(&invalid_json_str).unwrap();
+        assert_eq!(invalid_val["ok"], false);
+        assert_eq!(invalid_val["items_count"], 1);
+        assert_eq!(invalid_val["errors_count"], 1);
+        let err = &invalid_val["errors"][0];
+        assert_eq!(err["code"], "E0201");
+        assert!(err["message"]
+            .as_str()
+            .unwrap()
+            .contains("cost bound must be a money literal"));
+        assert_eq!(err["line"], 2);
+        assert_eq!(err["col"], 13);
+        assert!(err["span"].is_object());
+
+        // Invalid program with span: None (e.g. duplicate fn E0102)
+        let dup_src = "fn dup() -> int { 1 }\nfn dup() -> int { 2 }";
+        let dup_items = parse(lex(dup_src).unwrap()).unwrap();
+        let dup_json_str = check_json(&dup_items, dup_src);
+        let dup_val: serde_json::Value = serde_json::from_str(&dup_json_str).unwrap();
+        assert_eq!(dup_val["ok"], false);
+        assert_eq!(dup_val["items_count"], 2);
+        assert_eq!(dup_val["errors_count"], 1);
+        let dup_err = &dup_val["errors"][0];
+        assert_eq!(dup_err["code"], "E0102");
+        assert!(dup_err["line"].is_null());
+        assert!(dup_err["col"].is_null());
+        assert!(dup_err["span"].is_null());
     }
 }

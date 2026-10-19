@@ -1,7 +1,7 @@
 //! nudgec — the Nudge compiler driver.
 //!   nudgec lex   <file.ndg>   dump token stream
 //!   nudgec parse <file.ndg>   dump AST
-//!   nudgec check <file.ndg>   type-check (E0101–E0302)
+//!   nudgec check <file.ndg> [--json] [--watch]  type-check (E0101–E0302)
 //!   nudgec build <file.ndg>   check, then emit Python to out/<name>.py
 //!   nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts (v0.3c)
 //!   nudgec cost  <file.ndg> [--json]  static cost report per fn (v0.4, design §13)
@@ -26,7 +26,7 @@ use std::{env, fs, process};
 
 fn print_usage_to(to_stderr: bool) {
     let msg = format!(
-        "nudgec {} -- the Nudge compiler\nusage:\n  nudgec fmt   <file.ndg> [--check]   normalize indentation, trim trailing ws, collapse blanks\n  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)\n  nudgec learn [lesson]     the language in eight terminal lessons (run bare for the index)\n  nudgec lex   <file.ndg>   dump token stream\n  nudgec parse <file.ndg>   dump AST\n  nudgec check <file.ndg>   type-check (E0101–E0302)\n  nudgec build <file.ndg> [--standalone] [-o <output>] [--fn <entry>]  check, emit Python (or native binary with --standalone)\n  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts\n  nudgec check <file.ndg> --watch   re-check on every file change (Ctrl-C to stop)\n  nudgec cost  <file.ndg> [--json]   static cost report per fn\n  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn\n  nudgec run  <file.ndg> [--fn <name>] [args...]  execute a program fn on the bytecode VM (or the interpreter)\n  nudgec resume <run_id>    continue a crashed run from its last checkpoint\n  nudgec trace-check <t.jsonl> [--json] validate a trace against the frozen v1 schema\n  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json\n  nudgec a2a-serve <file.ndg> [--port N]  serve agent as an A2A protocol peer (v2.0)\n  nudgec lsp                serve the Language Server Protocol over stdio\n  nudgec trace-html <t.jsonl> [--out file.html]  static single-file viewer (no server, works offline)\n  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace\n  nudgec explain <t.jsonl> [--json]    human report over a trace: totals, failures, low-confidence answers\n  nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]  compare traces; gate CI on regression\n  nudgec audit <trace.jsonl> [--json]       compliance audit report over an NTF trace (EU AI Act)\n  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8] [--json]\n  nudgec compare <results_a.jsonl> <results_b.jsonl> [--json]  two eval runs: which rows flipped\n  nudgec runs  [--run <run_id>]   list recorded agent runs / show one run's state and trace\n  nudgec mcp   <file.ndg> [--fns a,b]   expose program fns as MCP tools over stdio\n  nudgec serve <file.ndg> [--fn <name>] [--port N]   run a program fn as a local HTTP API (POST /run, GET /health)\n  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8] [--json]  score a program over a dataset\n  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)\n  nudgec fuzz  [file.ndg] [--iterations N] [--seed S] [--json]  fuzz the compiler pipeline with mutated inputs (v1.6)",
+        "nudgec {} -- the Nudge compiler\nusage:\n  nudgec fmt   <file.ndg> [--check]   normalize indentation, trim trailing ws, collapse blanks\n  nudgec init  <name> [--template <t>] [--force]  scaffold a project from a template (`--list` to browse)\n  nudgec learn [lesson]     the language in eight terminal lessons (run bare for the index)\n  nudgec lex   <file.ndg>   dump token stream\n  nudgec parse <file.ndg>   dump AST\n  nudgec check <file.ndg> [--json] [--watch]   type-check (E0101–E0302)\n  nudgec build <file.ndg> [--standalone] [-o <output>] [--fn <entry>]  check, emit Python (or native binary with --standalone)\n  nudgec build-ts <file.ndg> check, then emit TypeScript to out/<name>.ts\n  nudgec cost  <file.ndg> [--json]   static cost report per fn\n  nudgec test  <file.ndg>   check, emit, then run every nudge_test_* fn\n  nudgec run  <file.ndg> [--fn <name>] [args...]  execute a program fn on the bytecode VM (or the interpreter)\n  nudgec resume <run_id>    continue a crashed run from its last checkpoint\n  nudgec trace-check <t.jsonl> [--json] validate a trace against the frozen v1 schema\n  nudgec a2a   <file.ndg>   emit A2A agent card(s) to out/<name>.agent.json\n  nudgec a2a-serve <file.ndg> [--port N]  serve agent as an A2A protocol peer (v2.0)\n  nudgec lsp                serve the Language Server Protocol over stdio\n  nudgec trace-html <t.jsonl> [--out file.html]  static single-file viewer (no server, works offline)\n  nudgec trace-view <t.jsonl> [--port N] [--no-open]  local web UI for a trace\n  nudgec explain <t.jsonl> [--json]    human report over a trace: totals, failures, low-confidence answers\n  nudgec trace-diff <a.jsonl> <b.jsonl> [--json] [--fail-on-regression]  compare traces; gate CI on regression\n  nudgec audit <trace.jsonl> [--json]       compliance audit report over an NTF trace (EU AI Act)\n  nudgec policy-sweep <trace.jsonl> --question <q> [--metric confidence|p] [--thresholds 0.5,0.8] [--json]\n  nudgec compare <results_a.jsonl> <results_b.jsonl> [--json]  two eval runs: which rows flipped\n  nudgec runs  [--run <run_id>]   list recorded agent runs / show one run's state and trace\n  nudgec mcp   <file.ndg> [--fns a,b]   expose program fns as MCP tools over stdio\n  nudgec serve <file.ndg> [--fn <name>] [--port N]   run a program fn as a local HTTP API (POST /run, GET /health)\n  nudgec eval  <file.ndg> --dataset <rows.jsonl> [--fn <name>] [--path <dotted>] [--min-accuracy 0.8] [--json]  score a program over a dataset\n  nudgec debug <t.jsonl>    step through a trace over DAP (Debug Adapter Protocol)\n  nudgec fuzz  [file.ndg] [--iterations N] [--seed S] [--json]  fuzz the compiler pipeline with mutated inputs (v1.6)",
         env!("CARGO_PKG_VERSION")
     );
     if to_stderr {
@@ -54,6 +54,17 @@ fn read_src(path: &str) -> String {
 fn print_hint(code: &str) {
     if let Some(h) = hints::hint(code) {
         eprintln!("  hint: {h}");
+    }
+}
+
+/// 1-based line:col of a byte offset, for human-facing diagnostics.
+fn line_col(src: &str, at: usize) -> (usize, usize) {
+    check::line_col(src, at)
+}
+
+fn print_lints(items: &[ast::Item]) {
+    for l in lint::lint_items(items) {
+        eprintln!("warning[{}]: {}", l.code, l.msg);
     }
 }
 
@@ -175,17 +186,101 @@ fn main() {
         }
         return;
     }
-    // `check --watch` re-runs the checker on every file change (B4)
-    if args.len() >= 3 && args[1] == "check" && args.iter().any(|a| a == "--watch") {
-        let file = match args
-            .iter()
-            .skip(1)
-            .find(|a| !a.starts_with('-') && a.as_str() != "check")
-        {
-            Some(f) => f.clone(),
-            None => usage(),
+    // `check` type-checks a source file (with optional --json or --watch)
+    if args.len() >= 2 && args[1] == "check" {
+        let mut json_mode = false;
+        let mut watch_mode = false;
+        let mut file = None;
+        for arg in &args[2..] {
+            if arg == "--json" {
+                json_mode = true;
+            } else if arg == "--watch" {
+                watch_mode = true;
+            } else if arg == "--help" || arg == "-h" {
+                println!("usage: nudgec check <file.ndg> [--json] [--watch]");
+                process::exit(0);
+            } else if arg.starts_with('-') {
+                eprintln!("error: unknown flag '{arg}'");
+                process::exit(64);
+            } else if file.is_none() {
+                file = Some(arg.as_str());
+            } else {
+                eprintln!("error: unexpected positional argument '{arg}'");
+                process::exit(64);
+            }
+        }
+        let Some(f) = file else {
+            eprintln!("usage: nudgec check <file.ndg> [--json] [--watch]");
+            process::exit(64);
         };
-        watch::run(&file);
+        if watch_mode {
+            watch::run(f);
+        }
+        let src = read_src(f);
+        if json_mode {
+            match compile(&src) {
+                Ok(items) => {
+                    let errs = check::check(&items);
+                    println!("{}", check::check_json(&items, &src));
+                    if errs.is_empty() {
+                        process::exit(0);
+                    } else {
+                        process::exit(1);
+                    }
+                }
+                Err((msg, at)) => {
+                    let (l, c) = line_col(&src, at);
+                    let output = check::CheckOutputJson {
+                        ok: false,
+                        items_count: 0,
+                        errors_count: 1,
+                        errors: vec![check::CheckDiagnosticJson {
+                            code: "E0002".to_string(),
+                            message: msg,
+                            line: Some(l),
+                            col: Some(c),
+                            span: None,
+                        }],
+                    };
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string())
+                    );
+                    process::exit(1);
+                }
+            }
+        } else {
+            match compile(&src) {
+                Ok(items) => {
+                    let errs = check::check(&items);
+                    if errs.is_empty() {
+                        print_lints(&items);
+                        eprintln!("-- checked {} item(s): OK", items.len());
+                    } else {
+                        for e in &errs {
+                            match e.span {
+                                Some(sp) => {
+                                    let (l, c) = line_col(&src, sp.start);
+                                    eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
+                                    print_hint(e.code);
+                                }
+                                None => {
+                                    eprintln!("error[{}]: {}", e.code, e.msg);
+                                    print_hint(e.code);
+                                }
+                            }
+                        }
+                        process::exit(1);
+                    }
+                }
+                Err((msg, at)) => {
+                    eprintln!("error[E0002]: {msg} at byte {at}");
+                    print_hint("E0002");
+                    process::exit(1);
+                }
+            }
+        }
+        return;
     }
     // `fmt` normalizes indentation; --check reports without writing
     if args.len() >= 3 && args[1] == "fmt" {
@@ -861,27 +956,6 @@ fn main() {
         read_src(&args[2])
     };
 
-    /// 1-based line:col of a byte offset, for human-facing diagnostics.
-    fn line_col(src: &str, at: usize) -> (usize, usize) {
-        let mut line = 1;
-        let mut col = 1;
-        for ch in src[..at.min(src.len())].chars() {
-            if ch == '\n' {
-                line += 1;
-                col = 1;
-            } else {
-                col += 1;
-            }
-        }
-        (line, col)
-    }
-
-    fn print_lints(items: &[ast::Item]) {
-        for l in lint::lint_items(items) {
-            eprintln!("warning[{}]: {}", l.code, l.msg);
-        }
-    }
-
     match args[1].as_str() {
         "lex" => match lexer::lex(&src) {
             Ok(tokens) => {
@@ -901,37 +975,6 @@ fn main() {
                     println!("{item:#?}");
                 }
                 eprintln!("-- parsed {} item(s) OK", items.len());
-            }
-            Err((msg, at)) => {
-                eprintln!("error[E0002]: {msg} at byte {at}");
-                print_hint("E0002");
-                process::exit(1);
-            }
-        },
-        "check" => match compile(&src) {
-            Ok(items) => {
-                let errs = check::check(&items);
-                if errs.is_empty() {
-                    print_lints(&items);
-                    eprintln!("-- checked {} item(s): OK", items.len());
-                } else {
-                    for e in &errs {
-                        match e.span {
-                            Some(sp) => {
-                                let (l, c) = line_col(&src, sp.start);
-                                {
-                                    eprintln!("error[{}] at {l}:{c}: {}", e.code, e.msg);
-                                    print_hint(e.code);
-                                }
-                            }
-                            None => {
-                                eprintln!("error[{}]: {}", e.code, e.msg);
-                                print_hint(e.code);
-                            }
-                        }
-                    }
-                    process::exit(1);
-                }
             }
             Err((msg, at)) => {
                 eprintln!("error[E0002]: {msg} at byte {at}");
