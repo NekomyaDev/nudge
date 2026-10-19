@@ -313,6 +313,7 @@ pub fn compare_json(a_src: &str, b_src: &str) -> String {
     }
 
     let payload = serde_json::json!({
+        "ok": true,
         "base": {
             "passed": ap,
             "total": at,
@@ -491,6 +492,7 @@ mod tests {
         let json_str = compare_json(a, b);
         let parsed: serde_json::Value =
             serde_json::from_str(&json_str).expect("compare_json should produce valid JSON");
+        assert_eq!(parsed["ok"], true);
         assert_eq!(parsed["base"]["passed"], 1);
         assert_eq!(parsed["candidate"]["passed"], 1);
         let imp = parsed["improved_rows"].as_array().expect("improved_rows");

@@ -243,6 +243,7 @@ fn test_cli_compare_json_and_flag_positions() {
     assert!(out1.status.success());
     let parsed1: serde_json::Value =
         serde_json::from_slice(&out1.stdout).expect("valid json output");
+    assert_eq!(parsed1["ok"], true);
     assert_eq!(parsed1["base"]["passed"], 1);
     assert_eq!(parsed1["candidate"]["passed"], 1);
 
