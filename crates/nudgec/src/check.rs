@@ -1950,6 +1950,35 @@ fn check_expr_pos(
                             }
                             _ => {}
                         }
+                    } else if prefix == "math" {
+                        match name.as_str() {
+                            "abs" | "floor" | "ceil" | "round" | "sqrt" | "sin" | "cos" | "tan" | "exp" | "ln" => {
+                                if args.is_empty() {
+                                    errs.push(CheckError {
+                                        span: None,
+                                        code: "E0201",
+                                        msg: format!("'math.{name}' takes 1 argument, got 0"),
+                                    });
+                                }
+                                return arg_tys.first().cloned().unwrap_or(Ty::Float);
+                            }
+                            "pow" | "log" | "min" | "max" => {
+                                return arg_tys.first().cloned().unwrap_or(Ty::Float);
+                            }
+                            "random_int" => return Ty::Int,
+                            "random_float" | "mean" => return Ty::Float,
+                            _ => {}
+                        }
+                    } else if prefix == "str" {
+                        match name.as_str() {
+                            "length" | "to_int" => return Ty::Int,
+                            "to_float" => return Ty::Float,
+                            "upper" | "lower" | "trim" | "replace" | "substring" | "to_string" => return Ty::Str,
+                            "contains" => return Ty::Bool,
+                            "split" => return Ty::List(Box::new(Ty::Str)),
+                            "index_of" => return Ty::Int,
+                            _ => {}
+                        }
                     } else if let Some((params, ret)) = g.fns.get(&format!("{prefix}.{name}")) {
                         let full_name = format!("{prefix}.{name}");
                         if args.len() > params.len() {
@@ -5546,5 +5575,35 @@ fn f() -> int | string {
         assert!(dup_err["line"].is_null());
         assert!(dup_err["col"].is_null());
         assert!(dup_err["span"].is_null());
+    }
+
+    #[test]
+    fn test_math_and_str_stdlib_typechecking() {
+        // math stdlib type resolution
+        let math_src = r#"
+            fn f(x: float) -> float {
+                let s = math.sqrt(x)
+                let c = math.cos(s)
+                let p = math.pow(s, 2.0)
+                p
+            }
+        "#;
+        assert_eq!(check_src(math_src), vec![]);
+
+        // str stdlib type resolution
+        let str_src = r#"
+            fn g(s: string) -> int {
+                let n = str.length(s)
+                let upper = str.upper(s)
+                let idx = str.index_of(upper, "TEST")
+                n + idx
+            }
+        "#;
+        assert_eq!(check_src(str_src), vec![]);
+
+        // arity check: math.abs takes 1 argument
+        let bad_math = "fn bad() -> float { math.abs() }";
+        let errs = check_src(bad_math);
+        assert!(errs.iter().any(|e| e.code == "E0201" && e.msg.contains("math.abs")));
     }
 }

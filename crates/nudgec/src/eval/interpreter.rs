@@ -2855,7 +2855,11 @@ impl Interpreter {
                     Ok(NudgeVal::Float((*a as f64).powf(*b as f64)))
                 }
                 (Some(NudgeVal::Float(a)), Some(NudgeVal::Int(b))) => {
-                    Ok(NudgeVal::Float(a.powi(*b as i32)))
+                    if let Ok(exp) = i32::try_from(*b) {
+                        Ok(NudgeVal::Float(a.powi(exp)))
+                    } else {
+                        Ok(NudgeVal::Float(a.powf(*b as f64)))
+                    }
                 }
                 (Some(NudgeVal::Int(a)), Some(NudgeVal::Float(b))) => {
                     Ok(NudgeVal::Float((*a as f64).powf(*b)))
