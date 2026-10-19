@@ -194,6 +194,16 @@ mod tests {
             assert!(!desc.is_empty(), "{name}: empty description");
             assert!(src.contains("fn "), "{name}: template has no fn");
             assert!(!src.contains('\r'), "{name}: CRLF line endings");
+
+            // Verify each template compiles and type-checks cleanly
+            let tokens = crate::lexer::lex(src).expect("lex template");
+            let items = crate::parser::parse(tokens).expect("parse template");
+            let errs = crate::check::check(&items);
+            assert!(
+                errs.is_empty(),
+                "template '{name}' failed typecheck: {:?}",
+                errs.iter().map(|e| &e.msg).collect::<Vec<_>>()
+            );
         }
     }
 
