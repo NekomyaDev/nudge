@@ -45,4 +45,28 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn recipes_dir_files_match_recipes_constant() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let recipes_dir = manifest_dir.join("../../docs/recipes");
+        let mut on_disk = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&recipes_dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.extension().and_then(|s| s.to_str()) == Some("ndg") {
+                    if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                        on_disk.push(stem.to_string());
+                    }
+                }
+            }
+        }
+        on_disk.sort();
+        let mut in_const: Vec<String> = RECIPES.iter().map(|(n, _)| (*n).to_string()).collect();
+        in_const.sort();
+        assert_eq!(
+            on_disk, in_const,
+            "recipes list in RECIPES constant must match files on disk in docs/recipes/*.ndg"
+        );
+    }
 }
