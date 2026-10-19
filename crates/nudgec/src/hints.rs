@@ -49,6 +49,17 @@ pub fn hint(code: &str) -> Option<&'static str> {
         "E-task-0001" => "task was cancelled — cooperative checkpoints prevent further execution",
         "E-task-0002" => "task failed during execution — inspect the inner error for failure details",
         "E-task-0003" => "invalid or corrupt task handle — verify task handle origin and lifecycle",
+        "E-native-0100" => "'stream let' is only supported for LLM calls with chunk streaming",
+        "E-native-0201" => "tool or MCP server configuration missing in 'impl' or registry",
+        "E-native-0202" => "tool or computer action failed during execution — check error details",
+        "E-native-0203" => "tool or MCP communication timed out or received an invalid option",
+        "E-native-0300" => "LLM provider call failed — check API key, base URL, and network connectivity",
+        "E-native-0301" => "failed to parse structured LLM output according to the requested schema",
+        "E-native-0302" => "replay mismatch or trace exhaustion — recorded trace does not match program requests",
+        "E-native-0303" => "writing NTF trace record to disk failed — check directory permissions and disk space",
+        "E-decision-0001" => "decision provider is unconfigured — set NUDGE_DECISION_SERVERS or use fake provider",
+        "E-decision-0002" => "decision server entry missing required 'base_url' or 'command' in configuration",
+        "E-decision-0003" => "HTTPS decision provider requires TLS support or valid HTTP endpoint",
         _ => return None,
     })
 }
@@ -134,6 +145,30 @@ mod tests {
             "E0403",
             "E0404",
             "E0405",
+        ] {
+            assert!(hint(code).is_some(), "{code} has no hint");
+            assert!(
+                !hint(code).unwrap().contains('\n'),
+                "{code} hint is multi-line"
+            );
+            assert!(hint(code).unwrap().len() <= 180, "{code} hint is too long");
+        }
+    }
+
+    #[test]
+    fn native_and_decision_codes_have_hints() {
+        for code in [
+            "E-native-0100",
+            "E-native-0201",
+            "E-native-0202",
+            "E-native-0203",
+            "E-native-0300",
+            "E-native-0301",
+            "E-native-0302",
+            "E-native-0303",
+            "E-decision-0001",
+            "E-decision-0002",
+            "E-decision-0003",
         ] {
             assert!(hint(code).is_some(), "{code} has no hint");
             assert!(
