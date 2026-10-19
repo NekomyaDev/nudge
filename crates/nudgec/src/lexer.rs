@@ -743,4 +743,32 @@ mod tests {
             .unwrap()
             .contains("unterminated"));
     }
+
+    #[test]
+    fn test_lex_multibyte_utf8_identifiers_and_escapes() {
+        // String with valid multibyte characters
+        let src = "\"Übersetzung 日本語 🚀\"";
+        let tokens = lex(src).expect("lex multibyte string");
+        assert_eq!(tokens.len(), 2); // Tok::Str + Tok::Eof
+        assert_eq!(tokens[0].tok, Tok::Str("Übersetzung 日本語 🚀".into()));
+        assert_eq!(tokens[1].tok, Tok::Eof);
+
+        // Valid escape sequences: \n, \t, \", \\
+        let esc = "\"line1\\nline2\\tindent\\\\backslash\\\"quote\"";
+        let esc_tokens = lex(esc).expect("lex escape sequences");
+        assert_eq!(
+            esc_tokens[0].tok,
+            Tok::Str("line1\nline2\tindent\\backslash\"quote".into())
+        );
+
+        // Invalid escape sequence fails cleanly
+        let bad_esc = "\"bad \\x escape\"";
+        let err = lex(bad_esc).expect_err("bad escape should fail");
+        assert!(err.msg.contains("bad escape"));
+
+        // Unterminated prompt fails cleanly with byte offset
+        let bad_prompt = "llm\"\"\"missing closing delimiter";
+        let prompt_err = lex(bad_prompt).expect_err("unterminated prompt should fail");
+        assert!(prompt_err.msg.contains("unterminated llm\"\"\" prompt"));
+    }
 }
