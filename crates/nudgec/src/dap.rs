@@ -95,8 +95,13 @@ impl Dap {
     }
 
     /// After configurationDone: pause on the first record (entry) — or on
-    /// the first breakpoint if one was set before launch.
+    /// the first breakpoint if one was set before launch; if the trace has
+    /// zero records, terminate immediately.
     fn entry_stop(&mut self) -> Json {
+        if self.records.is_empty() {
+            self.terminated = true;
+            return self.event("terminated", Json::Obj(vec![]));
+        }
         if let Some(idx) = self
             .records
             .iter()
@@ -426,5 +431,23 @@ mod tests {
         let raw = b"content-length: 7\r\n\r\n{\"a\":1}";
         let mut cur = std::io::Cursor::new(raw);
         assert_eq!(read_frame(&mut cur).as_deref(), Some("{\"a\":1}"));
+    }
+
+    #[test]
+    fn dap_handles_empty_or_corrupt_trace_gracefully() {
+        // Empty trace
+        let mut dap_empty = Dap::new("");
+        assert_eq!(dap_empty.records.len(), 0);
+        let out = dap_empty.dispatch(&request(1, "initialize", Json::Obj(vec![])));
+        assert!(dumps(&out[0]).contains("\"success\": true"));
+
+        let out_conf = dap_empty.dispatch(&request(2, "configurationDone", Json::Obj(vec![])));
+        assert!(dumps(&out_conf[1]).contains("\"event\": \"terminated\""));
+        assert!(dap_empty.is_terminated());
+
+        // Corrupted trace lines are filtered out without panic
+        let corrupt = "{\"v\": 1, \"seq\": 1, \"kind\": \"llm.call\"}\nnot valid json\n{\"v\": 1, \"seq\": 2, \"kind\": \"fn.return\"}\n";
+        let dap_corrupt = Dap::new(corrupt);
+        assert_eq!(dap_corrupt.records.len(), 2);
     }
 }
