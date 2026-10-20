@@ -22,19 +22,19 @@ impl SplitMix64 {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         let pid = std::process::id() as u128;
-        let mut seed = (nanos ^ (pid << 32) ^ 0x9E3779B97F4A7C15) as u64;
+        let mut seed = (nanos ^ (pid << 32) ^ 0x9E37_79B9_7F4A_7C15) as u64;
         if seed == 0 {
-            seed = 0x853C49E6748FEA9B;
+            seed = 0x853C_49E6_748F_EA9B;
         }
         Self { state: seed }
     }
 
     #[inline]
     fn next_u64(&mut self) -> u64 {
-        self.state = self.state.wrapping_add(0x9E3779B97F4A7C15);
+        self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut z = self.state;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
         z ^ (z >> 31)
     }
 
