@@ -377,7 +377,9 @@ fn bridge_call(command: &str, request: &str) -> Result<Json, String> {
             next_id: 0,
         });
     }
-    let sess = guard.as_mut().unwrap();
+    let sess = guard
+        .as_mut()
+        .ok_or_else(|| "computer bridge session not initialized".to_string())?;
     sess.next_id += 1;
     let id = sess.next_id;
     let request = request.replacen("\"id\":0", &format!("\"id\":{id}"), 1);
@@ -481,7 +483,10 @@ fn replay_take(kind: &str) -> Result<Option<Json>, String> {
     if guard.as_ref().map(|(p, _)| p.as_str()) != Some(path.as_str()) {
         *guard = Some((path.clone(), replay_records(&path)?));
     }
-    let state = &mut guard.as_mut().unwrap().1;
+    let state = &mut guard
+        .as_mut()
+        .ok_or_else(|| "computer replay state not initialized".to_string())?
+        .1;
     let (list, idx) = match kind {
         "obs" => (&mut state.obs, &mut state.obs_idx),
         _ => (&mut state.acts, &mut state.act_idx),

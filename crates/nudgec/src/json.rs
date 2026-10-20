@@ -95,11 +95,24 @@ pub fn dumps(v: &Json) -> String {
 }
 
 pub fn parse(text: &str) -> Result<Json, String> {
+    const MAX_DEPTH: usize = 256;
     struct P<'a> {
         b: &'a [u8],
         i: usize,
+        depth: usize,
     }
     impl<'a> P<'a> {
+        fn enter(&mut self) -> Result<(), String> {
+            self.depth += 1;
+            if self.depth > MAX_DEPTH {
+                Err(format!("json nesting exceeds limit of {MAX_DEPTH}"))
+            } else {
+                Ok(())
+            }
+        }
+        fn leave(&mut self) {
+            self.depth = self.depth.saturating_sub(1);
+        }
         fn ws(&mut self) {
             while matches!(self.b.get(self.i), Some(b' ' | b'\t' | b'\n' | b'\r')) {
                 self.i += 1;
@@ -221,6 +234,12 @@ pub fn parse(text: &str) -> Result<Json, String> {
             }
         }
         fn arr(&mut self) -> Result<Json, String> {
+            self.enter()?;
+            let res = self.arr_inner();
+            self.leave();
+            res
+        }
+        fn arr_inner(&mut self) -> Result<Json, String> {
             self.expect(b'[')?;
             let mut xs = Vec::new();
             self.ws();
@@ -242,6 +261,12 @@ pub fn parse(text: &str) -> Result<Json, String> {
             }
         }
         fn obj(&mut self) -> Result<Json, String> {
+            self.enter()?;
+            let res = self.obj_inner();
+            self.leave();
+            res
+        }
+        fn obj_inner(&mut self) -> Result<Json, String> {
             self.expect(b'{')?;
             let mut m = Vec::new();
             self.ws();
@@ -270,6 +295,7 @@ pub fn parse(text: &str) -> Result<Json, String> {
     let mut p = P {
         b: text.as_bytes(),
         i: 0,
+        depth: 0,
     };
     let v = p.value()?;
     p.ws();
@@ -319,5 +345,25 @@ mod tests {
         assert!(parse("\"\\uD83D\"").is_ok()); // lone surrogate → replacement char, not a crash
         assert_eq!(dumps(&Json::Num(f64::NAN)), "null");
         assert_eq!(dumps(&Json::Num(f64::INFINITY)), "null");
+    }
+
+    #[test]
+    fn json_depth_limit_rejects_pathological_nesting() {
+        let nested_arrays = "[".repeat(257) + &"]".repeat(257);
+        let err = parse(&nested_arrays).unwrap_err();
+        assert!(err.contains("nesting exceeds limit"));
+
+        let ok_nested = "[".repeat(256) + &"]".repeat(256);
+        assert!(parse(&ok_nested).is_ok());
+    }
+
+    #[test]
+    fn json_escape_control_chars_roundtrip() {
+        let raw = "\u{0000}\u{001f}\t\n\r\"\\";
+        let escaped = escape(raw);
+        assert!(escaped.contains("\\u0000"));
+        assert!(escaped.contains("\\u001f"));
+        let parsed = parse(&format!("\"{escaped}\"")).unwrap();
+        assert_eq!(parsed.as_str(), Some(raw));
     }
 }

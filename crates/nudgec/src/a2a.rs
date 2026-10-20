@@ -785,50 +785,60 @@ impl ServerContext {
                     self.insert_and_prune_task(task_id.clone(), rec);
 
                     let res = crate::eval::run_program(&self.items, &skill, &args);
-                    let mut tasks = self.tasks.write().unwrap();
-                    let t = tasks.get_mut(&task_id).unwrap();
-                    if cancel_token.load(std::sync::atomic::Ordering::SeqCst)
-                        || t.status == "cancelled"
-                    {
-                        t.status = "cancelled".to_string();
+                    let mut tasks = self.tasks.write().unwrap_or_else(|e| e.into_inner());
+                    if let Some(t) = tasks.get_mut(&task_id) {
+                        if cancel_token.load(std::sync::atomic::Ordering::SeqCst)
+                            || t.status == "cancelled"
+                        {
+                            t.status = "cancelled".to_string();
+                            serde_json::json!({
+                                "jsonrpc": "2.0",
+                                "id": id,
+                                "result": {
+                                    "id": task_id,
+                                    "status": "cancelled"
+                                }
+                            })
+                        } else {
+                            match res {
+                                Ok(val) => {
+                                    let out_json = crate::eval::val::nudgeval_to_json(&val);
+                                    t.status = "completed".to_string();
+                                    t.output = Some(out_json.clone());
+                                    serde_json::json!({
+                                        "jsonrpc": "2.0",
+                                        "id": id,
+                                        "result": {
+                                            "id": task_id,
+                                            "status": "completed",
+                                            "output": out_json
+                                        }
+                                    })
+                                }
+                                Err(e) => {
+                                    t.status = "failed".to_string();
+                                    t.error = Some(e.clone());
+                                    serde_json::json!({
+                                        "jsonrpc": "2.0",
+                                        "id": id,
+                                        "result": {
+                                            "id": task_id,
+                                            "status": "failed",
+                                            "error": e
+                                        }
+                                    })
+                                }
+                            }
+                        }
+                    } else {
                         serde_json::json!({
                             "jsonrpc": "2.0",
                             "id": id,
-                            "result": {
-                                "id": task_id,
-                                "status": "cancelled"
+                            "error": {
+                                "code": -32603,
+                                "message": format!("task {task_id} missing from registry")
                             }
                         })
-                    } else {
-                        match res {
-                            Ok(val) => {
-                                let out_json = crate::eval::val::nudgeval_to_json(&val);
-                                t.status = "completed".to_string();
-                                t.output = Some(out_json.clone());
-                                serde_json::json!({
-                                    "jsonrpc": "2.0",
-                                    "id": id,
-                                    "result": {
-                                        "id": task_id,
-                                        "status": "completed",
-                                        "output": out_json
-                                    }
-                                })
-                            }
-                            Err(e) => {
-                                t.status = "failed".to_string();
-                                t.error = Some(e.clone());
-                                serde_json::json!({
-                                    "jsonrpc": "2.0",
-                                    "id": id,
-                                    "result": {
-                                        "id": task_id,
-                                        "status": "failed",
-                                        "error": e
-                                    }
-                                })
-                            }
-                        }
                     }
                 }
             }
@@ -991,51 +1001,64 @@ impl ServerContext {
             self.insert_and_prune_task(task_id.clone(), rec);
 
             let res = crate::eval::run_program(&self.items, skill, args);
-            let mut tasks = self.tasks.write().unwrap();
-            let t = tasks.get_mut(&task_id).unwrap();
-            if cancel_token.load(std::sync::atomic::Ordering::SeqCst) || t.status == "cancelled" {
-                t.status = "cancelled".to_string();
-                self.send_json(
-                    stream,
-                    200,
-                    &serde_json::json!({
-                        "id": task_id,
-                        "task_id": task_id,
-                        "status": "cancelled"
-                    }),
-                )
-            } else {
-                match res {
-                    Ok(val) => {
-                        let out_json = crate::eval::val::nudgeval_to_json(&val);
-                        t.status = "completed".to_string();
-                        t.output = Some(out_json.clone());
-                        self.send_json(
-                            stream,
-                            200,
-                            &serde_json::json!({
-                                "id": task_id,
-                                "task_id": task_id,
-                                "status": "completed",
-                                "output": out_json
-                            }),
-                        )
-                    }
-                    Err(e) => {
-                        t.status = "failed".to_string();
-                        t.error = Some(e.clone());
-                        self.send_json(
-                            stream,
-                            500,
-                            &serde_json::json!({
-                                "id": task_id,
-                                "task_id": task_id,
-                                "status": "failed",
-                                "error": e
-                            }),
-                        )
+            let mut tasks = self.tasks.write().unwrap_or_else(|e| e.into_inner());
+            if let Some(t) = tasks.get_mut(&task_id) {
+                if cancel_token.load(std::sync::atomic::Ordering::SeqCst) || t.status == "cancelled"
+                {
+                    t.status = "cancelled".to_string();
+                    self.send_json(
+                        stream,
+                        200,
+                        &serde_json::json!({
+                            "id": task_id,
+                            "task_id": task_id,
+                            "status": "cancelled"
+                        }),
+                    )
+                } else {
+                    match res {
+                        Ok(val) => {
+                            let out_json = crate::eval::val::nudgeval_to_json(&val);
+                            t.status = "completed".to_string();
+                            t.output = Some(out_json.clone());
+                            self.send_json(
+                                stream,
+                                200,
+                                &serde_json::json!({
+                                    "id": task_id,
+                                    "task_id": task_id,
+                                    "status": "completed",
+                                    "output": out_json
+                                }),
+                            )
+                        }
+                        Err(e) => {
+                            t.status = "failed".to_string();
+                            t.error = Some(e.clone());
+                            self.send_json(
+                                stream,
+                                500,
+                                &serde_json::json!({
+                                    "id": task_id,
+                                    "task_id": task_id,
+                                    "status": "failed",
+                                    "error": e
+                                }),
+                            )
+                        }
                     }
                 }
+            } else {
+                self.send_json(
+                    stream,
+                    500,
+                    &serde_json::json!({
+                        "error": {
+                            "code": 500,
+                            "message": format!("task {task_id} missing from registry")
+                        }
+                    }),
+                )
             }
         }
     }

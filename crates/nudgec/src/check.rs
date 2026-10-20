@@ -2409,7 +2409,7 @@ fn check_expr_pos(
                             ),
                         });
                     }
-                    builtin_record_ty("Observation").unwrap()
+                    builtin_record_ty("Observation").unwrap_or(Ty::Unknown)
                 }
                 "screen_size" | "cursor_pos" => {
                     if !args.is_empty() {
@@ -2424,7 +2424,7 @@ fn check_expr_pos(
                     } else {
                         "CursorPos"
                     })
-                    .unwrap()
+                    .unwrap_or(Ty::Unknown)
                 }
                 "window_info" => {
                     if args.len() > 1 {
@@ -2437,7 +2437,7 @@ fn check_expr_pos(
                             ),
                         });
                     }
-                    builtin_record_ty("WindowInfo").unwrap()
+                    builtin_record_ty("WindowInfo").unwrap_or(Ty::Unknown)
                 }
                 "click" | "drag" | "set_value" | "type" | "key" | "scroll" | "perform"
                 | "paste" | "mouse_move" | "mouse_down" | "mouse_up" => {
@@ -2465,7 +2465,7 @@ fn check_expr_pos(
                             ),
                         });
                     }
-                    builtin_record_ty("ActionResult").unwrap()
+                    builtin_record_ty("ActionResult").unwrap_or(Ty::Unknown)
                 }
                 other => {
                     // unreachable via the parser (COMPUTER_METHODS gates it);
@@ -2698,9 +2698,10 @@ fn tool_matches_declared(
                 }
             }
             if tool_target.contains('/') {
-                let unqualified = tool_target.split('/').next_back().unwrap();
-                if rule == unqualified || nudge_runtime::grants::fnmatch(rule, unqualified) {
-                    return true;
+                if let Some(unqualified) = tool_target.split('/').next_back() {
+                    if rule == unqualified || nudge_runtime::grants::fnmatch(rule, unqualified) {
+                        return true;
+                    }
                 }
             }
         }
@@ -2992,10 +2993,11 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
                     add.extend(eff.iter().cloned());
                 }
             }
-            let entry = inferred.get_mut(name).unwrap();
-            for e in add {
-                if entry.insert(e) {
-                    changed = true;
+            if let Some(entry) = inferred.get_mut(name) {
+                for e in add {
+                    if entry.insert(e) {
+                        changed = true;
+                    }
                 }
             }
         }

@@ -46,19 +46,15 @@ impl HeadlessAppRecord {
     }
 
     pub fn ensure_input_state(&mut self, id: &str) -> &mut nudge_runtime::ui::TextInputState {
-        if !self.text_inputs.contains_key(id) {
-            let initial = self
-                .root
-                .as_ref()
-                .and_then(|r| r.find_by_id(id))
-                .and_then(|e| e.text.clone().or_else(|| e.props.get("value").cloned()))
-                .unwrap_or_default();
-            self.text_inputs.insert(
-                id.to_string(),
-                nudge_runtime::ui::TextInputState::new(initial),
-            );
-        }
-        self.text_inputs.get_mut(id).unwrap()
+        let initial = self
+            .root
+            .as_ref()
+            .and_then(|r| r.find_by_id(id))
+            .and_then(|e| e.text.clone().or_else(|| e.props.get("value").cloned()))
+            .unwrap_or_default();
+        self.text_inputs
+            .entry(id.to_string())
+            .or_insert_with(|| nudge_runtime::ui::TextInputState::new(initial))
     }
 
     /// Syncs existing TextInputState instances with updated values from a newly rendered tree.
