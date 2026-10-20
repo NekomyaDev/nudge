@@ -46,6 +46,7 @@ test "review identifies security issues" {
 
 ```sh
 nudgec check code-reviewer.ndg
+nudgec test code-reviewer.ndg
 nudgec build code-reviewer.ndg
 python3 out/code-reviewer.py
 ```

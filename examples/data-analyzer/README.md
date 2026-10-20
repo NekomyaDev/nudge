@@ -52,6 +52,7 @@ test "analysis provides actionable insights" {
 
 ```sh
 nudgec check data-analyzer.ndg
+nudgec test data-analyzer.ndg
 nudgec build data-analyzer.ndg
 python3 out/data-analyzer.py
 ```
