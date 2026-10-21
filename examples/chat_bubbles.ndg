@@ -1,0 +1,83 @@
+// Roadmap 3.1 — real chat bubbles.
+//
+// The same feed as `scroll_feed.ndg`, but each message is now a `bubble`:
+// a rounded, padded card that wraps its text to a max width and hugs the
+// right edge for the user, the left edge for the assistant. Role drives the
+// palette, so the two sides read apart without needing a name prefix.
+
+type Message = { role: string, body: string }
+
+view ChatView(messages: [Message], draft: string, sent: int) -> View {
+    let mut nodes = []
+    for m in messages {
+        nodes = nodes + [
+            bubble(m.body, role = m.role, max_width = 300, padding = 10)
+        ]
+    }
+    column(padding = 12, gap = 10) [
+        text("Nudge Studio — chat bubbles", wrap = false),
+        // Bubbles inside a scroll region inherit its viewport clip, so a
+        // message scrolled out of view leaves no pixels behind.
+        scroll(nodes, id = "feed", height = 150, padding = 8, gap = 8),
+        text("Sent: " + sent, wrap = false),
+        input(draft, id = "draft", on_change = on_draft),
+        button("Send", id = "send", on_click = on_send)
+    ]
+}
+
+agent ChatApp {
+    state {
+        messages: [Message] = [
+            { role: "assistant", body: "Scrolling and bubbles now work together." },
+            { role: "user", body: "nice — and the text wraps?" },
+            { role: "assistant", body: "yes, each bubble wraps to its max width and grows downward instead of stretching the column." },
+            { role: "user", body: "what about alignment?" },
+            { role: "assistant", body: "mine hug the left, yours hug the right." },
+            { role: "user", body: "message 6" },
+            { role: "assistant", body: "message 7" },
+            { role: "user", body: "message 8" },
+            { role: "assistant", body: "message 9 — the feed keeps going" },
+            { role: "user", body: "message 10" }
+        ],
+        draft: string = "",
+        sent: int = 0
+    }
+
+    fn on_draft(val: string) uses UI {
+        state.draft = val
+    }
+
+    fn on_send() uses UI {
+        state.messages = state.messages + [
+            { role: "user", body: state.draft }
+        ]
+        state.draft = ""
+        state.sent = state.sent + 1
+    }
+
+    window MainWindow {
+        title: "Nudge Chat Bubbles",
+        width: 420,
+        height: 360,
+        content: ChatView(state.messages, state.draft, state.sent)
+    }
+}
+
+fn main() uses UI {
+    ChatApp.MainWindow.open()
+}
+
+test "bubbles mount, wrap, and send" {
+    let app = ChatApp.MainWindow.mount_headless()
+    assert app.find("feed").exists()
+    assert app.find("send").exists()
+    assert app.find("draft").exists()
+    // Messages nested inside the scroll container are still reachable.
+    assert app.find_text("message 9 — the feed keeps going").exists()
+
+    app.dispatch_type("draft", "it works")
+    app.dispatch_click("send")
+    assert ChatApp.state.sent == 1
+    assert ChatApp.state.draft == ""
+    assert app.find_text("it works").exists()
+}

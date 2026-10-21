@@ -64,26 +64,38 @@ pub struct Theme {
     pub cursor: u32,
     pub scrollbar_track: u32,
     pub scrollbar_thumb: u32,
+    /// Chat bubble backgrounds/text. The user's own messages read as the
+    /// accent colour on the right; the assistant's read as a raised surface
+    /// on the left, so the two sides are told apart without relying on
+    /// alignment alone.
+    pub bubble_user_bg: u32,
+    pub bubble_user_text: u32,
+    pub bubble_assistant_bg: u32,
+    pub bubble_assistant_text: u32,
 }
 
 impl Theme {
     /// Zinc-900 dark theme (the original Studio palette).
     pub const DARK: Theme = Theme {
-        bg: 0xFF18_181B,                   // Zinc-900
-        text: 0xFFF4_F4F5,                 // Zinc-100
-        text_dim: 0xFF71_717A,             // Zinc-500
-        border: 0xFF3F_3F46,               // Zinc-700
-        input_bg: 0xFF27_272A,             // Zinc-800
-        input_border: 0xFF52_525B,         // Zinc-600
-        input_border_focused: 0xFF3B_82F6, // Blue-500
-        button_bg: 0xFF3B_82F6,            // Blue-500
-        button_bg_hover: 0xFF25_63EB,      // Blue-600
-        button_border: 0xFF60_A5FA,        // Blue-400
-        button_text: 0xFFFF_FFFF,          // white
-        selection_bg: 0xFF1D_4ED8,         // Blue-700
-        cursor: 0xFFFF_FFFF,               // white
-        scrollbar_track: 0xFF27_272A,      // Zinc-800
-        scrollbar_thumb: 0xFF71_717A,      // Zinc-500
+        bg: 0xFF18_181B,                    // Zinc-900
+        text: 0xFFF4_F4F5,                  // Zinc-100
+        text_dim: 0xFF71_717A,              // Zinc-500
+        border: 0xFF3F_3F46,                // Zinc-700
+        input_bg: 0xFF27_272A,              // Zinc-800
+        input_border: 0xFF52_525B,          // Zinc-600
+        input_border_focused: 0xFF3B_82F6,  // Blue-500
+        button_bg: 0xFF3B_82F6,             // Blue-500
+        button_bg_hover: 0xFF25_63EB,       // Blue-600
+        button_border: 0xFF60_A5FA,         // Blue-400
+        button_text: 0xFFFF_FFFF,           // white
+        selection_bg: 0xFF1D_4ED8,          // Blue-700
+        cursor: 0xFFFF_FFFF,                // white
+        scrollbar_track: 0xFF27_272A,       // Zinc-800
+        scrollbar_thumb: 0xFF71_717A,       // Zinc-500
+        bubble_user_bg: 0xFF3B_82F6,        // Blue-500
+        bubble_user_text: 0xFFFF_FFFF,      // white
+        bubble_assistant_bg: 0xFF27_272A,   // Zinc-800
+        bubble_assistant_text: 0xFFF4_F4F5, // Zinc-100
     };
 }
 
@@ -147,6 +159,9 @@ pub struct LayoutBox {
     pub pan: (i32, i32),
     /// Viewports this box must be clipped to. `None` when not scrollable.
     pub clips: Option<Vec<ClipRegion>>,
+    /// Inner padding for boxes that draw a background larger than their
+    /// content (chat bubbles). Text is drawn at `rect + pad`; `0` elsewhere.
+    pub pad: i32,
 }
 
 impl LayoutBox {
@@ -984,6 +999,80 @@ pub fn layout_element_ctx(
                 on_key: elem.on_key.clone(),
                 pan,
                 clips: clips_owned(clips),
+                pad: 0,
+            });
+            (w, h)
+        }
+        "bubble" => {
+            // A chat bubble is a `text` box with a painted background behind
+            // it: the message wraps to a max width, gets padded, and is
+            // aligned left/right inside whatever width the parent offers.
+            let raw_content = elem.text.clone().unwrap_or_else(|| elem.get_text());
+
+            // Role drives both the palette and the default side.
+            let role = elem
+                .props
+                .get("role")
+                .map(|s| s.as_str())
+                .unwrap_or("assistant");
+            let is_user = role == "user";
+
+            let pad: i32 = elem
+                .props
+                .get("padding")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(10);
+
+            // Never wider than the parent offers, and never so narrow that the
+            // padding alone would swallow the box.
+            let max_width: i32 = elem
+                .props
+                .get("max_width")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(340)
+                .min(max_w.saturating_sub(2 * pad))
+                .max(2 * pad + CELL_W);
+
+            let content = wrap_text(&raw_content, max_width - 2 * pad, CELL_W);
+
+            let lines = content.split('\n').count().max(1) as i32;
+            let max_line_len = content
+                .split('\n')
+                .map(|l| l.chars().count())
+                .max()
+                .unwrap_or(0) as i32;
+            let text_w = max_line_len * CELL_W;
+            let w = (text_w + 2 * pad).min(max_width);
+            let h = lines * CELL_H + 2 * pad;
+
+            // Left/right alignment inside the parent's available width.
+            let align = elem
+                .props
+                .get("align")
+                .map(|s| s.as_str())
+                .unwrap_or(if is_user { "right" } else { "left" });
+            let bx = match align {
+                "right" => x + (max_w - w).max(0),
+                "center" => x + ((max_w - w) / 2).max(0),
+                _ => x,
+            };
+
+            boxes.push(LayoutBox {
+                rect: Rect { x: bx, y, w, h },
+                tag: if is_user {
+                    "bubble:user"
+                } else {
+                    "bubble:assistant"
+                }
+                .into(),
+                id: elem.id.clone(),
+                text: Some(content),
+                on_click: None,
+                on_change: None,
+                on_key: elem.on_key.clone(),
+                pan,
+                clips: clips_owned(clips),
+                pad,
             });
             (w, h)
         }
@@ -1013,6 +1102,7 @@ pub fn layout_element_ctx(
                 on_key: elem.on_key.clone(),
                 pan,
                 clips: clips_owned(clips),
+                pad: 0,
             });
             (w, h)
         }
@@ -1040,6 +1130,7 @@ pub fn layout_element_ctx(
                 on_key: elem.on_key.clone(),
                 pan,
                 clips: clips_owned(clips),
+                pad: 0,
             });
             (w, h)
         }
@@ -1416,6 +1507,92 @@ impl<D: UiDispatcher> NativeApp<D> {
                                     );
                                 },
                             ),
+                        }
+                    }
+                }
+                t if t.starts_with("bubble:") => {
+                    // Rounded background sized to the padded box, with the
+                    // wrapped message drawn inside it. Both are clipped to the
+                    // enclosing viewport, so a bubble scrolled out of its
+                    // region leaks no pixels.
+                    let is_user = t == "bubble:user";
+                    let (bg, fg) = if is_user {
+                        (theme.bubble_user_bg, theme.bubble_user_text)
+                    } else {
+                        (theme.bubble_assistant_bg, theme.bubble_assistant_text)
+                    };
+                    let radius = 10;
+                    match clip {
+                        Some(c) => draw_rounded_rect_box_clipped(
+                            &mut buffer,
+                            stride,
+                            h_usize,
+                            Some(c),
+                            rx,
+                            ry,
+                            lbox.rect.w,
+                            lbox.rect.h,
+                            radius,
+                            bg,
+                            theme.border,
+                        ),
+                        None => draw_rounded_rect_box(
+                            &mut buffer,
+                            stride,
+                            h_usize,
+                            rx,
+                            ry,
+                            lbox.rect.w,
+                            lbox.rect.h,
+                            radius,
+                            bg,
+                            theme.border,
+                        ),
+                    }
+                    if let Some(ref text) = lbox.text {
+                        let fonts = &self.fonts;
+                        let tx = rx + lbox.pad;
+                        let ty = ry + lbox.pad + 2;
+                        // Keep the glyphs on the same clip as the background.
+                        let text_clip = match clip {
+                            Some(c) => {
+                                let inner = Rect {
+                                    x: rx + lbox.pad,
+                                    y: ry + lbox.pad,
+                                    w: (lbox.rect.w - 2 * lbox.pad).max(0),
+                                    h: (lbox.rect.h - 2 * lbox.pad).max(0),
+                                };
+                                intersect(inner, c)
+                            }
+                            None => Some(Rect {
+                                x: tx,
+                                y: ty,
+                                w: (lbox.rect.w - 2 * lbox.pad).max(0),
+                                h: (lbox.rect.h - 2 * lbox.pad).max(0),
+                            }),
+                        };
+                        if let Some(tc) = text_clip {
+                            draw_text_ttf_clipped(
+                                fonts,
+                                FaceKind::Ui,
+                                tx,
+                                ty,
+                                text,
+                                tc,
+                                |px, py, w, h, cov| {
+                                    draw_rect_alpha(
+                                        &mut buffer,
+                                        stride,
+                                        h_usize,
+                                        px,
+                                        py,
+                                        w,
+                                        h,
+                                        fg,
+                                        cov,
+                                    );
+                                },
+                            );
                         }
                     }
                 }
@@ -2551,6 +2728,7 @@ mod tests {
             on_key: None,
             pan: (0, 0),
             clips: None,
+            pad: 0,
         }];
 
         // Simulate click on line 1, col 2:
@@ -2912,6 +3090,7 @@ mod tests {
             on_key: None,
             pan: (0, 0),
             clips: None,
+            pad: 0,
         }];
 
         // Initially at (0, 0) - not hovering
@@ -3017,6 +3196,7 @@ mod tests {
             on_key: Some("key_handler".into()),
             pan: (0, 0),
             clips: None,
+            pad: 0,
         }];
 
         assert!(app.focus_input("test_input"));
@@ -3726,6 +3906,7 @@ mod tests {
             on_key: None,
             pan: (0, 0),
             clips: None,
+            pad: 0,
         };
         b.clips = Some(vec![outer, inner]);
         assert_eq!(
@@ -3809,5 +3990,303 @@ mod tests {
             buf.iter().take(100).any(|&p| p != BG),
             "the visible part of the control must still be painted"
         );
+    }
+
+    /// Build a bubble element with the given role and style overrides.
+    fn bubble_elem(role: &str, msg: &str, props: &[(&str, &str)]) -> UiElement {
+        let mut e = UiElement::new("bubble");
+        e.id = Some("b".into());
+        e.text = Some(msg.to_string());
+        e.props.insert("role".into(), role.to_string());
+        for (k, v) in props {
+            e.props.insert((*k).to_string(), (*v).to_string());
+        }
+        e
+    }
+
+    /// A bubble wraps its message to `max_width` and pads it, so the box never
+    /// grows past the cap no matter how long the message is.
+    #[test]
+    fn test_bubble_wraps_to_max_width_and_pads_the_box() {
+        let long = "this is a fairly long chat message that would otherwise stretch \
+                    the bubble well past a comfortable reading width";
+        let elem = bubble_elem("assistant", long, &[("max_width", "240")]);
+
+        let mut boxes = Vec::new();
+        let (w, h) = layout_element(&elem, 10, 10, 600, &mut boxes);
+
+        assert_eq!(boxes.len(), 1, "bubble lays out exactly one box");
+        let b = &boxes[0];
+        assert_eq!(b.tag, "bubble:assistant", "assistant role is recorded");
+        assert_eq!(b.pad, 10, "default padding is carried to the box");
+        assert!(
+            b.rect.w <= 240,
+            "bubble width {} must not exceed max_width 240",
+            b.rect.w
+        );
+        assert_eq!(b.rect.w, w, "returned width matches the box");
+        assert_eq!(b.rect.h, h, "returned height matches the box");
+        assert!(
+            h > CELL_H + 20,
+            "a long message must wrap into several padded lines"
+        );
+        // Every wrapped line must fit inside the bubble's text area.
+        for line in b.text.as_deref().unwrap_or("").split('\n') {
+            let px = (line.chars().count() as i32) * CELL_W;
+            assert!(
+                px <= 240 - 20,
+                "line '{line}' ({px}px) exceeds the padded text area"
+            );
+        }
+    }
+
+    /// `padding` widens the box symmetrically on both axes.
+    #[test]
+    fn test_bubble_padding_grows_the_box() {
+        let bare = bubble_elem("assistant", "hello", &[]);
+        let padded = bubble_elem("assistant", "hello", &[("padding", "24")]);
+
+        let mut b1 = Vec::new();
+        let (w1, h1) = layout_element(&bare, 10, 10, 600, &mut b1);
+        let mut b2 = Vec::new();
+        let (w2, h2) = layout_element(&padded, 10, 10, 600, &mut b2);
+
+        assert_eq!(w2 - w1, 2 * (24 - 10), "padding grows width on both sides");
+        assert_eq!(h2 - h1, 2 * (24 - 10), "padding grows height on both sides");
+        assert_eq!(b2[0].pad, 24, "the box carries its padding through");
+    }
+
+    /// Alignment: a user bubble hugs the right edge, the assistant's the left,
+    /// and an explicit `align` wins over the role default.
+    #[test]
+    fn test_bubble_alignment_defaults_by_role_and_can_be_overridden() {
+        let parent_w = 400;
+        let at = |role: &str, align: Option<&str>| -> Rect {
+            let mut props = vec![];
+            if let Some(a) = align {
+                props.push(("align", a));
+            }
+            let elem = bubble_elem(role, "hello", &props);
+            let mut boxes = Vec::new();
+            layout_element(&elem, 10, 10, parent_w, &mut boxes);
+            boxes[0].rect
+        };
+
+        let user = at("user", None);
+        assert_eq!(
+            user.x,
+            10 + parent_w - user.w,
+            "a user bubble is flush against the parent's right edge"
+        );
+
+        let assist = at("assistant", None);
+        assert_eq!(
+            assist.x, 10,
+            "an assistant bubble is flush against the left"
+        );
+
+        let flipped = at("user", Some("left"));
+        assert_eq!(
+            flipped.x, 10,
+            "an explicit align overrides the role's default side"
+        );
+
+        let centred = at("assistant", Some("center"));
+        assert_eq!(
+            centred.x,
+            10 + (parent_w - centred.w) / 2,
+            "center alignment sits halfway across the parent"
+        );
+    }
+
+    /// Alignment, measured exactly: inside a scroll viewport an assistant
+    /// bubble's left edge must sit `pad` from the viewport's left, and a user
+    /// bubble's right edge `pad` from the viewport's right. Symmetric — no
+    /// one-sided drift.
+    #[test]
+    fn test_bubble_alignment_is_symmetric_inside_a_viewport() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "Test".into(),
+                width: 420,
+                height: 360,
+            },
+            dummy,
+        );
+
+        let mut feed = UiElement::new("scroll");
+        feed.id = Some("feed".into());
+        feed.props.insert("height".into(), "150".into());
+        feed.props.insert("padding".into(), "8".into());
+        feed.props.insert("gap".into(), "8".into());
+        feed.children
+            .push(bubble_elem("assistant", "left side", &[]));
+        feed.children.push(bubble_elem("user", "right side", &[]));
+
+        let mut root = UiElement::new("column");
+        root.props.insert("padding".into(), "12".into());
+        root.children.push(feed);
+        app.layout_root(&root);
+
+        let viewport = &app.scroll_regions[0].rect;
+        let mut seen = [false; 2];
+        for b in &app.layout_boxes {
+            if b.tag == "bubble:assistant" {
+                seen[0] = true;
+                assert_eq!(
+                    b.rect.x - viewport.x,
+                    8,
+                    "assistant bubble must be padded 8px from the viewport's left"
+                );
+            } else if b.tag == "bubble:user" {
+                seen[1] = true;
+                let right_gap = (viewport.x + viewport.w) - (b.rect.x + b.rect.w);
+                assert_eq!(
+                    right_gap,
+                    8,
+                    "user bubble must be padded 8px from the viewport's right \
+                     (viewport right {}, bubble right {})",
+                    viewport.x + viewport.w,
+                    b.rect.x + b.rect.w
+                );
+            }
+        }
+        assert!(
+            seen[0] && seen[1],
+            "both roles must have laid out (got {:?})",
+            seen
+        );
+    }
+
+    /// Bubbles inherit pan + clip like every other box, so one scrolled out of
+    /// its viewport leaves no painted pixels behind.
+    #[test]
+    fn test_bubble_inherits_scroll_pan_and_viewport_clip() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "Test".into(),
+                width: 400,
+                height: 300,
+            },
+            dummy,
+        );
+
+        let mut feed = UiElement::new("scroll");
+        feed.id = Some("feed".into());
+        feed.props.insert("height".into(), "80".into());
+        feed.props.insert("padding".into(), "0".into());
+        feed.props.insert("gap".into(), "6".into());
+        for i in 0..8 {
+            feed.children
+                .push(bubble_elem("assistant", &format!("message {i}"), &[]));
+        }
+        let mut root = UiElement::new("column");
+        root.props.insert("padding".into(), "0".into());
+        root.children.push(feed);
+
+        app.layout_root(&root);
+
+        let first = app
+            .layout_boxes
+            .iter()
+            .find(|b| b.tag.starts_with("bubble"))
+            .expect("bubble laid out inside the scroll region");
+        assert!(
+            first.clips.is_some(),
+            "a bubble inside a scroll region must carry the viewport clip"
+        );
+        let clips = first.clips.as_ref().unwrap();
+        assert_eq!(clips.len(), 1, "clipped by its own viewport");
+        assert_eq!(clips[0].rect.h, 80, "the clip is the viewport, not the box");
+
+        // Scrolling the region pans the bubble's screen position. `render()`
+        // would re-run layout, but it needs a live surface, so the test drives
+        // the same layout pass the renderer would.
+        let y_before = first.rect.y - app.scroll_y - first.pan.1;
+        app.scroll_region_by("scroll:feed", 40);
+        app.layout_root(&root);
+        let after = app
+            .layout_boxes
+            .iter()
+            .find(|b| b.tag.starts_with("bubble"))
+            .expect("re-laid out after scrolling");
+        let y_after = after.rect.y - app.scroll_y - after.pan.1;
+        assert_eq!(
+            y_after,
+            y_before - 40,
+            "scrolling the region moves the bubble up by the offset"
+        );
+
+        // A bubble scrolled above the viewport is not visible at all.
+        assert!(
+            !after.visible_in(
+                app.scroll_x,
+                app.scroll_y,
+                app.width as i32,
+                app.height as i32
+            ),
+            "the first bubble is clipped away once scrolled past"
+        );
+    }
+
+    /// The rounded background stays inside the viewport clip, so a bubble can
+    /// never bleed over content outside its scroll region.
+    #[test]
+    fn test_bubble_background_is_clipped_to_the_viewport() {
+        const BG: u32 = 0xFF00_0000;
+        const FILL: u32 = 0xFF3B_82F6; // Theme::DARK.bubble_user_bg
+        let stride = 60usize;
+        let height_px = 60usize;
+
+        let mut buf = vec![BG; stride * height_px];
+        // A bubble whose left half sits inside the clip and right half outside.
+        let clip = Rect {
+            x: 0,
+            y: 0,
+            w: 30,
+            h: 60,
+        };
+        draw_rounded_rect_box_clipped(
+            &mut buf,
+            stride,
+            height_px,
+            Some(clip),
+            20,
+            10,
+            40,
+            30,
+            8,
+            FILL,
+            0xFF11_2233,
+        );
+
+        assert_eq!(
+            buf[25 * stride + 25],
+            FILL,
+            "the part inside the viewport is painted"
+        );
+        for x in 30..60 {
+            assert_eq!(
+                buf[25 * stride + x],
+                BG,
+                "pixel x={x} past the viewport edge must stay background"
+            );
+        }
     }
 }

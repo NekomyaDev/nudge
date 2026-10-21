@@ -523,6 +523,47 @@ pub fn estimate_element_size(elem: &UiElement, max_w: i64) -> (i64, i64) {
             let w = (max_line_len * 16).min(max_w);
             (w, lines * 24)
         }
+        "bubble" => {
+            // Same wrapping budget as the native renderer: the message wraps
+            // to a max width and the box grows by its padding on both sides.
+            let pad: i64 = elem
+                .props
+                .get("padding")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(10);
+            let max_width: i64 = elem
+                .props
+                .get("max_width")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(340)
+                .min((max_w - 2 * pad).max(0))
+                .max(2 * pad + 16);
+            let text = elem.text.as_deref().unwrap_or("");
+            let max_chars = ((max_width - 2 * pad) / 16).max(1);
+
+            let mut lines = 0i64;
+            let mut widest = 0i64;
+            for para in text.split('\n') {
+                let mut cur = 0i64;
+                for word in para.split_whitespace() {
+                    let wl = word.chars().count() as i64;
+                    if cur == 0 {
+                        cur = wl;
+                    } else if cur + 1 + wl <= max_chars {
+                        cur += 1 + wl;
+                    } else {
+                        widest = widest.max(cur);
+                        lines += 1;
+                        cur = wl;
+                    }
+                }
+                widest = widest.max(cur);
+                lines += 1;
+            }
+            let lines = lines.max(1);
+            let w = (widest * 16 + 2 * pad).min(max_width);
+            (w, lines * 24 + 2 * pad)
+        }
         "button" => {
             let len = elem.text.as_ref().map(|t| t.chars().count()).unwrap_or(0) as i64;
             let w = (len * 16 + 32).max(100).min(max_w);

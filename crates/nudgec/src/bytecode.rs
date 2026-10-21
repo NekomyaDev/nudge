@@ -996,7 +996,7 @@ fn check_expr_effects(expr: &Expr, tool_names: &[String]) -> Result<(), String> 
                     || name.ends_with(".exists")
                     || matches!(
                         name,
-                        "column" | "row" | "scroll" | "text" | "button" | "input"
+                        "column" | "row" | "scroll" | "text" | "button" | "input" | "bubble"
                     )
                 {
                     // Tool call / IO / workspace / store / UI expressions are delegated to the interpreter via DelegateExpr.

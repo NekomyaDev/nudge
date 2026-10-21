@@ -1028,6 +1028,35 @@ impl Interpreter {
             }));
         }
 
+        // Chat bubble: a text box with a painted, rounded background. Takes
+        // the message as its single positional arg, plus style kwargs.
+        if name == "bubble" {
+            let mut elem = nudge_runtime::ui::UiElement::new("bubble");
+            if !args.is_empty() {
+                let val = self.eval_expr(&args[0], env)?;
+                elem.text = Some(match val {
+                    NudgeVal::Str(s) => s,
+                    other => other.to_string(),
+                });
+            }
+            for (k, v_expr) in kwargs {
+                if k == "id" {
+                    let v = self.eval_expr(v_expr, env)?;
+                    elem.id = Some(match v {
+                        NudgeVal::Str(s) => s,
+                        other => other.to_string(),
+                    });
+                } else {
+                    let v = self.eval_expr(v_expr, env)?;
+                    elem.props.insert(k.clone(), v.to_string());
+                }
+            }
+            return Ok(Some(NudgeVal::UiElement {
+                found: true,
+                elem: Box::new(elem),
+            }));
+        }
+
         if name == "button" {
             let mut elem = nudge_runtime::ui::UiElement::new("button");
             if !args.is_empty() {
@@ -7137,6 +7166,131 @@ data: [DONE]\n\n";
             interp.agent_store.get_field("FeedApp", "sent"),
             Ok(NudgeVal::Int(1))
         );
+    }
+
+    #[test]
+    fn test_bubble_combinator_builds_typed_chat_elements() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cleanup = EnvReset::set("NUDGE_UI_HEADLESS", "1");
+
+        // The full path again: parse the `bubble(...)` calls, type them as
+        // View, evaluate them into elements, then read the message and the
+        // style props back off the element tree.
+        let src = r#"
+            type Message = { role: string, body: string }
+
+            view ChatView(messages: [Message], draft: string) -> View {
+                let mut nodes = []
+                for m in messages {
+                    nodes = nodes + [
+                        bubble(m.body, role = m.role, max_width = 280)
+                    ]
+                }
+                column(padding = 8, gap = 8) [
+                    bubble("typed bubbles work", role = "assistant"),
+                    scroll(nodes, id = "feed", height = 120, padding = 6, gap = 6),
+                    input(draft, id = "draft", on_change = on_draft),
+                    button("Send", id = "send", on_click = on_send)
+                ]
+            }
+
+            agent ChatApp {
+                state {
+                    messages: [Message] = [
+                        { role: "assistant", body: "seed one" },
+                        { role: "user", body: "seed two" }
+                    ],
+                    draft: string = "",
+                    sent: int = 0
+                }
+                fn on_draft(val: string) uses UI {
+                    state.draft = val
+                }
+                fn on_send() uses UI {
+                    state.messages = state.messages + [
+                        { role: "user", body: state.draft }
+                    ]
+                    state.draft = ""
+                    state.sent = state.sent + 1
+                }
+                window ChatWindow {
+                    title: "Chat",
+                    width: 400,
+                    height: 340,
+                    content: ChatView(state.messages, state.draft)
+                }
+            }
+
+            test "bubbles carry their message and a send appends a new one" {
+                let app = ChatApp.ChatWindow.mount_headless()
+                assert app.find("feed").exists()
+                assert app.find_text("typed bubbles work").exists()
+                assert app.find_text("seed one").exists()
+                assert app.find_text("it works").exists() == false
+
+                app.dispatch_type("draft", "it works")
+                assert ChatApp.state.draft == "it works"
+
+                app.dispatch_click("send")
+                assert ChatApp.state.sent == 1
+                // on_send clears the draft, so the composer's own text is now
+                // empty: finding the message again can only be the appended
+                // bubble, not the input.
+                assert ChatApp.state.draft == ""
+                assert app.find_text("it works").exists()
+            }
+        "#;
+        let tokens = lex(src).expect("lex failed");
+        let items = parse(tokens).expect("parse failed");
+        let mut interp = Interpreter::new();
+        interp.load_items(&items).expect("load_items failed");
+        interp.run_all_tests().expect("test execution failed");
+
+        assert_eq!(
+            interp.agent_store.get_field("ChatApp", "sent"),
+            Ok(NudgeVal::Int(1)),
+            "the bubble view mounted, its messages were findable, and the \
+             neighbouring button still dispatched"
+        );
+    }
+
+    /// The evaluator, not just the mount path: props must land on the element
+    /// so the renderer can read role / align / padding / max_width back off.
+    #[test]
+    fn test_bubble_evaluator_records_role_and_style_props() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        // A view body is the only place a bare `bubble(...)` call survives the
+        // parser, so evaluate the statement straight out of the body.
+        let src = r#"
+            view OneMsg() -> View {
+                bubble("ping", role = "user", align = "left", padding = 14, max_width = 200)
+            }
+        "#;
+        let tokens = lex(src).expect("lex failed");
+        let items = parse(tokens).expect("parse failed");
+
+        let Item::View { body, .. } = &items[0] else {
+            panic!("expected a view item, got {:?}", items[0]);
+        };
+        let StmtKind::ExprStmt(expr) = &body[0].kind else {
+            panic!("expected an expression statement in the view body")
+        };
+
+        let mut interp = Interpreter::new();
+        interp.load_items(&items).expect("load_items failed");
+        let env = Rc::new(RefCell::new(Env::new()));
+        let val = interp.eval_expr(expr, &env).expect("eval failed");
+        let NudgeVal::UiElement { found: true, elem } = val else {
+            panic!("expected a UI element, got {val:?}");
+        };
+        assert_eq!(elem.tag, "bubble");
+        assert_eq!(elem.text.as_deref(), Some("ping"));
+        assert_eq!(elem.id.as_deref(), None, "no id was passed");
+        assert_eq!(elem.props.get("role").map(|s| s.as_str()), Some("user"));
+        assert_eq!(elem.props.get("align").map(|s| s.as_str()), Some("left"));
+        assert_eq!(elem.props.get("padding").map(|s| s.as_str()), Some("14"));
+        assert_eq!(elem.props.get("max_width").map(|s| s.as_str()), Some("200"));
     }
 
     #[test]

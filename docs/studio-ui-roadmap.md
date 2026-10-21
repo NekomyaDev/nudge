@@ -186,10 +186,43 @@
 ## SECTION 3 — LAYOUT IMPROVEMENTS
 > Estimate: 3–4 days
 
-### 3.1 Real chat bubbles  ★
-- [ ] Rounded, aligned bubbles for user/assistant (needs 1.3 + 1.1)
-- [ ] Bubble padding, max width, left/right alignment
-- [ ] Most visible part of the "ChatGPT feel"
+### 3.1 Real chat bubbles  ★ — DONE
+- [x] Rounded, aligned bubbles for user/assistant (needs 1.3 + 1.1)
+- [x] Bubble padding, max width, left/right alignment
+- [x] Most visible part of the "ChatGPT feel"
+
+**Implementation (all three layers):**
+- **Renderer** (`ui_window.rs`): new `bubble` element. The message wraps to
+  `max_width` (default 340px), the box grows by `padding` (default 10px), and
+  it is aligned left/right/centre inside the width its parent offers — the
+  `role` prop (`user` / `assistant`) picks both the palette and the default
+  side, so an explicit `align` overrides it. Background is a rounded rect
+  drawn with the existing clipped helpers, and the glyphs are clipped to the
+  bubble's *interior* rect, so a bubble scrolled out of its viewport leaves no
+  pixels behind. `LayoutBox` gained a `pad` field so the renderer knows the
+  text inset.
+- **Theme**: `bubble_user_bg` / `bubble_user_text` / `bubble_assistant_bg` /
+  `bubble_assistant_text` (Dark theme: Blue-500 on white vs Zinc-800 on
+  Zinc-100).
+- **Compiler**: `bubble` added as a leaf combinator in the interpreter
+  (positional message + style kwargs, `id` honoured), typed `Ty::View` in the
+  checker (both the bare and the `ui.`-prefixed form), delegated in bytecode.
+  Headless `estimate_element_size` measures it too.
+- **Verified**: `cargo test --workspace --features native-gui` **856 passed /
+  0 failed** (1 ignored = the real-OS-window acceptance test, run under Xvfb).
+  6 new runtime tests (wrap + max_width cap, padding growth, role-default and
+  overridden alignment, symmetric alignment inside a viewport, pan/clip
+  inheritance, background clipping) + 2 compiler tests (typed mount path;
+  evaluator records role/align/padding/max_width).
+  Live-verified with `examples/chat_bubbles.ndg` on X11: bubbles render
+  rounded and correctly aligned, wheel scrolls the feed while header/composer
+  stay put (diff bbox was exactly the viewport `(30,52,397,202)`), typing into
+  the composer and clicking Send appends a new user bubble (counter 0→1→2 with
+  one dispatch per click, verified by pixel hash — the wheel does **not**
+  dispatch).
+  - **Note**: to drive the window with `xdotool` you must raise *and* focus
+    it and keep the pointer over it — a full-screen Chrome window otherwise
+    swallows hover/click/typing, which silently looks like an input bug.
 
 ### 3.2 Inline rich text  (1–2 days)
 - [ ] Bold, italic, code (`code`), link emphasis within a single text run
