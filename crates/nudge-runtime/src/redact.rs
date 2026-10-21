@@ -391,7 +391,12 @@ pub fn with_cached_redactor<R, F: FnOnce(&Redactor) -> R>(f: F) -> R {
     if stale {
         *lock = Some((gen, Redactor::from_env()));
     }
-    f(&lock.as_ref().unwrap().1)
+    if let Some((_, ref r)) = *lock {
+        f(r)
+    } else {
+        let fallback = Redactor::from_env();
+        f(&fallback)
+    }
 }
 
 /// Redact fields of a trace record in place, preserving request_hash, v, seq, and kind.

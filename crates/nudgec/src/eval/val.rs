@@ -459,4 +459,22 @@ mod tests {
             NudgeVal::Map(m)
         );
     }
+
+    #[test]
+    fn test_parse_cli_arg_boundary_and_corner_cases() {
+        assert_eq!(parse_cli_arg("()"), NudgeVal::Unit);
+        assert_eq!(parse_cli_arg("none"), NudgeVal::Unit);
+        assert_eq!(parse_cli_arg("null"), NudgeVal::Unit);
+        assert_eq!(parse_cli_arg("0"), NudgeVal::Int(0));
+        assert_eq!(parse_cli_arg("-42"), NudgeVal::Int(-42));
+        assert_eq!(parse_cli_arg("0.0"), NudgeVal::Float(0.0));
+        assert_eq!(parse_cli_arg("[]"), NudgeVal::List(vec![]));
+        assert_eq!(parse_cli_arg("{}"), NudgeVal::Map(HashMap::new()));
+        // invalid json formats fallback gracefully to string without panic
+        assert_eq!(
+            parse_cli_arg("{broken json"),
+            NudgeVal::Str("{broken json".into())
+        );
+        assert_eq!(parse_cli_arg("[1, 2,"), NudgeVal::Str("[1, 2,".into()));
+    }
 }
