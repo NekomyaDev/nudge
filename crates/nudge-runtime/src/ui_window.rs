@@ -128,7 +128,8 @@ pub fn draw_char(
 
     for (row, &byte) in glyph.iter().enumerate() {
         for col in 0..8 {
-            if (byte & (1 << col)) != 0 {
+            // font8x8 stores each row MSB-first: bit 7 is the leftmost pixel.
+            if (byte & (1 << (7 - col))) != 0 {
                 let px = x + (col * scale) as i32;
                 let py = y + (row * scale) as i32;
                 draw_rect(
