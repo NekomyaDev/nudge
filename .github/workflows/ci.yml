@@ -26,8 +26,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Install X11 build libs (for --features native-gui)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libx11-dev libxkbcommon-dev libxkbcommon-x11-dev libgl1-mesa-dev
       - name: Run the compiler test suite
-        run: cargo test --workspace
+        # `native-gui` because the renderer's unit tests live behind that
+        # feature flag — without it `cargo test --workspace` silently skips
+        # every test in `ui_window.rs`.
+        run: cargo test --workspace --features native-gui
       - name: Run the TS runtime tests
         run: node --experimental-strip-types --test runtime/nudge_runtime.test.mjs
       - name: Run the Python runtime + bridge tests

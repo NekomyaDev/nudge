@@ -135,13 +135,20 @@
 - **Compiler**: `scroll` added to the UI-container set in the parser
   (`is_ui_container_expr`), checker (Ty::View), interpreter
   (`eval_ui_combinator`) and bytecode delegation.
-- **Verified**: `cargo test --workspace` 822 passed (7 new runtime tests
-  covering viewport measurement, pan, clamp, click-through, wheel/key
-  routing, nested regions, clip helpers; 1 compiler test). Clippy clean.
+- **Verified**: `cargo test --workspace --features native-gui` **848 passed,
+  0 failed** (1 ignored: the real-OS-window acceptance test, which CI runs
+  under Xvfb). 8 new runtime tests covering viewport measurement, pan, clamp,
+  stale-max re-clamping after content shrinks, click-through, wheel/key
+  routing, nested regions, clip helpers; 1 compiler test. Clippy
+  `--all-features -D warnings` and `cargo fmt --check` both clean.
   Live-verified with `examples/scroll_feed.ndg`: wheel scrolls the feed
   while the composer stays put (8978px diff), typing into the composer after
   scrolling does **not** click through to scrolled-away content, and Send
   dispatches state updates (trace seq 2–3).
+  - **Note**: `native-gui` is *not* a default feature and `ui_window.rs` is
+    `#[cfg(feature = "native-gui")]`, so a bare `cargo test --workspace`
+    silently skips the entire renderer test suite. CI's test job now passes
+    `--features native-gui` for this reason.
 
 ### 2.2 `select` / dropdown  (1 day)
 - [ ] For model selection, settings menus

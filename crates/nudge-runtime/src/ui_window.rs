@@ -69,21 +69,21 @@ pub struct Theme {
 impl Theme {
     /// Zinc-900 dark theme (the original Studio palette).
     pub const DARK: Theme = Theme {
-        bg: 0xFF18_181B,          // Zinc-900
-        text: 0xFFF4_F4F5,        // Zinc-100
-        text_dim: 0xFF71_717A,    // Zinc-500
-        border: 0xFF3F_3F46,      // Zinc-700
-        input_bg: 0xFF27_272A,    // Zinc-800
-        input_border: 0xFF52_525B, // Zinc-600
+        bg: 0xFF18_181B,                   // Zinc-900
+        text: 0xFFF4_F4F5,                 // Zinc-100
+        text_dim: 0xFF71_717A,             // Zinc-500
+        border: 0xFF3F_3F46,               // Zinc-700
+        input_bg: 0xFF27_272A,             // Zinc-800
+        input_border: 0xFF52_525B,         // Zinc-600
         input_border_focused: 0xFF3B_82F6, // Blue-500
-        button_bg: 0xFF3B_82F6,   // Blue-500
-        button_bg_hover: 0xFF25_63EB, // Blue-600
-        button_border: 0xFF60_A5FA, // Blue-400
-        button_text: 0xFFFF_FFFF, // white
-        selection_bg: 0xFF1D_4ED8, // Blue-700
-        cursor: 0xFFFF_FFFF,      // white
-        scrollbar_track: 0xFF27_272A, // Zinc-800
-        scrollbar_thumb: 0xFF71_717A, // Zinc-500
+        button_bg: 0xFF3B_82F6,            // Blue-500
+        button_bg_hover: 0xFF25_63EB,      // Blue-600
+        button_border: 0xFF60_A5FA,        // Blue-400
+        button_text: 0xFFFF_FFFF,          // white
+        selection_bg: 0xFF1D_4ED8,         // Blue-700
+        cursor: 0xFFFF_FFFF,               // white
+        scrollbar_track: 0xFF27_272A,      // Zinc-800
+        scrollbar_thumb: 0xFF71_717A,      // Zinc-500
     };
 }
 
@@ -905,7 +905,10 @@ pub fn layout_element_ctx(
             // The viewport itself only moves with its ancestors, but its
             // content also moves by this container's own offset.
             let mut child_clips = clips.to_vec();
-            child_clips.push(ClipRegion { rect: viewport, pan });
+            child_clips.push(ClipRegion {
+                rect: viewport,
+                pan,
+            });
             let child_pan = (pan.0, pan.1 + offset);
 
             let mut child_boxes = Vec::new();
@@ -1245,8 +1248,16 @@ impl<D: UiDispatcher> NativeApp<D> {
                 regions: scroll_regions,
                 counter: scroll_counter,
             };
-            let (total_w, total_h) =
-                layout_element_ctx(root, 10, 10, self.width as i32 - 20, layout_boxes, &mut ctx, (0, 0), &[]);
+            let (total_w, total_h) = layout_element_ctx(
+                root,
+                10,
+                10,
+                self.width as i32 - 20,
+                layout_boxes,
+                &mut ctx,
+                (0, 0),
+                &[],
+            );
             *content_width = total_w;
             *content_height = total_h;
 
@@ -1348,8 +1359,12 @@ impl<D: UiDispatcher> NativeApp<D> {
             let ry = lbox.rect.y - self.scroll_y - lbox.pan.1;
 
             // Viewport clipping: skip completely out-of-bounds elements
-            if !lbox.visible_in(self.scroll_x, self.scroll_y, self.width as i32, self.height as i32)
-            {
+            if !lbox.visible_in(
+                self.scroll_x,
+                self.scroll_y,
+                self.width as i32,
+                self.height as i32,
+            ) {
                 continue;
             }
             let clip = lbox.screen_clip(self.scroll_x, self.scroll_y);
@@ -1368,7 +1383,17 @@ impl<D: UiDispatcher> NativeApp<D> {
                                 text,
                                 c,
                                 |px, py, w, h, cov| {
-                                    draw_rect_alpha(&mut buffer, stride, h_usize, px, py, w, h, color, cov);
+                                    draw_rect_alpha(
+                                        &mut buffer,
+                                        stride,
+                                        h_usize,
+                                        px,
+                                        py,
+                                        w,
+                                        h,
+                                        color,
+                                        cov,
+                                    );
                                 },
                             ),
                             None => draw_text_ttf(
@@ -1378,7 +1403,17 @@ impl<D: UiDispatcher> NativeApp<D> {
                                 ry + 2,
                                 text,
                                 |px, py, w, h, cov| {
-                                    draw_rect_alpha(&mut buffer, stride, h_usize, px, py, w, h, color, cov);
+                                    draw_rect_alpha(
+                                        &mut buffer,
+                                        stride,
+                                        h_usize,
+                                        px,
+                                        py,
+                                        w,
+                                        h,
+                                        color,
+                                        cov,
+                                    );
                                 },
                             ),
                         }
@@ -1393,8 +1428,8 @@ impl<D: UiDispatcher> NativeApp<D> {
                     };
                     // A control scrolled out of its viewport is not hoverable
                     // even if the cursor sits on its (invisible) rectangle.
-                    let hovered = screen_rect.contains(mx, my)
-                        && clip.is_none_or(|c| c.contains(mx, my));
+                    let hovered =
+                        screen_rect.contains(mx, my) && clip.is_none_or(|c| c.contains(mx, my));
                     let bg_color = if hovered {
                         theme.button_bg_hover
                     } else {
@@ -1434,9 +1469,27 @@ impl<D: UiDispatcher> NativeApp<D> {
                             Some(c) => intersect(interior, c),
                         };
                         if let Some(tc) = text_clip {
-                            draw_text_ttf_clipped(fonts, FaceKind::Ui, tx, ty, text, tc, |px, py, w, h, cov| {
-                                draw_rect_alpha(&mut buffer, stride, h_usize, px, py, w, h, color, cov);
-                            });
+                            draw_text_ttf_clipped(
+                                fonts,
+                                FaceKind::Ui,
+                                tx,
+                                ty,
+                                text,
+                                tc,
+                                |px, py, w, h, cov| {
+                                    draw_rect_alpha(
+                                        &mut buffer,
+                                        stride,
+                                        h_usize,
+                                        px,
+                                        py,
+                                        w,
+                                        h,
+                                        color,
+                                        cov,
+                                    );
+                                },
+                            );
                         }
                     }
                 }
@@ -1564,7 +1617,17 @@ impl<D: UiDispatcher> NativeApp<D> {
                             &display_text,
                             tc,
                             |px, py, w, h, cov| {
-                                draw_rect_alpha(&mut buffer, stride, h_usize, px, py, w, h, input_text_color, cov);
+                                draw_rect_alpha(
+                                    &mut buffer,
+                                    stride,
+                                    h_usize,
+                                    px,
+                                    py,
+                                    w,
+                                    h,
+                                    input_text_color,
+                                    cov,
+                                );
                             },
                         );
                     }
@@ -1589,8 +1652,8 @@ impl<D: UiDispatcher> NativeApp<D> {
                         // Proportional, not cell-grid: the caret must sit on
                         // the drawn glyph edge, otherwise it drifts right of
                         // short glyphs and looks like a phantom space.
-                        let cur_x = rx + 8
-                            + self.fonts.prefix_width(FaceKind::Ui, line_text, cur_col);
+                        let cur_x =
+                            rx + 8 + self.fonts.prefix_width(FaceKind::Ui, line_text, cur_col);
                         let cur_y = ry + 6 + (cur_line as i32) * cell_h;
                         let caret = Rect {
                             x: cur_x,
@@ -1638,9 +1701,8 @@ impl<D: UiDispatcher> NativeApp<D> {
                 .max(20.0)
                 .min(track_h as f64) as i32;
             let off = self.scroll_offsets.get(&r.key).copied().unwrap_or(0);
-            let thumb_y = vy
-                + 4
-                + ((off as f64 / max as f64) * (track_h - thumb_h).max(0) as f64) as i32;
+            let thumb_y =
+                vy + 4 + ((off as f64 / max as f64) * (track_h - thumb_h).max(0) as f64) as i32;
             draw_rect(
                 &mut buffer,
                 stride,
@@ -2039,7 +2101,12 @@ impl<D: UiDispatcher> NativeApp<D> {
         let scroll_keys = matches!(
             logical_key,
             Key::Named(
-                NamedKey::PageUp | NamedKey::PageDown | NamedKey::Home | NamedKey::End | NamedKey::ArrowUp | NamedKey::ArrowDown
+                NamedKey::PageUp
+                    | NamedKey::PageDown
+                    | NamedKey::Home
+                    | NamedKey::End
+                    | NamedKey::ArrowUp
+                    | NamedKey::ArrowDown
             )
         );
         if scroll_keys {
@@ -2491,7 +2558,7 @@ mod tests {
         // metric the glyphs are drawn with), NOT cell_grid 2*CELL_W.
         // y: lbox.rect.y + 6 + 1 * CELL_H = 20 + 6 + 20 = 46
         let x_line1_col2 = 10 + 8 + engine.prefix_width(FaceKind::Ui, "line1", 2);
-        app.cursor_pos = (x_line1_col2, 20 + 6 + 1 * CELL_H);
+        app.cursor_pos = (x_line1_col2, 20 + 6 + CELL_H);
         app.handle_click();
 
         assert_eq!(app.focused_id.as_deref(), Some("multiline_input"));
@@ -3043,8 +3110,16 @@ mod tests {
         assert_eq!(at(&buf, 29, 29), BG, "bottom-right corner must be cut");
 
         assert_eq!(at(&buf, 20, 20), FILL, "centre must be filled");
-        assert_eq!(at(&buf, 10, 20), FILL, "left edge at mid-height must be filled");
-        assert_eq!(at(&buf, 20, 10), FILL, "top edge at mid-width must be filled");
+        assert_eq!(
+            at(&buf, 10, 20),
+            FILL,
+            "left edge at mid-height must be filled"
+        );
+        assert_eq!(
+            at(&buf, 20, 10),
+            FILL,
+            "top edge at mid-width must be filled"
+        );
 
         // Nothing outside the box may be touched.
         assert_eq!(at(&buf, 9, 20), BG, "outside left must stay background");
@@ -3060,10 +3135,7 @@ mod tests {
         let mut buf = vec![BG; stride * height];
         draw_rounded_rect_alpha(&mut buf, stride, height, 10, 10, 20, 20, 6, FILL, 1.0);
 
-        let partial = buf
-            .iter()
-            .filter(|&&p| p != BG && p != FILL)
-            .count();
+        let partial = buf.iter().filter(|&&p| p != BG && p != FILL).count();
         assert!(
             partial > 0,
             "expected at least one anti-aliased pixel along the arcs"
@@ -3105,7 +3177,18 @@ mod tests {
         draw_rect(&mut sharp, stride, height, x, y, w, h, color);
         draw_rect_outline(&mut sharp, stride, height, x, y, w, h, 0xFF11_2233);
 
-        draw_rounded_rect_box(&mut rounded, stride, height, x, y, w, h, 0, color, 0xFF11_2233);
+        draw_rounded_rect_box(
+            &mut rounded,
+            stride,
+            height,
+            x,
+            y,
+            w,
+            h,
+            0,
+            color,
+            0xFF11_2233,
+        );
 
         assert_eq!(sharp, rounded, "radius 0 must equal the square helpers");
     }
@@ -3119,8 +3202,30 @@ mod tests {
         let mut buf = vec![BG; stride * height];
 
         // Straddles the top-left corner, the right edge and the bottom edge.
-        draw_rounded_rect_alpha(&mut buf, stride, height, -5, -5, 30, 40, 6, 0xFFFF_FFFF, 1.0);
-        draw_rounded_rect_box(&mut buf, stride, height, 20, 20, 20, 20, 6, 0xFF00_00FF, 0xFFFF_FFFF);
+        draw_rounded_rect_alpha(
+            &mut buf,
+            stride,
+            height,
+            -5,
+            -5,
+            30,
+            40,
+            6,
+            0xFFFF_FFFF,
+            1.0,
+        );
+        draw_rounded_rect_box(
+            &mut buf,
+            stride,
+            height,
+            20,
+            20,
+            20,
+            20,
+            6,
+            0xFF00_00FF,
+            0xFFFF_FFFF,
+        );
 
         // Every pixel is addressable and the buffer length is unchanged.
         assert_eq!(buf.len(), stride * height);
@@ -3265,7 +3370,12 @@ mod tests {
             first.rect.y - 40
         );
         assert!(
-            !first.visible_in(app.scroll_x, app.scroll_y, app.width as i32, app.height as i32),
+            !first.visible_in(
+                app.scroll_x,
+                app.scroll_y,
+                app.width as i32,
+                app.height as i32
+            ),
             "scrolled above the viewport is not visible"
         );
 
@@ -3276,7 +3386,12 @@ mod tests {
             .find(|b| b.text.as_deref() == Some("message 3"))
             .unwrap();
         assert!(
-            mid.visible_in(app.scroll_x, app.scroll_y, app.width as i32, app.height as i32),
+            mid.visible_in(
+                app.scroll_x,
+                app.scroll_y,
+                app.width as i32,
+                app.height as i32
+            ),
             "content scrolled into the viewport is visible"
         );
         let far = app
@@ -3285,7 +3400,12 @@ mod tests {
             .find(|b| b.text.as_deref() == Some("message 9"))
             .unwrap();
         assert!(
-            !far.visible_in(app.scroll_x, app.scroll_y, app.width as i32, app.height as i32),
+            !far.visible_in(
+                app.scroll_x,
+                app.scroll_y,
+                app.width as i32,
+                app.height as i32
+            ),
             "content still below the viewport stays clipped"
         );
     }
@@ -3428,7 +3548,10 @@ mod tests {
             "End scrolls the region to its bottom"
         );
         app.send_key("Home");
-        assert_eq!(app.scroll_offsets[&region_key], 0, "Home rewinds the region");
+        assert_eq!(
+            app.scroll_offsets[&region_key], 0,
+            "Home rewinds the region"
+        );
 
         // With the cursor outside the region the keys fall back to the window.
         app.cursor_pos = (20, 200);
@@ -3439,6 +3562,59 @@ mod tests {
             (app.content_height - app.height as i32 + 20).max(0),
             "End scrolls the window when no region is under the cursor"
         );
+    }
+
+    /// When the content shrinks (messages deleted) the region's max offset
+    /// shrinks with it. `scroll_region_by` may read a *stale* max from the
+    /// previous layout, so after the gesture settles the stored offset must
+    /// never exceed the fresh max — otherwise the viewport renders blank.
+    #[test]
+    fn test_region_offset_is_reclamped_when_content_shrinks() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "Test".into(),
+                width: 400,
+                height: 300,
+            },
+            dummy,
+        );
+        let region_key = "scroll:feed".to_string();
+
+        // 40 messages in a 100px viewport: plenty of headroom to scroll.
+        let tall = chat_tree(40, 100);
+        app.layout_root(&tall);
+        app.cursor_pos = (20, 30);
+        app.scroll_region_by(&region_key, 10_000);
+        let big_max = app.scroll_regions[0].max_offset();
+        assert_eq!(
+            app.scroll_offsets[&region_key], big_max,
+            "wheel clamps to the tall content's max"
+        );
+
+        // Delete most messages: the content now fits the viewport, so the
+        // region has nothing to scroll.
+        let short = chat_tree(3, 100);
+        app.layout_root(&short);
+        let fresh_max = app.scroll_regions[0].max_offset();
+        assert_eq!(fresh_max, 0, "short content leaves nothing to scroll");
+        assert_eq!(
+            app.scroll_offsets[&region_key], 0,
+            "layout re-clamps the stored offset to the fresh max after the\n\
+             content shrinks, so the viewport never renders blank"
+        );
+
+        // A wheel gesture over the shrunken region must stay clamped and must
+        // not resurrect the stale offset.
+        app.scroll_region_by(&region_key, 500);
+        assert_eq!(app.scroll_offsets[&region_key], 0);
     }
 
     /// Scroll inside scroll: both viewports clip, and the offsets compose.
@@ -3500,12 +3676,13 @@ mod tests {
             .iter()
             .find(|b| b.text.as_deref() == Some("inner3"))
             .expect("inner content laid out");
-        assert_eq!(
-            leaf.pan, (0, 30),
-            "inner content inherits the outer offset"
-        );
+        assert_eq!(leaf.pan, (0, 30), "inner content inherits the outer offset");
         let clips = leaf.clips.as_ref().expect("clipped by both viewports");
-        assert_eq!(clips.len(), 2, "clipped by the outer and the inner viewport");
+        assert_eq!(
+            clips.len(),
+            2,
+            "clipped by the outer and the inner viewport"
+        );
         // The outer viewport only moves with its own ancestors (none here).
         assert_eq!(clips[0].pan, (0, 0));
         // The inner viewport is itself inside the outer region, so it pans.

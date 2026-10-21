@@ -594,6 +594,12 @@ git clone https://github.com/NekomyaDev/nudge.git
 cd nudge
 cargo build --release -p nudgec   # compiler binary at target/release/nudgec
 cargo test --workspace            # compiler, VM, and runtime test suite
+
+# The native-window renderer's tests live behind the `native-gui` feature,
+# which is NOT on by default — without it every test in `ui_window.rs` is
+# silently skipped (needs X11 build libs: pkg-config libx11-dev libxkbcommon-dev
+# libxkbcommon-x11-dev libgl1-mesa-dev).
+cargo test --workspace --features native-gui
 ```
 
 The Python runtime is located in `runtime/` (standard library only, zero external dependencies):
