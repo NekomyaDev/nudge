@@ -749,7 +749,6 @@ impl<D: UiDispatcher> NativeApp<D> {
         let h_usize = self.height as usize;
 
         let theme = self.theme;
-        let cell_w = self.fonts.cell_w;
         let cell_h = self.fonts.cell_h;
 
         // Background from theme
@@ -929,8 +928,27 @@ impl<D: UiDispatcher> NativeApp<D> {
                                             st.line_len(line)
                                         };
                                         if col_end > col_start {
-                                            let sel_x = rx + 8 + (col_start as i32) * cell_w;
-                                            let sel_w = ((col_end - col_start) as i32) * cell_w;
+                                            // Measure on the same proportional
+                                            // metric the text is drawn with, so
+                                            // the highlight hugs the glyphs.
+                                            let line_text = st
+                                                .text
+                                                .split('\n')
+                                                .nth(line)
+                                                .unwrap_or("")
+                                                .trim_end_matches('\r');
+                                            let start_off = self.fonts.prefix_width(
+                                                FaceKind::Ui,
+                                                line_text,
+                                                col_start,
+                                            );
+                                            let end_off = self.fonts.prefix_width(
+                                                FaceKind::Ui,
+                                                line_text,
+                                                col_end,
+                                            );
+                                            let sel_x = rx + 8 + start_off;
+                                            let sel_w = (end_off - start_off).max(0);
                                             let sel_y = ry + 6 + (line as i32) * cell_h;
                                             draw_rect(
                                                 &mut buffer,
@@ -975,7 +993,16 @@ impl<D: UiDispatcher> NativeApp<D> {
                         } else {
                             (0, cur_idx)
                         };
-                        let cur_x = rx + 8 + (cur_col as i32) * cell_w;
+                        let line_text = display_text
+                            .split('\n')
+                            .nth(cur_line)
+                            .unwrap_or("")
+                            .trim_end_matches('\r');
+                        // Proportional, not cell-grid: the caret must sit on
+                        // the drawn glyph edge, otherwise it drifts right of
+                        // short glyphs and looks like a phantom space.
+                        let cur_x = rx + 8
+                            + self.fonts.prefix_width(FaceKind::Ui, line_text, cur_col);
                         let cur_y = ry + 6 + (cur_line as i32) * cell_h;
                         draw_rect(
                             &mut buffer,
@@ -1060,17 +1087,36 @@ impl<D: UiDispatcher> NativeApp<D> {
                 self.focused_id = Some(id.clone());
                 let rel_x = cx - (lbox.rect.x + 8);
                 let rel_y = cy - (lbox.rect.y + 6);
-                let cell_w = self.fonts.cell_w.max(1);
                 let cell_h = self.fonts.cell_h.max(1);
                 let line_idx = (rel_y.max(0) / cell_h) as usize;
-                let col_idx = (rel_x.max(0) / cell_w) as usize;
 
-                let st = self.ensure_input_state(id, lbox.text.as_deref().unwrap_or(""));
-                let target_line = line_idx.min(st.lines_count().saturating_sub(1));
-                let target_col = col_idx.min(st.line_len(target_line));
-                let char_idx = st.char_idx_for_line_col(target_line, target_col);
-                st.cursor = char_idx.min(st.char_len());
-                st.selection_anchor = None;
+                // Row height stays on the line grid (each drawn line advances
+                // by exactly cell_h), but the column is resolved with the same
+                // proportional advances the glyphs are drawn with.
+                let (line_start, target_col_max, char_len, line_text) = {
+                    let st = self.ensure_input_state(id, lbox.text.as_deref().unwrap_or(""));
+                    let target_line = line_idx.min(st.lines_count().saturating_sub(1));
+                    let line_start = st.char_idx_for_line_col(target_line, 0);
+                    let target_col_max = st.line_len(target_line);
+                    let char_len = st.char_len();
+                    let line_text = st
+                        .text
+                        .split('\n')
+                        .nth(target_line)
+                        .unwrap_or("")
+                        .trim_end_matches('\r')
+                        .to_string();
+                    (line_start, target_col_max, char_len, line_text)
+                };
+
+                let col_idx = self.fonts.col_at_offset(FaceKind::Ui, &line_text, rel_x);
+                let target_col = col_idx.min(target_col_max);
+                let char_idx = (line_start + target_col).min(char_len);
+
+                if let Some(st) = self.text_inputs.get_mut(id) {
+                    st.cursor = char_idx;
+                    st.selection_anchor = None;
+                }
             }
             self.render();
         } else {
@@ -1743,6 +1789,7 @@ mod tests {
         );
 
         // Set up layout boxes directly with an input at (10, 20) with multiline text
+        let engine = FontEngine::new(BASE_PX);
         app.layout_boxes = vec![LayoutBox {
             rect: Rect {
                 x: 10,
@@ -1759,9 +1806,11 @@ mod tests {
         }];
 
         // Simulate click on line 1, col 2:
-        // x: lbox.rect.x + 8 + 2 * CELL_W = 10 + 8 + 20 = 38
+        // x is the proportional offset of 2 glyphs into "line1" (the same
+        // metric the glyphs are drawn with), NOT cell_grid 2*CELL_W.
         // y: lbox.rect.y + 6 + 1 * CELL_H = 20 + 6 + 20 = 46
-        app.cursor_pos = (10 + 8 + 2 * CELL_W, 20 + 6 + 1 * CELL_H);
+        let x_line1_col2 = 10 + 8 + engine.prefix_width(FaceKind::Ui, "line1", 2);
+        app.cursor_pos = (x_line1_col2, 20 + 6 + 1 * CELL_H);
         app.handle_click();
 
         assert_eq!(app.focused_id.as_deref(), Some("multiline_input"));
@@ -1773,9 +1822,10 @@ mod tests {
         );
 
         // Simulate click on line 2, col 3:
-        // x: 10 + 8 + 3 * CELL_W = 48
+        // x: proportional offset of 3 glyphs into "line2"
         // y: 20 + 6 + 2 * CELL_H = 66
-        app.cursor_pos = (10 + 8 + 3 * CELL_W, 20 + 6 + 2 * CELL_H);
+        let x_line2_col3 = 10 + 8 + engine.prefix_width(FaceKind::Ui, "line2", 3);
+        app.cursor_pos = (x_line2_col3, 20 + 6 + 2 * CELL_H);
         app.handle_click();
 
         let st = app.text_inputs.get("multiline_input").unwrap();

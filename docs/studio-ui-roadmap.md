@@ -3,7 +3,7 @@
 > Goal: evolve the existing native renderer (`winit 0.30` + `softbuffer 0.4`) toward
 > a modern, "web-app feel" interface.
 > This document lists every missing item **evidence-based** (derived from the code).
-> Date: 21 Oct 2026 · Repo: NekomyaDev/nudge · HEAD: 5578b8c
+> Date: 21 Oct 2026 · Repo: NekomyaDev/nudge
 
 ---
 
@@ -68,6 +68,9 @@
 - [x] UTF-8 / Turkish character support (`ğüşıöç` render correctly)
 - [x] Measurement: `measure_width` for correct wrapping and vertical alignment
 - [x] Proportional glyph advances (natural spacing)
+- [x] Caret / selection / click use the **same** proportional metric as drawing
+      (`prefix_width` / `col_at_offset`). The old fixed `cell_w` grid put the
+      caret ~13px past the glyphs for "olur" — a phantom gap while typing.
 - [x] Inline style: **bold** (`FaceKind::UiBold`)
 - Note: `draw_text` call sites routed through `draw_text_ttf`
 

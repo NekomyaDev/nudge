@@ -157,6 +157,49 @@ impl FontEngine {
         sf.h_advance(sf.glyph_id(ch)).round() as i32
     }
 
+    /// Pixel x-offset of the first `col` glyphs of `line`.
+    ///
+    /// This is the **caret/selection/click metric**: it sums the exact same
+    /// kerning-free `advance_of` values that the free function
+    /// `draw_text_ttf` uses to place glyphs, so a caret computed from it
+    /// lands exactly on the drawn glyph boundary. Using the fixed `cell_w`
+    /// grid instead would drift from the rendered text (e.g. "olur" is 27px
+    /// drawn but 4*cell_w = 40px on the grid, leaving a phantom gap).
+    pub fn prefix_width(&self, kind: FaceKind, line: &str, col: usize) -> i32 {
+        line.chars()
+            .take(col)
+            .filter(|c| *c != '\n' && *c != '\r')
+            .map(|c| self.advance_of(kind, c))
+            .sum()
+    }
+
+    /// Inverse of [`FontEngine::prefix_width`]: the column inside `line` whose
+    /// glyph starts at or before pixel offset `x`. Ties (pointer past the end
+    /// of the line) clamp to the line length, so clicking after the last
+    /// character puts the caret at the end.
+    pub fn col_at_offset(&self, kind: FaceKind, line: &str, x: i32) -> usize {
+        let mut rem = x.max(0);
+        let mut col = 0usize;
+        for ch in line.chars() {
+            if ch == '\n' {
+                break;
+            }
+            if ch == '\r' {
+                // `draw_text_ttf` skips CR without advancing: zero-width, but it
+                // still occupies a column index.
+                col += 1;
+                continue;
+            }
+            let adv = self.advance_of(kind, ch);
+            if rem < adv {
+                return col;
+            }
+            rem -= adv;
+            col += 1;
+        }
+        col
+    }
+
     /// Rasterize one glyph's anti-aliased coverage into `buf`.
     ///
     /// `draw_px(x, y, w, h, color, coverage)` receives each covered pixel with
@@ -190,5 +233,79 @@ impl FontEngine {
                 draw_px(px, py, 1, 1, coverage.clamp(0.0, 1.0));
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn engine() -> FontEngine {
+        FontEngine::new(BASE_PX)
+    }
+
+    /// The caret metric must be exactly the sum of the advances used to draw,
+    /// otherwise the caret drifts off the rendered glyphs.
+    #[test]
+    fn prefix_width_equals_draw_advance_sum() {
+        let e = engine();
+        let line = "olur, merhaba!";
+        let expected: i32 = line.chars().map(|c| e.advance_of(FaceKind::Ui, c)).sum();
+        assert_eq!(
+            e.prefix_width(FaceKind::Ui, line, line.chars().count()),
+            expected,
+            "full-line prefix must equal the drawn advance sum"
+        );
+    }
+
+    /// Regression: on the old fixed grid the caret for "olur" sat at
+    /// 4*CELL_W = 40px while the glyphs end at 27px, a phantom ~13px gap.
+    #[test]
+    fn caret_metric_is_not_the_fixed_grid() {
+        let e = engine();
+        let line = "olur";
+        let drawn = e.prefix_width(FaceKind::Ui, line, line.chars().count());
+        let grid = (line.chars().count() as i32) * CELL_W;
+        assert!(
+            drawn < grid,
+            "proportional width ({drawn}px) must be tighter than the grid ({grid}px)"
+        );
+        // Sanity: the drawn width is in a plausible range for 16px DejaVu.
+        assert!((15..=40).contains(&drawn), "unexpected width {drawn}px");
+    }
+
+    /// col_at_offset must invert prefix_width for every column, so clicking
+    /// where a glyph is drawn puts the caret on that glyph.
+    #[test]
+    fn col_at_offset_round_trips_every_column() {
+        let e = engine();
+        for line in ["olur", "merhaba", "hi", "Nudge Studio", "ğüşıöç", ""] {
+            let cols = line.chars().count();
+            for col in 0..=cols {
+                let x = e.prefix_width(FaceKind::Ui, line, col);
+                assert_eq!(
+                    e.col_at_offset(FaceKind::Ui, line, x),
+                    col,
+                    "round-trip failed for {line:?} col {col}"
+                );
+            }
+            // Clicking well past the end clamps to the line length.
+            let past = e.prefix_width(FaceKind::Ui, line, cols) + 500;
+            assert_eq!(e.col_at_offset(FaceKind::Ui, line, past), cols);
+            // Clicking before the start clamps to column 0.
+            assert_eq!(e.col_at_offset(FaceKind::Ui, line, -5), 0);
+        }
+    }
+
+    /// CR is drawn without advancing (zero width) and must not skew the metric.
+    #[test]
+    fn cr_is_zero_width_in_caret_metric() {
+        let e = engine();
+        // "a\rb" occupies 3 columns but draws exactly as wide as "ab".
+        assert_eq!(
+            e.prefix_width(FaceKind::Ui, "a\rb", 3),
+            e.prefix_width(FaceKind::Ui, "ab", 2)
+        );
+        assert_eq!(e.prefix_width(FaceKind::Ui, "\r\r", 2), 0);
     }
 }
