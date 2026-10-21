@@ -957,7 +957,7 @@ impl Interpreter {
                 "error[E1002]: invalid or unknown UI component '{name}': check the element combinator name and its children or properties"
             ));
         }
-        if name == "column" || name == "row" {
+        if matches!(name, "column" | "row" | "scroll") {
             let mut elem = nudge_runtime::ui::UiElement::new(name);
             for (k, v_expr) in kwargs {
                 if k == "id" {
@@ -1958,7 +1958,7 @@ impl Interpreter {
                 if prefix == "ui" {
                     if matches!(
                         method_name.as_str(),
-                        "column" | "row" | "text" | "button" | "input"
+                        "column" | "row" | "scroll" | "text" | "button" | "input"
                     ) {
                         if let Some(ui_elem) =
                             self.eval_ui_combinator(method_name, args, kwargs, env)?
@@ -7081,6 +7081,61 @@ data: [DONE]\n\n";
         assert_eq!(
             interp.agent_store.get_field("EditorApp", "key_val"),
             Ok(NudgeVal::Str("Ctrl+S".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_scroll_combinator_builds_nested_viewport() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cleanup = EnvReset::set("NUDGE_UI_HEADLESS", "1");
+
+        // Exercises the whole trio: the `scroll(...) [ ... ]` bracket form
+        // (parser), the View type of the combinator (checker) and the element
+        // tree it builds (evaluator), including nested lookups and clicks.
+        let src = r#"
+            view FeedView(count: int) -> View {
+                column(padding = 0, gap = 10) [
+                    scroll(id = "feed", height = 120, padding = 0, gap = 6) [
+                        text("message 1"),
+                        text("message 2"),
+                        text("message 3")
+                    ],
+                    button("Send", id = "send", on_click = on_send)
+                ]
+            }
+
+            agent FeedApp {
+                state {
+                    sent: int = 0
+                }
+                fn on_send() uses UI {
+                    state.sent = state.sent + 1
+                }
+                window FeedWindow {
+                    title: "Feed",
+                    width: 400,
+                    height: 300,
+                    content: FeedView(3)
+                }
+            }
+
+            test "scroll container holds its children" {
+                let app = FeedApp.FeedWindow.mount_headless()
+                assert app.find("send").exists()
+                assert app.find_text("message 2").exists()
+                app.dispatch_click("send")
+                assert FeedApp.state.sent == 1
+            }
+        "#;
+        let tokens = lex(src).expect("lex failed");
+        let items = parse(tokens).expect("parse failed");
+        let mut interp = Interpreter::new();
+        interp.load_items(&items).expect("load_items failed");
+        interp.run_all_tests().expect("test execution failed");
+
+        assert_eq!(
+            interp.agent_store.get_field("FeedApp", "sent"),
+            Ok(NudgeVal::Int(1))
         );
     }
 

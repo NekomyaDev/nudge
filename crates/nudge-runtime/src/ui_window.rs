@@ -101,6 +101,37 @@ impl Rect {
     }
 }
 
+/// A scroll viewport a box must be clipped to.
+///
+/// `rect` lives in **content space** (the same space as [`LayoutBox::rect`]).
+/// `pan` is the scroll offset of the viewport's *ancestors* — a viewport does
+/// not move with its own scroll offset, only its content does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClipRegion {
+    pub rect: Rect,
+    pub pan: (i32, i32),
+}
+
+/// A scroll viewport measured by layout, kept for wheel/keyboard routing and
+/// scrollbar drawing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScrollRegion {
+    pub key: String,
+    /// Viewport in content space.
+    pub rect: Rect,
+    /// Total height of the content inside the viewport (content space).
+    pub content_h: i32,
+    /// Ancestors' pan, used to map the viewport into screen space.
+    pub pan: (i32, i32),
+}
+
+impl ScrollRegion {
+    /// How far the content can scroll before the viewport bottom is reached.
+    pub fn max_offset(&self) -> i32 {
+        (self.content_h - self.rect.h).max(0)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LayoutBox {
     pub rect: Rect,
@@ -110,6 +141,75 @@ pub struct LayoutBox {
     pub on_click: Option<String>,
     pub on_change: Option<String>,
     pub on_key: Option<String>,
+    /// Scroll offset of the enclosing scroll containers: screen position is
+    /// `rect - (scroll_x + pan.0, scroll_y + pan.1)`. `(0, 0)` when not inside
+    /// any scroll container.
+    pub pan: (i32, i32),
+    /// Viewports this box must be clipped to. `None` when not scrollable.
+    pub clips: Option<Vec<ClipRegion>>,
+}
+
+impl LayoutBox {
+    /// Screen-space rectangle, mapping content coordinates through the window
+    /// scroll and the enclosing scroll containers.
+    pub fn screen_rect(&self, scroll_x: i32, scroll_y: i32) -> Rect {
+        Rect {
+            x: self.rect.x - scroll_x - self.pan.0,
+            y: self.rect.y - scroll_y - self.pan.1,
+            w: self.rect.w,
+            h: self.rect.h,
+        }
+    }
+
+    /// Intersected screen-space clip for this box, or `None` when unclipped.
+    pub fn screen_clip(&self, scroll_x: i32, scroll_y: i32) -> Option<Rect> {
+        let clips = self.clips.as_ref()?;
+        let mut acc: Option<Rect> = None;
+        for c in clips {
+            let r = Rect {
+                x: c.rect.x - scroll_x - c.pan.0,
+                y: c.rect.y - scroll_y - c.pan.1,
+                w: c.rect.w,
+                h: c.rect.h,
+            };
+            acc = Some(match acc {
+                None => r,
+                Some(a) => intersect(a, r)?,
+            });
+        }
+        acc
+    }
+
+    /// True when the box is at least partially visible in screen space.
+    pub fn visible_in(&self, scroll_x: i32, scroll_y: i32, w: i32, h: i32) -> bool {
+        let r = self.screen_rect(scroll_x, scroll_y);
+        if r.x + r.w < 0 || r.y + r.h < 0 || r.x >= w || r.y >= h {
+            return false;
+        }
+        match self.screen_clip(scroll_x, scroll_y) {
+            None => true,
+            Some(c) => intersect(r, c).is_some(),
+        }
+    }
+}
+
+/// Rectangle intersection; `None` when the result is empty.
+#[inline]
+pub fn intersect(a: Rect, b: Rect) -> Option<Rect> {
+    let x0 = a.x.max(b.x);
+    let y0 = a.y.max(b.y);
+    let x1 = (a.x + a.w).min(b.x + b.w);
+    let y1 = (a.y + a.h).min(b.y + b.h);
+    if x1 <= x0 || y1 <= y0 {
+        None
+    } else {
+        Some(Rect {
+            x: x0,
+            y: y0,
+            w: x1 - x0,
+            h: y1 - y0,
+        })
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -241,12 +341,39 @@ pub fn draw_rounded_rect_alpha(
     color: u32,
     alpha: f32,
 ) {
+    draw_rounded_rect_alpha_clipped(buf, stride, height, None, x, y, w, h, r, color, alpha);
+}
+
+/// Same as [`draw_rounded_rect_alpha`], but every pixel is limited to `clip`
+/// (e.g. a scroll viewport). The shape keeps its true position, so a control
+/// half-scrolled out of view is sliced exactly at the viewport edge.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_rounded_rect_alpha_clipped(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    clip: Option<Rect>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    r: i32,
+    color: u32,
+    alpha: f32,
+) {
     if w <= 0 || h <= 0 || alpha <= 0.0 {
         return;
     }
     let r = r.min(w / 2).min(h / 2);
     if r <= 0 {
-        draw_rect_alpha(buf, stride, height, x, y, w, h, color, alpha);
+        match clip.and_then(|c| intersect(Rect { x, y, w, h }, c)) {
+            None => {
+                if clip.is_none() {
+                    draw_rect_alpha(buf, stride, height, x, y, w, h, color, alpha);
+                }
+            }
+            Some(r) => draw_rect_alpha(buf, stride, height, r.x, r.y, r.w, r.h, color, alpha),
+        }
         return;
     }
 
@@ -258,7 +385,13 @@ pub fn draw_rounded_rect_alpha(
     for row in y_start..y_end {
         let row_offset = row * stride;
         for col in x_start..x_end {
-            let cov = rounded_rect_coverage(x, y, w, h, r, col as i32, row as i32);
+            let (px, py) = (col as i32, row as i32);
+            if let Some(c) = clip {
+                if px < c.x || py < c.y || px >= c.x + c.w || py >= c.y + c.h {
+                    continue;
+                }
+            }
+            let cov = rounded_rect_coverage(x, y, w, h, r, px, py);
             if cov <= 0.0 {
                 continue;
             }
@@ -289,13 +422,48 @@ pub fn draw_rounded_rect_box(
     fill: u32,
     border: u32,
 ) {
+    draw_rounded_rect_box_clipped(buf, stride, height, None, x, y, w, h, r, fill, border);
+}
+
+/// Same as [`draw_rounded_rect_box`], but no pixel outside `clip` is touched,
+/// so chrome inside a scroll viewport is sliced at the viewport edge instead
+/// of bleeding over neighbouring content.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_rounded_rect_box_clipped(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    clip: Option<Rect>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    r: i32,
+    fill: u32,
+    border: u32,
+) {
     if w <= 0 || h <= 0 {
         return;
     }
+    if let Some(c) = clip {
+        if intersect(Rect { x, y, w, h }, c).is_none() {
+            return;
+        }
+    }
     let r = r.min(w / 2).min(h / 2);
     if r <= 0 {
-        draw_rect(buf, stride, height, x, y, w, h, fill);
-        draw_rect_outline(buf, stride, height, x, y, w, h, border);
+        match clip.and_then(|c| intersect(Rect { x, y, w, h }, c)) {
+            None => {
+                if clip.is_none() {
+                    draw_rect(buf, stride, height, x, y, w, h, fill);
+                    draw_rect_outline(buf, stride, height, x, y, w, h, border);
+                }
+            }
+            Some(rc) => {
+                draw_rect(buf, stride, height, rc.x, rc.y, rc.w, rc.h, fill);
+                draw_rect_outline(buf, stride, height, rc.x, rc.y, rc.w, rc.h, border);
+            }
+        }
         return;
     }
 
@@ -311,6 +479,11 @@ pub fn draw_rounded_rect_box(
         let row_offset = row * stride;
         for col in x_start..x_end {
             let (px, py) = (col as i32, row as i32);
+            if let Some(c) = clip {
+                if px < c.x || py < c.y || px >= c.x + c.w || py >= c.y + c.h {
+                    continue;
+                }
+            }
             let outer = rounded_rect_coverage(x, y, w, h, r, px, py);
             if outer <= 0.0 {
                 continue;
@@ -392,9 +565,11 @@ pub fn draw_text_ttf<F>(
     }
 }
 
-/// Same as [`draw_text_ttf`], but every pixel is clipped to `clip`. Pixels
-/// outside the rect are dropped, so centered text inside a button can never
-/// bleed past the border even when a glyph is wider than the layout grid.
+/// Same as [`draw_text_ttf`], but every pixel is limited to `clip`. Pixels
+/// entirely outside the rect are dropped and pixels straddling the edge are
+/// drawn only up to the edge, so centered text inside a button can never
+/// bleed past the border, and text scrolled to a viewport edge is sliced
+/// exactly there.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_text_ttf_clipped<F>(
     engine: &FontEngine,
@@ -408,12 +583,8 @@ pub fn draw_text_ttf_clipped<F>(
     F: FnMut(i32, i32, i32, i32, f32),
 {
     draw_text_ttf(engine, kind, start_x, start_y, text, |px, py, w, h, cov| {
-        if px >= clip.x
-            && py >= clip.y
-            && px + w <= clip.x + clip.w
-            && py + h <= clip.y + clip.h
-        {
-            draw_px(px, py, w, h, cov);
+        if let Some(r) = intersect(Rect { x: px, y: py, w, h }, clip) {
+            draw_px(r.x, r.y, r.w, r.h, cov);
         }
     });
 }
@@ -559,13 +730,59 @@ pub fn wrap_text(content: &str, max_width_px: i32, char_width_px: i32) -> String
     result_lines.join("\n")
 }
 
-#[allow(clippy::only_used_in_recursion)]
+/// Mutable state threaded through layout: runtime scroll offsets (read), the
+/// regions measured this pass (written), and the counter that mints stable
+/// keys for `scroll` containers without an `id`.
+pub struct LayoutCtx<'a> {
+    pub scroll: &'a mut HashMap<String, i32>,
+    pub regions: &'a mut Vec<ScrollRegion>,
+    pub counter: &'a mut usize,
+}
+
+#[inline]
+fn clips_owned(clips: &[ClipRegion]) -> Option<Vec<ClipRegion>> {
+    if clips.is_empty() {
+        None
+    } else {
+        Some(clips.to_vec())
+    }
+}
+
+/// Lay `elem` out ignoring scroll containers' offsets (regions are discarded).
+///
+/// Kept as the simple entry point for callers that only need box geometry;
+/// [`NativeApp::layout_root`] is the full pipeline used by the renderer.
 pub fn layout_element(
     elem: &UiElement,
     x: i32,
     y: i32,
     max_w: i32,
     boxes: &mut Vec<LayoutBox>,
+) -> (i32, i32) {
+    let mut scroll = HashMap::new();
+    let mut regions = Vec::new();
+    let mut counter = 0usize;
+    let mut ctx = LayoutCtx {
+        scroll: &mut scroll,
+        regions: &mut regions,
+        counter: &mut counter,
+    };
+    layout_element_ctx(elem, x, y, max_w, boxes, &mut ctx, (0, 0), &[])
+}
+
+/// Recursive worker: `pan` is the accumulated scroll offset of enclosing scroll
+/// containers (applied when drawing/hit-testing), `clips` are the viewports the
+/// resulting boxes must be clipped to.
+#[allow(clippy::only_used_in_recursion, clippy::too_many_arguments)]
+pub fn layout_element_ctx(
+    elem: &UiElement,
+    x: i32,
+    y: i32,
+    max_w: i32,
+    boxes: &mut Vec<LayoutBox>,
+    ctx: &mut LayoutCtx,
+    pan: (i32, i32),
+    clips: &[ClipRegion],
 ) -> (i32, i32) {
     match elem.tag.as_str() {
         "column" => {
@@ -584,8 +801,16 @@ pub fn layout_element(
             let mut max_child_w = 0;
 
             for child in &elem.children {
-                let (cw, ch) =
-                    layout_element(child, x + padding, child_y, max_w - 2 * padding, boxes);
+                let (cw, ch) = layout_element_ctx(
+                    child,
+                    x + padding,
+                    child_y,
+                    max_w - 2 * padding,
+                    boxes,
+                    ctx,
+                    pan,
+                    clips,
+                );
                 max_child_w = max_child_w.max(cw);
                 child_y += ch + gap;
             }
@@ -615,7 +840,8 @@ pub fn layout_element(
             let mut max_child_h = 0;
 
             for child in &elem.children {
-                let (cw, ch) = layout_element(child, child_x, y + padding, max_w, boxes);
+                let (cw, ch) =
+                    layout_element_ctx(child, child_x, y + padding, max_w, boxes, ctx, pan, clips);
                 max_child_h = max_child_h.max(ch);
                 child_x += cw + gap;
             }
@@ -628,6 +854,94 @@ pub fn layout_element(
             let total_h = max_child_h + 2 * padding;
 
             (total_w, total_h)
+        }
+        "scroll" => {
+            let padding = elem
+                .props
+                .get("padding")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(16);
+            let gap = elem
+                .props
+                .get("gap")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(10);
+            // The viewport is a *fixed* box: content taller than it scrolls
+            // inside instead of growing the container.
+            let viewport_h = elem
+                .props
+                .get("height")
+                .and_then(|s| s.parse::<i32>().ok())
+                .unwrap_or(240)
+                .max(1);
+            let viewport_w = elem
+                .props
+                .get("width")
+                .and_then(|s| s.parse::<i32>().ok())
+                .unwrap_or(max_w)
+                .clamp(1, max_w.max(1));
+
+            let viewport = Rect {
+                x,
+                y,
+                w: viewport_w,
+                h: viewport_h,
+            };
+
+            // Stable key: an explicit `id` survives layout order changes,
+            // otherwise the layout-order index keeps the map key aligned with
+            // the same container across renders.
+            let key = match &elem.id {
+                Some(id) => format!("scroll:{id}"),
+                None => format!("scroll:#{}", *ctx.counter),
+            };
+            *ctx.counter += 1;
+
+            // Offset comes from state clamped at the end of the previous
+            // layout pass; `layout_root` re-runs layout if clamping moves it,
+            // so the boxes drawn below are never based on a stale offset.
+            let offset = ctx.scroll.get(&key).copied().unwrap_or(0);
+
+            // The viewport itself only moves with its ancestors, but its
+            // content also moves by this container's own offset.
+            let mut child_clips = clips.to_vec();
+            child_clips.push(ClipRegion { rect: viewport, pan });
+            let child_pan = (pan.0, pan.1 + offset);
+
+            let mut child_boxes = Vec::new();
+            let mut child_y = y + padding;
+            let mut max_child_w = 0;
+            for child in &elem.children {
+                let (cw, ch) = layout_element_ctx(
+                    child,
+                    x + padding,
+                    child_y,
+                    viewport_w - 2 * padding,
+                    &mut child_boxes,
+                    ctx,
+                    child_pan,
+                    &child_clips,
+                );
+                max_child_w = max_child_w.max(cw);
+                child_y += ch + gap;
+            }
+            boxes.append(&mut child_boxes);
+
+            let content_h = if elem.children.is_empty() {
+                2 * padding
+            } else {
+                child_y - gap + padding - y
+            };
+
+            ctx.regions.push(ScrollRegion {
+                key,
+                rect: viewport,
+                content_h,
+                pan,
+            });
+
+            // Parents stack siblings below the *viewport*, not the content.
+            (viewport_w.max(max_child_w), viewport_h)
         }
         "text" => {
             let raw_content = elem.text.clone().unwrap_or_else(|| elem.get_text());
@@ -665,6 +979,8 @@ pub fn layout_element(
                 on_click: None,
                 on_change: None,
                 on_key: elem.on_key.clone(),
+                pan,
+                clips: clips_owned(clips),
             });
             (w, h)
         }
@@ -692,6 +1008,8 @@ pub fn layout_element(
                 on_click: elem.on_click.clone().or_else(|| elem.id.clone()),
                 on_change: None,
                 on_key: elem.on_key.clone(),
+                pan,
+                clips: clips_owned(clips),
             });
             (w, h)
         }
@@ -717,6 +1035,8 @@ pub fn layout_element(
                 on_click: None,
                 on_change: elem.on_change.clone(),
                 on_key: elem.on_key.clone(),
+                pan,
+                clips: clips_owned(clips),
             });
             (w, h)
         }
@@ -725,7 +1045,7 @@ pub fn layout_element(
             let mut child_y = y;
             let mut max_w_seen = 0;
             for child in &elem.children {
-                let (cw, ch) = layout_element(child, x, child_y, max_w, boxes);
+                let (cw, ch) = layout_element_ctx(child, x, child_y, max_w, boxes, ctx, pan, clips);
                 max_w_seen = max_w_seen.max(cw);
                 child_y += ch + 8;
             }
@@ -744,15 +1064,13 @@ pub fn find_hovered_button_in_boxes(
     let (mx, my) = pos;
     for (i, lbox) in boxes.iter().enumerate() {
         if lbox.tag == "button" {
-            let rx = lbox.rect.x - scroll_x;
-            let ry = lbox.rect.y - scroll_y;
-            let screen_rect = Rect {
-                x: rx,
-                y: ry,
-                w: lbox.rect.w,
-                h: lbox.rect.h,
-            };
-            if screen_rect.contains(mx, my) {
+            // Pan-aware screen rect; a button scrolled outside its scroll
+            // viewport is not hoverable even where its rect still overlaps.
+            let screen_rect = lbox.screen_rect(scroll_x, scroll_y);
+            let clip_ok = lbox
+                .screen_clip(scroll_x, scroll_y)
+                .is_none_or(|c| c.contains(mx, my));
+            if screen_rect.contains(mx, my) && clip_ok {
                 return Some(
                     lbox.id
                         .clone()
@@ -793,6 +1111,14 @@ pub struct NativeApp<D: UiDispatcher> {
     pub ctrl_pressed: bool,
     pub theme: Theme,
     pub fonts: FontEngine,
+    /// Scroll offset per `scroll` container (keyed by `scroll:<id>` or
+    /// `scroll:#<layout order index>`).
+    pub scroll_offsets: HashMap<String, i32>,
+    /// Viewports measured by the most recent layout pass.
+    pub scroll_regions: Vec<ScrollRegion>,
+    /// Mints stable keys for `scroll` containers without an `id`; reset on
+    /// every layout pass so keys track layout order.
+    scroll_counter: usize,
 }
 
 impl<D: UiDispatcher> NativeApp<D> {
@@ -823,6 +1149,9 @@ impl<D: UiDispatcher> NativeApp<D> {
             ctrl_pressed: false,
             theme: Theme::DARK,
             fonts: FontEngine::new(BASE_PX),
+            scroll_offsets: HashMap::new(),
+            scroll_regions: Vec::new(),
+            scroll_counter: 0,
         }
     }
 
@@ -840,6 +1169,91 @@ impl<D: UiDispatcher> NativeApp<D> {
         self.scroll_x = (self.scroll_x + dx).clamp(0, max_x);
         self.scroll_y = (self.scroll_y + dy).clamp(0, max_y);
         self.render();
+    }
+
+    /// Innermost measured scroll viewport containing `pos` (screen space).
+    ///
+    /// Later regions are laid out later, so they sit on top; iterating in
+    /// reverse yields the innermost container when views overlap.
+    pub fn region_at(&self, pos: (i32, i32)) -> Option<&ScrollRegion> {
+        let (px, py) = pos;
+        self.scroll_regions.iter().rev().find(|r| {
+            let rect = Rect {
+                x: r.rect.x - self.scroll_x - r.pan.0,
+                y: r.rect.y - self.scroll_y - r.pan.1,
+                w: r.rect.w,
+                h: r.rect.h,
+            };
+            rect.contains(px, py)
+        })
+    }
+
+    /// Scroll one region by `dy` pixels. Returns `false` when the key is
+    /// unknown (nothing to scroll).
+    pub fn scroll_region_by(&mut self, key: &str, dy: i32) -> bool {
+        let Some(region) = self.scroll_regions.iter().find(|r| r.key == key) else {
+            return false;
+        };
+        let max = region.max_offset();
+        let cur = self.scroll_offsets.get(key).copied().unwrap_or(0);
+        let next = cur.saturating_add(dy).clamp(0, max);
+        if next == cur {
+            return true; // already at the end; consumed by this region
+        }
+        self.scroll_offsets.insert(key.to_string(), next);
+        self.render();
+        true
+    }
+
+    /// Clamp every measured region's offset to its current content height.
+    /// Returns `true` when any offset moved (the caller should re-run layout
+    /// so drawn boxes never use a stale offset).
+    fn clamp_scroll_offsets(&mut self) -> bool {
+        let mut changed = false;
+        for r in &self.scroll_regions {
+            let max = r.max_offset();
+            let cur = self.scroll_offsets.get(&r.key).copied().unwrap_or(0);
+            let next = cur.clamp(0, max);
+            if next != cur {
+                self.scroll_offsets.insert(r.key.clone(), next);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Full layout pipeline: lay `root` out, then re-lay it out whenever
+    /// clamping moved a scroll offset (bounded — clamping is monotone, so it
+    /// converges after at most two passes).
+    pub fn layout_root(&mut self, root: &UiElement) {
+        for _ in 0..4 {
+            self.scroll_regions.clear();
+            self.scroll_counter = 0;
+            self.layout_boxes.clear();
+
+            let NativeApp {
+                layout_boxes,
+                scroll_offsets,
+                scroll_regions,
+                scroll_counter,
+                content_width,
+                content_height,
+                ..
+            } = self;
+            let mut ctx = LayoutCtx {
+                scroll: scroll_offsets,
+                regions: scroll_regions,
+                counter: scroll_counter,
+            };
+            let (total_w, total_h) =
+                layout_element_ctx(root, 10, 10, self.width as i32 - 20, layout_boxes, &mut ctx, (0, 0), &[]);
+            *content_width = total_w;
+            *content_height = total_h;
+
+            if !self.clamp_scroll_offsets() {
+                break;
+            }
+        }
     }
 
     pub fn find_hovered_button(&self, pos: (i32, i32)) -> Option<String> {
@@ -871,6 +1285,26 @@ impl<D: UiDispatcher> NativeApp<D> {
             None => return,
         };
 
+        // Fetch latest view tree and layout (re-runs if clamping moved a
+        // scroll offset, so boxes below never use a stale pan). Done before
+        // borrowing the surface, which is borrowed until present().
+        if let Some(root) = self.dispatcher.root() {
+            self.layout_root(&root);
+        } else {
+            self.layout_boxes.clear();
+            self.scroll_regions.clear();
+            self.content_width = 0;
+            self.content_height = 0;
+        }
+        let total_w = self.content_width;
+        let total_h = self.content_height;
+
+        // Clamp window scroll offsets
+        let max_scroll_y = (total_h - self.height as i32 + 20).max(0);
+        let max_scroll_x = (total_w - self.width as i32 + 20).max(0);
+        self.scroll_y = self.scroll_y.clamp(0, max_scroll_y);
+        self.scroll_x = self.scroll_x.clamp(0, max_scroll_x);
+
         let surface = self.surface.as_mut().unwrap();
         if surface.resize(w_nz, h_nz).is_err() {
             return;
@@ -899,30 +1333,6 @@ impl<D: UiDispatcher> NativeApp<D> {
             theme.bg,
         );
 
-        // Fetch latest view tree and layout
-        self.layout_boxes.clear();
-        let mut total_w = 0;
-        let mut total_h = 0;
-        if let Some(root) = self.dispatcher.root() {
-            let (cw, ch) = layout_element(
-                &root,
-                10,
-                10,
-                self.width as i32 - 20,
-                &mut self.layout_boxes,
-            );
-            total_w = cw;
-            total_h = ch;
-        }
-        self.content_width = total_w;
-        self.content_height = total_h;
-
-        // Clamp scroll offsets
-        let max_scroll_y = (total_h - self.height as i32 + 20).max(0);
-        let max_scroll_x = (total_w - self.width as i32 + 20).max(0);
-        self.scroll_y = self.scroll_y.clamp(0, max_scroll_y);
-        self.scroll_x = self.scroll_x.clamp(0, max_scroll_x);
-
         let (mx, my) = self.cursor_pos;
         self.hovered_id = find_hovered_button_in_boxes(
             &self.layout_boxes,
@@ -931,28 +1341,47 @@ impl<D: UiDispatcher> NativeApp<D> {
             self.cursor_pos,
         );
 
-        // Render each layout box with viewport scroll offset & clipping
+        // Render each layout box with window scroll, enclosing scroll
+        // containers (pan) & their viewport clipping
         for lbox in &self.layout_boxes {
-            let rx = lbox.rect.x - self.scroll_x;
-            let ry = lbox.rect.y - self.scroll_y;
+            let rx = lbox.rect.x - self.scroll_x - lbox.pan.0;
+            let ry = lbox.rect.y - self.scroll_y - lbox.pan.1;
 
             // Viewport clipping: skip completely out-of-bounds elements
-            if ry + lbox.rect.h < 0
-                || ry >= self.height as i32
-                || rx + lbox.rect.w < 0
-                || rx >= self.width as i32
+            if !lbox.visible_in(self.scroll_x, self.scroll_y, self.width as i32, self.height as i32)
             {
                 continue;
             }
+            let clip = lbox.screen_clip(self.scroll_x, self.scroll_y);
 
             match lbox.tag.as_str() {
                 "text" => {
                     if let Some(ref text) = lbox.text {
                         let color = theme.text;
                         let fonts = &self.fonts;
-                        draw_text_ttf(fonts, FaceKind::Ui, rx, ry + 2, text, |px, py, w, h, cov| {
-                            draw_rect_alpha(&mut buffer, stride, h_usize, px, py, w, h, color, cov);
-                        });
+                        match clip {
+                            Some(c) => draw_text_ttf_clipped(
+                                fonts,
+                                FaceKind::Ui,
+                                rx,
+                                ry + 2,
+                                text,
+                                c,
+                                |px, py, w, h, cov| {
+                                    draw_rect_alpha(&mut buffer, stride, h_usize, px, py, w, h, color, cov);
+                                },
+                            ),
+                            None => draw_text_ttf(
+                                fonts,
+                                FaceKind::Ui,
+                                rx,
+                                ry + 2,
+                                text,
+                                |px, py, w, h, cov| {
+                                    draw_rect_alpha(&mut buffer, stride, h_usize, px, py, w, h, color, cov);
+                                },
+                            ),
+                        }
                     }
                 }
                 "button" => {
@@ -962,16 +1391,20 @@ impl<D: UiDispatcher> NativeApp<D> {
                         w: lbox.rect.w,
                         h: lbox.rect.h,
                     };
-                    let hovered = screen_rect.contains(mx, my);
+                    // A control scrolled out of its viewport is not hoverable
+                    // even if the cursor sits on its (invisible) rectangle.
+                    let hovered = screen_rect.contains(mx, my)
+                        && clip.is_none_or(|c| c.contains(mx, my));
                     let bg_color = if hovered {
                         theme.button_bg_hover
                     } else {
                         theme.button_bg
                     };
-                    draw_rounded_rect_box(
+                    draw_rounded_rect_box_clipped(
                         &mut buffer,
                         stride,
                         h_usize,
+                        clip,
                         rx,
                         ry,
                         lbox.rect.w,
@@ -986,18 +1419,25 @@ impl<D: UiDispatcher> NativeApp<D> {
                         let ty = ry + ((lbox.rect.h - cell_h) / 2).max(4);
                         let color = theme.button_text;
                         let fonts = &self.fonts;
-                        // Clip to the button interior so wide glyphs can never
+                        // Clip to the button interior (intersected with any
+                        // enclosing scroll viewport) so wide glyphs can never
                         // bleed past the rounded border, while keeping the
                         // centered proportional layout.
-                        let clip = Rect {
+                        let interior = Rect {
                             x: rx,
                             y: ry,
                             w: lbox.rect.w,
                             h: lbox.rect.h,
                         };
-                        draw_text_ttf_clipped(fonts, FaceKind::Ui, tx, ty, text, clip, |px, py, w, h, cov| {
-                            draw_rect_alpha(&mut buffer, stride, h_usize, px, py, w, h, color, cov);
-                        });
+                        let text_clip = match clip {
+                            None => Some(interior),
+                            Some(c) => intersect(interior, c),
+                        };
+                        if let Some(tc) = text_clip {
+                            draw_text_ttf_clipped(fonts, FaceKind::Ui, tx, ty, text, tc, |px, py, w, h, cov| {
+                                draw_rect_alpha(&mut buffer, stride, h_usize, px, py, w, h, color, cov);
+                            });
+                        }
                     }
                 }
                 "input" => {
@@ -1009,10 +1449,11 @@ impl<D: UiDispatcher> NativeApp<D> {
                         theme.input_border
                     };
 
-                    draw_rounded_rect_box(
+                    draw_rounded_rect_box_clipped(
                         &mut buffer,
                         stride,
                         h_usize,
+                        clip,
                         rx,
                         ry,
                         lbox.rect.w,
@@ -1070,16 +1511,28 @@ impl<D: UiDispatcher> NativeApp<D> {
                                             let sel_x = rx + 8 + start_off;
                                             let sel_w = (end_off - start_off).max(0);
                                             let sel_y = ry + 6 + (line as i32) * cell_h;
-                                            draw_rect(
-                                                &mut buffer,
-                                                stride,
-                                                h_usize,
-                                                sel_x,
-                                                sel_y,
-                                                sel_w,
-                                                cell_h,
-                                                theme.selection_bg,
-                                            );
+                                            let sel_rect = Rect {
+                                                x: sel_x,
+                                                y: sel_y,
+                                                w: sel_w,
+                                                h: cell_h,
+                                            };
+                                            let sel_draw = match clip {
+                                                None => Some(sel_rect),
+                                                Some(c) => intersect(sel_rect, c),
+                                            };
+                                            if let Some(sr) = sel_draw {
+                                                draw_rect(
+                                                    &mut buffer,
+                                                    stride,
+                                                    h_usize,
+                                                    sr.x,
+                                                    sr.y,
+                                                    sr.w,
+                                                    sr.h,
+                                                    theme.selection_bg,
+                                                );
+                                            }
                                         }
                                     }
                                 }
@@ -1087,27 +1540,34 @@ impl<D: UiDispatcher> NativeApp<D> {
                         }
                     }
 
-                    // Draw text, clipped to the field interior so glyphs can
-                    // never bleed over the rounded border.
+                    // Draw text, clipped to the field interior (and any
+                    // enclosing scroll viewport) so glyphs can never bleed
+                    // over the rounded border.
                     let input_text_color = theme.text;
                     let fonts = &self.fonts;
-                    let clip = Rect {
+                    let field = Rect {
                         x: rx + 1,
                         y: ry + 1,
                         w: (lbox.rect.w - 2).max(0),
                         h: (lbox.rect.h - 2).max(0),
                     };
-                    draw_text_ttf_clipped(
-                        fonts,
-                        FaceKind::Ui,
-                        rx + 8,
-                        ry + 6,
-                        &display_text,
-                        clip,
-                        |px, py, w, h, cov| {
-                            draw_rect_alpha(&mut buffer, stride, h_usize, px, py, w, h, input_text_color, cov);
-                        },
-                    );
+                    let text_clip = match clip {
+                        None => Some(field),
+                        Some(c) => intersect(field, c),
+                    };
+                    if let Some(tc) = text_clip {
+                        draw_text_ttf_clipped(
+                            fonts,
+                            FaceKind::Ui,
+                            rx + 8,
+                            ry + 6,
+                            &display_text,
+                            tc,
+                            |px, py, w, h, cov| {
+                                draw_rect_alpha(&mut buffer, stride, h_usize, px, py, w, h, input_text_color, cov);
+                            },
+                        );
+                    }
 
                     // Draw cursor bar if focused
                     if is_focused {
@@ -1132,20 +1592,65 @@ impl<D: UiDispatcher> NativeApp<D> {
                         let cur_x = rx + 8
                             + self.fonts.prefix_width(FaceKind::Ui, line_text, cur_col);
                         let cur_y = ry + 6 + (cur_line as i32) * cell_h;
-                        draw_rect(
-                            &mut buffer,
-                            stride,
-                            h_usize,
-                            cur_x,
-                            cur_y,
-                            2,
-                            cell_h,
-                            theme.cursor,
-                        );
+                        let caret = Rect {
+                            x: cur_x,
+                            y: cur_y,
+                            w: 2,
+                            h: cell_h,
+                        };
+                        let caret_draw = match clip {
+                            None => Some(caret),
+                            Some(c) => intersect(caret, c),
+                        };
+                        if let Some(cd) = caret_draw {
+                            draw_rect(
+                                &mut buffer,
+                                stride,
+                                h_usize,
+                                cd.x,
+                                cd.y,
+                                cd.w,
+                                cd.h,
+                                theme.cursor,
+                            );
+                        }
                     }
                 }
                 _ => {}
             }
+        }
+
+        // Scroll thumb for each scrollable region, so nested content shows
+        // where it can be scrolled (the global track below covers the window)
+        for r in &self.scroll_regions {
+            let max = r.max_offset();
+            if max <= 0 {
+                continue;
+            }
+            let vx = r.rect.x - self.scroll_x - r.pan.0;
+            let vy = r.rect.y - self.scroll_y - r.pan.1;
+            let (vw, vh) = (r.rect.w, r.rect.h);
+            if vy + vh < 0 || vy >= self.height as i32 || vw <= 0 {
+                continue;
+            }
+            let track_h = (vh - 8).max(1);
+            let thumb_h = ((track_h as f64 * vh as f64) / r.content_h.max(1) as f64)
+                .max(20.0)
+                .min(track_h as f64) as i32;
+            let off = self.scroll_offsets.get(&r.key).copied().unwrap_or(0);
+            let thumb_y = vy
+                + 4
+                + ((off as f64 / max as f64) * (track_h - thumb_h).max(0) as f64) as i32;
+            draw_rect(
+                &mut buffer,
+                stride,
+                h_usize,
+                vx + vw - 5,
+                thumb_y,
+                4,
+                thumb_h,
+                theme.scrollbar_thumb,
+            );
         }
 
         // Render scrollbar if content exceeds viewport
@@ -1185,25 +1690,36 @@ impl<D: UiDispatcher> NativeApp<D> {
 
     pub fn handle_click(&mut self) {
         let (mx, my) = self.cursor_pos;
-        let cx = mx + self.scroll_x;
-        let cy = my + self.scroll_y;
 
         let mut clicked_button = None;
         let mut clicked_input = None;
 
         for lbox in &self.layout_boxes {
-            if lbox.rect.contains(cx, cy) {
-                if lbox.tag == "button" {
-                    if let Some(ref id) = lbox.id {
-                        clicked_button = Some(id.clone());
-                    } else if let Some(ref on_click) = lbox.on_click {
-                        clicked_button = Some(on_click.clone());
-                    }
-                    break;
-                } else if lbox.tag == "input" {
-                    clicked_input = Some(lbox.clone());
-                    break;
+            // Screen-space test accounts for the window scroll, the enclosing
+            // scroll containers (pan) and their viewports (clip), so a control
+            // scrolled out of view can never be clicked through.
+            let sr = lbox.screen_rect(self.scroll_x, self.scroll_y);
+            if !sr.contains(mx, my) {
+                continue;
+            }
+            if !lbox.visible_in(
+                self.scroll_x,
+                self.scroll_y,
+                self.width as i32,
+                self.height as i32,
+            ) {
+                continue;
+            }
+            if lbox.tag == "button" {
+                if let Some(ref id) = lbox.id {
+                    clicked_button = Some(id.clone());
+                } else if let Some(ref on_click) = lbox.on_click {
+                    clicked_button = Some(on_click.clone());
                 }
+                break;
+            } else if lbox.tag == "input" {
+                clicked_input = Some(lbox.clone());
+                break;
             }
         }
 
@@ -1211,6 +1727,9 @@ impl<D: UiDispatcher> NativeApp<D> {
             self.dispatcher.dispatch_click(&button_id);
             self.render();
         } else if let Some(lbox) = clicked_input {
+            // Map the click back into content space for caret placement.
+            let cx = mx + self.scroll_x + lbox.pan.0;
+            let cy = my + self.scroll_y + lbox.pan.1;
             if let Some(ref id) = lbox.id {
                 self.focused_id = Some(id.clone());
                 let rel_x = cx - (lbox.rect.x + 8);
@@ -1460,46 +1979,71 @@ impl<D: UiDispatcher> NativeApp<D> {
         let mut handled_scroll = false;
         let mut key_name = String::new();
 
+        // Scroll keys target the scroll viewport under the cursor; without
+        // one, they fall back to scrolling the whole window.
+        let region_target: Option<(String, i32)> = self
+            .region_at(self.cursor_pos)
+            .map(|r| (r.key.clone(), (r.rect.h - 40).max(40)));
+        let window_page = (self.height as i32 - 40).max(40);
+
         match logical_key {
-            Key::Named(NamedKey::PageUp) => {
-                let delta = -(self.height as i32 - 40);
-                self.scroll_by(0, delta);
-                handled_scroll = true;
-                key_name = "PageUp".to_string();
-            }
-            Key::Named(NamedKey::PageDown) => {
-                let delta = self.height as i32 - 40;
-                self.scroll_by(0, delta);
-                handled_scroll = true;
-                key_name = "PageDown".to_string();
-            }
-            Key::Named(NamedKey::Home) => {
-                self.scroll_y = 0;
-                self.render();
-                handled_scroll = true;
-                key_name = "Home".to_string();
-            }
-            Key::Named(NamedKey::End) => {
-                let max_y = (self.content_height - self.height as i32 + 20).max(0);
-                self.scroll_y = max_y;
-                self.render();
-                handled_scroll = true;
-                key_name = "End".to_string();
-            }
-            Key::Named(NamedKey::ArrowUp) => {
-                self.scroll_by(0, -20);
-                handled_scroll = true;
-                key_name = "ArrowUp".to_string();
-            }
-            Key::Named(NamedKey::ArrowDown) => {
-                self.scroll_by(0, 20);
-                handled_scroll = true;
-                key_name = "ArrowDown".to_string();
-            }
+            Key::Named(NamedKey::PageUp) => match &region_target {
+                Some((key, page)) => {
+                    self.scroll_region_by(key, -page);
+                }
+                None => self.scroll_by(0, -window_page),
+            },
+            Key::Named(NamedKey::PageDown) => match &region_target {
+                Some((key, page)) => {
+                    self.scroll_region_by(key, *page);
+                }
+                None => self.scroll_by(0, window_page),
+            },
+            Key::Named(NamedKey::Home) => match &region_target {
+                Some((key, _)) => {
+                    self.scroll_region_by(key, i32::MIN);
+                }
+                None => {
+                    self.scroll_y = 0;
+                    self.render();
+                }
+            },
+            Key::Named(NamedKey::End) => match &region_target {
+                Some((key, _)) => {
+                    self.scroll_region_by(key, i32::MAX);
+                }
+                None => {
+                    let max_y = (self.content_height - self.height as i32 + 20).max(0);
+                    self.scroll_y = max_y;
+                    self.render();
+                }
+            },
+            Key::Named(NamedKey::ArrowUp) => match &region_target {
+                Some((key, _)) => {
+                    self.scroll_region_by(key, -20);
+                }
+                None => self.scroll_by(0, -20),
+            },
+            Key::Named(NamedKey::ArrowDown) => match &region_target {
+                Some((key, _)) => {
+                    self.scroll_region_by(key, 20);
+                }
+                None => self.scroll_by(0, 20),
+            },
             Key::Named(NamedKey::Enter) => key_name = "Enter".to_string(),
             Key::Named(NamedKey::Escape) => key_name = "Escape".to_string(),
             Key::Character(s) => key_name = s.to_string(),
             _ => {}
+        }
+
+        let scroll_keys = matches!(
+            logical_key,
+            Key::Named(
+                NamedKey::PageUp | NamedKey::PageDown | NamedKey::Home | NamedKey::End | NamedKey::ArrowUp | NamedKey::ArrowDown
+            )
+        );
+        if scroll_keys {
+            handled_scroll = true;
         }
 
         if !key_name.is_empty() {
@@ -1706,13 +2250,20 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                match delta {
+                let (dx, dy) = match delta {
                     MouseScrollDelta::LineDelta(dx, dy) => {
-                        self.scroll_by((-dx * 30.0) as i32, (-dy * 30.0) as i32);
+                        ((-dx * 30.0) as i32, (-dy * 30.0) as i32)
                     }
-                    MouseScrollDelta::PixelDelta(pos) => {
-                        self.scroll_by(-pos.x as i32, -pos.y as i32);
+                    MouseScrollDelta::PixelDelta(pos) => (-pos.x as i32, -pos.y as i32),
+                };
+                // A scroll viewport under the cursor swallows the wheel so the
+                // page behind it stays put until the cursor leaves the region.
+                let region_key = self.region_at(self.cursor_pos).map(|r| r.key.clone());
+                match region_key {
+                    Some(key) => {
+                        self.scroll_region_by(&key, dy);
                     }
+                    None => self.scroll_by(dx, dy),
                 }
                 if let Some(win) = &self.window {
                     win.request_redraw();
@@ -1931,6 +2482,8 @@ mod tests {
             on_click: None,
             on_change: None,
             on_key: None,
+            pan: (0, 0),
+            clips: None,
         }];
 
         // Simulate click on line 1, col 2:
@@ -2290,6 +2843,8 @@ mod tests {
             on_click: Some("click".into()),
             on_change: None,
             on_key: None,
+            pan: (0, 0),
+            clips: None,
         }];
 
         // Initially at (0, 0) - not hovering
@@ -2393,6 +2948,8 @@ mod tests {
             on_click: None,
             on_change: Some("change_handler".into()),
             on_key: Some("key_handler".into()),
+            pan: (0, 0),
+            clips: None,
         }];
 
         assert!(app.focus_input("test_input"));
@@ -2570,6 +3127,510 @@ mod tests {
         assert!(
             buf.iter().any(|&p| p != BG),
             "clipped drawing must still paint inside the buffer"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Nested scroll regions (roadmap 2.1)
+    // -------------------------------------------------------------------------
+
+    /// `column[ scroll(id="feed", height, padding=0, gap=6)[ msgs... ],
+    ///  button("Send") ]` — the shape Studio's chat pane uses.
+    fn chat_tree(msg_count: usize, viewport_h: i32) -> UiElement {
+        let mut feed = UiElement::new("scroll");
+        feed.id = Some("feed".into());
+        feed.props.insert("height".into(), viewport_h.to_string());
+        feed.props.insert("padding".into(), "0".into());
+        feed.props.insert("gap".into(), "6".into());
+        for i in 0..msg_count {
+            let mut t = UiElement::new("text");
+            t.text = Some(format!("message {i}"));
+            feed.children.push(t);
+        }
+
+        let mut send = UiElement::new("button");
+        send.id = Some("send".into());
+        send.text = Some("Send".into());
+
+        let mut root = UiElement::new("column");
+        root.props.insert("padding".into(), "0".into());
+        root.props.insert("gap".into(), "10".into());
+        root.children.push(feed);
+        root.children.push(send);
+        root
+    }
+
+    /// A viewport keeps the height it declared, its content is measured, and
+    /// siblings stack below the *viewport* — not below the scrolled content.
+    #[test]
+    fn test_scroll_viewport_is_fixed_and_content_is_measured() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "Test".into(),
+                width: 400,
+                height: 300,
+            },
+            dummy,
+        );
+
+        let root = chat_tree(10, 100);
+        app.layout_root(&root);
+
+        assert_eq!(app.scroll_regions.len(), 1, "one scroll viewport measured");
+        let region = &app.scroll_regions[0];
+        assert_eq!(region.key, "scroll:feed", "explicit id becomes the key");
+        assert_eq!(region.rect.h, 100, "viewport keeps its declared height");
+        assert_eq!(
+            region.content_h,
+            10 * CELL_H + 9 * 6,
+            "content height is measured, not the viewport height"
+        );
+        assert_eq!(region.max_offset(), 10 * CELL_H + 9 * 6 - 100);
+
+        let send = app
+            .layout_boxes
+            .iter()
+            .find(|b| b.id.as_deref() == Some("send"))
+            .expect("Send button laid out");
+        assert_eq!(
+            send.rect.y,
+            region.rect.y + region.rect.h + 10,
+            "sibling stacks below the viewport, not below the content"
+        );
+
+        let first = app
+            .layout_boxes
+            .iter()
+            .find(|b| b.text.as_deref() == Some("message 0"))
+            .expect("first message laid out");
+        assert_eq!(first.pan, (0, 0), "no scrolling yet");
+        let clips = first
+            .clips
+            .as_ref()
+            .expect("content inside a scroll region must be clipped");
+        assert_eq!(clips.len(), 1);
+        assert_eq!(clips[0].rect, region.rect, "clipped to the viewport");
+    }
+
+    /// A stored offset pans the content, and layout clamps an overshooting
+    /// offset back into range before anything is drawn or clicked.
+    #[test]
+    fn test_scroll_offset_pans_content_and_is_clamped() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "Test".into(),
+                width: 400,
+                height: 300,
+            },
+            dummy,
+        );
+
+        let root = chat_tree(10, 100);
+        app.scroll_offsets.insert("scroll:feed".into(), 10_000);
+        app.layout_root(&root);
+
+        let max = app.scroll_regions[0].max_offset();
+        assert_eq!(
+            app.scroll_offsets["scroll:feed"], max,
+            "an offset past the content is clamped by layout"
+        );
+
+        app.scroll_offsets.insert("scroll:feed".into(), 40);
+        app.layout_root(&root);
+
+        let first = app
+            .layout_boxes
+            .iter()
+            .find(|b| b.text.as_deref() == Some("message 0"))
+            .unwrap();
+        assert_eq!(first.pan, (0, 40), "content pans by the region offset");
+        assert_eq!(
+            first.screen_rect(app.scroll_x, app.scroll_y).y,
+            first.rect.y - 40
+        );
+        assert!(
+            !first.visible_in(app.scroll_x, app.scroll_y, app.width as i32, app.height as i32),
+            "scrolled above the viewport is not visible"
+        );
+
+        // With pan 40 the viewport shows content y 50..150, i.e. messages 1..5.
+        let mid = app
+            .layout_boxes
+            .iter()
+            .find(|b| b.text.as_deref() == Some("message 3"))
+            .unwrap();
+        assert!(
+            mid.visible_in(app.scroll_x, app.scroll_y, app.width as i32, app.height as i32),
+            "content scrolled into the viewport is visible"
+        );
+        let far = app
+            .layout_boxes
+            .iter()
+            .find(|b| b.text.as_deref() == Some("message 9"))
+            .unwrap();
+        assert!(
+            !far.visible_in(app.scroll_x, app.scroll_y, app.width as i32, app.height as i32),
+            "content still below the viewport stays clipped"
+        );
+    }
+
+    /// Clicks follow the pan; content scrolled out of its viewport can never
+    /// be clicked through to the widgets underneath.
+    #[test]
+    fn test_click_follows_scroll_and_never_clicks_through() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "Test".into(),
+                width: 400,
+                height: 300,
+            },
+            dummy,
+        );
+
+        // scroll[ msgs..., button("Deep") ] — the button is at the bottom of
+        // the content, so scrolling brings it into view.
+        let mut feed = UiElement::new("scroll");
+        feed.id = Some("feed".into());
+        feed.props.insert("height".into(), "50".into());
+        feed.props.insert("padding".into(), "0".into());
+        feed.props.insert("gap".into(), "6".into());
+        for i in 0..5 {
+            let mut t = UiElement::new("text");
+            t.text = Some(format!("m{i}"));
+            feed.children.push(t);
+        }
+        let mut deep = UiElement::new("button");
+        deep.id = Some("deep".into());
+        deep.text = Some("Deep".into());
+        feed.children.push(deep);
+
+        let mut root = UiElement::new("column");
+        root.props.insert("padding".into(), "0".into());
+        root.children.push(feed);
+        app.layout_root(&root);
+
+        let button = app
+            .layout_boxes
+            .iter()
+            .find(|b| b.id.as_deref() == Some("deep"))
+            .unwrap()
+            .clone();
+        assert_eq!(
+            app.scroll_regions[0].max_offset(),
+            button.rect.y + button.rect.h - app.scroll_regions[0].rect.y - 50,
+            "the region scrolls until the button bottom meets the viewport"
+        );
+
+        // Bring the button into view, then click it where it is *drawn*.
+        app.scroll_offsets.insert("scroll:feed".into(), 100);
+        app.layout_root(&root);
+        let screen_y = 140 - 100;
+        app.cursor_pos = (20, screen_y + 10);
+        app.handle_click();
+
+        // The same screen point, but with the button scrolled away, must be a
+        // dead click even though its content-space rect still covers it.
+        app.scroll_offsets.insert("scroll:feed".into(), 0);
+        app.layout_root(&root);
+        app.cursor_pos = (20, screen_y + 10);
+        app.handle_click();
+
+        // Clicking the visible button once more, to prove the middle click
+        // above dispatched nothing (the count would be 3 otherwise).
+        app.scroll_offsets.insert("scroll:feed".into(), 100);
+        app.layout_root(&root);
+        app.cursor_pos = (20, screen_y + 10);
+        app.handle_click();
+
+        drop(app);
+        assert_eq!(
+            val, 2,
+            "a control scrolled out of its viewport must not receive clicks"
+        );
+    }
+
+    /// Wheel/keyboard routing: the region under the cursor swallows the
+    /// gesture, the window only scrolls when the cursor is outside any region.
+    #[test]
+    fn test_wheel_and_keys_route_to_region_under_cursor() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "Test".into(),
+                width: 400,
+                height: 300,
+            },
+            dummy,
+        );
+
+        let root = chat_tree(10, 100);
+        app.layout_root(&root);
+
+        assert_eq!(
+            app.region_at((20, 30)).map(|r| r.key.as_str()),
+            Some("scroll:feed"),
+            "cursor inside the viewport finds the region"
+        );
+        assert!(
+            app.region_at((20, 200)).is_none(),
+            "cursor below the viewport belongs to the window"
+        );
+
+        app.cursor_pos = (20, 30);
+        let window_before = app.scroll_y;
+        let region_key = "scroll:feed".to_string();
+        app.scroll_region_by(&region_key, 60);
+        assert_eq!(app.scroll_offsets[&region_key], 60);
+        assert_eq!(
+            app.scroll_y, window_before,
+            "scrolling a region must not move the window"
+        );
+
+        // Keyboard: the same routing applies to PageDown / End / Home.
+        let page = app.scroll_regions[0].rect.h - 40;
+        app.send_key("PageDown");
+        assert_eq!(app.scroll_offsets[&region_key], 60 + page);
+        app.send_key("End");
+        assert_eq!(
+            app.scroll_offsets[&region_key],
+            app.scroll_regions[0].max_offset(),
+            "End scrolls the region to its bottom"
+        );
+        app.send_key("Home");
+        assert_eq!(app.scroll_offsets[&region_key], 0, "Home rewinds the region");
+
+        // With the cursor outside the region the keys fall back to the window.
+        app.cursor_pos = (20, 200);
+        app.height = 120; // short window, so the window itself can scroll
+        app.send_key("End");
+        assert_eq!(
+            app.scroll_y,
+            (app.content_height - app.height as i32 + 20).max(0),
+            "End scrolls the window when no region is under the cursor"
+        );
+    }
+
+    /// Scroll inside scroll: both viewports clip, and the offsets compose.
+    #[test]
+    fn test_nested_scroll_containers_compose() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "Test".into(),
+                width: 400,
+                height: 300,
+            },
+            dummy,
+        );
+
+        let mut inner = UiElement::new("scroll");
+        inner.id = Some("inner".into());
+        inner.props.insert("height".into(), "50".into());
+        inner.props.insert("padding".into(), "0".into());
+        for i in 0..8 {
+            let mut t = UiElement::new("text");
+            t.text = Some(format!("inner{i}"));
+            inner.children.push(t);
+        }
+
+        let mut outer = UiElement::new("scroll");
+        outer.id = Some("outer".into());
+        outer.props.insert("height".into(), "200".into());
+        outer.props.insert("padding".into(), "0".into());
+        outer.props.insert("gap".into(), "10".into());
+        outer.children.push(inner);
+        // Filler below the inner region so the outer content overflows its
+        // 200px viewport and actually has something to scroll.
+        for i in 0..12 {
+            let mut t = UiElement::new("text");
+            t.text = Some(format!("outer{i}"));
+            outer.children.push(t);
+        }
+
+        let mut root = UiElement::new("column");
+        root.props.insert("padding".into(), "0".into());
+        root.children.push(outer);
+        app.layout_root(&root);
+
+        assert_eq!(app.scroll_regions.len(), 2, "both viewports measured");
+
+        app.scroll_offsets.insert("scroll:outer".into(), 30);
+        app.layout_root(&root);
+
+        let leaf = app
+            .layout_boxes
+            .iter()
+            .find(|b| b.text.as_deref() == Some("inner3"))
+            .expect("inner content laid out");
+        assert_eq!(
+            leaf.pan, (0, 30),
+            "inner content inherits the outer offset"
+        );
+        let clips = leaf.clips.as_ref().expect("clipped by both viewports");
+        assert_eq!(clips.len(), 2, "clipped by the outer and the inner viewport");
+        // The outer viewport only moves with its own ancestors (none here).
+        assert_eq!(clips[0].pan, (0, 0));
+        // The inner viewport is itself inside the outer region, so it pans.
+        assert_eq!(clips[1].pan, (0, 30));
+    }
+
+    /// Clip helpers: nested viewports intersect, and clipped chrome paints
+    /// strictly inside the viewport.
+    #[test]
+    fn test_screen_clip_intersects_nested_viewports() {
+        let outer = ClipRegion {
+            rect: Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 80,
+            },
+            pan: (0, 0),
+        };
+        let inner = ClipRegion {
+            rect: Rect {
+                x: 10,
+                y: 10,
+                w: 40,
+                h: 20,
+            },
+            pan: (0, 10),
+        };
+        let mut b = LayoutBox {
+            rect: Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 80,
+            },
+            tag: "text".into(),
+            id: None,
+            text: None,
+            on_click: None,
+            on_change: None,
+            on_key: None,
+            pan: (0, 0),
+            clips: None,
+        };
+        b.clips = Some(vec![outer, inner]);
+        assert_eq!(
+            b.screen_clip(0, 0),
+            Some(Rect {
+                x: 10,
+                y: 0,
+                w: 40,
+                h: 20
+            }),
+            "the tighter viewport wins"
+        );
+        // Both viewports share the ancestor pan, so window scrolling shifts
+        // the intersection without ever emptying it.
+        assert_eq!(
+            b.screen_clip(0, 60),
+            Some(Rect {
+                x: 10,
+                y: -60,
+                w: 40,
+                h: 20
+            })
+        );
+
+        // A viewport scrolled far past its ancestor clips everything away.
+        let far = ClipRegion {
+            rect: Rect {
+                x: 10,
+                y: 10,
+                w: 40,
+                h: 20,
+            },
+            pan: (0, 1000),
+        };
+        b.clips = Some(vec![outer, far]);
+        assert_eq!(
+            b.screen_clip(0, 0),
+            None,
+            "disjoint viewports clip the box away entirely"
+        );
+    }
+
+    /// Clipped chrome paints strictly inside the viewport, never past it.
+    #[test]
+    fn test_rounded_box_clipped_paints_only_inside_clip() {
+        const BG: u32 = 0xFF00_0000;
+        let (stride, height) = (30usize, 30usize);
+        let clip = Rect {
+            x: 0,
+            y: 0,
+            w: 10,
+            h: 10,
+        };
+        let mut buf = vec![BG; stride * height];
+        draw_rounded_rect_box_clipped(
+            &mut buf,
+            stride,
+            height,
+            Some(clip),
+            0,
+            0,
+            30,
+            30,
+            6,
+            0xFF00_00FF,
+            0xFFFF_FFFF,
+        );
+
+        for y in 0..height {
+            for x in 0..stride {
+                if x >= 10 || y >= 10 {
+                    assert_eq!(
+                        buf[y * stride + x],
+                        BG,
+                        "pixel ({x},{y}) outside the clip must stay background"
+                    );
+                }
+            }
+        }
+        assert!(
+            buf.iter().take(100).any(|&p| p != BG),
+            "the visible part of the control must still be painted"
         );
     }
 }

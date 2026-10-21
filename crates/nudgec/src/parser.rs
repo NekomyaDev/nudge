@@ -1132,11 +1132,11 @@ impl Parser {
     fn is_ui_container_expr(e: &Expr) -> bool {
         match &e.kind {
             ExprKind::Ident(s) => {
-                matches!(s.as_str(), "column" | "row" | "stack" | "box" | "container")
+                matches!(s.as_str(), "column" | "row" | "scroll" | "stack" | "box" | "container")
             }
             ExprKind::Call { func, .. } => match &func.kind {
                 ExprKind::Ident(s) => {
-                    matches!(s.as_str(), "column" | "row" | "stack" | "box" | "container")
+                    matches!(s.as_str(), "column" | "row" | "scroll" | "stack" | "box" | "container")
                 }
                 _ => false,
             },

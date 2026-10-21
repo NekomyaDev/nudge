@@ -1,0 +1,86 @@
+// Roadmap 2.1 — the `scroll` widget.
+//
+// A chat-style feed: the message list scrolls inside a fixed-height viewport
+// while the header, the status line and the composer below stay put. This
+// replaces the old "older / page N / latest" paging workaround — a scroll
+// region keeps its own offset, clips its content to the viewport and still
+// routes clicks to whatever is actually visible.
+
+type Message = { role: string, body: string }
+
+view FeedView(messages: [Message], draft: string, sent: int) -> View {
+    let mut nodes = []
+    for m in messages {
+        nodes = nodes + [
+            text(m.role + ": " + m.body, wrap = false)
+        ]
+    }
+    column(padding = 12, gap = 10) [
+        text("Nudge Studio — scroll demo", wrap = false),
+        // The feed: fixed viewport height, its own scroll offset, content
+        // clipped to the viewport and never growing the container.
+        scroll(nodes, id = "feed", height = 150, padding = 8, gap = 6),
+        text("Sent: " + sent, wrap = false),
+        input(draft, id = "draft", on_change = on_draft),
+        button("Send", id = "send", on_click = on_send)
+    ]
+}
+
+agent FeedApp {
+    state {
+        messages: [Message] = [
+            { role: "user", body: "hi — can you scroll?" },
+            { role: "nudge", body: "watch me." },
+            { role: "user", body: "message 3" },
+            { role: "nudge", body: "message 4" },
+            { role: "user", body: "message 5" },
+            { role: "nudge", body: "message 6" },
+            { role: "user", body: "message 7" },
+            { role: "nudge", body: "message 8" },
+            { role: "user", body: "message 9" },
+            { role: "nudge", body: "message 10 — the feed keeps going" },
+            { role: "user", body: "message 11" },
+            { role: "nudge", body: "message 12" }
+        ],
+        draft: string = "",
+        sent: int = 0
+    }
+
+    fn on_draft(val: string) uses UI {
+        state.draft = val
+    }
+
+    fn on_send() uses UI {
+        state.messages = state.messages + [
+            { role: "user", body: state.draft }
+        ]
+        state.draft = ""
+        state.sent = state.sent + 1
+    }
+
+    window MainWindow {
+        title: "Nudge Scroll Feed",
+        width: 420,
+        height: 340,
+        content: FeedView(state.messages, state.draft, state.sent)
+    }
+}
+
+fn main() uses UI {
+    FeedApp.MainWindow.open()
+}
+
+test "scroll feed mounts, holds its children and sends" {
+    let app = FeedApp.MainWindow.mount_headless()
+    assert app.find("feed").exists()
+    assert app.find("send").exists()
+    assert app.find("draft").exists()
+    // Children nested inside the scroll container are reachable.
+    assert app.find_text("nudge: message 8").exists()
+
+    app.dispatch_type("draft", "hello")
+    app.dispatch_click("send")
+    assert FeedApp.state.sent == 1
+    assert FeedApp.state.draft == ""
+    assert app.find_text("user: hello").exists()
+}

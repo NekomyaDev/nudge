@@ -777,7 +777,7 @@ impl<'a> Compiler<'a> {
                     || name.ends_with(".exists")
                     || matches!(
                         name.as_str(),
-                        "column" | "row" | "text" | "button" | "input"
+                        "column" | "row" | "scroll" | "text" | "button" | "input"
                     )
                 {
                     self.emit_delegated_expr(expr);
@@ -994,7 +994,7 @@ fn check_expr_effects(expr: &Expr, tool_names: &[String]) -> Result<(), String> 
                     || name.ends_with(".find")
                     || name.ends_with(".find_text")
                     || name.ends_with(".exists")
-                    || matches!(name, "column" | "row" | "text" | "button" | "input")
+                    || matches!(name, "column" | "row" | "scroll" | "text" | "button" | "input")
                 {
                     // Tool call / IO / workspace / store / UI expressions are delegated to the interpreter via DelegateExpr.
                     return Ok(());

@@ -118,10 +118,30 @@
 > Each must work on 3 layers: Nudge language syntax + compiler (AST/types) + renderer.
 > Estimate: simple 0.5 day, medium 1 day, complex 2 days
 
-### 2.1 `scroll` (nested scroll area)  (2 days) ★ critical
-- [ ] Make a specific region scrollable (currently only global window scroll exists)
-- [ ] Required for the chat feed; replaces the paging workaround
-- [ ] Content height measurement + scroll position + arrow keys
+### 2.1 `scroll` (nested scroll area)  (2 days) ★ critical — DONE
+- [x] Make a specific region scrollable — new `scroll(...)` container
+- [x] Required for the chat feed; replaces the paging workaround
+- [x] Content height measurement + scroll position + arrow keys
+
+**Implementation (all three layers):**
+- **Renderer** (`ui_window.rs`): `scroll` lays its children into a fixed
+  viewport, measures content height, keeps a per-container offset in
+  `scroll_offsets`, and clips children to the viewport (`ClipRegion` +
+  `screen_clip()` intersect nested viewports). Wheel over a region scrolls
+  the region; outside it scrolls the window. PageUp/Down/Home/End/↑/↓
+  target the region under the cursor. Thin scrollbar thumb per region.
+  Clicks/hover honour pan + clip, so a control scrolled out of its viewport
+  can never be clicked through.
+- **Compiler**: `scroll` added to the UI-container set in the parser
+  (`is_ui_container_expr`), checker (Ty::View), interpreter
+  (`eval_ui_combinator`) and bytecode delegation.
+- **Verified**: `cargo test --workspace` 822 passed (7 new runtime tests
+  covering viewport measurement, pan, clamp, click-through, wheel/key
+  routing, nested regions, clip helpers; 1 compiler test). Clippy clean.
+  Live-verified with `examples/scroll_feed.ndg`: wheel scrolls the feed
+  while the composer stays put (8978px diff), typing into the composer after
+  scrolling does **not** click through to scrolled-away content, and Send
+  dispatches state updates (trace seq 2–3).
 
 ### 2.2 `select` / dropdown  (1 day)
 - [ ] For model selection, settings menus
@@ -253,7 +273,7 @@
 ### Suggested order (by dependency)
 1. **1.8 Theme** (centralize colors) — quick win, simplifies everything — DONE
 2. **1.2 Real font** + **1.3 Rounded corners** + **1.1 Alpha** — visual leap — DONE
-3. **2.1 `scroll`** — unblocks the chat feed
+3. **2.1 `scroll`** — unblocks the chat feed — DONE
 4. **3.1 Bubbles** — where the "ChatGPT feel" comes from
 5. **5.2 Async + 5.1 Errors** — required for real usage
 6. Remaining widgets (SECTION 2) and interaction (SECTION 4)
