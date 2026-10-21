@@ -2767,6 +2767,20 @@ impl Interpreter {
                 let val = args.first().ok_or("'str.to_string' requires 1 argument")?;
                 Ok(NudgeVal::Str(val.to_string()))
             }
+            // mirrors nudge-runtime stdlib/string.rs `str.to_int`: trim then
+            // parse i64, floats/ints pass through, anything else is `none`
+            "str.to_int" => {
+                let val = args.first().ok_or("'str.to_int' requires 1 argument")?;
+                Ok(match val {
+                    NudgeVal::Str(s) => match s.trim().parse::<i64>() {
+                        Ok(v) => NudgeVal::Int(v),
+                        Err(_) => NudgeVal::Unit,
+                    },
+                    NudgeVal::Float(f) => NudgeVal::Int(*f as i64),
+                    NudgeVal::Int(i) => NudgeVal::Int(*i),
+                    _ => NudgeVal::Unit,
+                })
+            }
             "str.trim" => {
                 let s = args
                     .first()

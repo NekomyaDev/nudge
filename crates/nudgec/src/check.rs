@@ -2121,6 +2121,28 @@ fn check_expr_pos(
                     Ty::Bool
                 }
                 BinOp::Add if matches!(&lt, Ty::Str) || matches!(&rt_, Ty::Str) => Ty::Str,
+                // list concatenation: the VM and the interpreter both implement
+                // `[a] + [b]` (vm::tests::test_parity_lists_and_concat), so the
+                // checker must not reject what the runtime accepts. The element
+                // type widens the same way assignment does; incompatible element
+                // types stay an error.
+                BinOp::Add if matches!((&lt, &rt_), (Ty::List(_), Ty::List(_))) => {
+                    let (Ty::List(l_elem), Ty::List(r_elem)) = (&lt, &rt_) else {
+                        unreachable!("guarded by matches! above")
+                    };
+                    if assignable(l_elem, r_elem) {
+                        Ty::List(r_elem.clone())
+                    } else if assignable(r_elem, l_elem) {
+                        Ty::List(l_elem.clone())
+                    } else {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0201",
+                            msg: format!("cannot concatenate {lt} and {rt_}"),
+                        });
+                        Ty::List(Box::new(Ty::Unknown))
+                    }
+                }
                 _ => {
                     // arithmetic is numeric-only; previously a non-numeric
                     // operand silently fell through to Ty::Unknown and
