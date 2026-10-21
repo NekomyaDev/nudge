@@ -45,7 +45,7 @@
 
 ### Remaining renderer soft spots
 - No kerning-aware proportional layout for **container width** (uses fixed `CELL_W` grid)
-- No rounded corners, shadows, gradients, or icons yet
+- No shadows, gradients, or icons yet (rounded corners landed in 1.3)
 - Single font size tier in use (`BASE_PX`); fractional sizes not yet wired to UI
 - No animation / timer infrastructure (needed for cursor blink and spinners)
 
@@ -74,9 +74,15 @@
 - [x] Inline style: **bold** (`FaceKind::UiBold`)
 - Note: `draw_text` call sites routed through `draw_text_ttf`
 
-### 1.3 Rounded corners (rounded rect)  (1 day)
-- [ ] `draw_rounded_rect`: radius + border
-- [ ] Used by buttons, inputs, cards, modals
+### 1.3 Rounded corners (rounded rect)  (1 day) — DONE
+- [x] `draw_rounded_rect_alpha` + `draw_rounded_rect_box`: SDF-based
+      signed-distance field, so arcs are **anti-aliased** (no stair-stepping)
+- [x] 1px border ring drawn as `outer * (1 - inner)` with a 1px-inset fill —
+      the two regions are complementary, nothing is overdrawn twice
+- [x] `CORNER_RADIUS = 6` wired into buttons and inputs
+- [x] `radius = 0` degrades to the square helpers byte-for-byte
+- [x] Bounds clipping proven (partially off-screen boxes are safe)
+- [ ] Used by cards / modals (those widgets do not exist yet)
 
 ### 1.4 Drop shadow  (1 day)
 - [ ] Soft shadow (multi-layer alpha instead of blur)
@@ -246,7 +252,7 @@
 
 ### Suggested order (by dependency)
 1. **1.8 Theme** (centralize colors) — quick win, simplifies everything — DONE
-2. **1.2 Real font** + **1.3 Rounded corners** + **1.1 Alpha** — visual leap — font & alpha DONE
+2. **1.2 Real font** + **1.3 Rounded corners** + **1.1 Alpha** — visual leap — DONE
 3. **2.1 `scroll`** — unblocks the chat feed
 4. **3.1 Bubbles** — where the "ChatGPT feel" comes from
 5. **5.2 Async + 5.1 Errors** — required for real usage

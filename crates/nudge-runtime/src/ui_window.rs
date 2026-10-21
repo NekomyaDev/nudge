@@ -203,6 +203,142 @@ pub fn draw_rect_outline(
     draw_rect(buf, stride, height, x + w - 1, y, 1, h, color);
 }
 
+/// Corner radius (px) used by the default widget chrome (buttons, inputs).
+/// Kept modest so 36px-tall controls still read as rectangles, but enough to
+/// lose the hard 90-degree corners.
+pub const CORNER_RADIUS: i32 = 6;
+
+/// Anti-aliased coverage of a rounded rectangle at the centre of pixel
+/// `(px, py)` using the standard rounded-box signed distance field.
+///
+/// Returns `1.0` well inside, `0.0` outside, and a graded value across the
+/// ~1px arc so corners are smooth instead of stair-stepped.
+#[inline]
+fn rounded_rect_coverage(x: i32, y: i32, w: i32, h: i32, r: i32, px: i32, py: i32) -> f32 {
+    // Never round more than half the widget, otherwise the shape inverts.
+    let r = (r as f32).min(w as f32 / 2.0).min(h as f32 / 2.0).max(0.0);
+    let hw = w as f32 / 2.0;
+    let hh = h as f32 / 2.0;
+    let dx = (px as f32 + 0.5 - (x as f32 + hw)).abs();
+    let dy = (py as f32 + 0.5 - (y as f32 + hh)).abs();
+    let qx = dx - hw + r;
+    let qy = dy - hh + r;
+    let sdf = qx.max(qy).min(0.0) + qx.max(0.0).hypot(qy.max(0.0)) - r;
+    (0.5 - sdf).clamp(0.0, 1.0)
+}
+
+/// [`draw_rect_alpha`] with rounded corners and anti-aliased edges.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_rounded_rect_alpha(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    r: i32,
+    color: u32,
+    alpha: f32,
+) {
+    if w <= 0 || h <= 0 || alpha <= 0.0 {
+        return;
+    }
+    let r = r.min(w / 2).min(h / 2);
+    if r <= 0 {
+        draw_rect_alpha(buf, stride, height, x, y, w, h, color, alpha);
+        return;
+    }
+
+    let x_start = x.max(0) as usize;
+    let y_start = y.max(0) as usize;
+    let x_end = ((x + w).max(0) as usize).min(stride);
+    let y_end = ((y + h).max(0) as usize).min(height);
+
+    for row in y_start..y_end {
+        let row_offset = row * stride;
+        for col in x_start..x_end {
+            let cov = rounded_rect_coverage(x, y, w, h, r, col as i32, row as i32);
+            if cov <= 0.0 {
+                continue;
+            }
+            let a = (cov * alpha).clamp(0.0, 1.0);
+            if a >= 1.0 {
+                buf[row_offset + col] = color;
+            } else {
+                blend_px(buf, row_offset + col, color, a);
+            }
+        }
+    }
+}
+
+/// Rounded rectangle with a 1px border: the ring is drawn in `border`, the
+/// interior in `fill`. Both the outer arc and the inner edge are
+/// anti-aliased, and the two regions are complementary so nothing is
+/// overdrawn twice.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_rounded_rect_box(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    r: i32,
+    fill: u32,
+    border: u32,
+) {
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    let r = r.min(w / 2).min(h / 2);
+    if r <= 0 {
+        draw_rect(buf, stride, height, x, y, w, h, fill);
+        draw_rect_outline(buf, stride, height, x, y, w, h, border);
+        return;
+    }
+
+    // Interior after removing the 1px border on every side.
+    let (ix, iy, iw, ih) = (x + 1, y + 1, w - 2, h - 2);
+
+    let x_start = x.max(0) as usize;
+    let y_start = y.max(0) as usize;
+    let x_end = ((x + w).max(0) as usize).min(stride);
+    let y_end = ((y + h).max(0) as usize).min(height);
+
+    for row in y_start..y_end {
+        let row_offset = row * stride;
+        for col in x_start..x_end {
+            let (px, py) = (col as i32, row as i32);
+            let outer = rounded_rect_coverage(x, y, w, h, r, px, py);
+            if outer <= 0.0 {
+                continue;
+            }
+            let inner = if iw > 0 && ih > 0 {
+                rounded_rect_coverage(ix, iy, iw, ih, r - 1, px, py)
+            } else {
+                0.0
+            };
+            let border_a = outer * (1.0 - inner);
+            if border_a > 0.0 {
+                if border_a >= 1.0 {
+                    buf[row_offset + col] = border;
+                } else {
+                    blend_px(buf, row_offset + col, border, border_a);
+                }
+            }
+            if inner > 0.0 {
+                if inner >= 1.0 {
+                    buf[row_offset + col] = fill;
+                } else {
+                    blend_px(buf, row_offset + col, fill, inner);
+                }
+            }
+        }
+    }
+}
+
 /// Draw a single glyph using the real TrueType engine with grayscale
 /// anti-aliasing. `x, y` is the top-left of the line box; the baseline is
 /// derived from the font's ascent. `draw_px(x, y, w, h, coverage)` receives
@@ -832,7 +968,7 @@ impl<D: UiDispatcher> NativeApp<D> {
                     } else {
                         theme.button_bg
                     };
-                    draw_rect(
+                    draw_rounded_rect_box(
                         &mut buffer,
                         stride,
                         h_usize,
@@ -840,16 +976,8 @@ impl<D: UiDispatcher> NativeApp<D> {
                         ry,
                         lbox.rect.w,
                         lbox.rect.h,
+                        CORNER_RADIUS,
                         bg_color,
-                    );
-                    draw_rect_outline(
-                        &mut buffer,
-                        stride,
-                        h_usize,
-                        rx,
-                        ry,
-                        lbox.rect.w,
-                        lbox.rect.h,
                         theme.button_border,
                     );
                     if let Some(ref text) = lbox.text {
@@ -881,7 +1009,7 @@ impl<D: UiDispatcher> NativeApp<D> {
                         theme.input_border
                     };
 
-                    draw_rect(
+                    draw_rounded_rect_box(
                         &mut buffer,
                         stride,
                         h_usize,
@@ -889,16 +1017,8 @@ impl<D: UiDispatcher> NativeApp<D> {
                         ry,
                         lbox.rect.w,
                         lbox.rect.h,
+                        CORNER_RADIUS,
                         theme.input_bg,
-                    );
-                    draw_rect_outline(
-                        &mut buffer,
-                        stride,
-                        h_usize,
-                        rx,
-                        ry,
-                        lbox.rect.w,
-                        lbox.rect.h,
                         border_color,
                     );
 
@@ -967,15 +1087,23 @@ impl<D: UiDispatcher> NativeApp<D> {
                         }
                     }
 
-                    // Draw text
+                    // Draw text, clipped to the field interior so glyphs can
+                    // never bleed over the rounded border.
                     let input_text_color = theme.text;
                     let fonts = &self.fonts;
-                    draw_text_ttf(
+                    let clip = Rect {
+                        x: rx + 1,
+                        y: ry + 1,
+                        w: (lbox.rect.w - 2).max(0),
+                        h: (lbox.rect.h - 2).max(0),
+                    };
+                    draw_text_ttf_clipped(
                         fonts,
                         FaceKind::Ui,
                         rx + 8,
                         ry + 6,
                         &display_text,
+                        clip,
                         |px, py, w, h, cov| {
                             draw_rect_alpha(&mut buffer, stride, h_usize, px, py, w, h, input_text_color, cov);
                         },
@@ -2337,6 +2465,111 @@ mod tests {
         assert_eq!(
             app.text_inputs.get("test_input").unwrap().text,
             "initial edi"
+        );
+    }
+
+    /// A rounded rectangle must actually cut its corners: the outermost corner
+    /// pixel stays background while the centre is filled.
+    #[test]
+    fn test_rounded_rect_cuts_corners() {
+        const BG: u32 = 0xFF00_0000;
+        const FILL: u32 = 0xFFFF_FFFF;
+        let (stride, height) = (40usize, 40usize);
+        let mut buf = vec![BG; stride * height];
+        let at = |b: &[u32], x: i32, y: i32| b[(y as usize) * stride + x as usize];
+
+        draw_rounded_rect_alpha(&mut buf, stride, height, 10, 10, 20, 20, 6, FILL, 1.0);
+
+        assert_eq!(at(&buf, 10, 10), BG, "top-left corner must be cut");
+        assert_eq!(at(&buf, 29, 10), BG, "top-right corner must be cut");
+        assert_eq!(at(&buf, 10, 29), BG, "bottom-left corner must be cut");
+        assert_eq!(at(&buf, 29, 29), BG, "bottom-right corner must be cut");
+
+        assert_eq!(at(&buf, 20, 20), FILL, "centre must be filled");
+        assert_eq!(at(&buf, 10, 20), FILL, "left edge at mid-height must be filled");
+        assert_eq!(at(&buf, 20, 10), FILL, "top edge at mid-width must be filled");
+
+        // Nothing outside the box may be touched.
+        assert_eq!(at(&buf, 9, 20), BG, "outside left must stay background");
+        assert_eq!(at(&buf, 20, 9), BG, "outside top must stay background");
+    }
+
+    /// The arc must be anti-aliased (a graded pixel exists), not stair-stepped.
+    #[test]
+    fn test_rounded_rect_edges_are_anti_aliased() {
+        const BG: u32 = 0xFF00_0000;
+        const FILL: u32 = 0xFFFF_FFFF;
+        let (stride, height) = (40usize, 40usize);
+        let mut buf = vec![BG; stride * height];
+        draw_rounded_rect_alpha(&mut buf, stride, height, 10, 10, 20, 20, 6, FILL, 1.0);
+
+        let partial = buf
+            .iter()
+            .filter(|&&p| p != BG && p != FILL)
+            .count();
+        assert!(
+            partial > 0,
+            "expected at least one anti-aliased pixel along the arcs"
+        );
+        // ...but the shape must stay mostly solid: fewer partial than solid px.
+        let solid = buf.iter().filter(|&&p| p == FILL).count();
+        assert!(solid > partial, "arc pixels should not dominate the shape");
+    }
+
+    /// `draw_rounded_rect_box` must produce a 1px border ring with the fill
+    /// inside it, and leave the cut corner as background.
+    #[test]
+    fn test_rounded_rect_box_border_and_fill() {
+        const BG: u32 = 0xFF00_0000;
+        const FILL: u32 = 0xFF00_00FF;
+        const BORDER: u32 = 0xFFFF_FFFF;
+        let (stride, height) = (40usize, 40usize);
+        let mut buf = vec![BG; stride * height];
+        let at = |b: &[u32], x: i32, y: i32| b[(y as usize) * stride + x as usize];
+
+        draw_rounded_rect_box(&mut buf, stride, height, 10, 10, 20, 20, 6, FILL, BORDER);
+
+        assert_eq!(at(&buf, 10, 10), BG, "corner cut must remain background");
+        assert_eq!(at(&buf, 10, 20), BORDER, "left edge must be the border");
+        assert_eq!(at(&buf, 20, 10), BORDER, "top edge must be the border");
+        assert_eq!(at(&buf, 20, 20), FILL, "interior must be the fill");
+        assert_eq!(at(&buf, 11, 20), FILL, "fill starts right after the border");
+        assert_eq!(at(&buf, 20, 11), FILL, "fill starts right after the border");
+    }
+
+    /// Radius 0 must degrade to the plain rectangle helpers, byte for byte.
+    #[test]
+    fn test_rounded_rect_radius_zero_matches_rect() {
+        let (stride, height) = (32usize, 32usize);
+        let mut sharp = vec![0xFF00_0000u32; stride * height];
+        let mut rounded = vec![0xFF00_0000u32; stride * height];
+        let (x, y, w, h, color) = (5, 5, 20, 14, 0xFFAA_BBCC);
+
+        draw_rect(&mut sharp, stride, height, x, y, w, h, color);
+        draw_rect_outline(&mut sharp, stride, height, x, y, w, h, 0xFF11_2233);
+
+        draw_rounded_rect_box(&mut rounded, stride, height, x, y, w, h, 0, color, 0xFF11_2233);
+
+        assert_eq!(sharp, rounded, "radius 0 must equal the square helpers");
+    }
+
+    /// Partial off-screen boxes must clip safely instead of panicking or
+    /// scribbling outside the buffer.
+    #[test]
+    fn test_rounded_rect_clips_to_framebuffer() {
+        const BG: u32 = 0xFF00_0000;
+        let (stride, height) = (24usize, 24usize);
+        let mut buf = vec![BG; stride * height];
+
+        // Straddles the top-left corner, the right edge and the bottom edge.
+        draw_rounded_rect_alpha(&mut buf, stride, height, -5, -5, 30, 40, 6, 0xFFFF_FFFF, 1.0);
+        draw_rounded_rect_box(&mut buf, stride, height, 20, 20, 20, 20, 6, 0xFF00_00FF, 0xFFFF_FFFF);
+
+        // Every pixel is addressable and the buffer length is unchanged.
+        assert_eq!(buf.len(), stride * height);
+        assert!(
+            buf.iter().any(|&p| p != BG),
+            "clipped drawing must still paint inside the buffer"
         );
     }
 }
