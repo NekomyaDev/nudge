@@ -19,12 +19,13 @@ getrandom = "0.2"
 [features]
 default = []
 live-provider = ["dep:ureq"]
-native-gui = ["dep:winit", "dep:softbuffer"]
+native-gui = ["dep:winit", "dep:softbuffer", "dep:ab_glyph"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = { version = "2.10", default-features = false, features = ["tls"], optional = true }
 winit = { version = "0.30", optional = true }
 softbuffer = { version = "0.4", optional = true }
+ab_glyph = { version = "0.2", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

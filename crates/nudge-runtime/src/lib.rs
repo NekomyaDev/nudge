@@ -1,6 +1,8 @@
 pub mod auth;
 #[cfg(feature = "native-gui")]
 pub mod font8x8;
+#[cfg(feature = "native-gui")]
+pub mod font_engine;
 pub mod fs_watch;
 pub mod grants;
 pub mod host_tool;

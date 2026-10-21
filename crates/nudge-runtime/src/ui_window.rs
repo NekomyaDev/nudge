@@ -2,6 +2,7 @@
 #![cfg(feature = "native-gui")]
 
 use crate::font8x8::get_glyph;
+use crate::font_engine::{FaceKind, FontEngine, BASE_PX, CELL_H, CELL_W};
 use crate::ui::{TextInputState, UiElement};
 use std::collections::HashMap;
 use std::num::NonZeroU32;
@@ -43,6 +44,49 @@ pub trait UiDispatcher {
     }
 }
 
+/// Central color theme. Every hard-coded color in the renderer resolves
+/// through a `Theme` field, so light/dark and custom palettes only need to
+/// change here. Colors are stored as opaque `0xFFRRGGBB`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Theme {
+    pub bg: u32,
+    pub text: u32,
+    pub text_dim: u32,
+    pub border: u32,
+    pub input_bg: u32,
+    pub input_border: u32,
+    pub input_border_focused: u32,
+    pub button_bg: u32,
+    pub button_bg_hover: u32,
+    pub button_border: u32,
+    pub button_text: u32,
+    pub selection_bg: u32,
+    pub cursor: u32,
+    pub scrollbar_track: u32,
+    pub scrollbar_thumb: u32,
+}
+
+impl Theme {
+    /// Zinc-900 dark theme (the original Studio palette).
+    pub const DARK: Theme = Theme {
+        bg: 0xFF18_181B,          // Zinc-900
+        text: 0xFFF4_F4F5,        // Zinc-100
+        text_dim: 0xFF71_717A,    // Zinc-500
+        border: 0xFF3F_3F46,      // Zinc-700
+        input_bg: 0xFF27_272A,    // Zinc-800
+        input_border: 0xFF52_525B, // Zinc-600
+        input_border_focused: 0xFF3B_82F6, // Blue-500
+        button_bg: 0xFF3B_82F6,   // Blue-500
+        button_bg_hover: 0xFF25_63EB, // Blue-600
+        button_border: 0xFF60_A5FA, // Blue-400
+        button_text: 0xFFFF_FFFF, // white
+        selection_bg: 0xFF1D_4ED8, // Blue-700
+        cursor: 0xFFFF_FFFF,      // white
+        scrollbar_track: 0xFF27_272A, // Zinc-800
+        scrollbar_thumb: 0xFF71_717A, // Zinc-500
+    };
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rect {
     pub x: i32,
@@ -72,6 +116,31 @@ pub struct LayoutBox {
 // Software Rasterization Primitives
 // -----------------------------------------------------------------------------
 
+/// Blend `color` over the existing pixel at `buf[y*stride + x]` using `alpha`
+/// in `[0.0, 1.0]`. `alpha = 1.0` is fully opaque (matches old behaviour).
+#[inline]
+fn blend_px(buf: &mut [u32], idx: usize, color: u32, alpha: f32) {
+    let a = alpha.clamp(0.0, 1.0);
+    if a >= 1.0 {
+        buf[idx] = color;
+        return;
+    }
+    if a <= 0.0 {
+        return;
+    }
+    let dst = buf[idx];
+    let sr = ((color >> 16) & 0xFF) as f32;
+    let sg = ((color >> 8) & 0xFF) as f32;
+    let sb = (color & 0xFF) as f32;
+    let dr = ((dst >> 16) & 0xFF) as f32;
+    let dg = ((dst >> 8) & 0xFF) as f32;
+    let db = (dst & 0xFF) as f32;
+    let r = (sr * a + dr * (1.0 - a)) as u32;
+    let g = (sg * a + dg * (1.0 - a)) as u32;
+    let b = (sb * a + db * (1.0 - a)) as u32;
+    buf[idx] = 0xFF00_0000 | (r << 16) | (g << 8) | b;
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn draw_rect(
     buf: &mut [u32],
@@ -83,6 +152,22 @@ pub fn draw_rect(
     h: i32,
     color: u32,
 ) {
+    draw_rect_alpha(buf, stride, height, x, y, w, h, color, 1.0);
+}
+
+/// `draw_rect` with an alpha channel in `[0.0, 1.0]` (1.0 = opaque).
+#[allow(clippy::too_many_arguments)]
+pub fn draw_rect_alpha(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    color: u32,
+    alpha: f32,
+) {
     let x_start = x.max(0) as usize;
     let y_start = y.max(0) as usize;
     let x_end = ((x + w).max(0) as usize).min(stride);
@@ -91,7 +176,12 @@ pub fn draw_rect(
     for row in y_start..y_end {
         let row_offset = row * stride;
         for col in x_start..x_end {
-            buf[row_offset + col] = color;
+            let idx = row_offset + col;
+            if alpha >= 1.0 {
+                buf[idx] = color;
+            } else {
+                blend_px(buf, idx, color, alpha);
+            }
         }
     }
 }
@@ -111,6 +201,59 @@ pub fn draw_rect_outline(
     draw_rect(buf, stride, height, x, y + h - 1, w, 1, color);
     draw_rect(buf, stride, height, x, y, 1, h, color);
     draw_rect(buf, stride, height, x + w - 1, y, 1, h, color);
+}
+
+/// Draw a single glyph using the real TrueType engine with grayscale
+/// anti-aliasing. `x, y` is the top-left of the line box; the baseline is
+/// derived from the font's ascent. `draw_px(x, y, w, h, coverage)` receives
+/// each covered pixel with coverage in `[0.0, 1.0]`.
+pub fn draw_char_ttf<F>(
+    engine: &FontEngine,
+    kind: FaceKind,
+    x: i32,
+    y: i32,
+    ch: char,
+    mut draw_px: F,
+) where
+    F: FnMut(i32, i32, i32, i32, f32),
+{
+    engine.draw_glyph(kind, ch, x, y, |gx, gy, w, h, cov| {
+        draw_px(gx, gy, w, h, cov);
+    });
+}
+
+/// Draw `text` with the real TrueType engine, honouring `\n` line breaks and
+/// proportional glyph advances (tight, natural spacing).
+#[allow(clippy::too_many_arguments)]
+pub fn draw_text_ttf<F>(
+    engine: &FontEngine,
+    kind: FaceKind,
+    start_x: i32,
+    start_y: i32,
+    text: &str,
+    mut draw_px: F,
+) where
+    F: FnMut(i32, i32, i32, i32, f32),
+{
+    let cell_h = engine.cell_h;
+    let mut x = start_x;
+    let mut y = start_y;
+    for ch in text.chars() {
+        if ch == '\r' {
+            continue;
+        }
+        if ch == '\n' {
+            x = start_x;
+            y += cell_h;
+            continue;
+        }
+        let cx = x;
+        let cy = y;
+        engine.draw_glyph(kind, ch, cx, cy, |gx, gy, w, h, cov| {
+            draw_px(gx, gy, w, h, cov);
+        });
+        x += engine.advance_of(kind, ch);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -335,11 +478,11 @@ pub fn layout_element(
             } else {
                 raw_content
                     .split('\n')
-                    .any(|l| (l.chars().count() as i32) * 16 > target_w)
+                    .any(|l| (l.chars().count() as i32) * CELL_W > target_w)
             };
 
             let content = if should_wrap {
-                wrap_text(&raw_content, target_w, 16)
+                wrap_text(&raw_content, target_w, CELL_W)
             } else {
                 raw_content
             };
@@ -350,8 +493,8 @@ pub fn layout_element(
                 .map(|l| l.chars().count())
                 .max()
                 .unwrap_or(0) as i32;
-            let w = max_line_len * 16;
-            let h = lines * 20;
+            let w = max_line_len * CELL_W;
+            let h = lines * CELL_H;
             boxes.push(LayoutBox {
                 rect: Rect { x, y, w, h },
                 tag: "text".into(),
@@ -376,9 +519,9 @@ pub fn layout_element(
                         t
                     }
                 });
-            let text_w = (content.chars().count() as i32) * 16;
+            let text_w = (content.chars().count() as i32) * CELL_W;
             let w = (text_w + 32).max(80);
-            let h = 36;
+            let h = (CELL_H + 16).max(36);
             boxes.push(LayoutBox {
                 rect: Rect { x, y, w, h },
                 tag: "button".into(),
@@ -402,8 +545,8 @@ pub fn layout_element(
                 .map(|l| l.chars().count())
                 .max()
                 .unwrap_or(0) as i32;
-            let w = 220.max(max_line_len * 16 + 24);
-            let h = 36.max(lines * 20 + 16);
+            let w = 220.max(max_line_len * CELL_W + 24);
+            let h = (CELL_H + 16).max(lines * CELL_H + 16);
             boxes.push(LayoutBox {
                 rect: Rect { x, y, w, h },
                 tag: "input".into(),
@@ -486,6 +629,8 @@ pub struct NativeApp<D: UiDispatcher> {
     pub clipboard: String,
     pub shift_pressed: bool,
     pub ctrl_pressed: bool,
+    pub theme: Theme,
+    pub fonts: FontEngine,
 }
 
 impl<D: UiDispatcher> NativeApp<D> {
@@ -514,6 +659,8 @@ impl<D: UiDispatcher> NativeApp<D> {
             clipboard: String::new(),
             shift_pressed: false,
             ctrl_pressed: false,
+            theme: Theme::DARK,
+            fonts: FontEngine::new(BASE_PX),
         }
     }
 
@@ -575,7 +722,11 @@ impl<D: UiDispatcher> NativeApp<D> {
         let stride = self.width as usize;
         let h_usize = self.height as usize;
 
-        // Background: Zinc-900 (0xFF18181B)
+        let theme = self.theme;
+        let cell_w = self.fonts.cell_w;
+        let cell_h = self.fonts.cell_h;
+
+        // Background from theme
         draw_rect(
             &mut buffer,
             stride,
@@ -584,7 +735,7 @@ impl<D: UiDispatcher> NativeApp<D> {
             0,
             self.width as i32,
             self.height as i32,
-            0xFF18181B,
+            theme.bg,
         );
 
         // Fetch latest view tree and layout
@@ -636,16 +787,11 @@ impl<D: UiDispatcher> NativeApp<D> {
             match lbox.tag.as_str() {
                 "text" => {
                     if let Some(ref text) = lbox.text {
-                        draw_text(
-                            &mut buffer,
-                            stride,
-                            h_usize,
-                            rx,
-                            ry + 2,
-                            text,
-                            0xFFF4F4F5, // crisp white
-                            2,
-                        );
+                        let color = theme.text;
+                        let fonts = &self.fonts;
+                        draw_text_ttf(fonts, FaceKind::Ui, rx, ry + 2, text, |px, py, w, h, cov| {
+                            draw_rect_alpha(&mut buffer, stride, h_usize, px, py, w, h, color, cov);
+                        });
                     }
                 }
                 "button" => {
@@ -657,9 +803,9 @@ impl<D: UiDispatcher> NativeApp<D> {
                     };
                     let hovered = screen_rect.contains(mx, my);
                     let bg_color = if hovered {
-                        0xFF2563EB // Blue-600 hover
+                        theme.button_bg_hover
                     } else {
-                        0xFF3B82F6 // Blue-500
+                        theme.button_bg
                     };
                     draw_rect(
                         &mut buffer,
@@ -679,22 +825,26 @@ impl<D: UiDispatcher> NativeApp<D> {
                         ry,
                         lbox.rect.w,
                         lbox.rect.h,
-                        0xFF60A5FA, // lighter border
+                        theme.button_border,
                     );
                     if let Some(ref text) = lbox.text {
-                        let text_w = (text.chars().count() as i32) * 16;
+                        let text_w = self.fonts.measure_width(FaceKind::Ui, text);
                         let tx = rx + ((lbox.rect.w - text_w) / 2).max(8);
-                        let ty = ry + ((lbox.rect.h - 16) / 2).max(4);
-                        draw_text(&mut buffer, stride, h_usize, tx, ty, text, 0xFFFFFFFF, 2);
+                        let ty = ry + ((lbox.rect.h - cell_h) / 2).max(4);
+                        let color = theme.button_text;
+                        let fonts = &self.fonts;
+                        draw_text_ttf(fonts, FaceKind::Ui, tx, ty, text, |px, py, w, h, cov| {
+                            draw_rect_alpha(&mut buffer, stride, h_usize, px, py, w, h, color, cov);
+                        });
                     }
                 }
                 "input" => {
                     let is_focused =
                         self.focused_id.as_deref() == lbox.id.as_deref() && lbox.id.is_some();
                     let border_color = if is_focused {
-                        0xFF3B82F6 // Blue-500 focused outline
+                        theme.input_border_focused
                     } else {
-                        0xFF52525B // Zinc-600 unfocused border
+                        theme.input_border
                     };
 
                     draw_rect(
@@ -705,7 +855,7 @@ impl<D: UiDispatcher> NativeApp<D> {
                         ry,
                         lbox.rect.w,
                         lbox.rect.h,
-                        0xFF27272A, // Zinc-800
+                        theme.input_bg,
                     );
                     draw_rect_outline(
                         &mut buffer,
@@ -744,9 +894,9 @@ impl<D: UiDispatcher> NativeApp<D> {
                                             st.line_len(line)
                                         };
                                         if col_end > col_start {
-                                            let sel_x = rx + 8 + (col_start as i32) * 16;
-                                            let sel_w = ((col_end - col_start) as i32) * 16;
-                                            let sel_y = ry + 6 + (line as i32) * 20;
+                                            let sel_x = rx + 8 + (col_start as i32) * cell_w;
+                                            let sel_w = ((col_end - col_start) as i32) * cell_w;
+                                            let sel_y = ry + 6 + (line as i32) * cell_h;
                                             draw_rect(
                                                 &mut buffer,
                                                 stride,
@@ -754,8 +904,8 @@ impl<D: UiDispatcher> NativeApp<D> {
                                                 sel_x,
                                                 sel_y,
                                                 sel_w,
-                                                20,
-                                                0xFF1D4ED8, // Blue-700 selection background
+                                                cell_h,
+                                                theme.selection_bg,
                                             );
                                         }
                                     }
@@ -765,15 +915,17 @@ impl<D: UiDispatcher> NativeApp<D> {
                     }
 
                     // Draw text
-                    draw_text(
-                        &mut buffer,
-                        stride,
-                        h_usize,
+                    let input_text_color = theme.text;
+                    let fonts = &self.fonts;
+                    draw_text_ttf(
+                        fonts,
+                        FaceKind::Ui,
                         rx + 8,
-                        ry + 10,
+                        ry + 6,
                         &display_text,
-                        0xFFE4E4E7,
-                        2,
+                        |px, py, w, h, cov| {
+                            draw_rect_alpha(&mut buffer, stride, h_usize, px, py, w, h, input_text_color, cov);
+                        },
                     );
 
                     // Draw cursor bar if focused
@@ -788,8 +940,8 @@ impl<D: UiDispatcher> NativeApp<D> {
                         } else {
                             (0, cur_idx)
                         };
-                        let cur_x = rx + 8 + (cur_col as i32) * 16;
-                        let cur_y = ry + 8 + (cur_line as i32) * 20;
+                        let cur_x = rx + 8 + (cur_col as i32) * cell_w;
+                        let cur_y = ry + 6 + (cur_line as i32) * cell_h;
                         draw_rect(
                             &mut buffer,
                             stride,
@@ -797,8 +949,8 @@ impl<D: UiDispatcher> NativeApp<D> {
                             cur_x,
                             cur_y,
                             2,
-                            20,
-                            0xFFFFFFFF, // white cursor
+                            cell_h,
+                            theme.cursor,
                         );
                     }
                 }
@@ -823,7 +975,7 @@ impl<D: UiDispatcher> NativeApp<D> {
                 0,
                 8,
                 track_h,
-                0xFF27272A,
+                theme.scrollbar_track,
             );
             draw_rect(
                 &mut buffer,
@@ -833,7 +985,7 @@ impl<D: UiDispatcher> NativeApp<D> {
                 thumb_y,
                 6,
                 thumb_h,
-                0xFF71717A, // Zinc-500
+                theme.scrollbar_thumb,
             );
         }
 
@@ -872,9 +1024,11 @@ impl<D: UiDispatcher> NativeApp<D> {
             if let Some(ref id) = lbox.id {
                 self.focused_id = Some(id.clone());
                 let rel_x = cx - (lbox.rect.x + 8);
-                let rel_y = cy - (lbox.rect.y + 8);
-                let line_idx = (rel_y.max(0) / 20) as usize;
-                let col_idx = (rel_x.max(0) / 16) as usize;
+                let rel_y = cy - (lbox.rect.y + 6);
+                let cell_w = self.fonts.cell_w.max(1);
+                let cell_h = self.fonts.cell_h.max(1);
+                let line_idx = (rel_y.max(0) / cell_h) as usize;
+                let col_idx = (rel_x.max(0) / cell_w) as usize;
 
                 let st = self.ensure_input_state(id, lbox.text.as_deref().unwrap_or(""));
                 let target_line = line_idx.min(st.lines_count().saturating_sub(1));
@@ -1570,9 +1724,9 @@ mod tests {
         }];
 
         // Simulate click on line 1, col 2:
-        // x: lbox.rect.x + 8 + 2 * 16 = 10 + 8 + 32 = 50
-        // y: lbox.rect.y + 8 + 1 * 20 = 20 + 8 + 20 = 48
-        app.cursor_pos = (50, 48);
+        // x: lbox.rect.x + 8 + 2 * CELL_W = 10 + 8 + 20 = 38
+        // y: lbox.rect.y + 6 + 1 * CELL_H = 20 + 6 + 20 = 46
+        app.cursor_pos = (10 + 8 + 2 * CELL_W, 20 + 6 + 1 * CELL_H);
         app.handle_click();
 
         assert_eq!(app.focused_id.as_deref(), Some("multiline_input"));
@@ -1584,9 +1738,9 @@ mod tests {
         );
 
         // Simulate click on line 2, col 3:
-        // x: 10 + 8 + 3 * 16 = 66
-        // y: 20 + 8 + 2 * 20 = 68
-        app.cursor_pos = (66, 68);
+        // x: 10 + 8 + 3 * CELL_W = 48
+        // y: 20 + 6 + 2 * CELL_H = 66
+        app.cursor_pos = (10 + 8 + 3 * CELL_W, 20 + 6 + 2 * CELL_H);
         app.handle_click();
 
         let st = app.text_inputs.get("multiline_input").unwrap();
@@ -1966,11 +2120,11 @@ mod tests {
     #[test]
     fn test_text_word_wrapping_within_bounds() {
         let long_message = "This is a long user message in the chat conversation that exceeds the standard window width";
-        let wrapped = wrap_text(long_message, 200, 16);
+        let wrapped = wrap_text(long_message, 200, CELL_W);
         let lines: Vec<&str> = wrapped.split('\n').collect();
         assert!(lines.len() > 1, "long text must wrap into multiple lines");
         for line in &lines {
-            let line_px = (line.chars().count() as i32) * 16;
+            let line_px = (line.chars().count() as i32) * CELL_W;
             assert!(
                 line_px <= 200,
                 "wrapped line '{line}' (px={line_px}) exceeds max width 200px"
@@ -1987,10 +2141,10 @@ mod tests {
         assert_eq!(boxes.len(), 1);
         assert!(boxes[0].rect.w <= 200, "box width must not exceed 200px");
         assert!(
-            h > 20,
-            "wrapped height must exceed single-line height of 20px"
+            h > CELL_H,
+            "wrapped height must exceed single-line height of {CELL_H}px"
         );
-        assert_eq!(h, (lines.len() as i32) * 20);
+        assert_eq!(h, (lines.len() as i32) * CELL_H);
         assert_eq!(boxes[0].rect.h, h);
     }
 

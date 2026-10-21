@@ -841,6 +841,7 @@ dependencies = [
 name = "nudge-runtime"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
  "getrandom 0.2.17",
  "libc",
  "nudgec",
