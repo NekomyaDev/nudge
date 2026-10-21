@@ -256,6 +256,32 @@ pub fn draw_text_ttf<F>(
     }
 }
 
+/// Same as [`draw_text_ttf`], but every pixel is clipped to `clip`. Pixels
+/// outside the rect are dropped, so centered text inside a button can never
+/// bleed past the border even when a glyph is wider than the layout grid.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_text_ttf_clipped<F>(
+    engine: &FontEngine,
+    kind: FaceKind,
+    start_x: i32,
+    start_y: i32,
+    text: &str,
+    clip: Rect,
+    mut draw_px: F,
+) where
+    F: FnMut(i32, i32, i32, i32, f32),
+{
+    draw_text_ttf(engine, kind, start_x, start_y, text, |px, py, w, h, cov| {
+        if px >= clip.x
+            && py >= clip.y
+            && px + w <= clip.x + clip.w
+            && py + h <= clip.y + clip.h
+        {
+            draw_px(px, py, w, h, cov);
+        }
+    });
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn draw_char(
     buf: &mut [u32],
@@ -833,7 +859,16 @@ impl<D: UiDispatcher> NativeApp<D> {
                         let ty = ry + ((lbox.rect.h - cell_h) / 2).max(4);
                         let color = theme.button_text;
                         let fonts = &self.fonts;
-                        draw_text_ttf(fonts, FaceKind::Ui, tx, ty, text, |px, py, w, h, cov| {
+                        // Clip to the button interior so wide glyphs can never
+                        // bleed past the rounded border, while keeping the
+                        // centered proportional layout.
+                        let clip = Rect {
+                            x: rx,
+                            y: ry,
+                            w: lbox.rect.w,
+                            h: lbox.rect.h,
+                        };
+                        draw_text_ttf_clipped(fonts, FaceKind::Ui, tx, ty, text, clip, |px, py, w, h, cov| {
                             draw_rect_alpha(&mut buffer, stride, h_usize, px, py, w, h, color, cov);
                         });
                     }
