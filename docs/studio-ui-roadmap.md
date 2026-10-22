@@ -45,7 +45,7 @@
 
 ### Remaining renderer soft spots
 - No kerning-aware proportional layout for **container width** (uses fixed `CELL_W` grid)
-- No shadows, gradients, or icons yet (rounded corners landed in 1.3)
+- No gradients or icons yet (rounded corners landed in 1.3, drop shadows in 1.4)
 - Single font size tier in use (`BASE_PX`); fractional sizes not yet wired to UI
 - No animation / timer infrastructure (needed for cursor blink and spinners)
 
@@ -82,11 +82,56 @@
 - [x] `CORNER_RADIUS = 6` wired into buttons and inputs
 - [x] `radius = 0` degrades to the square helpers byte-for-byte
 - [x] Bounds clipping proven (partially off-screen boxes are safe)
-- [ ] Used by cards / modals (those widgets do not exist yet)
+- [x] Used by cards — chat bubbles (3.1) build their background from these
+      helpers, so the "cards don't exist yet" caveat no longer applies;
+      modals still pending
 
-### 1.4 Drop shadow  (1 day)
-- [ ] Soft shadow (multi-layer alpha instead of blur)
-- [ ] Depth for cards and modals
+### 1.4 Drop shadow  (1 day) — DONE
+- [x] Soft shadow around elevated surfaces (needs 1.1 alpha + 1.3 rounded rect)
+- [x] Depth for cards — chat bubbles now float above the feed
+
+**Implementation:**
+- **Renderer** (`ui_window.rs`): `rounded_rect_sdf` split out of
+  `rounded_rect_coverage`, so the halo follows *exactly* the same arc as the
+  visible corners. `draw_rounded_rect_shadow_clipped` walks the SDF outside the
+  shape and blends a **smoothstep** over the signed distance — one pass, no
+  banding, unlike the classic stack of concentric alpha rings (so the roadmap's
+  "multi-layer alpha" approach was superseded by something cheaper and
+  smoother). Honours the same `clip` as the rest of the chrome.
+- **`shadow_for(tag)`**: shadows are opt-in per tag. Only `bubble:*` floats;
+  buttons/inputs stay flat, since they already read as raised through border +
+  hover tone and halos on every widget would flatten the hierarchy.
+  Parameters: `blur = 6`, `alpha = 0.5`, `offset = (0, 2)`.
+  `blur + oy = 8` equals the feed's default gap, so a halo stops exactly at the
+  next bubble instead of stacking into a dark seam down the column.
+- **`draw_shadows` is its own pass**, run right after the background and
+  *before* the box loop. Drawing a halo inline would let a later bubble's halo
+  land on an earlier bubble's fill — a grey smear between stacked cards.
+- **Theme**: `shadow: u32` (Dark: pure black; the strength is per element, so a
+  light surface can later swap in a softer grey without touching call sites).
+- **Verified**: `cargo fmt --all -- --check` OK, clippy `--all-features -D
+  warnings` clean, `cargo test --workspace --features native-gui` **860 passed /
+  0 failed** (1 ignored = the real-OS-window acceptance test). 4 new runtime
+  tests: the halo darkens at the edge, ramps monotonically and is *exactly*
+  background at `blur`; the clipped variant leaves everything past the viewport
+  untouched; `draw_shadows` + box paint leaves an earlier bubble's fill and its
+  bottom border byte-identical (the two-pass invariant); only `bubble:*` tags
+  carry a halo and its reach stays inside an 8px gap.
+  Live-verified with `examples/chat_bubbles.ndg` on X11, measured rather than
+  eyeballed: **8px below** a bubble (rows y=98..105 darkening from
+  (12,12,13) back to bg, exact bg at y=106) and **4px above** (y=54..57,
+  `blur - oy`), matching the offset asymmetry by construction; no bleed past
+  the viewport at either edge (y=203+ and y=44..51 are untouched bg) even in a
+  scrolled frame; bubble fills and border rings come out pure, proving the
+  ordering rule holds on real content. Interaction re-proved unaffected —
+  hover turns Send to (37,99,235), one dispatch per click
+  (`fa9ce7391d14` → `d14fbb076faf` → `87bd8f0e6575`, the same pixel hashes
+  3.1 recorded), wheel scrolls the feed but never dispatches.
+  - **Note**: two seemingly-dead input checks were a measurement artefact, not
+    a bug — a *physical* mouse on this machine drifts while `xdotool` sleeps
+    between the warp and the event, so hover/click landed elsewhere. Chaining
+    `xdotool mousemove --sync X Y click 1` in a single invocation and reading
+    `getmouselocation` right afterwards makes the tests deterministic.
 
 ### 1.5 Gradient  (0.5 day)
 - [ ] Vertical / horizontal linear gradient (buttons, headers, selected items)

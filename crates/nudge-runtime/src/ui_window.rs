@@ -72,6 +72,10 @@ pub struct Theme {
     pub bubble_user_text: u32,
     pub bubble_assistant_bg: u32,
     pub bubble_assistant_text: u32,
+    /// Colour every drop shadow is blended in (alpha is decided per element
+    /// by `blur`/`strength`). Kept in the theme so a light surface can switch
+    /// to a softer grey instead of pure black.
+    pub shadow: u32,
 }
 
 impl Theme {
@@ -96,6 +100,7 @@ impl Theme {
         bubble_user_text: 0xFFFF_FFFF,      // white
         bubble_assistant_bg: 0xFF27_272A,   // Zinc-800
         bubble_assistant_text: 0xFFF4_F4F5, // Zinc-100
+        shadow: 0xFF00_0000,                // black; strength is per element
     };
 }
 
@@ -323,13 +328,13 @@ pub fn draw_rect_outline(
 /// lose the hard 90-degree corners.
 pub const CORNER_RADIUS: i32 = 6;
 
-/// Anti-aliased coverage of a rounded rectangle at the centre of pixel
-/// `(px, py)` using the standard rounded-box signed distance field.
-///
-/// Returns `1.0` well inside, `0.0` outside, and a graded value across the
-/// ~1px arc so corners are smooth instead of stair-stepped.
+/// Signed distance from pixel `(px, py)` to a rounded rectangle: negative
+/// inside the shape, `0.0` on its edge, positive outside — measured in whole
+/// pixels. This is the shared basis for [`rounded_rect_coverage`] (a 1px band
+/// around the edge) and for the drop shadow's falloff, so a shadow's halo
+/// follows exactly the same arc the visible corners do.
 #[inline]
-fn rounded_rect_coverage(x: i32, y: i32, w: i32, h: i32, r: i32, px: i32, py: i32) -> f32 {
+fn rounded_rect_sdf(x: i32, y: i32, w: i32, h: i32, r: i32, px: i32, py: i32) -> f32 {
     // Never round more than half the widget, otherwise the shape inverts.
     let r = (r as f32).min(w as f32 / 2.0).min(h as f32 / 2.0).max(0.0);
     let hw = w as f32 / 2.0;
@@ -338,8 +343,150 @@ fn rounded_rect_coverage(x: i32, y: i32, w: i32, h: i32, r: i32, px: i32, py: i3
     let dy = (py as f32 + 0.5 - (y as f32 + hh)).abs();
     let qx = dx - hw + r;
     let qy = dy - hh + r;
-    let sdf = qx.max(qy).min(0.0) + qx.max(0.0).hypot(qy.max(0.0)) - r;
-    (0.5 - sdf).clamp(0.0, 1.0)
+    qx.max(qy).min(0.0) + qx.max(0.0).hypot(qy.max(0.0)) - r
+}
+
+/// Anti-aliased coverage of a rounded rectangle at the centre of pixel
+/// `(px, py)` using the standard rounded-box signed distance field.
+///
+/// Returns `1.0` well inside, `0.0` outside, and a graded value across the
+/// ~1px arc so corners are smooth instead of stair-stepped.
+#[inline]
+fn rounded_rect_coverage(x: i32, y: i32, w: i32, h: i32, r: i32, px: i32, py: i32) -> f32 {
+    (0.5 - rounded_rect_sdf(x, y, w, h, r, px, py)).clamp(0.0, 1.0)
+}
+
+/// Soft drop shadow: a halo around the rounded rect at `(x, y)` that fades to
+/// nothing over `blur` pixels, nudged down/right by `(ox, oy)` so the shape
+/// reads as floating above the surface.
+///
+/// The falloff is a smoothstep over the *signed* distance rather than the
+/// traditional stack of concentric alpha rings, so it costs one pass and has
+/// no visible banding.
+///
+/// Callers must draw the shape itself **after** this (and after anything the
+/// shadow could touch), otherwise the dark halo lands on top of a neighbouring
+/// box. [`NativeApp::draw_shadows`] keeps that ordering for bubbles.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_rounded_rect_shadow_clipped(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    clip: Option<Rect>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    r: i32,
+    color: u32,
+    alpha: f32,
+    blur: i32,
+    ox: i32,
+    oy: i32,
+) {
+    if w <= 0 || h <= 0 || blur <= 0 || alpha <= 0.0 {
+        return;
+    }
+    let r = r.min(w / 2).min(h / 2);
+    // The halo reaches `blur` past the *offset* shape, so scan that grown box.
+    let sx = x + ox - blur;
+    let sy = y + oy - blur;
+    let sw = w + 2 * blur;
+    let sh = h + 2 * blur;
+
+    let x_start = sx.max(0) as usize;
+    let y_start = sy.max(0) as usize;
+    let x_end = ((sx + sw).max(0) as usize).min(stride);
+    let y_end = ((sy + sh).max(0) as usize).min(height);
+    if x_start >= x_end || y_start >= y_end {
+        return;
+    }
+    let inv = 1.0 / blur as f32;
+
+    for row in y_start..y_end {
+        let row_offset = row * stride;
+        for col in x_start..x_end {
+            let (px, py) = (col as i32, row as i32);
+            if let Some(c) = clip {
+                if px < c.x || py < c.y || px >= c.x + c.w || py >= c.y + c.h {
+                    continue;
+                }
+            }
+            let d = rounded_rect_sdf(x + ox, y + oy, w, h, r, px, py);
+            if d >= blur as f32 {
+                continue;
+            }
+            // Under the shape the halo is at full strength (the shape itself
+            // covers it); outside it ramps down to zero with a soft shoulder.
+            let t = if d <= 0.0 { 1.0 } else { 1.0 - d * inv };
+            let a = (alpha * t * t * (3.0 - 2.0 * t)).clamp(0.0, 1.0);
+            if a <= 0.0 {
+                continue;
+            }
+            blend_px(buf, row_offset + col, color, a);
+        }
+    }
+}
+
+/// Drop-shadow parameters for a box, keyed by its tag: `(blur, alpha, ox, oy)`.
+///
+/// Bubbles are the only card-like chrome so far, so they are the only things
+/// that float above the surface. Controls (buttons/inputs) stay flat — they
+/// already read as raised through their border and hover tone, and giving
+/// every widget a halo would flatten the hierarchy rather than build it.
+///
+/// The blur is deliberately smaller than the feed's default 8px gap so the
+/// halo of one bubble stops short of the next: no stacked dark seams down the
+/// column.
+pub fn shadow_for(tag: &str) -> Option<(i32, f32, i32, i32)> {
+    if tag.starts_with("bubble:") {
+        Some((6, 0.5, 0, 2))
+    } else {
+        None
+    }
+}
+
+/// Paint every box's drop shadow, before anything else is drawn.
+///
+/// Shadows are deliberately their own pass rather than part of each box's arm:
+/// a box drawn later must never have its halo land on top of a box drawn
+/// earlier, or two stacked bubbles would leave a grey seam between them. Free
+/// of `self` because `render` already holds `&mut` on the surface buffer.
+pub fn draw_shadows(
+    boxes: &[LayoutBox],
+    scroll_x: i32,
+    scroll_y: i32,
+    buffer: &mut [u32],
+    stride: usize,
+    height: usize,
+    theme: &Theme,
+) {
+    for lbox in boxes {
+        let Some((blur, alpha, ox, oy)) = shadow_for(&lbox.tag) else {
+            continue;
+        };
+        // Off-screen boxes are still considered: their halo can legally reach
+        // into view even when the box itself sits just outside.
+        let clip = lbox.screen_clip(scroll_x, scroll_y);
+        let rx = lbox.rect.x - scroll_x - lbox.pan.0;
+        let ry = lbox.rect.y - scroll_y - lbox.pan.1;
+        draw_rounded_rect_shadow_clipped(
+            buffer,
+            stride,
+            height,
+            clip,
+            rx,
+            ry,
+            lbox.rect.w,
+            lbox.rect.h,
+            10,
+            theme.shadow,
+            alpha,
+            blur,
+            ox,
+            oy,
+        );
+    }
 }
 
 /// [`draw_rect_alpha`] with rounded corners and anti-aliased edges.
@@ -1441,6 +1588,20 @@ impl<D: UiDispatcher> NativeApp<D> {
             self.scroll_x,
             self.scroll_y,
             self.cursor_pos,
+        );
+
+        // Shadows first, as their own pass: every halo lands on the bare
+        // background, then the boxes paint over the parts underneath them.
+        // Drawing a halo inline would let a later bubble's shadow darken an
+        // earlier bubble's edge — a grey smear down the feed.
+        draw_shadows(
+            &self.layout_boxes,
+            self.scroll_x,
+            self.scroll_y,
+            &mut buffer,
+            stride,
+            h_usize,
+            &theme,
         );
 
         // Render each layout box with window scroll, enclosing scroll
@@ -4286,6 +4447,222 @@ mod tests {
                 buf[25 * stride + x],
                 BG,
                 "pixel x={x} past the viewport edge must stay background"
+            );
+        }
+    }
+
+    /// The halo darkens immediately outside the shape, ramps off smoothly,
+    /// and is *exactly* background once `blur` pixels away — no hard ring, no
+    /// residue past the declared reach.
+    #[test]
+    fn test_shadow_fades_out_over_its_blur_and_stops() {
+        const BG: u32 = 0xFF18_181B; // Theme::DARK.bg
+        const SHADOW: u32 = 0xFF00_0000;
+        let stride = 120usize;
+        let height = 80usize;
+        let mut buf = vec![BG; stride * height];
+
+        // Shape at x 20..80, nudged down by oy=2, so its right edge sits x=80.
+        let (blur, alpha) = (6, 0.5);
+        draw_rounded_rect_shadow_clipped(
+            &mut buf, stride, height, None, 20, 20, 60, 30, 10, SHADOW, alpha, blur, 0, 2,
+        );
+
+        let at = |x: usize| buf[35 * stride + x] & 0xFF;
+        let bg_l = BG & 0xFF;
+
+        // Right at the edge the halo is near full strength: markedly darker.
+        assert!(
+            at(80) < bg_l - 5,
+            "just outside the edge must be visibly darkened, got {} vs bg {bg_l}",
+            at(80)
+        );
+
+        // Past blur there must be nothing at all — the declared reach is real.
+        for x in (80 + blur + 1)..80 + blur + 6 {
+            assert_eq!(
+                at(x as usize),
+                bg_l,
+                "x={x} is past blur={blur} and must be untouched background"
+            );
+        }
+
+        // Monotonic ramp: darkening weakens steadily with distance. Start
+        // from the darkest sample (right at the edge) and require it to rise.
+        let mut prev = at(80);
+        for x in 81..80 + blur {
+            let v = at(x as usize);
+            assert!(
+                v >= prev,
+                "halo must fade out monotonically: x={x} got {v}, previous {prev}"
+            );
+            prev = v;
+        }
+        assert!(
+            prev >= bg_l - 1,
+            "halo must reach background exactly at blur, got {prev} vs {bg_l}"
+        );
+    }
+
+    /// A halo inside a scroll region is sliced at the viewport edge, exactly
+    /// like every other piece of chrome — it must not leak past it.
+    #[test]
+    fn test_shadow_is_clipped_to_the_viewport() {
+        const BG: u32 = 0xFF18_181B;
+        const SHADOW: u32 = 0xFF00_0000;
+        let stride = 80usize;
+        let height = 60usize;
+        let mut buf = vec![BG; stride * height];
+
+        let clip = Rect {
+            x: 0,
+            y: 0,
+            w: 40,
+            h: height as i32,
+        };
+        // Shape spans x 20..70, so its right half (and that halo) is outside.
+        draw_rounded_rect_shadow_clipped(
+            &mut buf,
+            stride,
+            height,
+            Some(clip),
+            20,
+            20,
+            50,
+            24,
+            8,
+            SHADOW,
+            0.5,
+            6,
+            0,
+            2,
+        );
+
+        assert_ne!(
+            buf[32 * stride + 39],
+            BG,
+            "the part inside the viewport must carry halo"
+        );
+        for x in 40..80 {
+            assert_eq!(
+                buf[32 * stride + x],
+                BG,
+                "x={x} is outside the viewport and must stay background"
+            );
+        }
+    }
+
+    /// Why shadows are their own pass: with two bubbles almost touching, a
+    /// halo drawn inline would land on the *earlier* bubble's fill and leave a
+    /// grey smear. After the pass, the earlier box's interior must still be
+    /// pure fill.
+    #[test]
+    fn test_shadow_pass_never_darkens_an_earlier_box() {
+        const BG: u32 = 0xFF18_181B;
+        const FILL: u32 = 0xFF3B_82F6; // bubble_user_bg
+        let stride = 120usize;
+        let height = 160usize;
+        let mut buf = vec![BG; stride * height];
+
+        let boxes = vec![
+            LayoutBox {
+                rect: Rect {
+                    x: 20,
+                    y: 20,
+                    w: 60,
+                    h: 40,
+                },
+                tag: "bubble:user".into(),
+                id: None,
+                text: None,
+                on_click: None,
+                on_change: None,
+                on_key: None,
+                pan: (0, 0),
+                clips: None,
+                pad: 10,
+            },
+            // Only 2px below the first: its halo *would* reach back over the
+            // first box's bottom edge if drawn inline.
+            LayoutBox {
+                rect: Rect {
+                    x: 20,
+                    y: 62,
+                    w: 60,
+                    h: 40,
+                },
+                tag: "bubble:user".into(),
+                id: None,
+                text: None,
+                on_click: None,
+                on_change: None,
+                on_key: None,
+                pan: (0, 0),
+                clips: None,
+                pad: 10,
+            },
+        ];
+
+        draw_shadows(&boxes, 0, 0, &mut buf, stride, height, &Theme::DARK);
+        // Now the boxes paint over their own halos, exactly as render does.
+        for b in &boxes {
+            draw_rounded_rect_box(
+                &mut buf,
+                stride,
+                height,
+                b.rect.x,
+                b.rect.y,
+                b.rect.w,
+                b.rect.h,
+                10,
+                FILL,
+                Theme::DARK.border,
+            );
+        }
+
+        // Deep inside box 1: pure fill, no darkening from box 2's halo.
+        assert_eq!(
+            buf[38 * stride + 50],
+            FILL,
+            "box 1's fill must not be tinted by a later box's halo"
+        );
+        // Its very last row is the 1px border — also must be exactly the
+        // border colour, since that is where an inline halo would land.
+        assert_eq!(
+            buf[59 * stride + 50],
+            Theme::DARK.border,
+            "box 1's bottom border must stay exactly the border colour"
+        );
+        // And box 2 itself is intact.
+        assert_eq!(buf[80 * stride + 50], FILL, "box 2's fill must be intact");
+        // Between them the halo *is* allowed on the bare background.
+        assert_ne!(
+            buf[61 * stride + 50],
+            BG,
+            "the gap between bubbles should show the halo on background"
+        );
+    }
+
+    /// Shadows are opt-in per tag: only the card-like bubbles float, and their
+    /// blur is smaller than a feed's default 8px gap so halos never stack into
+    /// a dark seam down the column.
+    #[test]
+    fn test_only_bubbles_carry_a_shadow_and_it_stays_inside_the_gap() {
+        for tag in ["button", "text", "input", "bubble", "scroll"] {
+            assert_eq!(
+                shadow_for(tag),
+                None,
+                "flat chrome '{tag}' must not cast a halo"
+            );
+        }
+        for tag in ["bubble:user", "bubble:assistant"] {
+            let (blur, alpha, _ox, oy) = shadow_for(tag)
+                .unwrap_or_else(|| panic!("'{tag}' is card-like and must cast a halo"));
+            assert!(blur < 8, "blur {blur} must stay under the 8px gap");
+            assert!(alpha > 0.0 && alpha <= 1.0, "alpha out of range");
+            assert!(
+                blur + oy <= 8,
+                "reach below the box ({blur}+{oy}) must not cross an 8px gap"
             );
         }
     }
