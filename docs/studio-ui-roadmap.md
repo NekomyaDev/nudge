@@ -333,7 +333,44 @@
 ### 1.8 Color / theme system  (1 day) — DONE
 - [x] Colors moved into `struct Theme`
 - [x] Widgets access colors through the theme reference
-- [ ] Light / dark theme toggle (structure ready, palette entry pending)
+- [x] Light / dark theme toggle (`Theme::LIGHT` + a per-frame `theme:` query)
+
+**Implementation (state plus a button, nothing more):**
+- **`Theme::LIGHT`** (Zinc-50 / Blue-600) re-picks every role rather than
+  inverting the dark ladder, because the two surfaces ask different things of
+  a colour: the accent steps *up* to Blue-600 so white button text keeps its
+  contrast on a bright page, the caret goes dark (a white one would vanish in
+  a white field), the shadow softens to grey (black reads as a smudge, not
+  depth), and the selection is Blue-200 sitting behind dark text.
+- **`Theme::named`** resolves `"dark"`/`"light"` case- and padding-tolerantly;
+  an unknown name answers `None` — *keep whatever is in force* — so a typo in
+  a `.ndg` file never silently drags the window back to the default palette.
+- **`UiDispatcher::theme(&mut self) -> Option<Theme>`** is a defaulted trait
+  method, re-read at the top of every `render()` (before the surface is
+  borrowed, alongside the other per-frame decisions). No `WindowConfig`
+  change: the palette is state, not configuration.
+- **The language side needed no parser or checker change at all** — `theme:`
+  rides the existing generic `ident: expr` window field, and the expression is
+  stored unevaluated in `HeadlessAppRecord::theme_expr`, then re-evaluated on
+  demand by `Interpreter::theme_headless`. That re-read is the whole mechanism:
+  the button flips a string, the next frame asks again, the next paint is
+  already the other palette.
+- `theme_headless` is `#[cfg(feature = "native-gui")]` because
+  `nudge_runtime::ui_window` is feature-gated; the stored `theme_expr` is not,
+  so headless mounts keep it regardless.
+
+**Defect found while testing (fixed):** the light theme's input border was
+Zinc-300, which gives 1.42:1 against a Zinc-50 page — and since a white field
+on Zinc-50 is only 1.04:1 by nature, the border is the *sole* thing saying
+"this is a box", so the field was effectively invisible. Stepped to Zinc-400
+(2.46:1), and the test now asserts the border must carry ≥2.0:1 against both
+the page and the field it frames.
+
+**Verified:** 896 tests / 0 failures; fmt + clippy clean; `nudgec test
+examples/theme_toggle.ndg` 1/1; live on X11 the first frame paints the light
+palette (bg `#FAFAFA`), one click repaints in dark (`#18181B`) on the *very
+next frame* (the first capture after the click already shows it), a second
+click returns to light, and idle CPU is 0.00% over 5 s.
 
 ### 1.9 Scrollbar  (1 day) — DONE
 - [x] Vertical + horizontal scrollbar drawing (thumb + track)

@@ -19,6 +19,10 @@ pub struct HeadlessAppRecord {
     pub width: Option<i64>,
     pub height: Option<i64>,
     pub content_expr: Expr,
+    /// The window's `theme` field expression, kept unevaluated and re-read on
+    /// every frame so state can drive the palette — a toggle is nothing more
+    /// than state plus a button. `None` when the window declares no `theme`.
+    pub theme_expr: Option<Expr>,
     pub root: Option<nudge_runtime::ui::UiElement>,
     pub scroll_x: i64,
     pub scroll_y: i64,
@@ -246,6 +250,7 @@ impl Interpreter {
         let mut width = None;
         let mut height = None;
         let mut content_expr = None;
+        let mut theme_expr = None;
         for (k, v) in fields {
             if k == "title" {
                 if let Ok(tv) = self.eval_expr(v, env) {
@@ -264,6 +269,11 @@ impl Interpreter {
                 }
             } else if k == "content" {
                 content_expr = Some(v.clone());
+            } else if k == "theme" {
+                // Kept as an expression, not a value: the window may name a
+                // piece of state, so it has to be re-read every frame for the
+                // toggle to take effect.
+                theme_expr = Some(v.clone());
             }
         }
         let content_expr =
@@ -286,6 +296,7 @@ impl Interpreter {
             width,
             height,
             content_expr,
+            theme_expr,
             root,
             scroll_x: 0,
             scroll_y: 0,
@@ -293,6 +304,34 @@ impl Interpreter {
             text_inputs: HashMap::new(),
         });
         Ok(app_id)
+    }
+
+    /// The palette a mounted window asks for on this frame, if it names one.
+    ///
+    /// The `theme` field was kept as an expression rather than a value, so it
+    /// is evaluated fresh here against the current state — that is what makes
+    /// a toggle work: state flips, this reads the other name, the next paint
+    /// is already the other palette. Any evaluation trouble, or a name the
+    /// theme table does not know, resolves to `None`, which means "keep the
+    /// palette already in force" rather than "fall back to dark".
+    #[cfg(feature = "native-gui")]
+    pub fn theme_headless(
+        &mut self,
+        app_id: usize,
+        env: &Rc<RefCell<Env>>,
+    ) -> Option<nudge_runtime::ui_window::Theme> {
+        let expr = self.headless_apps.get(app_id)?.theme_expr.clone()?;
+        let agent = self.headless_apps.get(app_id)?.agent.clone();
+        let prev_agent = self.active_agent.clone();
+        if agent.is_some() {
+            self.active_agent = agent;
+        }
+        let name = self.eval_expr(&expr, env).ok();
+        self.active_agent = prev_agent;
+        match name? {
+            NudgeVal::Str(s) => nudge_runtime::ui_window::Theme::named(&s),
+            _ => None,
+        }
     }
 
     /// Dispatches a click event to a component inside a mounted window app.
@@ -613,6 +652,10 @@ impl Interpreter {
                             .headless_apps
                             .get(self.app_id)
                             .and_then(|a| a.root.clone())
+                    }
+
+                    fn theme(&mut self) -> Option<nudge_runtime::ui_window::Theme> {
+                        self.interp.theme_headless(self.app_id, self.env)
                     }
 
                     fn dispatch_click(&mut self, button_id: &str) {
@@ -7764,6 +7807,119 @@ data: [DONE]\n\n";
         assert!(
             !inp.props.contains_key("disabled"),
             "a control that never says so stays live"
+        );
+    }
+
+    /// The `theme` window field is read *on demand*, not at mount, which is
+    /// the entire mechanism behind a toggle: the window names a piece of state,
+    /// the state flips, and the very next frame asks again and gets the other
+    /// palette. A name the theme table does not know answers `None`, so a typo
+    /// leaves the current palette standing instead of dragging the window back
+    /// to dark.
+    #[cfg(feature = "native-gui")]
+    #[test]
+    fn test_window_theme_field_is_reevaluated_on_every_query() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cleanup = EnvReset::set("NUDGE_UI_HEADLESS", "1");
+
+        let src = r#"
+            view ThemeView(mode: string) -> View {
+                column [
+                    button("Toggle", id = "toggle", on_click = on_toggle),
+                    input(mode, id = "mode", on_change = on_mode),
+                    text("flip the state")
+                ]
+            }
+
+            agent ThemeApp {
+                state {
+                    theme_name: string = "dark"
+                }
+                fn on_toggle() uses UI {
+                    state.theme_name = "light"
+                }
+                fn on_mode(v: string) uses UI {
+                    state.theme_name = v
+                }
+                window ThemeWindow {
+                    title: "Theme Toggle",
+                    theme: state.theme_name,
+                    content: ThemeView(state.theme_name)
+                }
+            }
+
+            view PlainView() -> View {
+                column [ text("no theme here") ]
+            }
+
+            agent PlainApp {
+                window PlainWindow {
+                    title: "Plain",
+                    content: PlainView()
+                }
+            }
+        "#;
+        let tokens = lex(src).expect("lex failed");
+        let items = parse(tokens).expect("parse failed");
+        let mut interp = Interpreter::new();
+        interp.load_items(&items).expect("load_items failed");
+
+        let env = Rc::new(RefCell::new(Env::new()));
+        let app_id = interp
+            .mount_headless_app(&Some("ThemeApp".to_string()), "ThemeWindow", &env)
+            .expect("mount failed");
+
+        // 1. State starts at "dark", so the first query answers dark.
+        assert_eq!(
+            interp.theme_headless(app_id, &env),
+            Some(nudge_runtime::ui_window::Theme::DARK),
+            "the first frame must read the state the window names"
+        );
+
+        // 2. The expression was stored, not its value: flipping the state by
+        //    ordinary means changes what the next query answers.
+        interp
+            .dispatch_click_headless(app_id, "toggle", &env)
+            .expect("click failed");
+        assert!(
+            interp.headless_apps[app_id].theme_expr.is_some(),
+            "the window must still be holding the theme as an expression"
+        );
+        assert_eq!(
+            interp.theme_headless(app_id, &env),
+            Some(nudge_runtime::ui_window::Theme::LIGHT),
+            "after the state flips, the next query must answer light"
+        );
+
+        // 3. A name the theme table does not know answers `None` — "keep
+        //    whatever is in force", never a silent fall-back to dark.
+        interp
+            .dispatch_change_headless(app_id, "mode", "solarized", &env)
+            .expect("change failed");
+        assert_eq!(
+            interp.theme_headless(app_id, &env),
+            None,
+            "an unknown theme name must mean 'no opinion'"
+        );
+
+        // 4. …and a known name straight after picks the palette back up.
+        interp
+            .dispatch_change_headless(app_id, "mode", "light", &env)
+            .expect("change failed");
+        assert_eq!(
+            interp.theme_headless(app_id, &env),
+            Some(nudge_runtime::ui_window::Theme::LIGHT),
+            "a later known name must take effect immediately"
+        );
+
+        // 5. A window that declares no theme at all answers None.
+        let plain = interp
+            .mount_headless_app(&Some("PlainApp".to_string()), "PlainWindow", &env)
+            .expect("plain mount failed");
+        assert_eq!(
+            interp.theme_headless(plain, &env),
+            None,
+            "a window with no theme field has no opinion"
         );
     }
 

@@ -36,6 +36,15 @@ impl Default for WindowConfig {
 /// Callback dispatcher for reacting to UI events and fetching updated view trees.
 pub trait UiDispatcher {
     fn root(&mut self) -> Option<UiElement>;
+    /// The palette to paint the next frame in, if the program has an opinion.
+    ///
+    /// Asked on every frame rather than once at startup so state can drive it:
+    /// a theme toggle is nothing more than state plus a button, and the switch
+    /// lands on the very next paint. Returning `None` keeps whatever is already
+    /// in force.
+    fn theme(&mut self) -> Option<Theme> {
+        None
+    }
     fn dispatch_click(&mut self, button_id: &str);
     fn dispatch_change(&mut self, element_id: &str, value: &str) {
         let _ = (element_id, value);
@@ -114,6 +123,55 @@ impl Theme {
         bubble_assistant_text: 0xFFF4_F4F5, // Zinc-100
         shadow: 0xFF00_0000,                // black; strength is per element
     };
+
+    /// Zinc-50 light theme: the same ladder, walked the other way.
+    ///
+    /// Every role is re-picked rather than inverted, because the two surfaces
+    /// ask different things of a colour. The accent steps *up* to Blue-600 so
+    /// white button text still clears contrast against a page that is now
+    /// bright; the caret goes dark, since a white one would be invisible in a
+    /// white field; the shadow softens to grey, since a hard black halo on a
+    /// light page reads as a smudge rather than as depth.
+    pub const LIGHT: Theme = Theme {
+        bg: 0xFFFA_FAFA,           // Zinc-50
+        text: 0xFF18_181B,         // Zinc-900
+        text_dim: 0xFF71_717A,     // Zinc-500 — muted on either surface
+        border: 0xFFE4_E4E7,       // Zinc-200
+        input_bg: 0xFFFF_FFFF,     // white
+        input_border: 0xFFA1_A1AA, // Zinc-400 — the field is white on
+        // Zinc-50, so the border is the only
+        // thing that says "this is a box";
+        // Zinc-300 left it at 1.4:1
+        input_border_focused: 0xFF25_63EB,  // Blue-600
+        button_bg: 0xFF25_63EB,             // Blue-600
+        button_bg_hover: 0xFF1D_4ED8,       // Blue-700
+        button_bg_top: 0xFF3B_82F6,         // Blue-500 (gradient top)
+        button_bg_pressed: 0xFF1E_40AF,     // Blue-800 (pressed ladder rung)
+        button_border: 0xFF3B_82F6,         // Blue-500
+        button_text: 0xFFFF_FFFF,           // white
+        selection_bg: 0xFFBF_DBFE,          // Blue-200 — behind dark text
+        cursor: 0xFF18_181B,                // Zinc-900 — a white caret would vanish
+        scrollbar_track: 0xFFE4_E4E7,       // Zinc-200
+        scrollbar_thumb: 0xFFA1_A1AA,       // Zinc-400
+        bubble_user_bg: 0xFF25_63EB,        // Blue-600
+        bubble_user_text: 0xFFFF_FFFF,      // white
+        bubble_assistant_bg: 0xFFFF_FFFF,   // white — a raised surface
+        bubble_assistant_text: 0xFF18_181B, // Zinc-900
+        shadow: 0xFF71_717A,                // a soft grey; black would smudge
+    };
+
+    /// The palette a `theme:` window field names, if it names one at all.
+    ///
+    /// An unknown name resolves to nothing rather than to dark, so a typo in a
+    /// `.ndg` file leaves the theme already in force standing instead of
+    /// quietly dragging the app back to the default.
+    pub fn named(name: &str) -> Option<Theme> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "dark" => Some(Theme::DARK),
+            "light" => Some(Theme::LIGHT),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2763,6 +2821,15 @@ impl<D: UiDispatcher> NativeApp<D> {
         let max_scroll_x = (total_w - self.width as i32 + 20).max(0);
         self.scroll_y = self.scroll_y.clamp(0, max_scroll_y);
         self.scroll_x = self.scroll_x.clamp(0, max_scroll_x);
+
+        // The program may drive the palette from state — a theme toggle is
+        // nothing more than state plus a button — so it is asked for every
+        // frame rather than fixed at startup, and lands on this very paint.
+        // Done before the surface is borrowed, like everything else this frame
+        // has to decide.
+        if let Some(t) = self.dispatcher.theme() {
+            self.theme = t;
+        }
 
         // Hover is re-derived here as well as on every cursor move, so the
         // tone follows the layout rather than the last event. Resolved before
@@ -7762,6 +7829,143 @@ mod tests {
             find_hovered_button_in_boxes(&boxes, 0, 0, (5, 5)),
             Some("__btn_0".into()),
             "an unlabelled button still reports the shared key"
+        );
+    }
+
+    /// WCAG relative luminance of an opaque `0xAARRGGBB` colour.
+    fn rel_lum(c: u32) -> f64 {
+        let lin = |ch: u32| {
+            let v = ch as f64 / 255.0;
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * lin((c >> 16) & 0xFF) + 0.7152 * lin((c >> 8) & 0xFF) + 0.0722 * lin(c & 0xFF)
+    }
+
+    /// WCAG contrast ratio between two opaque colours, 1.0 … 21.0.
+    fn contrast(a: u32, b: u32) -> f64 {
+        let (la, lb) = (rel_lum(a), rel_lum(b));
+        let (hi, lo) = if la > lb { (la, lb) } else { (lb, la) };
+        (hi + 0.05) / (lo + 0.05)
+    }
+
+    /// The light theme must earn its place the same way the dark one did:
+    /// every pairing a user actually reads has to clear its contrast bar on a
+    /// bright page. This is the whole reason `LIGHT` re-picks each role rather
+    /// than flipping the ladder — an inverted caret, an inverted shadow or an
+    /// un-lifted accent would all pass a naive "not equal to dark" check and
+    /// still be unusable.
+    #[test]
+    fn test_light_theme_is_legible_on_a_bright_surface() {
+        let d = Theme::DARK;
+        let l = Theme::LIGHT;
+
+        assert_ne!(l, d, "a light theme that equals the dark one is no theme");
+
+        // Body copy and dimmed copy on the page.
+        assert!(
+            contrast(l.text, l.bg) >= 7.0,
+            "body text must be AAA on the light page: {}",
+            contrast(l.text, l.bg)
+        );
+        assert!(
+            contrast(l.text_dim, l.bg) >= 4.5,
+            "dimmed text must stay readable on the light page: {}",
+            contrast(l.text_dim, l.bg)
+        );
+
+        // White button label on a *brighter* accent than the dark theme uses.
+        assert!(
+            contrast(l.button_text, l.button_bg) >= 4.5,
+            "white button text must clear AA on Blue-600: {}",
+            contrast(l.button_text, l.button_bg)
+        );
+        assert!(
+            l.button_bg != d.button_bg,
+            "the accent must step up rather than stay at the dark theme's rung"
+        );
+
+        // The caret is the trap: on a white field a white caret vanishes.
+        assert!(
+            contrast(l.cursor, l.input_bg) >= 7.0,
+            "the caret must be obvious in a light input: {}",
+            contrast(l.cursor, l.input_bg)
+        );
+
+        // Selection sits *behind* dark text, so its own contrast with that
+        // text is what matters — not with the page.
+        assert!(
+            contrast(l.text, l.selection_bg) >= 4.5,
+            "selected text must stay readable over the selection: {}",
+            contrast(l.text, l.selection_bg)
+        );
+
+        // Inputs and their borders have to be told apart from the page. On a
+        // light theme the *fill* can barely differ from the page — white on
+        // Zinc-50 is 1.04:1 by nature, and every light UI lives with that —
+        // so the border carries the whole "this is a field" job alone. That
+        // is why the light theme needs a darker step than the dark one does.
+        assert!(
+            contrast(l.input_border, l.bg) >= 2.0,
+            "the light input must still read as a field: border {}",
+            contrast(l.input_border, l.bg)
+        );
+        assert!(
+            contrast(l.input_border, l.input_bg) >= 2.0,
+            "the border must stand out against the field it frames: {}",
+            contrast(l.input_border, l.input_bg)
+        );
+
+        // A black halo on a light page reads as dirt, not depth.
+        assert_ne!(
+            l.shadow, 0xFF00_0000,
+            "the light theme must soften the shadow instead of reusing black"
+        );
+        assert_ne!(
+            l.shadow, d.shadow,
+            "the shadow has to actually differ from the dark theme's"
+        );
+    }
+
+    /// `theme:` names come from `.ndg` text, so lookup forgives the ordinary
+    /// ways that text arrives — capitalisation and padding — but a name it
+    /// does not know must resolve to nothing at all, because "nothing" is what
+    /// keeps the palette already in force and "dark" would silently undo a
+    /// program that asked for something else.
+    #[test]
+    fn test_theme_named_forgives_case_and_padding_but_not_typos() {
+        assert_eq!(Theme::named("dark"), Some(Theme::DARK));
+        assert_eq!(Theme::named("light"), Some(Theme::LIGHT));
+        assert_eq!(Theme::named("Light"), Some(Theme::LIGHT), "capitalised");
+        assert_eq!(Theme::named("  LIGHT  "), Some(Theme::LIGHT), "padded");
+        assert_eq!(Theme::named("DaRk"), Some(Theme::DARK));
+
+        assert_eq!(Theme::named("solarized"), None, "an unknown name is None");
+        assert_eq!(Theme::named(""), None, "so is an empty one");
+        assert_eq!(Theme::named("lite"), None, "and so is a near miss");
+    }
+
+    /// The trait offers a theme but never insists on one: a dispatcher written
+    /// before this existed keeps compiling *and* keeps its palette, because the
+    /// default answer is "no opinion" and the frame then paints whatever is
+    /// already in force.
+    #[test]
+    fn test_dispatcher_theme_defaults_to_no_opinion() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let mut dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        assert_eq!(
+            dummy.theme(),
+            None,
+            "the default hook must express no preference"
         );
     }
 }

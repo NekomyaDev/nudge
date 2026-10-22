@@ -1,0 +1,56 @@
+// 1.8 — light / dark theme toggle.
+//
+// The window carries a `theme:` field naming a piece of state. Nothing else
+// in the language knows about themes: the field is an ordinary expression,
+// re-evaluated for every frame, so the button below only has to flip a string
+// and the next paint arrives in the other palette.
+
+view ThemeView(mode: string) -> View {
+    column(padding = 20, gap = 12) [
+        text("Current theme: " + mode),
+        button("Toggle theme", id = "btn_toggle", on_click = toggle_theme),
+        input(mode, id = "mode_input", on_change = set_mode),
+        text("Type light or dark in the field to jump straight there.")
+    ]
+}
+
+agent ThemeApp {
+    state { theme_name: string = "light" }
+    fn toggle_theme() uses UI {
+        if state.theme_name == "light" {
+            state.theme_name = "dark"
+        } else {
+            state.theme_name = "light"
+        }
+    }
+    fn set_mode(v: string) uses UI {
+        state.theme_name = v
+    }
+    window ThemeWindow {
+        title: "Nudge Theme Toggle",
+        width: 380,
+        height: 260,
+        theme: state.theme_name,
+        content: ThemeView(state.theme_name)
+    }
+}
+
+fn main() uses UI {
+    ThemeApp.ThemeWindow.open()
+}
+
+test "theme field follows state on every query" {
+    let app = ThemeApp.ThemeWindow.mount_headless()
+    assert app.find("btn_toggle").exists()
+    assert app.find_text("Current theme: light").exists()
+
+    app.dispatch_click("btn_toggle")
+    assert ThemeApp.state.theme_name == "dark"
+    assert app.find_text("Current theme: dark").exists()
+
+    // Flip back — the window's `theme:` field follows the state each frame,
+    // so this is the same query answering the other palette.
+    app.dispatch_click("btn_toggle")
+    assert ThemeApp.state.theme_name == "light"
+    assert app.find_text("Current theme: light").exists()
+}
