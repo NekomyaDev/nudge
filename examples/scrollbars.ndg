@@ -1,0 +1,110 @@
+// Roadmap 1.9 — the window scrollbar.
+//
+// Two axes, one window: the row below is several times wider than the window
+// and the list below it several times taller, so both bars have somewhere to
+// go. Each has a track and a thumb, the tone lifts when it is hovered or
+// held, the thumb can be grabbed and dragged, and clicking bare track pages
+// the content to the pointer.
+//
+// The bars run along the window's very edge — exactly where the composer's
+// input reaches — so a bar under the pointer swallows hover rather than
+// letting the control behind it light up.
+
+view ScrollbarView(draft: string, clicks: int) -> View {
+    column(padding = 12, gap = 10) [
+        // In the top-left corner on purpose: it makes the click counter
+        // observable at scroll 0, which is how the live pass can tell a click
+        // that dispatched from one a scrollbar swallowed.
+        text("Nudge Studio — scrollbar demo   clicks: " + clicks, wrap = false),
+        // Far wider than the window: this is what gives the horizontal bar
+        // something to do.
+        row(gap = 8, padding = 0) [
+            button("Alpha", id = "b_alpha", on_click = on_press),
+            button("Bravo", id = "b_bravo", on_click = on_press),
+            button("Charlie", id = "b_charlie", on_click = on_press),
+            button("Delta", id = "b_delta", on_click = on_press),
+            button("Echo", id = "b_echo", on_click = on_press),
+            button("Foxtrot", id = "b_foxtrot", on_click = on_press),
+            button("Golf", id = "b_golf", on_click = on_press),
+            button("Hotel", id = "b_hotel", on_click = on_press),
+            button("India", id = "b_india", on_click = on_press),
+            button("Juliet", id = "b_juliet", on_click = on_press),
+            button("Kilo", id = "b_kilo", on_click = on_press),
+            button("Lima", id = "b_lima", on_click = on_press),
+            button("Mike", id = "b_mike", on_click = on_press),
+            button("November", id = "b_november", on_click = on_press)
+        ],
+        // Far taller than the window: this is what gives the vertical bar
+        // something to do.
+        text("01 — the thumb is proportional to the visible share", wrap = false),
+        text("02 — and is floored so it never disappears", wrap = false),
+        text("03 — grab it and the content follows the pointer", wrap = false),
+        text("04 — the grab point is honoured, so pressing it does not jump", wrap = false),
+        text("05 — clicking bare track pages the content to the pointer", wrap = false),
+        text("06 — then keeps dragging from there", wrap = false),
+        text("07 — the tone lifts when a bar is hovered", wrap = false),
+        text("08 — and lifts further while it is held", wrap = false),
+        text("09 — dragging past the end stops exactly at the end", wrap = false),
+        text("10 — so the thumb is flush with the track there", wrap = false),
+        text("11 — and back at the top it is flush with the top", wrap = false),
+        text("12 — the two bars never fight over the corner", wrap = false),
+        text("13 — the vertical one keeps it", wrap = false),
+        text("14 — and the horizontal one stops short of it", wrap = false),
+        text("15 — so no square is left where neither answers", wrap = false),
+        text("16 — a bar under the pointer swallows button hover", wrap = false),
+        text("17 — because a thumb you cannot tell apart from the", wrap = false),
+        text("18 — control behind it is a thumb nobody trusts", wrap = false),
+        text("19 — scroll on", wrap = false),
+        text("20 — and on", wrap = false),
+        input(draft, id = "draft", on_change = on_draft),
+        button("Send (" + clicks + ")", id = "send", on_click = on_send)
+    ]
+}
+
+agent ScrollbarApp {
+    state {
+        draft: string = "",
+        clicks: int = 0
+    }
+
+    fn on_draft(val: string) uses UI {
+        state.draft = val
+    }
+
+    fn on_press() uses UI {
+        state.clicks = state.clicks + 1
+    }
+
+    fn on_send() uses UI {
+        state.draft = ""
+        state.clicks = state.clicks + 1
+    }
+
+    window MainWindow {
+        title: "Nudge Scrollbars",
+        width: 460,
+        height: 340,
+        content: ScrollbarView(state.draft, state.clicks)
+    }
+}
+
+fn main() uses UI {
+    ScrollbarApp.MainWindow.open()
+}
+
+test "scrollbar demo mounts and drives its controls" {
+    let app = ScrollbarApp.MainWindow.mount_headless()
+    assert app.find("b_alpha").exists()
+    assert app.find("b_november").exists()
+    assert app.find("draft").exists()
+    assert app.find("send").exists()
+    // The tall list is reachable too — that is what makes the vertical bar
+    // have somewhere to go.
+    assert app.find_text("20 — and on").exists()
+
+    app.dispatch_click("b_alpha")
+    assert ScrollbarApp.state.clicks == 1
+
+    app.dispatch_click("send")
+    assert ScrollbarApp.state.clicks == 2
+}

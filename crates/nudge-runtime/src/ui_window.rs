@@ -161,6 +161,227 @@ impl ScrollRegion {
     }
 }
 
+/// Thickness of the window's scrollbars, in pixels.
+pub const SCROLLBAR_SIZE: i32 = 8;
+/// Shortest a thumb may be drawn, so it stays grabbable however long the
+/// content is. Past this point the thumb no longer tracks the content
+/// proportionally — the track simply runs out — but it never vanishes.
+pub const SCROLLBAR_MIN_THUMB: i32 = 24;
+
+/// Which of the window's two scrollbars something refers to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrollbarAxis {
+    Vertical,
+    Horizontal,
+}
+
+/// How far an axis allows scrolling, including the 20px of slack the layout
+/// keeps below the last row. Sharing this with the clamp is what makes a thumb
+/// reach the track's end at exactly the moment the content stops moving.
+pub fn max_scroll(content: i32, viewport: i32) -> i32 {
+    (content - viewport + 20).max(0)
+}
+
+/// Where each window scrollbar's track sits, or `None` for an axis that has
+/// nothing to scroll.
+///
+/// The two tracks are laid out so neither overlaps the other: the vertical bar
+/// keeps the full right edge, corner included, and a horizontal one stops
+/// short of it. An axis with no scroll therefore gets the whole edge, and the
+/// geometry never leaves an unreachable square where neither bar answers.
+pub fn scrollbar_tracks(
+    win_w: i32,
+    win_h: i32,
+    content_w: i32,
+    content_h: i32,
+) -> (Option<Rect>, Option<Rect>) {
+    let vertical = (content_h > win_h).then_some(Rect {
+        x: win_w - SCROLLBAR_SIZE,
+        y: 0,
+        w: SCROLLBAR_SIZE,
+        h: win_h,
+    });
+    let horizontal = (content_w > win_w).then_some(Rect {
+        x: 0,
+        y: win_h - SCROLLBAR_SIZE,
+        // The vertical bar owns the corner, so a horizontal one runs up to it
+        // rather than underneath it — leaving no square where neither bar
+        // answers the pointer.
+        w: if content_h > win_h {
+            (win_w - SCROLLBAR_SIZE).max(0)
+        } else {
+            win_w
+        },
+        h: SCROLLBAR_SIZE,
+    });
+    (vertical, horizontal)
+}
+
+/// How long a thumb is along its track, given the track's length, how much of
+/// the content is visible at once, the total content, and the axis' largest
+/// offset.
+///
+/// Proportional to the visible share so it reads as "how much of this am I
+/// seeing", floored at [`SCROLLBAR_MIN_THUMB`] so it stays grabbable, and
+/// capped at the track itself.
+pub fn scrollbar_thumb_len(track: i32, viewport: i32, content: i32, max_offset: i32) -> i32 {
+    if track <= 0 || content <= 0 || max_offset <= 0 {
+        return 0;
+    }
+    let proportional = ((track as i64 * viewport as i64) / content as i64) as i32;
+    proportional.clamp(SCROLLBAR_MIN_THUMB, track)
+}
+
+/// Where along its track a thumb sits, in track-local pixels, for the given
+/// offset. Pinned to the far end exactly when the axis is at its limit, so the
+/// thumb never overshoots the track however the offset was reached.
+pub fn scrollbar_thumb_pos(track: i32, thumb: i32, offset: i32, max_offset: i32) -> i32 {
+    let travel = (track - thumb).max(0);
+    if travel == 0 || max_offset <= 0 {
+        return 0;
+    }
+    let clamped = offset.clamp(0, max_offset) as i64;
+    ((clamped * travel as i64) / max_offset as i64) as i32
+}
+
+/// The offset a drag to `pos` (track-local pixels) asks for. The inverse of
+/// [`scrollbar_thumb_pos`], so dragging the thumb to where it would have been
+/// drawn at some offset gives that offset back.
+pub fn scrollbar_offset_at(travel: i32, pos: i32, max_offset: i32) -> i32 {
+    if travel <= 0 || max_offset <= 0 {
+        return 0;
+    }
+    let clamped = pos.clamp(0, travel) as i64;
+    ((clamped * max_offset as i64) / travel as i64) as i32
+}
+
+/// Thumb and track tones for a scrollbar, blended toward the theme's text
+/// colour by how much attention the bar is asking for.
+///
+/// Blending toward `text` rather than a fixed highlight means a light theme
+/// darkens its thumb and a dark theme lightens it — either way the contrast
+/// against the track rises, which is the entire point of the highlight.
+pub fn scrollbar_tones(theme: &Theme, hovered: bool, active: bool) -> (u32, u32) {
+    let amount = if active {
+        0.5
+    } else if hovered {
+        0.3
+    } else {
+        0.0
+    };
+    (
+        lerp_color(theme.scrollbar_thumb, theme.text, amount),
+        lerp_color(theme.scrollbar_track, theme.text, amount * 0.4),
+    )
+}
+
+/// Both window scrollbars resolved in one pass: the track each one runs in,
+/// and the thumb that shows where the content currently is.
+///
+/// Drawing and hit-testing both read this, so a thumb can never be drawn in
+/// one place and grabbed in another — the failure mode that makes scrollbars
+/// feel broken in ways nobody can point at.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScrollbarGeometry {
+    /// `(track, thumb)` in screen space.
+    pub vertical: Option<(Rect, Rect)>,
+    /// `(track, thumb)` in screen space.
+    pub horizontal: Option<(Rect, Rect)>,
+}
+
+impl ScrollbarGeometry {
+    /// Resolve both bars against the window and the current scroll offsets.
+    /// A thumb is laid out *inside* its track with a pixel of margin, so it
+    /// reads as a pill rather than a filled channel.
+    pub fn resolve(
+        win_w: i32,
+        win_h: i32,
+        content_w: i32,
+        content_h: i32,
+        scroll_x: i32,
+        scroll_y: i32,
+    ) -> Self {
+        let (v_track, h_track) = scrollbar_tracks(win_w, win_h, content_w, content_h);
+
+        let vertical = v_track.and_then(|t| {
+            let max = max_scroll(content_h, win_h);
+            let len = scrollbar_thumb_len(t.h, win_h, content_h, max);
+            if len <= 0 {
+                return None;
+            }
+            let pos = scrollbar_thumb_pos(t.h, len, scroll_y, max);
+            Some((
+                t,
+                Rect {
+                    x: t.x + 1,
+                    y: t.y + pos,
+                    w: (t.w - 2).max(1),
+                    h: len,
+                },
+            ))
+        });
+
+        let horizontal = h_track.and_then(|t| {
+            let max = max_scroll(content_w, win_w);
+            let len = scrollbar_thumb_len(t.w, win_w, content_w, max);
+            if len <= 0 {
+                return None;
+            }
+            let pos = scrollbar_thumb_pos(t.w, len, scroll_x, max);
+            Some((
+                t,
+                Rect {
+                    x: t.x + pos,
+                    y: t.y + 1,
+                    w: len,
+                    h: (t.h - 2).max(1),
+                },
+            ))
+        });
+
+        Self {
+            vertical,
+            horizontal,
+        }
+    }
+
+    /// Which bar the pointer is over, if either. A thumb beats the track it
+    /// sits in, so a press that lands on the thumb is a grab and never a jump.
+    pub fn axis_at(&self, pos: (i32, i32)) -> Option<ScrollbarAxis> {
+        let (px, py) = pos;
+        if let Some((_, thumb)) = self.vertical {
+            if thumb.contains(px, py) {
+                return Some(ScrollbarAxis::Vertical);
+            }
+        }
+        if let Some((_, thumb)) = self.horizontal {
+            if thumb.contains(px, py) {
+                return Some(ScrollbarAxis::Horizontal);
+            }
+        }
+        if let Some((track, _)) = self.vertical {
+            if track.contains(px, py) {
+                return Some(ScrollbarAxis::Vertical);
+            }
+        }
+        if let Some((track, _)) = self.horizontal {
+            if track.contains(px, py) {
+                return Some(ScrollbarAxis::Horizontal);
+            }
+        }
+        None
+    }
+
+    /// Whether the pointer is on a *thumb* rather than bare track.
+    pub fn on_thumb(&self, pos: (i32, i32)) -> bool {
+        let (px, py) = pos;
+        self.vertical
+            .iter()
+            .chain(self.horizontal.iter())
+            .any(|(_, thumb)| thumb.contains(px, py))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LayoutBox {
     pub rect: Rect,
@@ -1822,6 +2043,10 @@ pub enum CursorKind {
     Pointer,
     /// A text field: the I-beam.
     Text,
+    /// Over a scrollbar thumb, ready to take it: the open hand.
+    Grab,
+    /// A scrollbar thumb is being dragged: the closed hand.
+    Grabbing,
 }
 
 impl CursorKind {
@@ -1830,6 +2055,8 @@ impl CursorKind {
             CursorKind::Default => CursorIcon::Default,
             CursorKind::Pointer => CursorIcon::Pointer,
             CursorKind::Text => CursorIcon::Text,
+            CursorKind::Grab => CursorIcon::Grab,
+            CursorKind::Grabbing => CursorIcon::Grabbing,
         }
     }
 }
@@ -1867,6 +2094,15 @@ pub struct NativeApp<D: UiDispatcher> {
     caret_blink_origin: Option<Instant>,
     /// When the previous animation tick ran, so the next one can measure `dt`.
     last_tick: Option<Instant>,
+    /// Which window scrollbar the pointer is currently over, driving the hover
+    /// highlight. Re-derived from geometry rather than remembered across
+    /// layouts, so a resize cannot leave a stale bar lit.
+    scrollbar_hover: Option<ScrollbarAxis>,
+    /// Set while the pointer is down on a scrollbar: the axis being dragged,
+    /// the grab point in track-local pixels (where inside the thumb the press
+    /// landed, so the thumb does not jump to the pointer's centre), and the
+    /// offset the drag started from.
+    scrollbar_drag: Option<(ScrollbarAxis, i32, i32)>,
     pub layout_boxes: Vec<LayoutBox>,
     pub render_count: usize,
     pub test_runner: Option<fn(&mut NativeApp<D>, &ActiveEventLoop)>,
@@ -1914,6 +2150,8 @@ impl<D: UiDispatcher> NativeApp<D> {
             hover_ramps: HashMap::new(),
             caret_blink_origin: None,
             last_tick: None,
+            scrollbar_hover: None,
+            scrollbar_drag: None,
             layout_boxes: Vec::new(),
             render_count: 0,
             test_runner: None,
@@ -2044,11 +2282,47 @@ impl<D: UiDispatcher> NativeApp<D> {
     }
 
     pub fn find_hovered_button(&self, pos: (i32, i32)) -> Option<String> {
+        // A bar under the pointer swallows hover: the tracks run down the very
+        // edge of the window, where a control can sit, and a thumb that cannot
+        // be told apart from the button behind it is a thumb nobody trusts.
+        // Living here rather than in one caller is what makes it hold for
+        // *every* path that asks — a cursor move and each frame's
+        // re-derivation alike.
+        if self.scrollbar_geometry().axis_at(pos).is_some() {
+            return None;
+        }
         find_hovered_button_in_boxes(&self.layout_boxes, self.scroll_x, self.scroll_y, pos)
+    }
+
+    /// Re-derive hover from the layout as it stands now.
+    ///
+    /// `render` calls this rather than trusting the hover the last cursor move
+    /// left behind: layout has just re-run, so a control that slid out from
+    /// under the pointer must stop lighting up and one that slid under it must
+    /// start. It has to go through `find_hovered_button` for that — asking the
+    /// boxes directly would hand the hover straight back to whatever sits
+    /// behind a scrollbar, and the hover ramp would chase it to full.
+    fn refresh_hover(&mut self) {
+        self.hovered_id = self.find_hovered_button(self.cursor_pos);
     }
 
     pub fn handle_cursor_moved(&mut self, pos: (i32, i32)) -> bool {
         self.cursor_pos = pos;
+
+        // A drag owns the pointer entirely: the thumb follows it and nothing
+        // else under it lights up, which is what stops a control sliding past
+        // the cursor mid-drag from hijacking the gesture.
+        if self.scrollbar_drag.is_some() {
+            return self.update_scrollbar_drag(pos);
+        }
+
+        let g = self.scrollbar_geometry();
+        let bar_here = g.axis_at(pos);
+        let bar_changed = bar_here != self.scrollbar_hover;
+        self.scrollbar_hover = bar_here;
+
+        // A bar under the pointer swallows hover — which `find_hovered_button`
+        // decides, so the cursor move and every later frame agree.
         let new_hovered = self.find_hovered_button(pos);
         let hover_changed = new_hovered != self.hovered_id;
         self.hovered_id = new_hovered;
@@ -2059,13 +2333,21 @@ impl<D: UiDispatcher> NativeApp<D> {
         // alone — as the button tone does — leaves the card frozen where the
         // pointer entered and never removes it on the way out.
         let tooltip_here = self.tooltip_here();
-        let needs_redraw = hover_changed || tooltip_here || self.tooltip_shown;
+        let needs_redraw = hover_changed || tooltip_here || self.tooltip_shown || bar_changed;
         self.tooltip_shown = tooltip_here;
         needs_redraw
     }
 
     /// Whether a tooltip should be painted at the current cursor position.
-    fn tooltip_here(&self) -> bool {
+    /// The tooltip, if any, for whatever sits under the cursor.
+    ///
+    /// A scrollbar under the pointer swallows the control behind it whole —
+    /// hover, the press, and this too. A card describing a button you cannot
+    /// reach because the bar is drawn over it is a card about the wrong thing.
+    fn tooltip_at(&self) -> Option<String> {
+        if self.scrollbar_geometry().axis_at(self.cursor_pos).is_some() {
+            return None;
+        }
         find_tooltip_in_boxes(
             &self.layout_boxes,
             self.scroll_x,
@@ -2074,7 +2356,10 @@ impl<D: UiDispatcher> NativeApp<D> {
             self.height as i32,
             self.cursor_pos,
         )
-        .is_some()
+    }
+
+    fn tooltip_here(&self) -> bool {
+        self.tooltip_at().is_some()
     }
 
     // -------------------------------------------------------------
@@ -2253,11 +2538,175 @@ impl<D: UiDispatcher> NativeApp<D> {
         });
     }
 
+    // -------------------------------------------------------------
+    // Scrollbar interaction (roadmap 1.9)
+    // -------------------------------------------------------------
+
+    /// Both window scrollbars against the current layout.
+    fn scrollbar_geometry(&self) -> ScrollbarGeometry {
+        ScrollbarGeometry::resolve(
+            self.width as i32,
+            self.height as i32,
+            self.content_width,
+            self.content_height,
+            self.scroll_x,
+            self.scroll_y,
+        )
+    }
+
+    /// Where the pointer sits along a bar's track, in track-local pixels.
+    fn scrollbar_along(g: &ScrollbarGeometry, axis: ScrollbarAxis, pos: (i32, i32)) -> i32 {
+        let (px, py) = pos;
+        match axis {
+            ScrollbarAxis::Vertical => g
+                .vertical
+                .map(|(track, _)| py - track.y)
+                .unwrap_or_default(),
+            ScrollbarAxis::Horizontal => g
+                .horizontal
+                .map(|(track, _)| px - track.x)
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Begin a scrollbar interaction at `pos`: grabbing the thumb if the press
+    /// landed on it, or paging the content so the thumb's centre comes to the
+    /// pointer if it landed on bare track. Returns whether a bar was hit.
+    ///
+    /// The grab offset is recorded rather than assuming the press was at the
+    /// thumb's centre — otherwise the thumb jumps the instant it is pressed,
+    /// which makes precise positioning impossible.
+    fn begin_scrollbar_drag(&mut self, pos: (i32, i32)) -> bool {
+        let g = self.scrollbar_geometry();
+        let Some(axis) = g.axis_at(pos) else {
+            return false;
+        };
+        let along = Self::scrollbar_along(&g, axis, pos);
+        let (track, thumb) = match axis {
+            ScrollbarAxis::Vertical => g.vertical.expect("axis_at returned Vertical"),
+            ScrollbarAxis::Horizontal => g.horizontal.expect("axis_at returned Horizontal"),
+        };
+        let thumb_along = match axis {
+            ScrollbarAxis::Vertical => thumb.y - track.y,
+            ScrollbarAxis::Horizontal => thumb.x - track.x,
+        };
+
+        let grab = if g.on_thumb(pos) {
+            along - thumb_along
+        } else {
+            // Bare track: page the content to the pointer, then grab the
+            // middle of the thumb that just arrived under it.
+            let travel = match axis {
+                ScrollbarAxis::Vertical => (track.h - thumb.h).max(0),
+                ScrollbarAxis::Horizontal => (track.w - thumb.w).max(0),
+            };
+            let target = (along
+                - match axis {
+                    ScrollbarAxis::Vertical => thumb.h / 2,
+                    ScrollbarAxis::Horizontal => thumb.w / 2,
+                })
+            .clamp(0, travel);
+            let max = match axis {
+                ScrollbarAxis::Vertical => max_scroll(self.content_height, self.height as i32),
+                ScrollbarAxis::Horizontal => max_scroll(self.content_width, self.width as i32),
+            };
+            self.set_scrollbar_offset(axis, scrollbar_offset_at(travel, target, max));
+            match axis {
+                ScrollbarAxis::Vertical => thumb.h / 2,
+                ScrollbarAxis::Horizontal => thumb.w / 2,
+            }
+        };
+
+        self.scrollbar_drag = Some((axis, grab, along));
+        self.scrollbar_hover = Some(axis);
+        true
+    }
+
+    /// Follow the pointer with the bar being dragged. Returns whether the
+    /// offset moved.
+    fn update_scrollbar_drag(&mut self, pos: (i32, i32)) -> bool {
+        let Some((axis, grab, _)) = self.scrollbar_drag else {
+            return false;
+        };
+        let g = self.scrollbar_geometry();
+        let along = Self::scrollbar_along(&g, axis, pos);
+        let (track, thumb) = match axis {
+            ScrollbarAxis::Vertical => g.vertical.expect("dragging a bar that has no track"),
+            ScrollbarAxis::Horizontal => g.horizontal.expect("dragging a bar that has no track"),
+        };
+        let travel = match axis {
+            ScrollbarAxis::Vertical => (track.h - thumb.h).max(0),
+            ScrollbarAxis::Horizontal => (track.w - thumb.w).max(0),
+        };
+        let max = match axis {
+            ScrollbarAxis::Vertical => max_scroll(self.content_height, self.height as i32),
+            ScrollbarAxis::Horizontal => max_scroll(self.content_width, self.width as i32),
+        };
+
+        // Drag from the recorded grab point, so the content follows the
+        // pointer exactly and the thumb never slips out from under the cursor.
+        let target = (along - grab).clamp(0, travel);
+        let next = scrollbar_offset_at(travel, target, max);
+        self.set_scrollbar_offset(axis, next)
+    }
+
+    /// Let go of the bar being dragged. Returns whether there was one.
+    ///
+    /// The drag owns the pointer while it runs, so hover — including which
+    /// bar, if any, the pointer sits on — was frozen at the point the grab
+    /// started. Re-deriving it on release is what stops a control under the
+    /// released pointer staying dark until the next pixel of movement, and a
+    /// bar staying lit long after the pointer has left it.
+    fn end_scrollbar_drag(&mut self) -> bool {
+        if self.scrollbar_drag.take().is_none() {
+            return false;
+        }
+        self.handle_cursor_moved(self.cursor_pos);
+        true
+    }
+
+    /// Write an offset to whichever axis' scroll state it belongs to, clamped
+    /// the same way the wheel clamps it.
+    fn set_scrollbar_offset(&mut self, axis: ScrollbarAxis, value: i32) -> bool {
+        match axis {
+            ScrollbarAxis::Vertical => {
+                let max = max_scroll(self.content_height, self.height as i32);
+                let next = value.clamp(0, max);
+                if next == self.scroll_y {
+                    return false;
+                }
+                self.scroll_y = next;
+                true
+            }
+            ScrollbarAxis::Horizontal => {
+                let max = max_scroll(self.content_width, self.width as i32);
+                let next = value.clamp(0, max);
+                if next == self.scroll_x {
+                    return false;
+                }
+                self.scroll_x = next;
+                true
+            }
+        }
+    }
+
     /// Push the cursor shape implied by whatever is under the pointer to the
     /// window. Called after hover changes and after every layout, so a control
     /// that moves out from under a still pointer never keeps a stale shape.
     fn sync_cursor_icon(&mut self) {
-        let kind = if self.hovered_id.is_some() {
+        // A scrollbar outranks everything else under the pointer: the bars run
+        // along the window edge, where a control could perfectly well sit, and
+        // a thumb that cannot be told apart from the button behind it is a
+        // thumb nobody trusts.
+        let over_thumb =
+            self.scrollbar_hover.is_some() && self.scrollbar_geometry().on_thumb(self.cursor_pos);
+        let kind = if self.scrollbar_drag.is_some() {
+            CursorKind::Grabbing
+        } else if over_thumb {
+            CursorKind::Grab
+        } else if self.scrollbar_hover.is_some() {
+            CursorKind::Default
+        } else if self.hovered_id.is_some() {
             // `find_hovered_button` already excludes disabled buttons, so the
             // hand never appears over an inert control.
             CursorKind::Pointer
@@ -2315,6 +2764,11 @@ impl<D: UiDispatcher> NativeApp<D> {
         self.scroll_y = self.scroll_y.clamp(0, max_scroll_y);
         self.scroll_x = self.scroll_x.clamp(0, max_scroll_x);
 
+        // Hover is re-derived here as well as on every cursor move, so the
+        // tone follows the layout rather than the last event. Resolved before
+        // the surface is borrowed, and before the cursor shape, which reads it.
+        self.refresh_hover();
+
         // Layout just moved every box, so re-derive the cursor shape from the
         // new geometry rather than trusting the one hover last set.
         self.sync_cursor_icon();
@@ -2324,6 +2778,16 @@ impl<D: UiDispatcher> NativeApp<D> {
         // the same frame, and a per-box check cannot let two carets disagree
         // if the clock happened to flip between them.
         let caret_on = self.caret_visible(Instant::now());
+
+        // Both window scrollbars, resolved once here so drawing them cannot
+        // disagree with hit-testing them later.
+        let scrollbars = self.scrollbar_geometry();
+        let bar_hover = self.scrollbar_hover;
+        let bar_dragging = self.scrollbar_drag.is_some();
+
+        // And the tooltip, which layers over every box rather than sitting in
+        // their order, so it too is asked for while `self` can still be read.
+        let tooltip = self.tooltip_at();
 
         let surface = self.surface.as_mut().unwrap();
         if surface.resize(w_nz, h_nz).is_err() {
@@ -2354,12 +2818,6 @@ impl<D: UiDispatcher> NativeApp<D> {
         );
 
         let (mx, my) = self.cursor_pos;
-        self.hovered_id = find_hovered_button_in_boxes(
-            &self.layout_boxes,
-            self.scroll_x,
-            self.scroll_y,
-            self.cursor_pos,
-        );
 
         // Shadows first, as their own pass: every halo lands on the bare
         // background, then the boxes paint over the parts underneath them.
@@ -2851,47 +3309,77 @@ impl<D: UiDispatcher> NativeApp<D> {
             );
         }
 
-        // Render scrollbar if content exceeds viewport
-        if self.content_height > self.height as i32 {
-            let track_h = self.height as i32;
-            let thumb_h =
-                ((track_h as f32 * track_h as f32) / self.content_height as f32).max(24.0) as i32;
-            let max_scroll = (self.content_height - track_h + 20).max(1);
-            let thumb_y =
-                ((self.scroll_y as f32 / max_scroll as f32) * (track_h - thumb_h) as f32) as i32;
-
-            draw_rect(
-                &mut buffer,
-                stride,
-                h_usize,
-                self.width as i32 - 8,
-                0,
-                8,
-                track_h,
-                theme.scrollbar_track,
+        // Window scrollbars. Both axes go through the same geometry the
+        // pointer hit-tests against, and the tone lifts when a bar is hovered
+        // or held so the thing that will move is visible before it does.
+        if let Some((track, thumb)) = scrollbars.vertical {
+            let (thumb_c, track_c) = scrollbar_tones(
+                &theme,
+                bar_hover == Some(ScrollbarAxis::Vertical),
+                bar_dragging && bar_hover == Some(ScrollbarAxis::Vertical),
             );
-            draw_rect(
+            draw_rounded_rect_box(
                 &mut buffer,
                 stride,
                 h_usize,
-                self.width as i32 - 7,
-                thumb_y,
-                6,
-                thumb_h,
-                theme.scrollbar_thumb,
+                track.x,
+                track.y,
+                track.w,
+                track.h,
+                4,
+                track_c,
+                track_c,
+            );
+            draw_rounded_rect_box(
+                &mut buffer,
+                stride,
+                h_usize,
+                thumb.x,
+                thumb.y,
+                thumb.w,
+                thumb.h,
+                3,
+                thumb_c,
+                thumb_c,
+            );
+        }
+        if let Some((track, thumb)) = scrollbars.horizontal {
+            let (thumb_c, track_c) = scrollbar_tones(
+                &theme,
+                bar_hover == Some(ScrollbarAxis::Horizontal),
+                bar_dragging && bar_hover == Some(ScrollbarAxis::Horizontal),
+            );
+            draw_rounded_rect_box(
+                &mut buffer,
+                stride,
+                h_usize,
+                track.x,
+                track.y,
+                track.w,
+                track.h,
+                4,
+                track_c,
+                track_c,
+            );
+            draw_rounded_rect_box(
+                &mut buffer,
+                stride,
+                h_usize,
+                thumb.x,
+                thumb.y,
+                thumb.w,
+                thumb.h,
+                3,
+                thumb_c,
+                thumb_c,
             );
         }
 
         // Tooltip overlay, painted last so it layers over every box, including
-        // those inside a scroll viewport that would otherwise clip it.
-        if let Some(tip) = find_tooltip_in_boxes(
-            &self.layout_boxes,
-            self.scroll_x,
-            self.scroll_y,
-            self.width as i32,
-            self.height as i32,
-            (mx, my),
-        ) {
+        // those inside a scroll viewport that would otherwise clip it. Asked
+        // for above, while `self` could still be read — and already made to
+        // yield to a scrollbar, like hover and the press.
+        if let Some(tip) = tooltip {
             draw_tooltip(
                 &mut buffer,
                 stride,
@@ -3498,6 +3986,18 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
                 button: MouseButton::Left,
                 ..
             } => {
+                // A scrollbar under the pointer takes the press outright: the
+                // tracks run down the window edge, where a control can sit, and
+                // the bar is the thing the pointer was deliberately aimed at.
+                if self.begin_scrollbar_drag(self.cursor_pos) {
+                    self.hovered_id = None;
+                    self.sync_cursor_icon();
+                    self.render();
+                    if let Some(win) = &self.window {
+                        win.request_redraw();
+                    }
+                    return;
+                }
                 // Resolve the button under the cursor *before* dispatching, so
                 // the pressed tone survives the press itself: dispatch may
                 // already have swapped the view underneath us.
@@ -3517,6 +4017,14 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
                 button: MouseButton::Left,
                 ..
             } => {
+                // Ending a drag outranks a button release: nothing can be both
+                // pressed and dragged, and the hand has to come back.
+                if self.end_scrollbar_drag() {
+                    if let Some(win) = &self.window {
+                        win.request_redraw();
+                    }
+                    return;
+                }
                 // The tone is held for exactly as long as the button is down.
                 // Released outside the button still clears it, so nothing can
                 // get stuck looking pressed.
@@ -6361,6 +6869,645 @@ mod tests {
             !app.fire_due_frame(),
             "a spent frame cannot be collected twice — this is what stops the loop spinning"
         );
+    }
+
+    /// A bar only appears when its axis actually has somewhere to go, and the
+    /// two never fight over the corner: whichever is live takes it, and the
+    /// other stops short. An axis with nothing to scroll is not drawn at all.
+    #[test]
+    fn test_scrollbar_tracks_appear_only_when_needed_and_yield_the_corner() {
+        // Fits both ways: no bars, and so no way to grab either axis.
+        let (v, h) = scrollbar_tracks(400, 300, 400, 300);
+        assert!(
+            v.is_none() && h.is_none(),
+            "nothing to scroll, nothing drawn"
+        );
+
+        // Vertical only: it gets the whole right edge, corner included.
+        let (v, h) = scrollbar_tracks(400, 300, 400, 900);
+        let v = v.expect("tall content needs a vertical bar");
+        assert!(h.is_none(), "narrow content needs no horizontal bar");
+        assert_eq!(
+            v,
+            Rect {
+                x: 400 - SCROLLBAR_SIZE,
+                y: 0,
+                w: SCROLLBAR_SIZE,
+                h: 300
+            },
+            "a lone bar runs the full edge"
+        );
+
+        // Both: the vertical keeps the whole right edge including the corner,
+        // and the horizontal runs along the bottom only as far as the vertical
+        // bar's left edge — so the two abut without ever overlapping, and no
+        // square of the window is left where neither bar answers the pointer.
+        let (v, h) = scrollbar_tracks(400, 300, 900, 900);
+        let v = v.expect("vertical");
+        let h = h.expect("horizontal");
+        assert_eq!(
+            (v.x, v.y, v.w, v.h),
+            (392, 0, SCROLLBAR_SIZE, 300),
+            "the vertical bar keeps the whole edge, corner included"
+        );
+        assert_eq!(
+            (h.x, h.y, h.w, h.h),
+            (0, 292, 392, SCROLLBAR_SIZE),
+            "the horizontal bar stops exactly at the vertical bar's left edge"
+        );
+        assert!(
+            v.x >= h.x + h.w,
+            "the two rectangles cannot overlap — otherwise the corner would be drawn twice"
+        );
+
+        // Horizontal only: it takes the full bottom edge.
+        let (v, h) = scrollbar_tracks(400, 300, 900, 300);
+        assert!(v.is_none());
+        let h = h.expect("wide content needs a horizontal bar");
+        assert_eq!(h.w, 400, "a lone bar runs the full edge");
+    }
+
+    /// The thumb is proportional to the visible share so it reads as "how much
+    /// of this am I seeing", but never disappears: on very long content the
+    /// minimum length takes over, which is the whole point of a minimum.
+    #[test]
+    fn test_thumb_length_is_proportional_floored_and_capped() {
+        // Half the content visible -> half the track.
+        assert_eq!(scrollbar_thumb_len(300, 500, 1000, 500), 150);
+        // A quarter visible.
+        assert_eq!(scrollbar_thumb_len(300, 250, 1000, 750), 75);
+        // Absurdly long content: floored, not shrunk to nothing.
+        assert_eq!(
+            scrollbar_thumb_len(300, 100, 100_000, 99_900),
+            SCROLLBAR_MIN_THUMB,
+            "a thumb nobody can grab is no better than no thumb"
+        );
+        // More of the content visible than the track can hold: capped at the
+        // track, since a thumb longer than its own channel is meaningless.
+        assert_eq!(scrollbar_thumb_len(100, 600, 500, 100), 100);
+        // Just over the track's worth of visible content, as the window's 20px
+        // of slack can produce: still under the cap, not at it.
+        assert_eq!(scrollbar_thumb_len(100, 500, 520, 20), 96);
+
+        // Nothing to scroll -> no thumb at all.
+        assert_eq!(scrollbar_thumb_len(300, 300, 300, 0), 0);
+        assert_eq!(scrollbar_thumb_len(0, 300, 1000, 500), 0);
+    }
+
+    /// The thumb's position pins to both ends exactly when the axis is at its
+    /// limit, and never runs off the track however the offset was reached.
+    #[test]
+    fn test_thumb_position_pins_at_both_ends_of_the_track() {
+        let (track, thumb) = (300, 150);
+        let travel = track - thumb;
+
+        assert_eq!(scrollbar_thumb_pos(track, thumb, 0, 500), 0, "top");
+        assert_eq!(
+            scrollbar_thumb_pos(track, thumb, 500, 500),
+            travel,
+            "bottom — the thumb touches the end exactly when scrolling stops"
+        );
+        assert_eq!(
+            scrollbar_thumb_pos(track, thumb, 250, 500),
+            travel / 2,
+            "halfway through is halfway down"
+        );
+        // Out-of-range offsets are clamped, not believed.
+        assert_eq!(scrollbar_thumb_pos(track, thumb, -999, 500), 0);
+        assert_eq!(scrollbar_thumb_pos(track, thumb, 99_999, 500), travel);
+    }
+
+    /// Dragging and drawing are inverse operations up to the track's own
+    /// resolution: 240 pixels of track standing in for 940 offsets is ~4
+    /// offsets per pixel, so a round trip can lose at most one pixel and never
+    /// gains one. The ends are exact, which is what lets a user park the view.
+    #[test]
+    fn test_dragging_back_to_a_drawn_position_recovers_that_position() {
+        let (track, thumb, max) = (300, 60, 940);
+        let travel = track - thumb;
+        for offset in [0, 1, 17, 300, 620, 940] {
+            let pos = scrollbar_thumb_pos(track, thumb, offset, max);
+            let back = scrollbar_offset_at(travel, pos, max);
+            let pos_again = scrollbar_thumb_pos(track, thumb, back, max);
+            assert!(
+                pos_again <= pos && pos - pos_again <= 1,
+                "offset {offset}: dragging back to pixel {pos} lands on {pos_again}, \
+                 which is within the track's one-pixel resolution"
+            );
+        }
+        // The ends are exact, not merely close.
+        assert_eq!(scrollbar_thumb_pos(track, thumb, 0, max), 0);
+        assert_eq!(scrollbar_offset_at(travel, 0, max), 0);
+        assert_eq!(scrollbar_offset_at(travel, travel, max), max);
+        assert_eq!(
+            scrollbar_thumb_pos(track, thumb, max, max),
+            travel,
+            "…so the thumb touches the end exactly when the content stops"
+        );
+        // A degenerate track asks for nothing rather than dividing by zero.
+        assert_eq!(scrollbar_offset_at(0, 40, max), 0);
+        assert_eq!(scrollbar_offset_at(travel, 40, 0), 0);
+    }
+
+    /// A thumb beats the track it sits in — otherwise every grab would be read
+    /// as a page jump — and the two axes are told apart by where they run.
+    #[test]
+    fn test_hit_testing_prefers_thumb_over_track() {
+        let g = ScrollbarGeometry::resolve(400, 300, 400, 2000, 0, 0);
+        let (v_track, v_thumb) = g.vertical.expect("vertical bar");
+
+        assert_eq!(
+            g.axis_at((v_thumb.x + 1, v_thumb.y + 1)),
+            Some(ScrollbarAxis::Vertical),
+            "on the thumb"
+        );
+        assert_eq!(
+            g.axis_at((v_track.x + 1, v_track.h - 5)),
+            Some(ScrollbarAxis::Vertical),
+            "on bare track well below the thumb"
+        );
+        assert!(
+            g.on_thumb((v_thumb.x + 1, v_thumb.y + 1)),
+            "so the press is read as a grab"
+        );
+        assert!(
+            !g.on_thumb((v_track.x + 1, v_track.h - 5)),
+            "and a track press is read as a jump"
+        );
+        assert_eq!(
+            g.axis_at((100, 150)),
+            None,
+            "the middle of the window belongs to the content"
+        );
+
+        // With both axes live, the corner goes to the vertical bar.
+        let g = ScrollbarGeometry::resolve(400, 300, 2000, 2000, 0, 0);
+        assert_eq!(
+            g.axis_at((399, 299)),
+            Some(ScrollbarAxis::Vertical),
+            "the corner is the vertical bar's, not a dead zone"
+        );
+    }
+
+    /// Pressing a thumb must not move it. The grab point is recorded, so the
+    /// content follows the pointer exactly from wherever the press landed —
+    /// which is what makes positioning precise instead of approximate.
+    #[test]
+    fn test_pressing_a_thumb_does_not_jump_it() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "T".into(),
+                width: 200,
+                height: 300,
+            },
+            dummy,
+        );
+        app.content_height = 3000;
+        app.scroll_y = 400;
+
+        let g = app.scrollbar_geometry();
+        let (_, thumb) = g.vertical.expect("vertical bar");
+        // Press near the thumb's bottom edge, not its middle.
+        let press = (thumb.x + 1, thumb.y + thumb.h - 2);
+        assert!(app.begin_scrollbar_drag(press), "the thumb was hit");
+        assert_eq!(
+            app.scroll_y, 400,
+            "and the offset did not move — the press was a grab, not a jump"
+        );
+
+        // Now move the pointer down by exactly 10px: the offset moves by the
+        // same distance, and the thumb lands back under the pointer — to
+        // within the one pixel the integer scroll offset can resolve, since
+        // several offsets share a track pixel.
+        let moved = app.update_scrollbar_drag((press.0, press.1 + 10));
+        assert!(moved, "the drag moved the content");
+        let g2 = app.scrollbar_geometry();
+        let (_, thumb2) = g2.vertical.expect("still there");
+        let drift = (thumb2.y - (thumb.y + 10)).abs();
+        assert!(
+            drift <= 1,
+            "the thumb followed the pointer by the pointer's own distance \
+             (off by {drift}px, which is the track's resolution)"
+        );
+        assert!(
+            thumb2.y > thumb.y,
+            "and it moved the way the pointer did, not the other way"
+        );
+    }
+
+    /// Pressing bare track pages the content to the pointer and then keeps
+    /// dragging from there, rather than only jumping once.
+    #[test]
+    fn test_pressing_the_track_pages_and_then_drags() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "T".into(),
+                width: 200,
+                height: 300,
+            },
+            dummy,
+        );
+        app.content_height = 3000;
+        app.scroll_y = 0;
+
+        let g = app.scrollbar_geometry();
+        let (track, _) = g.vertical.expect("vertical bar");
+        // Click near the bottom of the track.
+        assert!(app.begin_scrollbar_drag((track.x + 1, track.h - 2)), "hit");
+        assert!(
+            app.scroll_y > 0,
+            "a track press pages the content toward the pointer"
+        );
+        let after_jump = app.scroll_y;
+
+        // Dragging continues from there rather than snapping back to zero.
+        assert!(app.update_scrollbar_drag((track.x + 1, track.h - 20)));
+        assert!(
+            app.scroll_y != after_jump,
+            "and the gesture keeps dragging after the jump"
+        );
+        assert!(
+            app.scroll_y < after_jump,
+            "moving back up the track scrolls back up"
+        );
+    }
+
+    /// A drag is clamped at both ends and reaches the very end exactly, so the
+    /// thumb touches the track's end precisely when the content stops.
+    #[test]
+    fn test_a_drag_is_clamped_and_reaches_the_end_exactly() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "T".into(),
+                width: 200,
+                height: 300,
+            },
+            dummy,
+        );
+        app.content_height = 3000;
+        app.scroll_y = 0;
+
+        let g = app.scrollbar_geometry();
+        let (track, thumb) = g.vertical.expect("vertical bar");
+        assert!(app.begin_scrollbar_drag((thumb.x + 1, thumb.y + 1)), "grab");
+
+        // Far past the bottom of the track.
+        app.update_scrollbar_drag((thumb.x + 1, track.y + track.h + 5000));
+        let max = max_scroll(app.content_height, app.height as i32);
+        assert_eq!(
+            app.scroll_y, max,
+            "dragging past the end stops exactly at the end"
+        );
+        let g = app.scrollbar_geometry();
+        let (track, thumb) = g.vertical.expect("vertical bar");
+        assert_eq!(
+            thumb.y + thumb.h,
+            track.y + track.h,
+            "…and the thumb is flush with the track's end there"
+        );
+
+        // Far above the top.
+        app.update_scrollbar_drag((thumb.x + 1, track.y - 5000));
+        assert_eq!(app.scroll_y, 0, "dragging above the top stops at zero");
+        let g = app.scrollbar_geometry();
+        let (_, thumb) = g.vertical.expect("vertical bar");
+        assert_eq!(thumb.y, track.y, "…and the thumb is flush with the top");
+    }
+
+    /// The horizontal bar drives `scroll_x` and leaves `scroll_y` alone, and
+    /// the two are told apart purely by where they run.
+    #[test]
+    fn test_horizontal_drag_drives_scroll_x_only() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "T".into(),
+                width: 300,
+                height: 200,
+            },
+            dummy,
+        );
+        app.content_width = 3000;
+        app.content_height = 3000;
+        app.scroll_x = 0;
+        app.scroll_y = 700;
+
+        let g = app.scrollbar_geometry();
+        let (h_track, _) = g.horizontal.expect("horizontal bar");
+        assert!(
+            app.begin_scrollbar_drag((h_track.x + h_track.w - 2, h_track.y + 1)),
+            "hit"
+        );
+        assert_eq!(app.scroll_y, 700, "the vertical offset is untouched");
+        assert!(app.scroll_x > 0, "…and the horizontal one moved");
+
+        app.update_scrollbar_drag((h_track.x + h_track.w - 2, h_track.y + 1));
+        let g = app.scrollbar_geometry();
+        let (_, thumb) = g.horizontal.expect("still there");
+        assert_eq!(
+            thumb.x + thumb.w,
+            h_track.x + h_track.w,
+            "dragged to the far end, the thumb is flush with it"
+        );
+    }
+
+    /// A bar under the pointer swallows hover entirely: the tracks run down the
+    /// window edge, where a control can sit, and a thumb that lights up the
+    /// button behind it is a thumb nobody trusts.
+    #[test]
+    fn test_a_scrollbar_under_the_pointer_swallows_button_hover() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "T".into(),
+                width: 200,
+                height: 300,
+            },
+            dummy,
+        );
+        app.content_height = 3000;
+
+        // A button whose box reaches under the vertical bar, and a card
+        // describing it.
+        let mut btn = test_box("button", "go", 50, false);
+        btn.rect = Rect {
+            x: 150,
+            y: 50,
+            w: 50,
+            h: 40,
+        };
+        btn.tooltip = Some("Go".into());
+        app.layout_boxes = vec![btn];
+
+        let g = app.scrollbar_geometry();
+        let (track, _) = g.vertical.expect("vertical bar");
+
+        // Away from the bar, the button lights up as usual.
+        app.handle_cursor_moved((160, 60));
+        assert_eq!(
+            app.hovered_id.as_deref(),
+            Some("go"),
+            "a button away from the bar still hovers"
+        );
+        assert_eq!(
+            app.tooltip_at().as_deref(),
+            Some("Go"),
+            "and so does its card"
+        );
+
+        // On the bar, nothing does.
+        app.handle_cursor_moved((track.x + 1, 60));
+        assert_eq!(
+            app.hovered_id, None,
+            "the bar takes the hover, not the control behind it"
+        );
+        assert_eq!(
+            app.tooltip_at(), None,
+            "and the card goes with it — a tooltip about a control the bar is drawn over is a tooltip about the wrong thing"
+        );
+        assert_eq!(app.scrollbar_hover, Some(ScrollbarAxis::Vertical));
+    }
+
+    /// `render` re-derives hover on its own so the tone follows the layout
+    /// rather than the last cursor event. That re-derivation has to ask the
+    /// same question a cursor move does — otherwise every frame quietly hands
+    /// the hover back to whatever sits behind a scrollbar, and the ramp the
+    /// frame just started fading is given a target of 1.0 again. The live pass
+    /// is what caught this: the cursor move swallowed the hover, the very next
+    /// render gave it straight back, and three frames later the button sat at
+    /// the tone it had started from.
+    #[test]
+    fn test_the_frames_own_hover_rederivation_also_yields_to_a_bar() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "T".into(),
+                width: 200,
+                height: 300,
+            },
+            dummy,
+        );
+        app.content_height = 3000;
+
+        // A button whose box reaches under the vertical bar.
+        let mut btn = test_box("button", "go", 50, false);
+        btn.rect = Rect {
+            x: 150,
+            y: 50,
+            w: 50,
+            h: 40,
+        };
+        app.layout_boxes = vec![btn];
+
+        let g = app.scrollbar_geometry();
+        let (track, _) = g.vertical.expect("vertical bar");
+
+        // Hover the button, then leave it for the bar.
+        app.cursor_pos = (160, 60);
+        app.refresh_hover();
+        assert_eq!(app.hovered_id.as_deref(), Some("go"));
+
+        app.handle_cursor_moved((track.x + 1, 60));
+        assert_eq!(app.hovered_id, None, "the cursor move swallows it");
+
+        // The next frame asks again, from the layout rather than the event. It
+        // must still be swallowed.
+        app.refresh_hover();
+        assert_eq!(
+            app.hovered_id, None,
+            "a frame must not hand the hover back to the control behind the bar"
+        );
+
+        // And a pointer that leaves the bar lights the button up again: the
+        // swallow follows the bar, not the pointer's history.
+        app.handle_cursor_moved((160, 60));
+        app.refresh_hover();
+        assert_eq!(app.hovered_id.as_deref(), Some("go"));
+    }
+
+    /// The hover highlight is a real tone change, not a no-op, and holding the
+    /// bar lifts it further still — so the thing that will move is visible
+    /// before it does.
+    #[test]
+    fn test_scrollbar_tones_lift_on_hover_and_further_when_held() {
+        let t = Theme::DARK;
+        let lum = |c: u32| ((c >> 16) & 0xFF) as i64 + ((c >> 8) & 0xFF) as i64 + (c & 0xFF) as i64;
+
+        let (rest_thumb, rest_track) = scrollbar_tones(&t, false, false);
+        assert_eq!(
+            (rest_thumb, rest_track),
+            (t.scrollbar_thumb, t.scrollbar_track),
+            "unhovered is exactly the theme's own tones"
+        );
+
+        let (hov_thumb, hov_track) = scrollbar_tones(&t, true, false);
+        assert_ne!(hov_thumb, rest_thumb, "hovering the thumb changes it");
+        assert_ne!(hov_track, rest_track, "and the track it runs in");
+
+        let (held_thumb, _) = scrollbar_tones(&t, true, true);
+        assert!(
+            (lum(held_thumb) - lum(rest_thumb)).abs() > (lum(hov_thumb) - lum(rest_thumb)).abs(),
+            "holding lifts the thumb further than hovering alone"
+        );
+        // Whatever the theme's text colour is, the point of the highlight is
+        // contrast against the track — so the gap must widen, not shrink.
+        assert!(
+            (lum(hov_thumb) - lum(hov_track)).abs() >= (lum(rest_thumb) - lum(rest_track)).abs(),
+            "hovering must not reduce the thumb's contrast against its track"
+        );
+    }
+
+    /// Letting go restores whatever the drag had frozen: hover is blanked for
+    /// the whole gesture, so on release a control under the pointer must light
+    /// up immediately rather than on the next pixel of movement, and a bar the
+    /// pointer has already left must not stay lit.
+    #[test]
+    fn test_releasing_the_drag_restores_frozen_hover() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "T".into(),
+                width: 200,
+                height: 300,
+            },
+            dummy,
+        );
+        app.content_height = 3000;
+
+        let g = app.scrollbar_geometry();
+        let (track, _) = g.vertical.expect("vertical bar");
+        // The real order: the pointer moves onto the bar, then presses. During
+        // a drag `handle_cursor_moved` still records the position before it
+        // hands it to the drag, so release can re-derive from where the
+        // pointer actually is.
+        app.handle_cursor_moved((track.x + 1, 60));
+        assert!(app.begin_scrollbar_drag(app.cursor_pos), "grab the bar");
+        // What the press arm does: a grab owns the pointer outright.
+        app.hovered_id = None;
+        app.sync_cursor_icon();
+        assert_eq!(
+            app.cursor_kind,
+            CursorKind::Grabbing,
+            "the closed hand while the thumb is held"
+        );
+
+        // Move away from the bar while dragging. Hover stays frozen — that is
+        // the point of the drag owning the pointer — and the bar the pointer
+        // has left is still recorded as hovered, because nothing re-derives it
+        // mid-drag.
+        app.handle_cursor_moved((70, 70));
+        assert_eq!(
+            app.hovered_id, None,
+            "hover is frozen for the whole gesture"
+        );
+        assert_eq!(
+            app.cursor_kind,
+            CursorKind::Grabbing,
+            "…and so is the hand, however far the pointer wanders"
+        );
+        assert_eq!(
+            app.scrollbar_hover,
+            Some(ScrollbarAxis::Vertical),
+            "and the stale bar is exactly what release has to clean up"
+        );
+
+        // A drag scrolls the page, and scrolling can carry a control
+        // underneath a pointer that has not moved. Measured against the offset
+        // the drag has already left behind, so it really is under there.
+        let mut btn = test_box("button", "btn", 50, false);
+        btn.rect = Rect {
+            x: 40,
+            y: app.scroll_y + 50,
+            w: 60,
+            h: 40,
+        };
+        app.layout_boxes = vec![btn];
+        assert_eq!(
+            app.hovered_id, None,
+            "…and it still must not light up, with a control now under the pointer"
+        );
+
+        assert!(app.end_scrollbar_drag(), "there was a drag to end");
+        assert!(app.scrollbar_drag.is_none());
+        assert_eq!(
+            app.hovered_id.as_deref(),
+            Some("btn"),
+            "the control under the released pointer lights up at once, not on the next move"
+        );
+        assert_eq!(
+            app.scrollbar_hover, None,
+            "…and no bar stays lit that the pointer has already left"
+        );
+        assert_ne!(
+            app.cursor_kind,
+            CursorKind::Grabbing,
+            "the closed hand does not outlive the drag"
+        );
+
+        // Releasing *while still on* the bar keeps it hovered — it is simply
+        // ready to be grabbed again.
+        app.handle_cursor_moved((track.x + 1, 60));
+        assert!(app.begin_scrollbar_drag(app.cursor_pos), "grab again");
+        app.hovered_id = None;
+        assert!(app.end_scrollbar_drag());
+        assert_eq!(app.scrollbar_hover, Some(ScrollbarAxis::Vertical));
+        assert_eq!(app.hovered_id, None, "still on the bar, so still no button");
+        assert_eq!(app.cursor_kind, CursorKind::Grab, "…and the open hand");
+
+        // Ending when nothing was dragging is a no-op rather than a panic.
+        assert!(!app.end_scrollbar_drag());
     }
 
     /// Focus is what the border signals, and an inert field must not be able

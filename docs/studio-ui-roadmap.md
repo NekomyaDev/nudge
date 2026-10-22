@@ -335,10 +335,78 @@
 - [x] Widgets access colors through the theme reference
 - [ ] Light / dark theme toggle (structure ready, palette entry pending)
 
-### 1.9 Scrollbar  (1 day)
-- [ ] Vertical + horizontal scrollbar drawing (thumb + track)
-- [ ] Drag-to-scroll, hover highlight
-- [ ] Integration with existing global `scroll_y`
+### 1.9 Scrollbar  (1 day) — DONE
+- [x] Vertical + horizontal scrollbar drawing (thumb + track)
+- [x] Drag-to-scroll, hover highlight
+- [x] Integration with existing global `scroll_y`
+
+**Implementation (one geometry, asked of by both the hand and the brush):**
+- **`ScrollbarGeometry::resolve`** computes each bar's track *and* thumb
+  together, so drawing and hit-testing read the same numbers and cannot drift
+  apart — a thumb drawn in one place and grabbed in another is the failure
+  mode that makes a scrollbar feel broken in ways nobody can point at. Pure
+  helpers underneath: `scrollbar_tracks`, `scrollbar_thumb_len`,
+  `scrollbar_thumb_pos`, `scrollbar_offset_at`, `max_scroll`,
+  `scrollbar_tones`.
+- **The tracks yield the corner**: the vertical bar keeps the whole right
+  edge, corner included; the horizontal one runs only as far as the vertical
+  bar's left edge. The rectangles therefore never overlap, so the corner is
+  not painted twice, and — unlike an earlier "vertical yields the corner"
+  arrangement — no square of the window is left where neither bar answers the
+  pointer. An axis with nothing to scroll is not drawn at all.
+- **Thumb length** is proportional to the visible share, so it reads as "how
+  much of this am I seeing"; floored at `SCROLLBAR_MIN_THUMB` = 24px so it
+  stays grabbable however long the content, and capped at the track.
+- **`max_scroll`** is shared with `scroll_by`'s clamp, slack included, so the
+  thumb reaches the track's end at exactly the moment the content stops — not
+  a hair short, and not a hair past.
+- **Drag**: pressing the thumb records *where inside it* the press landed, so
+  the content follows the pointer and the thumb cannot jump on the first pixel
+  — which is what makes positioning precise. Pressing bare track pages the
+  content so the thumb's centre comes to the pointer, then goes on dragging
+  from there. Offsets go through `set_scrollbar_offset`, the same clamp the
+  wheel uses, and a drag owns the pointer outright.
+- **Hover highlight** blends `scrollbar_tones(theme, hovered, held)` toward
+  `theme.text` — 0.3 for the thumb and 0.12 for the track, rising to 0.5/0.2
+  while held. Blending toward *text* rather than a fixed highlight means a
+  light theme darkens its bars and a dark theme lightens them; either way the
+  contrast against the track rises, which is the whole point.
+- **A bar under the pointer outranks the control behind it**: hover, the
+  press *and* the tooltip all yield, because the tracks run down the window's
+  very edge where a control can sit, and a thumb you cannot tell apart from
+  the button behind it is a thumb nobody trusts. `CursorKind` gained `Grab` /
+  `Grabbing` (the `cursor-icon` crate has both).
+- **`end_scrollbar_drag`** re-derives hover on release: the drag freezes hover
+  by design, so without it a control under the *released* pointer stayed dark
+  until the next pixel of movement, and a bar the pointer had already left
+  stayed lit.
+
+**Verified:** fmt OK · clippy `-D warnings` clean · **892 passed / 0 failed /
+1 ignored** (13 new tests — geometry, both axes, the drag's round trip and its
+clamp at each end, thumb-beats-track precedence, the swallow, and the frame's
+own hover re-derivation). Live on X11 with the new `examples/scrollbars.ndg`:
+both bars drawn as pills at the window's edge with geometry matching the
+formula; hover lifting the tone to exactly the blended value; a 127px pointer
+drag moving the thumb 126px and a 200px one moving it 199px; the thumb ending
+flush against the track when dragged to the end; a track click paging; a click
+on the bar leaving the counter untouched while the very same button clicked
+beside it advances it; idle at 0.0% CPU in state `Ss`.
+
+**Two defects the live pass caught that the tests had not — same shape of
+mistake, so worth recording together.**
+- *The frame had its own opinion about hover.* `render` re-derives hover from
+  the layout so a control that slid past the pointer stops lighting up — but it
+  asked the boxes directly, never asking whether a scrollbar was in the way. So
+  the cursor move swallowed the hover and the very next render handed it back,
+  and the ramp chased it straight to full again. Moving the swallow into
+  `find_hovered_button`, the one question both paths ask, is what makes it
+  hold; `refresh_hover` was split out of `render` so a test can hold the frame
+  to it without needing a surface. The first live check had missed this by
+  only ever moving *onto* the bar, where the ramp had no reason to start — a
+  check that only proves the easy half.
+- *The card went with the control.* A tooltip describing a button the bar is
+  drawn over is a tooltip about the wrong thing, so `tooltip_at` yields too —
+  resolved before the surface is borrowed, like the caret and the bars.
 
 ---
 
