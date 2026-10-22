@@ -46,11 +46,10 @@
 ### Remaining renderer soft spots
 - No kerning-aware proportional layout for **container width** (uses fixed `CELL_W` grid)
 - No icons yet (rounded corners 1.3, drop shadows 1.4, gradients 1.5, cursor
-  & mouse states 1.6)
-- No text cursor blink yet — 1.6 shipped the pointer/I-beam shapes but blink
-  needs the frame clock from 1.7
+  & mouse states 1.6, timer/animation 1.7)
 - Single font size tier in use (`BASE_PX`); fractional sizes not yet wired to UI
-- No animation / timer infrastructure (needed for cursor blink and spinners)
+- No loading state to hang a spinner on — the frame clock from 1.7 can drive
+  one the moment 3.5 gives the UI an async operation to wait for
 
 ---
 
@@ -188,7 +187,7 @@
 - [x] Mouse cursor shape changes (pointer / text) — winit `set_cursor`
 - [x] Button `active` (pressed) third tone; disabled (dimmed) state
 - [x] Tooltip (small label on hover)
-- [ ] Text cursor blink animation — deferred to 1.7 (needs the frame clock)
+- [x] Text cursor blink animation — landed in 1.7 (needed the frame clock)
 
 **Implementation (renderer + language props, no compiler change needed):**
 - **Cursor shape**: `CursorKind`, a 3-variant enum of its own rather than
@@ -257,10 +256,79 @@
     proved by unit test plus the live hover that drives the same predicate;
     every other claim above is pixel evidence.
 
-### 1.7 Timer / animation infrastructure  (1–2 days)
-- [ ] Frame clock / `request_redraw` scheduling for redraws
-- [ ] Hover transition smoothing (color interpolation)
-- [ ] Foundation for spinner animation
+### 1.7 Timer / animation infrastructure  (1–2 days) — DONE
+- [x] Frame clock / `request_redraw` scheduling for redraws
+- [x] Hover transition smoothing (color interpolation)
+- [x] Foundation for spinner animation — the clock is ready; the widget itself
+      is 2.5, which needs the loading state from 3.5 to attach it to
+- [x] Text cursor blink animation (deferred from 1.6)
+
+**Implementation (one timer, every timed thing agrees on it):**
+- **`FrameClock`**: holds a single `Option<Instant>` — the earliest moment
+  anything in the UI is due. `wake_in` only ever pulls that moment *forward*,
+  never back: a caret toggle arriving mid-ramp has no business delaying the
+  ramp's own last frame. When the clock is idle the event loop sits in
+  `ControlFlow::Wait` and costs nothing; only an outstanding deadline earns a
+  `WaitUntil`. `ControlFlow` is set through `ActiveEventLoop::set_control_flow`
+  (verified in the winit 0.30.13 source — `EventLoop` has the same-named
+  method, but only the `ActiveEventLoop` one is reachable from a handler).
+- **The one place the loop re-arms itself**: `about_to_wait` calls
+  `fire_due_frame`, which spends a wake-up on a frame **only** once the
+  deadline has actually arrived, and clears it so it cannot be collected
+  twice. `schedule_frames` (called after every frame) recomputes the deadline
+  and does *not* ask for a redraw. This split is the whole design: asking from
+  `schedule_frames` rebuilds the very redraw the frame just consumed and pins
+  the process at full speed. The first frame drawn in `resumed` arms the clock
+  itself, since it bypasses `RedrawRequested`.
+- **Hover ramps**: `hover_ramps: HashMap<String, f32>` keyed by the same
+  `button_key` hover and dispatch already use, holding each control's blend
+  from resting (`0.0`) to hovered (`1.0`) over `HOVER_RAMP_SECS` = 0.12s. The
+  target is read from the *current* hover state each tick, so moving from one
+  control to another ramps both at once instead of the first snapping back;
+  entries that fade to zero are dropped, so the map cannot grow with every
+  button the pointer has visited. `button_tones(theme, hover_t, pressed,
+  disabled)` took the ramp value in place of the `hovered` bool, and the
+  resting ramp Blue-400→500 and the hovered ramp 500→600 are simply the two
+  ends of that one blend — an in-between frame is both channels lerped by the
+  same amount. Pressing still drops a rung instantly: press is feedback, not
+  decoration. `dt` is clamped to `MAX_ANIM_STEP` = 33ms so a long stall cannot
+  teleport a ramp to its end on the next frame.
+- **Caret blink**: `caret_blink_origin` records when the caret last moved, and
+  the phase derives from it — on for 265ms, off for 265ms. `touch_caret` runs
+  on **every** key and on click-to-place, so typing can never land in the
+  invisible half and look like it did nothing. The caret is resolved once per
+  frame (`caret_visible(Instant::now())`) before the surface is borrowed, so
+  two fields can never disagree. A focused field schedules its next toggle; a
+  field that loses focus drops its orphaned origin rather than paying for it
+  forever.
+- **Verified**: fmt OK, clippy `-D warnings` clean, **879 passed / 0 failed /
+  1 ignored** (5 new tests: `FrameClock` keeping the earliest deadline,
+  ramps blending in and fading back out with both halves of a move animating
+  at once, the caret phase and a move restarting it, a still interface
+  scheduling no frames, and a frame being spent only once its deadline has
+  arrived).
+  Live-verified on X11 with `examples/cursor_states.ndg`. **Caret blink**:
+  focus ring stays Blue-500 (59,130,246) across all 16 sampled frames while
+  the caret itself alternates — present as exactly 40 pixels spanning
+  x=36..37, y=102..121 (a 2px bar at the text origin), absent in the other
+  frames; measured cycle 0.15+0.44 ≈ 0.59s, i.e. the 530ms nominal plus capture
+  overhead. **Hover ramp**: sampled every ~22ms at a text-free column the top
+  of the Send button climbs **(93,162,250) → (83,152,248) → (78,147,247) →
+  (72,142,247) → (68,137,246) → (63,132,246) → (57,127,245)** and settles
+  there — monotonic, no step, landing exactly on the hovered tone ~126ms after
+  the move, matching the constant. Leaving repeats it downward to exactly the
+  resting tone. A swap would have read rest, rest, hover, hover.
+  **Idle cost**: a freshly started window that is never touched sits at
+  **0.0–0.3% CPU in state `Ss`**, and with an input focused — caret blinking,
+  the loop waking several times a second — it stays at **0.0–0.1%**.
+  - **Bug found and fixed by the live pass**: that idle figure was initially
+    **51% CPU in state `Rs`** — a spin loop. `schedule_frames` called
+    `request_redraw()` whenever the clock was non-idle, which rebuilds the
+    redraw the frame that just ran had already consumed, so `WaitUntil` never
+    got a chance to sleep. Splitting the arming (`schedule_frames`) from the
+    spending (`fire_due_frame` in `about_to_wait`) is what makes the clock
+    actually a clock; the regression test above is written against exactly
+    that.
 
 ### 1.8 Color / theme system  (1 day) — DONE
 - [x] Colors moved into `struct Theme`

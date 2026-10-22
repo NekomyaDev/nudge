@@ -7,10 +7,11 @@ use crate::ui::{TextInputState, UiElement};
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{CursorIcon, Window, WindowAttributes, WindowId};
 
@@ -347,6 +348,66 @@ pub fn draw_rect_outline(
 /// Kept modest so 36px-tall controls still read as rectangles, but enough to
 /// lose the hard 90-degree corners.
 pub const CORNER_RADIUS: i32 = 6;
+
+/// How long a hover ramp takes to travel from the resting tone to the hovered
+/// one and back. Short enough to read as instant feedback, long enough that
+/// the eye sees a change rather than a jump.
+const HOVER_RAMP_SECS: f32 = 0.12;
+
+/// One animation tick while something is moving (~60fps). Only ever used as a
+/// deadline while an animation is actually outstanding — an idle window
+/// schedules nothing and never wakes for it.
+const RAMP_TICK: Duration = Duration::from_millis(16);
+
+/// Ceiling on how much time a single frame may claim to have covered. Without
+/// it, the first frame after a long idle would carry the whole stall as `dt`
+/// and a ramp that had not started yet would teleport to its end state.
+const MAX_ANIM_STEP: Duration = Duration::from_millis(33);
+
+/// Caret blink: on for this long, off for the same again, repeating. The
+/// classic rhythm, and the reason a focused field needs a clock at all.
+const CARET_BLINK_ON: Duration = Duration::from_millis(265);
+const CARET_BLINK_OFF: Duration = Duration::from_millis(265);
+
+/// The window's only timer: a single wake-up deadline that every timed part of
+/// the UI agrees on. The event loop sleeps in `ControlFlow::Wait` while this is
+/// idle, so a still interface costs no CPU, and switches to `WaitUntil` only
+/// while a ramp or a caret blink is outstanding.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct FrameClock {
+    next: Option<Instant>,
+}
+
+impl FrameClock {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// The moment the next scheduled frame is due, if one is outstanding.
+    fn next_deadline(&self) -> Option<Instant> {
+        self.next
+    }
+
+    fn is_idle(&self) -> bool {
+        self.next.is_none()
+    }
+
+    /// Bring the next wake-up forward to at most `now + after`. A later ask
+    /// never postpones an earlier one: the caret's next toggle arriving
+    /// mid-ramp must not delay the ramp's own last frame.
+    fn wake_in(&mut self, now: Instant, after: Duration) {
+        let at = now + after;
+        self.next = Some(match self.next {
+            Some(existing) => existing.min(at),
+            None => at,
+        });
+    }
+
+    /// Drop the outstanding wake-up, having drawn the frame it promised.
+    fn clear(&mut self) {
+        self.next = None;
+    }
+}
 
 /// Signed distance from pixel `(px, py)` to a rounded rectangle: negative
 /// inside the shape, `0.0` on its edge, positive outside — measured in whole
@@ -1613,14 +1674,16 @@ pub fn button_key(lbox: &LayoutBox, index: usize) -> String {
         .unwrap_or_else(|| format!("__btn_{index}"))
 }
 
-/// The two vertical gradient ends for a button in a given state. The three
-/// live states form one continuous ladder — resting ramps Blue-400 → Blue-500,
-/// hovering drops a rung to 500 → 600, pressing another to 600 → 700 — so each
-/// state is a shift of the whole surface rather than a swap of one flat tone,
-/// and the control never appears to jump. Disabled is not a fourth colour: it
-/// is the resting pair washed toward the window background, which keeps the
-/// hue while removing the call to action.
-pub fn button_tones(theme: &Theme, hovered: bool, pressed: bool, disabled: bool) -> (u32, u32) {
+/// The two vertical gradient ends for a button. `hover_t` is how far the
+/// control has travelled from resting (`0.0`) to hovered (`1.0`); the resting
+/// ramp Blue-400 → Blue-500 and the hovered ramp Blue-500 → Blue-600 are the
+/// two ends of that blend, so an in-between frame is simply both channels
+/// lerped by the same amount and the state change reads as the whole surface
+/// shifting rather than one flat tone being swapped. Pressing drops one more
+/// rung to Blue-600 → Blue-700, instantly — press is feedback, not decoration.
+/// Disabled is not a fourth colour: it is the resting pair washed toward the
+/// window background, keeping the hue while removing the call to action.
+pub fn button_tones(theme: &Theme, hover_t: f32, pressed: bool, disabled: bool) -> (u32, u32) {
     if disabled {
         (
             lerp_color(theme.button_bg_top, theme.bg, 0.62),
@@ -1628,10 +1691,12 @@ pub fn button_tones(theme: &Theme, hovered: bool, pressed: bool, disabled: bool)
         )
     } else if pressed {
         (theme.button_bg_hover, theme.button_bg_pressed)
-    } else if hovered {
-        (theme.button_bg, theme.button_bg_hover)
     } else {
-        (theme.button_bg_top, theme.button_bg)
+        let t = hover_t.clamp(0.0, 1.0);
+        (
+            lerp_color(theme.button_bg_top, theme.button_bg, t),
+            lerp_color(theme.button_bg, theme.button_bg_hover, t),
+        )
     }
 }
 
@@ -1789,6 +1854,19 @@ pub struct NativeApp<D: UiDispatcher> {
     pub tooltip_shown: bool,
     /// Cursor shape last pushed to the window, so unchanged moves cost nothing.
     pub cursor_kind: CursorKind,
+    /// The window's single timer: the earliest moment anything timed is due.
+    /// Idle means the event loop sleeps in `ControlFlow::Wait`.
+    clock: FrameClock,
+    /// How far each button has travelled toward its hovered tone, keyed by the
+    /// same `button_key` the render loop resolves: `0.0` resting, `1.0`
+    /// hovered. Entries fade to zero and are dropped, so only controls that
+    /// are mid-ramp or still under the pointer are held.
+    hover_ramps: HashMap<String, f32>,
+    /// When the caret last moved. The blink phase derives from it, so typing
+    /// or clicking restarts the visible phase instead of landing mid-blink.
+    caret_blink_origin: Option<Instant>,
+    /// When the previous animation tick ran, so the next one can measure `dt`.
+    last_tick: Option<Instant>,
     pub layout_boxes: Vec<LayoutBox>,
     pub render_count: usize,
     pub test_runner: Option<fn(&mut NativeApp<D>, &ActiveEventLoop)>,
@@ -1832,6 +1910,10 @@ impl<D: UiDispatcher> NativeApp<D> {
             // Matches winit's own starting state, so the first shape is only
             // pushed once it differs from the platform default.
             cursor_kind: CursorKind::Default,
+            clock: FrameClock::new(),
+            hover_ramps: HashMap::new(),
+            caret_blink_origin: None,
+            last_tick: None,
             layout_boxes: Vec::new(),
             render_count: 0,
             test_runner: None,
@@ -1995,6 +2077,182 @@ impl<D: UiDispatcher> NativeApp<D> {
         .is_some()
     }
 
+    // -------------------------------------------------------------
+    // Timer / animation (roadmap 1.7)
+    // -------------------------------------------------------------
+
+    /// Whether the element holding focus is a text field that is still laid
+    /// out and still enabled — the only condition under which a caret exists.
+    fn has_focused_input(&self) -> bool {
+        let Some(ref id) = self.focused_id else {
+            return false;
+        };
+        self.layout_boxes
+            .iter()
+            .any(|b| b.tag == "input" && !b.disabled && b.id.as_deref() == Some(id.as_str()))
+    }
+
+    /// Restart the caret's visible phase. Typing or clicking somewhere new has
+    /// to *show* the caret immediately rather than land in the middle of a
+    /// blink, which would make the very act of moving it look like nothing
+    /// happened.
+    fn touch_caret(&mut self) {
+        if self.has_focused_input() {
+            self.caret_blink_origin = Some(Instant::now());
+            if let Some(win) = &self.window {
+                win.request_redraw();
+            }
+        }
+    }
+
+    /// Where in its cycle the caret is: on for [`CARET_BLINK_ON`], off for
+    /// [`CARET_BLINK_OFF`], repeating from the moment it last moved.
+    fn caret_phase(&self, now: Instant, origin: Instant) -> Duration {
+        let period = CARET_BLINK_ON + CARET_BLINK_OFF;
+        let elapsed = now.saturating_duration_since(origin).as_nanos();
+        Duration::from_nanos((elapsed % period.as_nanos()) as u64)
+    }
+
+    /// Whether the caret should be drawn in the frame being built — true only
+    /// in the visible half of the cycle, and only while a focusable field is
+    /// actually there to host it.
+    fn caret_visible(&self, now: Instant) -> bool {
+        match (self.caret_blink_origin, self.has_focused_input()) {
+            (Some(origin), true) => self.caret_phase(now, origin) < CARET_BLINK_ON,
+            _ => false,
+        }
+    }
+
+    /// How long until the caret flips again.
+    fn next_caret_toggle(&self, now: Instant, origin: Instant) -> Duration {
+        let into = self.caret_phase(now, origin);
+        let remaining = if into < CARET_BLINK_ON {
+            CARET_BLINK_ON - into
+        } else {
+            (CARET_BLINK_ON + CARET_BLINK_OFF) - into
+        };
+        // Never schedule "immediately": a zero-length deadline would have the
+        // loop wake, do nothing, and sleep again in a tight spin.
+        remaining.max(Duration::from_millis(1))
+    }
+
+    /// Move every ramp in flight toward its target — `1.0` under the pointer,
+    /// `0.0` everywhere else — and drop the ones that have fully faded out.
+    /// The target is read from the *current* hover state, so moving from one
+    /// control to another ramps both at once instead of the first snapping
+    /// back the instant the pointer leaves it.
+    fn advance_hover_ramps(&mut self, step: Duration) -> bool {
+        if let Some(key) = self.hovered_id.clone() {
+            self.hover_ramps.entry(key).or_insert(0.0);
+        }
+        if self.hover_ramps.is_empty() {
+            return false;
+        }
+        let rate = step.as_secs_f32() / HOVER_RAMP_SECS;
+        let hovered = self.hovered_id.clone();
+        let mut moving = false;
+        let mut faded = Vec::new();
+        for (key, t) in self.hover_ramps.iter_mut() {
+            let target = if hovered.as_deref() == Some(key.as_str()) {
+                1.0
+            } else {
+                0.0
+            };
+            *t = if *t < target {
+                (*t + rate).min(target)
+            } else {
+                (*t - rate).max(target)
+            };
+            if (*t - target).abs() > f32::EPSILON {
+                moving = true;
+            }
+            // Faded-out entries are dropped so the map cannot grow with every
+            // control the pointer has ever visited; the hovered one always
+            // stays, even at zero, so its very first frame has something to
+            // read.
+            if *t <= 0.0 && target == 0.0 {
+                faded.push(key.clone());
+            }
+        }
+        for key in faded {
+            self.hover_ramps.remove(&key);
+        }
+        moving
+    }
+
+    /// Whether any button is still between its resting and hovered tones.
+    fn ramps_in_flight(&self) -> bool {
+        self.hover_ramps.values().any(|t| *t > 0.0 && *t < 1.0)
+    }
+
+    /// Advance the animation by the time the last frame actually took, then
+    /// draw nothing — the caller draws. `dt` is clamped to
+    /// [`MAX_ANIM_STEP`] so a long stall cannot teleport a ramp to its end.
+    fn advance_animation(&mut self) {
+        let now = Instant::now();
+        let dt = self
+            .last_tick
+            .map(|prev| now.saturating_duration_since(prev))
+            .unwrap_or(Duration::ZERO);
+        self.last_tick = Some(now);
+        self.advance_hover_ramps(dt.min(MAX_ANIM_STEP));
+    }
+
+    /// Recompute the clock from what the UI actually needs. Called after every
+    /// frame, so an interface with nothing moving ends up with a cleared
+    /// clock: the loop then sleeps in `ControlFlow::Wait` and costs nothing
+    /// until the next real event.
+    ///
+    /// This deliberately does *not* ask for a redraw. The frame is requested
+    /// by [`about_to_wait`] once the deadline it just recorded has actually
+    /// arrived — asking here would rebuild the very redraw that frame
+    /// consumed, and pin the loop at full speed instead of at the tick.
+    fn schedule_frames(&mut self, now: Instant) {
+        self.clock.clear();
+
+        if self.ramps_in_flight() {
+            self.clock.wake_in(now, RAMP_TICK);
+        }
+
+        if let Some(origin) = self.caret_blink_origin {
+            if self.has_focused_input() {
+                self.clock.wake_in(now, self.next_caret_toggle(now, origin));
+            } else {
+                // The caret it belonged to is gone; stop paying for it.
+                self.caret_blink_origin = None;
+            }
+        }
+    }
+
+    /// Spend a wake-up on a frame if the clock's promised moment has arrived.
+    /// Returns whether a redraw was requested. This is the only place the loop
+    /// re-arms itself, which is what keeps one animation frame per tick rather
+    /// than one per iteration.
+    fn fire_due_frame(&mut self) -> bool {
+        if self.clock.is_idle() {
+            return false;
+        }
+        match self.clock.next_deadline() {
+            Some(at) if Instant::now() >= at => {
+                self.clock.clear();
+                if let Some(win) = &self.window {
+                    win.request_redraw();
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Put the event loop to sleep until the clock's deadline — or for good,
+    /// when there is none.
+    fn pump_clock(&self, event_loop: &ActiveEventLoop) {
+        event_loop.set_control_flow(match self.clock.next_deadline() {
+            Some(at) => ControlFlow::WaitUntil(at),
+            None => ControlFlow::Wait,
+        });
+    }
+
     /// Push the cursor shape implied by whatever is under the pointer to the
     /// window. Called after hover changes and after every layout, so a control
     /// that moves out from under a still pointer never keeps a stale shape.
@@ -2060,6 +2318,12 @@ impl<D: UiDispatcher> NativeApp<D> {
         // Layout just moved every box, so re-derive the cursor shape from the
         // new geometry rather than trusting the one hover last set.
         self.sync_cursor_icon();
+
+        // Whether the caret is in the visible half of its blink. Resolved once
+        // here — before the surface is borrowed — so every field draws it for
+        // the same frame, and a per-box check cannot let two carets disagree
+        // if the clock happened to flip between them.
+        let caret_on = self.caret_visible(Instant::now());
 
         let surface = self.surface.as_mut().unwrap();
         if surface.resize(w_nz, h_nz).is_err() {
@@ -2281,10 +2545,16 @@ impl<D: UiDispatcher> NativeApp<D> {
                     // The pressed tone is matched on the dispatch *key* rather
                     // than on box identity, so the box that lit up when the
                     // button went down is exactly the box that fires on release.
-                    let pressed = hovered
-                        && self.pressed_id.as_deref() == Some(button_key(lbox, box_index).as_str());
+                    let key = button_key(lbox, box_index);
+                    let pressed = hovered && self.pressed_id.as_deref() == Some(key.as_str());
+                    // How far this button has travelled toward its hovered
+                    // tone. Read by the same key, so an unlabelled button
+                    // ramps too and one already fading out after the pointer
+                    // left keeps drawing the blend it has reached instead of
+                    // snapping back to rest the moment it stops being hovered.
+                    let hover_t = self.hover_ramps.get(&key).copied().unwrap_or(0.0);
                     let (grad_top, grad_bottom) =
-                        button_tones(&theme, hovered, pressed, lbox.disabled);
+                        button_tones(&theme, hover_t, pressed, lbox.disabled);
                     let border_color = if lbox.disabled {
                         theme.border
                     } else {
@@ -2496,8 +2766,10 @@ impl<D: UiDispatcher> NativeApp<D> {
                         );
                     }
 
-                    // Draw cursor bar if focused
-                    if is_focused {
+                    // Draw the caret while focused and in the visible half of
+                    // its blink; the blink's other half is what makes a still
+                    // field obviously alive without any polling from the user.
+                    if is_focused && caret_on {
                         let cur_idx = cursor_opt.unwrap_or_else(|| display_text.chars().count());
                         let (cur_line, cur_col) = if let Some(ref id) = lbox.id {
                             if let Some(st) = self.text_inputs.get(id) {
@@ -2689,6 +2961,9 @@ impl<D: UiDispatcher> NativeApp<D> {
             let cy = my + self.scroll_y + lbox.pan.1;
             if let Some(ref id) = lbox.id {
                 self.focused_id = Some(id.clone());
+                // Placing the caret restarts its blink: the first thing a
+                // click in a field has to do is show where it landed.
+                self.touch_caret();
                 let rel_x = cx - (lbox.rect.x + 8);
                 let rel_y = cy - (lbox.rect.y + 6);
                 let cell_h = self.fonts.cell_h.max(1);
@@ -2732,6 +3007,10 @@ impl<D: UiDispatcher> NativeApp<D> {
     }
 
     pub fn handle_key_input(&mut self, logical_key: &Key, typed_text: Option<&str>) {
+        // Any key at all restarts the caret's visible phase: a caret that
+        // happens to be mid-blink when the user types would look like the
+        // keystroke did nothing.
+        self.touch_caret();
         if let Some(ref focused_id) = self.focused_id.clone() {
             let lbox = self
                 .layout_boxes
@@ -3164,6 +3443,11 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
             self.surface = Some(surface);
 
             self.render();
+            // The first frame is drawn here rather than through
+            // `RedrawRequested`, so it has to arm the clock itself — otherwise
+            // a field that is focused from the start would never blink.
+            self.schedule_frames(Instant::now());
+            self.pump_clock(event_loop);
         }
     }
 
@@ -3192,7 +3476,15 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
                 }
             }
             WindowEvent::RedrawRequested => {
+                // Every frame starts the same way: advance whatever is moving,
+                // draw the state it just reached, then recompute the clock
+                // from what is *still* moving. With nothing left to animate,
+                // that leaves the clock idle and the loop back in
+                // `ControlFlow::Wait`, so an idle window costs no CPU.
+                self.advance_animation();
                 self.render();
+                self.schedule_frames(Instant::now());
+                self.pump_clock(event_loop);
             }
             WindowEvent::CursorMoved { position, .. } => {
                 if self.handle_cursor_moved((position.x as i32, position.y as i32)) {
@@ -3279,6 +3571,11 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // A wake-up is only ever worth something if the clock's moment has
+        // arrived; otherwise this is a stray event and the loop goes straight
+        // back to sleep.
+        self.fire_due_frame();
+        self.pump_clock(event_loop);
         if let Some(runner) = self.test_runner.take() {
             runner(self, event_loop);
         }
@@ -5654,7 +5951,8 @@ mod tests {
     }
 
     /// Rest → hover → pressed is one continuous ladder of blues, each rung
-    /// darker than the last. Disabled is not a fourth colour but the resting
+    /// darker than the last, and the hover ramp is literally the blend between
+    /// the first two rungs. Disabled is not a fourth colour but the resting
     /// pair dimmed toward the background — and no amount of hovering can talk
     /// an inert control back into a live tone.
     #[test]
@@ -5663,24 +5961,24 @@ mod tests {
         let lum = |c: u32| ((c >> 16) & 0xFF) as i64 + ((c >> 8) & 0xFF) as i64 + (c & 0xFF) as i64;
 
         assert_eq!(
-            button_tones(&t, false, false, false),
+            button_tones(&t, 0.0, false, false),
             (t.button_bg_top, t.button_bg),
-            "resting ramp"
+            "ramp at 0.0 is exactly the resting pair"
         );
         assert_eq!(
-            button_tones(&t, true, false, false),
+            button_tones(&t, 1.0, false, false),
             (t.button_bg, t.button_bg_hover),
-            "hover drops a rung"
+            "ramp at 1.0 is exactly the hovered pair"
         );
         assert_eq!(
-            button_tones(&t, true, true, false),
+            button_tones(&t, 1.0, true, false),
             (t.button_bg_hover, t.button_bg_pressed),
-            "pressing drops another"
+            "pressing drops another rung"
         );
 
-        let (rest_top, rest_bot) = button_tones(&t, false, false, false);
-        let (hov_top, _) = button_tones(&t, true, false, false);
-        let (prs_top, _) = button_tones(&t, true, true, false);
+        let (rest_top, rest_bot) = button_tones(&t, 0.0, false, false);
+        let (hov_top, _) = button_tones(&t, 1.0, false, false);
+        let (prs_top, _) = button_tones(&t, 1.0, true, false);
         assert!(
             lum(rest_top) > lum(hov_top) && lum(hov_top) > lum(prs_top),
             "each rung must be darker than the one above: rest {} > hover {} > pressed {}",
@@ -5689,15 +5987,379 @@ mod tests {
             lum(prs_top)
         );
 
-        let disabled = button_tones(&t, false, false, true);
+        // A ramp part-way must lie strictly between the two rungs on *both*
+        // channels, so an in-between frame is a real blend and never a jump.
+        let (mid_top, mid_bot) = button_tones(&t, 0.5, false, false);
+        assert!(
+            lum(mid_top) < lum(rest_top)
+                && lum(mid_top) > lum(hov_top)
+                && lum(mid_bot) < lum(rest_bot)
+                && lum(mid_bot) > lum(t.button_bg_hover),
+            "half-ramp must sit between rest and hover on both channels: top {} rest {} hover {}",
+            lum(mid_top),
+            lum(rest_top),
+            lum(hov_top)
+        );
+        // Out-of-range values clamp rather than invent a new tone.
+        assert_eq!(button_tones(&t, -1.0, false, false), (rest_top, rest_bot));
+        assert_eq!(
+            button_tones(&t, 2.0, false, false),
+            (t.button_bg, t.button_bg_hover)
+        );
+
+        let disabled = button_tones(&t, 0.0, false, true);
         assert!(
             lum(disabled.0) < lum(rest_top) && lum(disabled.1) < lum(rest_bot),
             "disabled must be washed toward the background, not re-tinted"
         );
         assert_eq!(
-            button_tones(&t, true, true, true),
+            button_tones(&t, 1.0, true, true),
             disabled,
             "hover and press cannot re-light an inert control"
+        );
+    }
+
+    /// The clock is one deadline, and it only ever moves in one direction:
+    /// forward. A later ask must not postpone an earlier one, because the
+    /// caret's next toggle arriving mid-ramp has no business delaying the
+    /// ramp's own last frame.
+    #[test]
+    fn test_frame_clock_keeps_the_earliest_deadline_and_goes_idle() {
+        let mut clock = FrameClock::new();
+        assert!(clock.is_idle(), "a fresh clock has nothing outstanding");
+        assert_eq!(clock.next_deadline(), None);
+
+        let now = Instant::now();
+        clock.wake_in(now, Duration::from_millis(200));
+        assert_eq!(
+            clock.next_deadline(),
+            Some(now + Duration::from_millis(200))
+        );
+
+        clock.wake_in(now, Duration::from_millis(500));
+        assert_eq!(
+            clock.next_deadline(),
+            Some(now + Duration::from_millis(200)),
+            "a later ask must never push the deadline back"
+        );
+
+        clock.wake_in(now, Duration::from_millis(50));
+        assert_eq!(
+            clock.next_deadline(),
+            Some(now + Duration::from_millis(50)),
+            "an earlier one may pull it forward"
+        );
+
+        clock.clear();
+        assert!(
+            clock.is_idle(),
+            "having drawn the frame, the clock is idle again"
+        );
+    }
+
+    /// A hover is a ramp, not a swap: the button travels from its resting tone
+    /// to the hovered one over [`HOVER_RAMP_SECS`], and the control the pointer
+    /// just left fades back down at the same time instead of snapping. Entries
+    /// that fade all the way out are dropped, so the map cannot grow with every
+    /// button the pointer has ever visited.
+    #[test]
+    fn test_hover_ramps_blend_in_and_fade_back_out() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "T".into(),
+                width: 300,
+                height: 300,
+            },
+            dummy,
+        );
+        app.layout_boxes = vec![
+            test_box("button", "a", 50, false),
+            test_box("button", "b", 110, false),
+        ];
+        let ka = button_key(&app.layout_boxes[0], 0);
+        let kb = button_key(&app.layout_boxes[1], 1);
+
+        assert!(
+            !app.advance_hover_ramps(RAMP_TICK),
+            "an untouched control is not animation"
+        );
+        assert!(
+            app.hover_ramps.is_empty(),
+            "and no entry is invented for a control nobody is on"
+        );
+
+        app.hovered_id = Some(ka.clone());
+        assert!(
+            app.advance_hover_ramps(RAMP_TICK),
+            "a fresh ramp is in flight"
+        );
+        let t = app.hover_ramps[&ka];
+        assert!(
+            t > 0.0 && t < 1.0,
+            "the first tick must land strictly between the two rungs, got {t}"
+        );
+
+        for _ in 0..20 {
+            app.advance_hover_ramps(RAMP_TICK);
+        }
+        assert_eq!(
+            app.hover_ramps[&ka], 1.0,
+            "a finished ramp rests exactly on the hovered tone"
+        );
+        assert!(
+            !app.ramps_in_flight(),
+            "and once there it stops asking for frames"
+        );
+
+        app.hovered_id = Some(kb.clone());
+        assert!(
+            app.advance_hover_ramps(RAMP_TICK),
+            "both halves of the move are animation"
+        );
+        assert!(
+            app.hover_ramps[&ka] < 1.0,
+            "the control just left must start fading rather than snap"
+        );
+        assert!(
+            app.hover_ramps[&kb] > 0.0,
+            "the one just entered must start climbing"
+        );
+
+        for _ in 0..20 {
+            app.advance_hover_ramps(RAMP_TICK);
+        }
+        assert_eq!(app.hover_ramps[&kb], 1.0, "B finishes its own ramp");
+        assert!(
+            !app.hover_ramps.contains_key(&ka),
+            "a control faded back to rest is dropped from the map"
+        );
+        assert!(!app.ramps_in_flight());
+
+        app.hovered_id = None;
+        for _ in 0..20 {
+            app.advance_hover_ramps(RAMP_TICK);
+        }
+        assert!(
+            app.hover_ramps.is_empty(),
+            "a still interface holds no ramp state at all"
+        );
+    }
+
+    /// The caret's blink is a phase, not a coin flip: on for
+    /// [`CARET_BLINK_ON`], off for [`CARET_BLINK_OFF`], repeating from whenever
+    /// the caret last moved — so typing can never land in the invisible half
+    /// and make the keystroke look like it did nothing.
+    #[test]
+    fn test_caret_blink_follows_a_phase_that_a_move_restarts() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "T".into(),
+                width: 300,
+                height: 300,
+            },
+            dummy,
+        );
+        app.layout_boxes = vec![test_box("input", "draft", 50, false)];
+        let origin = Instant::now();
+
+        assert_eq!(app.caret_phase(origin, origin), Duration::ZERO);
+        assert_eq!(
+            app.caret_phase(origin + CARET_BLINK_ON, origin),
+            CARET_BLINK_ON
+        );
+        assert_eq!(
+            app.caret_phase(origin + CARET_BLINK_ON + CARET_BLINK_OFF, origin),
+            Duration::ZERO,
+            "the cycle repeats"
+        );
+
+        // The deadline points at the *next* flip — never past the cycle, and
+        // never at "now", which would have the loop spin.
+        assert_eq!(app.next_caret_toggle(origin, origin), CARET_BLINK_ON);
+        assert_eq!(
+            app.next_caret_toggle(origin + CARET_BLINK_ON, origin),
+            CARET_BLINK_OFF
+        );
+        let into_off = CARET_BLINK_ON + Duration::from_millis(10);
+        assert_eq!(
+            app.next_caret_toggle(origin + into_off, origin),
+            (CARET_BLINK_ON + CARET_BLINK_OFF) - into_off
+        );
+
+        // Without a focusable field there is no caret to blink at all.
+        assert!(!app.caret_visible(origin), "no focus, no caret");
+        app.focused_id = Some("draft".into());
+        app.caret_blink_origin = Some(origin);
+        assert!(
+            app.caret_visible(origin),
+            "freshly placed, it is in the visible half"
+        );
+        assert!(app.caret_visible(origin + CARET_BLINK_ON - Duration::from_millis(1)));
+        assert!(
+            !app.caret_visible(origin + CARET_BLINK_ON),
+            "half a cycle later it is not"
+        );
+        assert!(app.caret_visible(origin + CARET_BLINK_ON + CARET_BLINK_OFF));
+
+        // Moving the caret restarts the visible phase, so the next frame after
+        // a keystroke always shows it.
+        app.touch_caret();
+        assert!(
+            app.caret_visible(Instant::now()),
+            "moving the caret restarts the visible phase"
+        );
+
+        // An inert field can neither hold focus nor borrow a caret.
+        app.layout_boxes = vec![test_box("input", "draft", 50, true)];
+        assert!(
+            !app.has_focused_input(),
+            "a disabled field is not a caret host"
+        );
+        assert!(!app.caret_visible(Instant::now()));
+    }
+
+    /// The point of the whole clock: a still interface schedules *nothing*, so
+    /// the loop can sleep in `ControlFlow::Wait` and cost no CPU. The moment a
+    /// caret is blinking or a button is mid-ramp it asks for a frame and
+    /// carries a deadline to sleep until.
+    #[test]
+    fn test_a_still_interface_schedules_no_frames() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "T".into(),
+                width: 300,
+                height: 300,
+            },
+            dummy,
+        );
+        app.layout_boxes = vec![
+            test_box("button", "a", 50, false),
+            test_box("input", "draft", 110, false),
+        ];
+
+        app.schedule_frames(Instant::now());
+        assert!(
+            app.clock.is_idle(),
+            "an idle interface must not keep the loop awake"
+        );
+
+        let before = Instant::now();
+        app.focused_id = Some("draft".into());
+        app.caret_blink_origin = Some(before);
+        app.schedule_frames(before);
+        let deadline = app.clock.next_deadline();
+        assert!(deadline.is_some(), "a blinking caret needs a frame");
+        assert!(
+            deadline.unwrap() > before,
+            "…due after the moment it was scheduled, not at it"
+        );
+
+        app.focused_id = None;
+        app.schedule_frames(Instant::now());
+        assert!(
+            app.clock.is_idle(),
+            "with nothing focused there is nothing left to wake for"
+        );
+        assert!(
+            app.caret_blink_origin.is_none(),
+            "and the caret's orphaned origin is dropped rather than paid for forever"
+        );
+
+        app.hovered_id = Some(button_key(&app.layout_boxes[0], 0));
+        app.advance_hover_ramps(Duration::from_millis(8));
+        assert!(
+            app.ramps_in_flight(),
+            "a half-ramped button is still moving"
+        );
+        app.schedule_frames(Instant::now());
+        assert!(
+            app.clock.next_deadline().is_some(),
+            "so it needs its next tick"
+        );
+    }
+
+    /// The mechanism that keeps an animating window off the CPU: the loop only
+    /// spends a wake-up on a frame once the clock's moment has actually
+    /// arrived. Asking for the frame from `schedule_frames` instead would
+    /// rebuild the redraw that frame just consumed and pin the process at full
+    /// speed, which is exactly what a frame clock exists to prevent.
+    #[test]
+    fn test_a_frame_is_spent_only_once_its_deadline_has_arrived() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "T".into(),
+                width: 300,
+                height: 300,
+            },
+            dummy,
+        );
+        app.layout_boxes = vec![test_box("input", "draft", 50, false)];
+        app.focused_id = Some("draft".into());
+
+        // Arming the clock spends nothing on its own.
+        let now = Instant::now();
+        app.caret_blink_origin = Some(now);
+        app.schedule_frames(now);
+        assert!(app.clock.next_deadline().is_some());
+        assert!(
+            !app.fire_due_frame(),
+            "the moment has not arrived, so no frame is spent"
+        );
+        assert!(
+            app.clock.next_deadline().is_some(),
+            "…and the promise is still outstanding for the wake-up that will keep it"
+        );
+
+        // Once the caret's toggle is genuinely due, the wake-up buys one frame
+        // and only one. The deadline is always in the future when it is armed,
+        // so this arms the last millisecond of the cycle and lets it lapse.
+        let period = CARET_BLINK_ON + CARET_BLINK_OFF;
+        app.caret_blink_origin = Some(Instant::now() - period + Duration::from_millis(1));
+        app.schedule_frames(Instant::now());
+        std::thread::sleep(Duration::from_millis(10));
+        assert!(
+            app.fire_due_frame(),
+            "the deadline has passed, so the frame is drawn"
+        );
+        assert!(
+            app.clock.is_idle(),
+            "and it is spent, not left outstanding to fire again next iteration"
+        );
+        assert!(
+            !app.fire_due_frame(),
+            "a spent frame cannot be collected twice — this is what stops the loop spinning"
         );
     }
 
