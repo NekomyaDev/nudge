@@ -45,7 +45,7 @@
 
 ### Remaining renderer soft spots
 - No kerning-aware proportional layout for **container width** (uses fixed `CELL_W` grid)
-- No gradients or icons yet (rounded corners landed in 1.3, drop shadows in 1.4)
+- No icons yet (rounded corners 1.3, drop shadows 1.4, gradients 1.5)
 - Single font size tier in use (`BASE_PX`); fractional sizes not yet wired to UI
 - No animation / timer infrastructure (needed for cursor blink and spinners)
 
@@ -133,8 +133,53 @@
     `xdotool mousemove --sync X Y click 1` in a single invocation and reading
     `getmouselocation` right afterwards makes the tests deterministic.
 
-### 1.5 Gradient  (0.5 day)
-- [ ] Vertical / horizontal linear gradient (buttons, headers, selected items)
+### 1.5 Gradient  (0.5 day) — DONE
+- [x] Vertical / horizontal linear gradient (buttons, headers, selected items)
+
+**Implementation:**
+- **Renderer** (`ui_window.rs`): `lerp_color` (per-channel mix, carries `top`'s
+  alpha so an opaque ramp writes straight through) + `gradient_t`, which
+  measures position from the pixel's **index** rather than its centre — so the
+  first and last row/column land on exactly `0.0` and `1.0` and both end
+  colours appear verbatim instead of merely approximately. That is what makes
+  the endpoints assertable rather than a visual guess.
+- `draw_rect_gradient_clipped` for square corners, and
+  `draw_rounded_rect_gradient_box_clipped` mirroring the existing flat box
+  helper (same clip dance, same `outer * (1 - inner)` complementary ring, same
+  `radius = 0` fallback). Both orientations supported: `horizontal = false`
+  ramps down, `true` ramps right.
+- The 1px ring stays a **flat** `border` — a gradient at one pixel reads as a
+  smudge, and a constant outline is what keeps the silhouette legible against a
+  ramping fill. The ramp spans the **interior**, not the whole shape, because
+  the border would otherwise hide both end colours.
+- **Applied to buttons** (`Theme::button_bg_top`): resting ramps Blue-400 →
+  Blue-500, hovering ramps Blue-500 → Blue-600, so a hover shifts the *entire
+  surface* one step darker instead of swapping a single flat tone — the same
+  relationship the old flat pair had. Headers and selected items get the same
+  helper when those widgets land (1.9 / 2.7).
+- **Verified**: `cargo fmt --all -- --check` OK, clippy `--all-features -D
+  warnings` clean, `cargo test --workspace --features native-gui` **865 passed /
+  0 failed** (1 ignored = the real-OS-window acceptance test). 5 new tests:
+  both end colours land exactly with a strictly monotonic ramp in between
+  (vertical *and* horizontal), nothing outside the rect or past a viewport clip
+  is touched, the rounded variant keeps a flat ring while the interior ramps,
+  corners stay anti-aliased (the extreme corner pixel is correctly cut by the
+  radius — a first assertion of mine demanded a blended pixel *there* and was
+  wrong: at `r=6` that pixel sits ~2.5px outside the arc), and the square
+  fallback clips without losing the ramp.
+  Live-verified on X11 with `examples/chat_bubbles.ndg`: the Send button's
+  centre column reads **(96,165,250) → (59,130,246)** at rest (exactly
+  Blue-400 → Blue-500) and **(59,130,246) → (37,99,235)** on hover (Blue-500 →
+  Blue-600), with a flat Blue-400 ring at both ends; a text-free column gives
+  **34 distinct colours across 34 rows**, i.e. a strictly monotonic ramp with
+  no banding. Interaction re-proved: hover renders, one click adds exactly one
+  message (3 clicks → 3 empty bubbles, hashes `fa9ce7391d14` → `87bd8f0e6575` →
+  `d63fe1787b87`), and 8 wheel events dispatch nothing.
+  - **Note**: `import` can capture the window *before* the app repaints, so a
+    click may look like a no-op while it actually dispatched — confirmed by
+    counting resulting messages rather than trusting one screenshot. Focus was
+    also stolen again (back to Chrome), fixed by chaining
+    `windowactivate`/`windowfocus`/`mousemove`/`click` tightly.
 
 ### 1.6 Cursor & mouse state  (1 day)
 - [ ] Text cursor blink animation (requires timer)

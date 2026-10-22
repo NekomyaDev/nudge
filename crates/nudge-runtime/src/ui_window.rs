@@ -58,6 +58,11 @@ pub struct Theme {
     pub input_border_focused: u32,
     pub button_bg: u32,
     pub button_bg_hover: u32,
+    /// Lighter end of the button's vertical gradient; `button_bg` is the bottom
+    /// edge, so controls read as subtly domed instead of flat slabs. The hover
+    /// state runs `button_bg` → `button_bg_hover`, i.e. one step darker overall
+    /// than the resting gradient, which matches how the flat tones related.
+    pub button_bg_top: u32,
     pub button_border: u32,
     pub button_text: u32,
     pub selection_bg: u32,
@@ -90,6 +95,7 @@ impl Theme {
         input_border_focused: 0xFF3B_82F6,  // Blue-500
         button_bg: 0xFF3B_82F6,             // Blue-500
         button_bg_hover: 0xFF25_63EB,       // Blue-600
+        button_bg_top: 0xFF60_A5FA,         // Blue-400 (gradient top)
         button_border: 0xFF60_A5FA,         // Blue-400
         button_text: 0xFFFF_FFFF,           // white
         selection_bg: 0xFF1D_4ED8,          // Blue-700
@@ -664,6 +670,215 @@ pub fn draw_rounded_rect_box_clipped(
                 }
             }
             if inner > 0.0 {
+                if inner >= 1.0 {
+                    buf[row_offset + col] = fill;
+                } else {
+                    blend_px(buf, row_offset + col, fill, inner);
+                }
+            }
+        }
+    }
+}
+
+/// Linear interpolation between two ARGB colours: `t = 0.0` is `top`,
+/// `t = 1.0` is `bottom`, blended per channel. The alpha byte is carried over
+/// from `top`, so a fully opaque gradient writes straight through without a
+/// needless blend.
+#[inline]
+fn lerp_color(top: u32, bottom: u32, t: f32) -> u32 {
+    let t = t.clamp(0.0, 1.0);
+    let ch = |a: u32, b: u32| (a as f32 + (b as f32 - a as f32) * t).round() as u32;
+    let r = ch((top >> 16) & 0xFF, (bottom >> 16) & 0xFF);
+    let g = ch((top >> 8) & 0xFF, (bottom >> 8) & 0xFF);
+    let b = ch(top & 0xFF, bottom & 0xFF);
+    (((top >> 24) & 0xFF) << 24) | (r << 16) | (g << 8) | b
+}
+
+/// Normalised position of pixel `(px, py)` along a gradient that runs from
+/// `top` to `bottom` over the rect `(x, y, w, h)`: `0.0` on the leading edge
+/// and `1.0` on the trailing one. Vertical gradients run **down** (so a button
+/// is lighter at the top, the way light falls on a raised surface), horizontal
+/// ones run right.
+///
+/// Measured from pixel *position*, not centre, so the first and last row/column
+/// land on exactly `0.0` and `1.0` — the end colours appear verbatim, which
+/// keeps them assertable instead of merely approximate.
+#[inline]
+fn gradient_t(px: i32, py: i32, x: i32, y: i32, w: i32, h: i32, horizontal: bool) -> f32 {
+    let (pos, span) = if horizontal {
+        ((px - x) as f32, (w - 1) as f32)
+    } else {
+        ((py - y) as f32, (h - 1) as f32)
+    };
+    if span <= 0.0 {
+        0.0
+    } else {
+        (pos / span).clamp(0.0, 1.0)
+    }
+}
+
+/// Rectangle filled with a linear gradient, `top` → `bottom`: down the left
+/// edge by default, or across the top when `horizontal` is set. Square corners
+/// and no anti-aliasing — use [`draw_rounded_rect_gradient_box_clipped`] for
+/// shapes that need a radius.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_rect_gradient_clipped(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    clip: Option<Rect>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    top: u32,
+    bottom: u32,
+    horizontal: bool,
+) {
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    if let Some(c) = clip {
+        if intersect(Rect { x, y, w, h }, c).is_none() {
+            return;
+        }
+    }
+    let x_start = x.max(0) as usize;
+    let y_start = y.max(0) as usize;
+    let x_end = ((x + w).max(0) as usize).min(stride);
+    let y_end = ((y + h).max(0) as usize).min(height);
+
+    for row in y_start..y_end {
+        let row_offset = row * stride;
+        for col in x_start..x_end {
+            let (px, py) = (col as i32, row as i32);
+            if let Some(c) = clip {
+                if px < c.x || py < c.y || px >= c.x + c.w || py >= c.y + c.h {
+                    continue;
+                }
+            }
+            let t = gradient_t(px, py, x, y, w, h, horizontal);
+            buf[row_offset + col] = lerp_color(top, bottom, t);
+        }
+    }
+}
+
+/// Same as [`draw_rounded_rect_box_clipped`], but the interior ramps from
+/// `top` to `bottom` instead of using one flat `fill`.
+///
+/// The 1px ring stays a **flat** `border`: at one pixel wide a gradient reads
+/// as a smudge rather than an edge, and a constant outline is what makes the
+/// shape's silhouette legible against a gradient fill. The ramp is measured
+/// across the interior rather than the whole shape, so both end colours land
+/// on pixels you can actually see.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_rounded_rect_gradient_box_clipped(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    clip: Option<Rect>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    r: i32,
+    top: u32,
+    bottom: u32,
+    border: u32,
+    horizontal: bool,
+) {
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    if let Some(c) = clip {
+        if intersect(Rect { x, y, w, h }, c).is_none() {
+            return;
+        }
+    }
+    let r = r.min(w / 2).min(h / 2);
+
+    // Interior after removing the 1px border on every side — this is the part
+    // that actually receives paint, so the ramp is measured across *it*: the
+    // topmost filled row lands on exactly `top` and the bottommost on exactly
+    // `bottom`. Measuring across the whole shape instead would hide both end
+    // colours underneath the border ring.
+    let (ix, iy, iw, ih) = (x + 1, y + 1, w - 2, h - 2);
+    let (gx, gy, gw, gh) = if iw > 0 && ih > 0 {
+        (ix, iy, iw, ih)
+    } else {
+        // Degenerate (1–2px) shape: there is no ring worth drawing separately,
+        // so ramp across whatever remains.
+        (x, y, w, h)
+    };
+
+    if r <= 0 {
+        // Square fallback: fill only the interior, then ring it, so the result
+        // matches the flat helper byte-for-byte while keeping the ramp pinned
+        // to visible pixels. The gradient is computed over the *unclipped*
+        // interior, so a box sliced by a viewport keeps the ramp it would have
+        // had in full.
+        match clip.and_then(|c| intersect(Rect { x, y, w, h }, c)) {
+            None => {
+                if clip.is_none() {
+                    draw_rect_gradient_clipped(
+                        buf, stride, height, None, gx, gy, gw, gh, top, bottom, horizontal,
+                    );
+                    draw_rect_outline(buf, stride, height, x, y, w, h, border);
+                }
+            }
+            Some(rc) => {
+                draw_rect_gradient_clipped(
+                    buf,
+                    stride,
+                    height,
+                    Some(rc),
+                    gx,
+                    gy,
+                    gw,
+                    gh,
+                    top,
+                    bottom,
+                    horizontal,
+                );
+                draw_rect_outline(buf, stride, height, rc.x, rc.y, rc.w, rc.h, border);
+            }
+        }
+        return;
+    }
+
+    let x_start = x.max(0) as usize;
+    let y_start = y.max(0) as usize;
+    let x_end = ((x + w).max(0) as usize).min(stride);
+    let y_end = ((y + h).max(0) as usize).min(height);
+
+    for row in y_start..y_end {
+        let row_offset = row * stride;
+        for col in x_start..x_end {
+            let (px, py) = (col as i32, row as i32);
+            if let Some(c) = clip {
+                if px < c.x || py < c.y || px >= c.x + c.w || py >= c.y + c.h {
+                    continue;
+                }
+            }
+            let outer = rounded_rect_coverage(x, y, w, h, r, px, py);
+            if outer <= 0.0 {
+                continue;
+            }
+            let inner = if iw > 0 && ih > 0 {
+                rounded_rect_coverage(ix, iy, iw, ih, r - 1, px, py)
+            } else {
+                0.0
+            };
+            let border_a = outer * (1.0 - inner);
+            if border_a > 0.0 {
+                if border_a >= 1.0 {
+                    buf[row_offset + col] = border;
+                } else {
+                    blend_px(buf, row_offset + col, border, border_a);
+                }
+            }
+            if inner > 0.0 {
+                let fill = lerp_color(top, bottom, gradient_t(px, py, gx, gy, gw, gh, horizontal));
                 if inner >= 1.0 {
                     buf[row_offset + col] = fill;
                 } else {
@@ -1768,12 +1983,16 @@ impl<D: UiDispatcher> NativeApp<D> {
                     // even if the cursor sits on its (invisible) rectangle.
                     let hovered =
                         screen_rect.contains(mx, my) && clip.is_none_or(|c| c.contains(mx, my));
-                    let bg_color = if hovered {
-                        theme.button_bg_hover
+                    // Resting buttons ramp Blue-400 → Blue-500; hovering drops
+                    // the whole ramp one step (Blue-500 → Blue-600), so the
+                    // state change is a shift of the entire surface rather
+                    // than a swap of one flat tone.
+                    let (grad_top, grad_bottom) = if hovered {
+                        (theme.button_bg, theme.button_bg_hover)
                     } else {
-                        theme.button_bg
+                        (theme.button_bg_top, theme.button_bg)
                     };
-                    draw_rounded_rect_box_clipped(
+                    draw_rounded_rect_gradient_box_clipped(
                         &mut buffer,
                         stride,
                         h_usize,
@@ -1783,8 +2002,10 @@ impl<D: UiDispatcher> NativeApp<D> {
                         lbox.rect.w,
                         lbox.rect.h,
                         CORNER_RADIUS,
-                        bg_color,
+                        grad_top,
+                        grad_bottom,
                         theme.button_border,
+                        false,
                     );
                     if let Some(ref text) = lbox.text {
                         let text_w = self.fonts.measure_width(FaceKind::Ui, text);
@@ -4663,6 +4884,266 @@ mod tests {
             assert!(
                 blur + oy <= 8,
                 "reach below the box ({blur}+{oy}) must not cross an 8px gap"
+            );
+        }
+    }
+
+    /// A vertical ramp must start and end on the *exact* end colours (no
+    /// rounding drift) and move in one direction only — a reversal would read
+    /// as a band across the surface.
+    #[test]
+    fn test_gradient_vertical_lands_on_both_end_colours_and_ramps_once() {
+        const BG: u32 = 0xFF18_181B;
+        const TOP: u32 = 0xFFFF_0000; // pure red
+        const BOTTOM: u32 = 0xFF00_00FF; // pure blue
+        let stride = 40usize;
+        let height = 30usize;
+        let mut buf = vec![BG; stride * height];
+        let (x, y, w, h) = (5i32, 3i32, 20i32, 20i32);
+
+        draw_rect_gradient_clipped(
+            &mut buf, stride, height, None, x, y, w, h, TOP, BOTTOM, false,
+        );
+
+        let at = |col: usize, row: usize| buf[row * stride + col];
+        let cx = x as usize + 5;
+        assert_eq!(
+            at(cx, y as usize),
+            TOP,
+            "the first row must be exactly `top`"
+        );
+        assert_eq!(
+            at(cx, (y + h - 1) as usize),
+            BOTTOM,
+            "the last row must be exactly `bottom`"
+        );
+
+        let mut prev_r = 256u32;
+        let mut prev_b = 0u32;
+        for row in (y as usize)..((y + h) as usize) {
+            let c = at(cx, row);
+            let (r, b) = ((c >> 16) & 0xFF, c & 0xFF);
+            assert!(r <= prev_r, "red must never rise going down (row {row})");
+            assert!(b >= prev_b, "blue must never fall going down (row {row})");
+            prev_r = r;
+            prev_b = b;
+        }
+
+        // Nothing outside the rect may be touched.
+        assert_eq!(at(0, 0), BG, "pixels left of the rect stay background");
+        assert_eq!(at(cx, 0), BG, "pixels above the rect stay background");
+    }
+
+    /// The horizontal orientation (required for headers and side rails) ramps
+    /// across columns with the same exact endpoints.
+    #[test]
+    fn test_gradient_horizontal_ramps_left_to_right() {
+        const BG: u32 = 0xFF18_181B;
+        const LEFT: u32 = 0xFFFF_0000;
+        const RIGHT: u32 = 0xFF00_00FF;
+        let stride = 40usize;
+        let height = 30usize;
+        let mut buf = vec![BG; stride * height];
+        let (x, y, w, h) = (5i32, 3i32, 20i32, 20i32);
+
+        draw_rect_gradient_clipped(
+            &mut buf, stride, height, None, x, y, w, h, LEFT, RIGHT, true,
+        );
+
+        let at = |col: usize, row: usize| buf[row * stride + col];
+        let my = y as usize + 5;
+        assert_eq!(
+            at(x as usize, my),
+            LEFT,
+            "the first column must be exactly the left end colour"
+        );
+        assert_eq!(
+            at((x + w - 1) as usize, my),
+            RIGHT,
+            "the last column must be exactly the right end colour"
+        );
+
+        let mut prev_b = 0u32;
+        for col in (x as usize)..((x + w) as usize) {
+            let b = at(col, my) & 0xFF;
+            assert!(b >= prev_b, "blue must never fall going right (col {col})");
+            prev_b = b;
+        }
+        // Rows above/below the rect are untouched — this is horizontal, so the
+        // ramp must not leak vertically.
+        assert_eq!(at(x as usize + 1, 0), BG);
+    }
+
+    /// A gradient inside a scroll region is sliced at the viewport edge like
+    /// every other piece of chrome.
+    #[test]
+    fn test_gradient_respects_the_viewport_clip() {
+        const BG: u32 = 0xFF18_181B;
+        const TOP: u32 = 0xFFFF_0000;
+        const BOTTOM: u32 = 0xFF00_00FF;
+        let stride = 40usize;
+        let height = 30usize;
+        let mut buf = vec![BG; stride * height];
+        let clip = Rect {
+            x: 0,
+            y: 0,
+            w: 15,
+            h: height as i32,
+        };
+
+        // Rect spans x 5..25, so everything from x=15 on is outside the clip.
+        draw_rect_gradient_clipped(
+            &mut buf,
+            stride,
+            height,
+            Some(clip),
+            5,
+            3,
+            20,
+            20,
+            TOP,
+            BOTTOM,
+            false,
+        );
+
+        assert_ne!(buf[10 * stride + 14], BG, "inside the clip is painted");
+        for x in 15..25 {
+            assert_eq!(
+                buf[10 * stride + x],
+                BG,
+                "x={x} is past the viewport and must stay background"
+            );
+        }
+    }
+
+    /// The rounded variant keeps its ring a constant border colour while the
+    /// interior ramps, and the ramp's endpoints land on *visible* interior
+    /// rows (the border would otherwise hide them).
+    #[test]
+    fn test_rounded_gradient_box_rings_it_flat_and_ramps_the_interior() {
+        const BG: u32 = 0xFF18_181B;
+        const TOP: u32 = 0xFFFF_0000;
+        const BOTTOM: u32 = 0xFF00_00FF;
+        const BORDER: u32 = 0xFF00_FF00; // green, so a leak is obvious
+        let stride = 40usize;
+        let height = 30usize;
+        let mut buf = vec![BG; stride * height];
+        let (x, y, w, h, r) = (5i32, 3i32, 30i32, 20i32, 6i32);
+
+        draw_rounded_rect_gradient_box_clipped(
+            &mut buf, stride, height, None, x, y, w, h, r, TOP, BOTTOM, BORDER, false,
+        );
+
+        let at = |col: i32, row: i32| buf[row as usize * stride + col as usize];
+        let cx = x + w / 2;
+
+        assert_eq!(
+            at(cx, y),
+            BORDER,
+            "the top ring must be the flat border colour, not a ramp sample"
+        );
+        assert_eq!(
+            at(cx, y + 1),
+            TOP,
+            "the topmost filled row must be exactly `top`"
+        );
+        assert_eq!(
+            at(cx, y + h - 2),
+            BOTTOM,
+            "the bottommost filled row must be exactly `bottom`"
+        );
+
+        // The interior must actually vary — a single flat tone means the ramp
+        // never got applied.
+        let mut distinct = std::collections::HashSet::new();
+        let mut prev_r = 256u32;
+        for row in (y + 1)..=(y + h - 2) {
+            let c = at(cx, row);
+            distinct.insert(c);
+            let rr = (c >> 16) & 0xFF;
+            assert!(
+                rr <= prev_r,
+                "interior must ramp monotonically (row {row} rose from {prev_r} to {rr})"
+            );
+            prev_r = rr;
+        }
+        assert!(
+            distinct.len() >= 8,
+            "interior must show a real ramp, only {} distinct colours",
+            distinct.len()
+        );
+
+        // The extreme corner pixel sits sqrt(r^2+r^2) ≈ 8.5px from the arc
+        // centre, i.e. ~2.5px *outside* a 6px radius — so it must be cut away
+        // entirely. What must not be flat is the arc itself: partial-coverage
+        // pixels are what stop the corner from stair-stepping.
+        assert_eq!(at(x, y), BG, "the radius must cut the extreme corner pixel");
+        assert_eq!(
+            at(x + w - 1, y + h - 1),
+            BG,
+            "the far corner must be cut as well"
+        );
+        let mut blended = 0;
+        for col in x..(x + w) {
+            let c = at(col, y);
+            if c != BG && c != BORDER {
+                blended += 1;
+            }
+        }
+        assert!(
+            blended >= 2,
+            "the arc needs anti-aliased pixels along the top edge, found {blended}"
+        );
+    }
+
+    /// The square (`radius = 0`) fallback clips at the viewport and still pins
+    /// the ramp to the visible interior.
+    #[test]
+    fn test_gradient_square_fallback_clips_without_losing_the_ramp() {
+        const BG: u32 = 0xFF18_181B;
+        const TOP: u32 = 0xFFFF_0000;
+        const BOTTOM: u32 = 0xFF00_00FF;
+        const BORDER: u32 = 0xFF00_FF00;
+        let stride = 40usize;
+        let height = 30usize;
+        let mut buf = vec![BG; stride * height];
+        let clip = Rect {
+            x: 0,
+            y: 0,
+            w: 15,
+            h: height as i32,
+        };
+
+        // Rect spans x 5..35, y 3..23; the clip cuts it at x=15.
+        draw_rounded_rect_gradient_box_clipped(
+            &mut buf,
+            stride,
+            height,
+            Some(clip),
+            5,
+            3,
+            30,
+            20,
+            0, // square
+            TOP,
+            BOTTOM,
+            BORDER,
+            false,
+        );
+
+        let at = |col: usize, row: usize| buf[row * stride + col];
+        assert_eq!(at(10, 4), TOP, "top interior row inside the clip is `top`");
+        assert_eq!(
+            at(10, 21),
+            BOTTOM,
+            "bottom interior row inside the clip is `bottom`"
+        );
+        assert_eq!(at(10, 3), BORDER, "the visible ring is still flat border");
+        for x in 15..35 {
+            assert_eq!(
+                at(x, 10),
+                BG,
+                "x={x} is past the viewport and must stay background"
             );
         }
     }
