@@ -1,0 +1,66 @@
+// Roadmap 1.6 — cursor & mouse state.
+//
+// Everything here is what a user can read off the screen *before* clicking:
+//
+//   * the cursor shape follows what is under it — a pointing hand over a live
+//     button, an I-beam over a text field, the ordinary arrow elsewhere;
+//   * holding the mouse down on a live button drops it one rung down the blue
+//     ladder (rest 400/500 → hover 500/600 → pressed 600/700), so the press is
+//     visible for as long as it is held;
+//   * `disabled = true` washes a control toward the background, keeps the
+//     arrow, and swallows the click rather than letting it fall through to the
+//     control stacked behind it — this applies to fields as well as buttons,
+//     where it also refuses the caret and the focus ring;
+//   * `tooltip` follows the cursor over a control as a small floating card.
+
+view FormView(draft: string, sent: int) -> View {
+    column(padding = 18, gap = 14) [
+        text("Nudge Studio — cursor & mouse state", wrap = false),
+        text("Draft: [" + draft + "]", wrap = false),
+        input(draft, id = "draft", on_change = on_draft, tooltip = "Type a message here"),
+        input("locked until a reply is drafted", id = "reply", disabled = true, tooltip = "Only enabled once a draft exists"),
+        button("Send", id = "send", on_click = on_send, tooltip = "Send the draft"),
+        button("Cancel", id = "cancel", disabled = true, tooltip = "Nothing to cancel"),
+        text("Sent: " + sent, wrap = false)
+    ]
+}
+
+agent FormApp {
+    state {
+        draft: string = "",
+        sent: int = 0
+    }
+
+    fn on_draft(val: string) uses UI {
+        state.draft = val
+    }
+
+    fn on_send() uses UI {
+        state.sent = state.sent + 1
+        state.draft = ""
+    }
+
+    window MainWindow {
+        title: "Nudge Cursor States",
+        width: 420,
+        height: 300,
+        content: FormView(state.draft, state.sent)
+    }
+}
+
+fn main() uses UI {
+    FormApp.MainWindow.open()
+}
+
+test "the view mounts with live and disabled controls" {
+    let app = FormApp.MainWindow.mount_headless()
+    assert app.find("draft").exists()
+    assert app.find("reply").exists()
+    assert app.find("send").exists()
+    assert app.find("cancel").exists()
+
+    // A disabled control is still laid out — dimmed and inert, not missing —
+    // and the live one still sends.
+    app.dispatch_click("send")
+    assert FormApp.state.sent == 1
+}

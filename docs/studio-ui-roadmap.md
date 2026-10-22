@@ -45,7 +45,10 @@
 
 ### Remaining renderer soft spots
 - No kerning-aware proportional layout for **container width** (uses fixed `CELL_W` grid)
-- No icons yet (rounded corners 1.3, drop shadows 1.4, gradients 1.5)
+- No icons yet (rounded corners 1.3, drop shadows 1.4, gradients 1.5, cursor
+  & mouse states 1.6)
+- No text cursor blink yet — 1.6 shipped the pointer/I-beam shapes but blink
+  needs the frame clock from 1.7
 - Single font size tier in use (`BASE_PX`); fractional sizes not yet wired to UI
 - No animation / timer infrastructure (needed for cursor blink and spinners)
 
@@ -181,11 +184,78 @@
     also stolen again (back to Chrome), fixed by chaining
     `windowactivate`/`windowfocus`/`mousemove`/`click` tightly.
 
-### 1.6 Cursor & mouse state  (1 day)
-- [ ] Text cursor blink animation (requires timer)
-- [ ] Mouse cursor shape changes (pointer/text/wait) — winit `set_cursor`
-- [ ] Button `active` (pressed) third tone; disabled (dimmed) state
-- [ ] Tooltip (small label on hover)
+### 1.6 Cursor & mouse state  (1 day) — DONE
+- [x] Mouse cursor shape changes (pointer / text) — winit `set_cursor`
+- [x] Button `active` (pressed) third tone; disabled (dimmed) state
+- [x] Tooltip (small label on hover)
+- [ ] Text cursor blink animation — deferred to 1.7 (needs the frame clock)
+
+**Implementation (renderer + language props, no compiler change needed):**
+- **Cursor shape**: `CursorKind`, a 3-variant enum of its own rather than
+  `CursorIcon` itself, so it compares cheaply and the window API is only
+  touched when the shape actually changes — mouse-move events arrive several
+  per pixel of travel. Pushed through winit 0.30's `set_cursor`
+  (`set_cursor_icon` is already deprecated in 0.30.13). `sync_cursor_icon`
+  runs after hover changes **and after every layout**, so a control that moves
+  out from under a still pointer can never keep a stale shape. Rules: a live
+  button → `Pointer`, an enabled text field → `Text`, anything else →
+  `Default`. `Wait`/`Progress` are deliberately absent until 3.5 gives the
+  renderer a loading state to be waiting *for*.
+- **Pressed tone**: `pressed_id` records the button under the cursor on
+  `MouseInput::Pressed`, resolved with the same `button_key` hover uses so the
+  box that lights up is the box that fires, and cleared on `Released` —
+  releasing outside the button therefore cannot leave anything stuck looking
+  pressed. `button_tones(theme, hovered, pressed, disabled)` is a pure
+  function: rest Blue-400/500 → hover 500/600 → pressed 600/700, one
+  continuous ladder instead of three unrelated fills.
+- **Disabled**: two new `LayoutBox` fields, `disabled` and `tooltip`, filled
+  from `elem.props` in the layout pass. This needed **no interpreter change**:
+  unknown kwargs already land in `props`, the same route `scroll`'s `gap` and
+  `height` take, and both the checker and the codegens already forward
+  anything they do not recognise verbatim. `button_tones` washes the resting
+  pair 62% toward the background, `input_surface` washes `input_bg` 50% — the
+  hue survives, the call to action does not. An inert control is not
+  hoverable, never takes the pointer cursor, never dispatches, **and absorbs
+  the click** so nothing stacked behind it is hit by mistake; a disabled field
+  additionally refuses the caret and the focus ring.
+- **Tooltip**: `find_tooltip_in_boxes` — any tag may carry one, iterated
+  newest-first so the topmost box wins where boxes overlap — plus a
+  `draw_tooltip` overlay painted **last**, above scroll viewports and all
+  other chrome, because a tooltip has no layout box to hold it in the document
+  flow. The same absence means nothing else keeps it on screen, so it clamps
+  itself inside the window.
+- **Verified**: fmt OK, clippy `-D warnings` clean, **874 passed / 0 failed /
+  1 ignored** (9 new tests: props reaching the layout box, a disabled control
+  absorbing the click without it falling through to the input behind, the tone
+  ladder monotonic with disabled immune to hover, cursor kind per control,
+  the tooltip painting over content and staying inside the window,
+  `button_key` shared by hover/press/dispatch, `input_surface` washing out,
+  and a regression test for the bug below).
+  Live-verified on X11 with the new `examples/cursor_states.ndg`: resting ramp
+  **(94,163,250) → (60,131,246)**, hover **(58,128,245) → (38,100,235)**,
+  pressed **(37,98,234) → (29,79,217)** — three rungs, hover and press darker
+  than the rung above at *every* interior row of a text-free column. The
+  disabled Cancel button is **byte-identical** under hover, running
+  (51,78,112) → (37,64,110), exactly the 0.62 wash of Blue-400/500 toward
+  background, with a flat `theme.border` ring instead of Blue-400; three
+  clicks on it leave the "Sent:" line unchanged (same pixel hash) while one
+  click on Send still advances it. A disabled input keeps its washed fill
+  (32,32,35) and takes **no focus ring** on click, where the live one snaps to
+  Blue-500. Tooltip cards render as `input_bg` + `theme.border` with the label
+  drawn, are exactly `cell_h + 2·PAD_Y` = 28px tall, **follow the pointer by
+  the cursor's own delta** (a 63px cursor move moved the card 63px), and clamp
+  at the window edge — under a right-edge cursor the card ends at x=419, never
+  past it.
+  - **Bug found and fixed by the live pass**: the card was never erased.
+    Repaints were keyed off the button-hover change, but a tooltip-bearing box
+    need not be a button, so leaving one left `hovered_id` at `None`, no
+    repaint was requested, and the card stayed frozen on screen forever.
+    `handle_cursor_moved` now also repaints whenever a tooltip is showing or
+    was showing — which is also what makes the card follow the pointer at all.
+  - **Note**: the X11 cursor glyph itself cannot be captured by a screenshot
+    (`import` and `xwd` composite without the pointer), so the *shape* is
+    proved by unit test plus the live hover that drives the same predicate;
+    every other claim above is pixel evidence.
 
 ### 1.7 Timer / animation infrastructure  (1–2 days)
 - [ ] Frame clock / `request_redraw` scheduling for redraws

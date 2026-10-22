@@ -7696,6 +7696,77 @@ data: [DONE]\n\n";
         assert_eq!(st.text, "heYZllo");
     }
 
+    /// `disabled` and `tooltip` ride along as ordinary props, which is what
+    /// lets the renderer and hit-test honour them without the language needing
+    /// a dedicated slot for each — the handler still lands in its own field.
+    #[test]
+    fn test_button_disabled_and_tooltip_are_forwarded_as_props() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cleanup = EnvReset::set("NUDGE_UI_HEADLESS", "1");
+
+        let src = r#"
+            view FormView(draft: string) -> View {
+                column [
+                    input(draft, id = "draft", on_change = on_draft),
+                    button("Send", id = "send", on_click = on_send, disabled = true, tooltip = "Send the draft")
+                ]
+            }
+
+            agent FormApp {
+                state {
+                    draft: string = ""
+                }
+                fn on_draft(v: string) uses UI {
+                    state.draft = v
+                }
+                fn on_send() uses UI {
+                    state.draft = ""
+                }
+                window FormWindow {
+                    title: "Form",
+                    content: FormView(state.draft)
+                }
+            }
+        "#;
+        let tokens = lex(src).expect("lex failed");
+        let items = parse(tokens).expect("parse failed");
+        let mut interp = Interpreter::new();
+        interp.load_items(&items).expect("load_items failed");
+
+        let env = Rc::new(RefCell::new(Env::new()));
+        let app_id = interp
+            .mount_headless_app(&Some("FormApp".to_string()), "FormWindow", &env)
+            .expect("mount_headless failed");
+
+        let app = interp.headless_apps.get(app_id).expect("mounted app");
+        let root = app.root.as_ref().expect("the view tree must be mounted");
+        let btn = root
+            .find_by_id("send")
+            .expect("the button must be in the view tree");
+        assert_eq!(
+            btn.props.get("disabled").map(String::as_str),
+            Some("true"),
+            "a boolean kwarg must be stringified into props for the renderer"
+        );
+        assert_eq!(
+            btn.props.get("tooltip").map(String::as_str),
+            Some("Send the draft")
+        );
+        assert_eq!(
+            btn.on_click.as_deref(),
+            Some("on_send"),
+            "the handler still belongs to its own field, not to props"
+        );
+
+        let inp = root
+            .find_by_id("draft")
+            .expect("the input must be in the view tree");
+        assert!(
+            !inp.props.contains_key("disabled"),
+            "a control that never says so stays live"
+        );
+    }
+
     #[test]
     fn test_decision_cache_hit_produces_cache_hit_trace() {
         let temp_dir =

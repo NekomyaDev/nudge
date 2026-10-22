@@ -12,7 +12,7 @@ use winit::dpi::LogicalSize;
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, NamedKey};
-use winit::window::{Window, WindowAttributes, WindowId};
+use winit::window::{CursorIcon, Window, WindowAttributes, WindowId};
 
 /// Configuration for opening a native OS window.
 #[derive(Debug, Clone)]
@@ -63,6 +63,10 @@ pub struct Theme {
     /// state runs `button_bg` → `button_bg_hover`, i.e. one step darker overall
     /// than the resting gradient, which matches how the flat tones related.
     pub button_bg_top: u32,
+    /// Bottom of the pressed (mouse-down) ramp, whose top is `button_bg_hover` —
+    /// so the three states form one continuous ladder (400/500 → 500/600 →
+    /// 600/700) rather than three unrelated colours.
+    pub button_bg_pressed: u32,
     pub button_border: u32,
     pub button_text: u32,
     pub selection_bg: u32,
@@ -96,6 +100,7 @@ impl Theme {
         button_bg: 0xFF3B_82F6,             // Blue-500
         button_bg_hover: 0xFF25_63EB,       // Blue-600
         button_bg_top: 0xFF60_A5FA,         // Blue-400 (gradient top)
+        button_bg_pressed: 0xFF1D_4ED8,     // Blue-700 (pressed ladder rung)
         button_border: 0xFF60_A5FA,         // Blue-400
         button_text: 0xFFFF_FFFF,           // white
         selection_bg: 0xFF1D_4ED8,          // Blue-700
@@ -173,6 +178,15 @@ pub struct LayoutBox {
     /// Inner padding for boxes that draw a background larger than their
     /// content (chat bubbles). Text is drawn at `rect + pad`; `0` elsewhere.
     pub pad: i32,
+    /// From `disabled = true`: the control still lays out and draws, but dimmed
+    /// — it is not hoverable, never shows the pointer cursor and never
+    /// dispatches, and it absorbs clicks instead of letting them fall through
+    /// to whatever sits behind it.
+    pub disabled: bool,
+    /// From `tooltip = "..."`: a label drawn as a floating card near the
+    /// cursor while this box is hovered. Purely an overlay, so it is never
+    /// measured and cannot shift layout.
+    pub tooltip: Option<String>,
 }
 
 impl LayoutBox {
@@ -591,6 +605,65 @@ pub fn draw_rounded_rect_box(
     border: u32,
 ) {
     draw_rounded_rect_box_clipped(buf, stride, height, None, x, y, w, h, r, fill, border);
+}
+
+/// Paint a hover tooltip just below and to the right of the cursor. Called
+/// last, so it layers over everything drawn so far — including scroll
+/// viewports, which would otherwise slice it at their edges. A tooltip has no
+/// layout box of its own, which is exactly what keeps it out of the document
+/// flow; the price is that nothing else keeps it on screen, so it is clamped
+/// inside the window here.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_tooltip(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    engine: &FontEngine,
+    theme: &Theme,
+    win_w: i32,
+    win_h: i32,
+    mx: i32,
+    my: i32,
+    text: &str,
+) {
+    const PAD_X: i32 = 7;
+    const PAD_Y: i32 = 5;
+    // Distance from the pointer to the card's top-left corner.
+    const GAP: i32 = 13;
+    const RADIUS: i32 = 4;
+
+    let w = engine.measure_width(FaceKind::Ui, text) + 2 * PAD_X;
+    let h = engine.cell_h + 2 * PAD_Y;
+
+    // Below-right of the pointer, then slid back inside the window if that
+    // would push it past an edge. The card never wraps to the other side, so
+    // it cannot leap across the screen while the pointer sits still.
+    let x = (mx + GAP).clamp(0, (win_w - w).max(0));
+    let y = (my + GAP).clamp(0, (win_h - h).max(0));
+
+    draw_rounded_rect_box(
+        buf,
+        stride,
+        height,
+        x,
+        y,
+        w,
+        h,
+        RADIUS,
+        theme.input_bg,
+        theme.border,
+    );
+    draw_text_ttf_clipped(
+        engine,
+        FaceKind::Ui,
+        x + PAD_X,
+        y + PAD_Y,
+        text,
+        Rect { x, y, w, h },
+        |px, py, pw, ph, cov| {
+            draw_rect_alpha(buf, stride, height, px, py, pw, ph, theme.text, cov);
+        },
+    );
 }
 
 /// Same as [`draw_rounded_rect_box`], but no pixel outside `clip` is touched,
@@ -1362,6 +1435,8 @@ pub fn layout_element_ctx(
                 pan,
                 clips: clips_owned(clips),
                 pad: 0,
+                disabled: false,
+                tooltip: elem.props.get("tooltip").cloned(),
             });
             (w, h)
         }
@@ -1435,6 +1510,8 @@ pub fn layout_element_ctx(
                 pan,
                 clips: clips_owned(clips),
                 pad,
+                disabled: false,
+                tooltip: elem.props.get("tooltip").cloned(),
             });
             (w, h)
         }
@@ -1465,6 +1542,8 @@ pub fn layout_element_ctx(
                 pan,
                 clips: clips_owned(clips),
                 pad: 0,
+                disabled: elem.props.get("disabled").is_some_and(|s| is_truthy(s)),
+                tooltip: elem.props.get("tooltip").cloned(),
             });
             (w, h)
         }
@@ -1493,6 +1572,8 @@ pub fn layout_element_ctx(
                 pan,
                 clips: clips_owned(clips),
                 pad: 0,
+                disabled: elem.props.get("disabled").is_some_and(|s| is_truthy(s)),
+                tooltip: elem.props.get("tooltip").cloned(),
             });
             (w, h)
         }
@@ -1510,7 +1591,56 @@ pub fn layout_element_ctx(
     }
 }
 
+/// Interpret a props value as a boolean. `props` is a flat string map, so
+/// `disabled = true` arrives here as text and every accepted spelling — the
+/// boolean literal's own output plus the forms people type out of habit — has
+/// to be recognised rather than silently falling back to "enabled".
+pub fn is_truthy(v: &str) -> bool {
+    matches!(
+        v.trim().to_ascii_lowercase().as_str(),
+        "true" | "1" | "yes" | "on"
+    )
+}
+
+/// Stable dispatch key for a button: its `id`, else `on_click`, else a
+/// layout-order index. Hover, the pressed state and the actual dispatch all
+/// resolve through this one function, so a press cannot highlight one box and
+/// fire another.
+pub fn button_key(lbox: &LayoutBox, index: usize) -> String {
+    lbox.id
+        .clone()
+        .or_else(|| lbox.on_click.clone())
+        .unwrap_or_else(|| format!("__btn_{index}"))
+}
+
+/// The two vertical gradient ends for a button in a given state. The three
+/// live states form one continuous ladder — resting ramps Blue-400 → Blue-500,
+/// hovering drops a rung to 500 → 600, pressing another to 600 → 700 — so each
+/// state is a shift of the whole surface rather than a swap of one flat tone,
+/// and the control never appears to jump. Disabled is not a fourth colour: it
+/// is the resting pair washed toward the window background, which keeps the
+/// hue while removing the call to action.
+pub fn button_tones(theme: &Theme, hovered: bool, pressed: bool, disabled: bool) -> (u32, u32) {
+    if disabled {
+        (
+            lerp_color(theme.button_bg_top, theme.bg, 0.62),
+            lerp_color(theme.button_bg, theme.bg, 0.62),
+        )
+    } else if pressed {
+        (theme.button_bg_hover, theme.button_bg_pressed)
+    } else if hovered {
+        (theme.button_bg, theme.button_bg_hover)
+    } else {
+        (theme.button_bg_top, theme.button_bg)
+    }
+}
+
 /// Helper to determine which button in `boxes` contains the cursor coordinates `pos`.
+///
+/// Disabled buttons are skipped: they must neither take the pointer cursor nor
+/// be reportable as pressed. Note they still *absorb* clicks in
+/// [`NativeApp::handle_click`], so a click on one cannot fall through to a
+/// control behind it.
 pub fn find_hovered_button_in_boxes(
     boxes: &[LayoutBox],
     scroll_x: i32,
@@ -1519,7 +1649,7 @@ pub fn find_hovered_button_in_boxes(
 ) -> Option<String> {
     let (mx, my) = pos;
     for (i, lbox) in boxes.iter().enumerate() {
-        if lbox.tag == "button" {
+        if lbox.tag == "button" && !lbox.disabled {
             // Pan-aware screen rect; a button scrolled outside its scroll
             // viewport is not hoverable even where its rect still overlaps.
             let screen_rect = lbox.screen_rect(scroll_x, scroll_y);
@@ -1527,21 +1657,117 @@ pub fn find_hovered_button_in_boxes(
                 .screen_clip(scroll_x, scroll_y)
                 .is_none_or(|c| c.contains(mx, my));
             if screen_rect.contains(mx, my) && clip_ok {
-                return Some(
-                    lbox.id
-                        .clone()
-                        .or_else(|| lbox.on_click.clone())
-                        .unwrap_or_else(|| format!("__btn_{i}")),
-                );
+                return Some(button_key(lbox, i));
             }
         }
     }
     None
 }
 
+/// The box whose `tooltip` should be showing, if the cursor sits on one. Used
+/// for the overlay pass and for the pointer/text cursor decision, so any tag —
+/// not just buttons — can carry a label. Iterated newest-first so that when
+/// boxes overlap, the one drawn last (i.e. on top) wins.
+pub fn find_tooltip_in_boxes(
+    boxes: &[LayoutBox],
+    scroll_x: i32,
+    scroll_y: i32,
+    width: i32,
+    height: i32,
+    pos: (i32, i32),
+) -> Option<String> {
+    let (mx, my) = pos;
+    for lbox in boxes.iter().rev() {
+        if lbox.tooltip.is_none() {
+            continue;
+        }
+        if !lbox.visible_in(scroll_x, scroll_y, width, height) {
+            continue;
+        }
+        if lbox.screen_rect(scroll_x, scroll_y).contains(mx, my)
+            && lbox
+                .screen_clip(scroll_x, scroll_y)
+                .is_none_or(|c| c.contains(mx, my))
+        {
+            return lbox.tooltip.clone();
+        }
+    }
+    None
+}
+
+/// The interactive text field under the cursor, if any. Disabled fields are
+/// skipped so they keep the arrow instead of claiming the I-beam. Window
+/// bounds matter here: a field scrolled past the window edge still has a
+/// screen rectangle.
+pub fn input_under_cursor(
+    boxes: &[LayoutBox],
+    scroll_x: i32,
+    scroll_y: i32,
+    width: i32,
+    height: i32,
+    pos: (i32, i32),
+) -> bool {
+    let (mx, my) = pos;
+    for lbox in boxes.iter().rev() {
+        if lbox.tag != "input" || lbox.disabled {
+            continue;
+        }
+        if !lbox.visible_in(scroll_x, scroll_y, width, height) {
+            continue;
+        }
+        if lbox.screen_rect(scroll_x, scroll_y).contains(mx, my)
+            && lbox
+                .screen_clip(scroll_x, scroll_y)
+                .is_none_or(|c| c.contains(mx, my))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// The `(fill, border)` pair for a text field. Focus is what the border
+/// signals; disabled is not a separate palette entry but the resting surface
+/// washed halfway to the window background, the same treatment a disabled
+/// button gets, so the two read as one idea rather than two coincidences. An
+/// inert field is checked first so it can never borrow the focus ring.
+pub fn input_surface(theme: &Theme, focused: bool, disabled: bool) -> (u32, u32) {
+    if disabled {
+        (lerp_color(theme.input_bg, theme.bg, 0.5), theme.border)
+    } else if focused {
+        (theme.input_bg, theme.input_border_focused)
+    } else {
+        (theme.input_bg, theme.input_border)
+    }
+}
+
 // -----------------------------------------------------------------------------
 // Application Handler and Event Loop
 // -----------------------------------------------------------------------------
+
+/// Which cursor shape the window should be showing. A small enum of its own
+/// rather than `CursorIcon` itself purely so it compares cheaply: mouse-move
+/// events arrive several per pixel of travel and the window API should only be
+/// touched when the shape actually changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CursorKind {
+    /// Nothing interactive under the cursor — the platform's usual arrow.
+    Default,
+    /// A live (non-disabled) button: the pointing hand.
+    Pointer,
+    /// A text field: the I-beam.
+    Text,
+}
+
+impl CursorKind {
+    fn icon(self) -> CursorIcon {
+        match self {
+            CursorKind::Default => CursorIcon::Default,
+            CursorKind::Pointer => CursorIcon::Pointer,
+            CursorKind::Text => CursorIcon::Text,
+        }
+    }
+}
 
 pub struct NativeApp<D: UiDispatcher> {
     pub config: WindowConfig,
@@ -1553,6 +1779,16 @@ pub struct NativeApp<D: UiDispatcher> {
     pub height: u32,
     pub cursor_pos: (i32, i32),
     pub hovered_id: Option<String>,
+    /// Key of the button the left button went down on, held until release. It
+    /// is resolved with the same helper hover uses, so the box that shows the
+    /// pressed tone is the one that will dispatch.
+    pub pressed_id: Option<String>,
+    /// Whether a tooltip is on screen, so leaving a labelled box can be told
+    /// apart from merely moving within one — only the exit needs a repaint to
+    /// erase the card.
+    pub tooltip_shown: bool,
+    /// Cursor shape last pushed to the window, so unchanged moves cost nothing.
+    pub cursor_kind: CursorKind,
     pub layout_boxes: Vec<LayoutBox>,
     pub render_count: usize,
     pub test_runner: Option<fn(&mut NativeApp<D>, &ActiveEventLoop)>,
@@ -1591,6 +1827,11 @@ impl<D: UiDispatcher> NativeApp<D> {
             height,
             cursor_pos: (0, 0),
             hovered_id: None,
+            pressed_id: None,
+            tooltip_shown: false,
+            // Matches winit's own starting state, so the first shape is only
+            // pushed once it differs from the platform default.
+            cursor_kind: CursorKind::Default,
             layout_boxes: Vec::new(),
             render_count: 0,
             test_runner: None,
@@ -1727,11 +1968,58 @@ impl<D: UiDispatcher> NativeApp<D> {
     pub fn handle_cursor_moved(&mut self, pos: (i32, i32)) -> bool {
         self.cursor_pos = pos;
         let new_hovered = self.find_hovered_button(pos);
-        if new_hovered != self.hovered_id {
-            self.hovered_id = new_hovered;
-            true
+        let hover_changed = new_hovered != self.hovered_id;
+        self.hovered_id = new_hovered;
+        self.sync_cursor_icon();
+
+        // A tooltip both appears and *follows* the pointer, so every movement
+        // over a labelled box needs a repaint. Keying this off the hover change
+        // alone — as the button tone does — leaves the card frozen where the
+        // pointer entered and never removes it on the way out.
+        let tooltip_here = self.tooltip_here();
+        let needs_redraw = hover_changed || tooltip_here || self.tooltip_shown;
+        self.tooltip_shown = tooltip_here;
+        needs_redraw
+    }
+
+    /// Whether a tooltip should be painted at the current cursor position.
+    fn tooltip_here(&self) -> bool {
+        find_tooltip_in_boxes(
+            &self.layout_boxes,
+            self.scroll_x,
+            self.scroll_y,
+            self.width as i32,
+            self.height as i32,
+            self.cursor_pos,
+        )
+        .is_some()
+    }
+
+    /// Push the cursor shape implied by whatever is under the pointer to the
+    /// window. Called after hover changes and after every layout, so a control
+    /// that moves out from under a still pointer never keeps a stale shape.
+    fn sync_cursor_icon(&mut self) {
+        let kind = if self.hovered_id.is_some() {
+            // `find_hovered_button` already excludes disabled buttons, so the
+            // hand never appears over an inert control.
+            CursorKind::Pointer
+        } else if input_under_cursor(
+            &self.layout_boxes,
+            self.scroll_x,
+            self.scroll_y,
+            self.width as i32,
+            self.height as i32,
+            self.cursor_pos,
+        ) {
+            CursorKind::Text
         } else {
-            false
+            CursorKind::Default
+        };
+        if kind != self.cursor_kind {
+            self.cursor_kind = kind;
+            if let Some(win) = &self.window {
+                win.set_cursor(kind.icon());
+            }
         }
     }
 
@@ -1768,6 +2056,10 @@ impl<D: UiDispatcher> NativeApp<D> {
         let max_scroll_x = (total_w - self.width as i32 + 20).max(0);
         self.scroll_y = self.scroll_y.clamp(0, max_scroll_y);
         self.scroll_x = self.scroll_x.clamp(0, max_scroll_x);
+
+        // Layout just moved every box, so re-derive the cursor shape from the
+        // new geometry rather than trusting the one hover last set.
+        self.sync_cursor_icon();
 
         let surface = self.surface.as_mut().unwrap();
         if surface.resize(w_nz, h_nz).is_err() {
@@ -1820,8 +2112,9 @@ impl<D: UiDispatcher> NativeApp<D> {
         );
 
         // Render each layout box with window scroll, enclosing scroll
-        // containers (pan) & their viewport clipping
-        for lbox in &self.layout_boxes {
+        // containers (pan) & their viewport clipping. The index participates
+        // in the button dispatch key when a button has no id or handler.
+        for (box_index, lbox) in self.layout_boxes.iter().enumerate() {
             let rx = lbox.rect.x - self.scroll_x - lbox.pan.0;
             let ry = lbox.rect.y - self.scroll_y - lbox.pan.1;
 
@@ -1980,17 +2273,22 @@ impl<D: UiDispatcher> NativeApp<D> {
                         h: lbox.rect.h,
                     };
                     // A control scrolled out of its viewport is not hoverable
-                    // even if the cursor sits on its (invisible) rectangle.
-                    let hovered =
-                        screen_rect.contains(mx, my) && clip.is_none_or(|c| c.contains(mx, my));
-                    // Resting buttons ramp Blue-400 → Blue-500; hovering drops
-                    // the whole ramp one step (Blue-500 → Blue-600), so the
-                    // state change is a shift of the entire surface rather
-                    // than a swap of one flat tone.
-                    let (grad_top, grad_bottom) = if hovered {
-                        (theme.button_bg, theme.button_bg_hover)
+                    // even if the cursor sits on its (invisible) rectangle, and
+                    // a disabled one is never hoverable at all.
+                    let hovered = !lbox.disabled
+                        && screen_rect.contains(mx, my)
+                        && clip.is_none_or(|c| c.contains(mx, my));
+                    // The pressed tone is matched on the dispatch *key* rather
+                    // than on box identity, so the box that lit up when the
+                    // button went down is exactly the box that fires on release.
+                    let pressed = hovered
+                        && self.pressed_id.as_deref() == Some(button_key(lbox, box_index).as_str());
+                    let (grad_top, grad_bottom) =
+                        button_tones(&theme, hovered, pressed, lbox.disabled);
+                    let border_color = if lbox.disabled {
+                        theme.border
                     } else {
-                        (theme.button_bg_top, theme.button_bg)
+                        theme.button_border
                     };
                     draw_rounded_rect_gradient_box_clipped(
                         &mut buffer,
@@ -2004,14 +2302,18 @@ impl<D: UiDispatcher> NativeApp<D> {
                         CORNER_RADIUS,
                         grad_top,
                         grad_bottom,
-                        theme.button_border,
+                        border_color,
                         false,
                     );
                     if let Some(ref text) = lbox.text {
                         let text_w = self.fonts.measure_width(FaceKind::Ui, text);
                         let tx = rx + ((lbox.rect.w - text_w) / 2).max(8);
                         let ty = ry + ((lbox.rect.h - cell_h) / 2).max(4);
-                        let color = theme.button_text;
+                        let color = if lbox.disabled {
+                            theme.text_dim
+                        } else {
+                            theme.button_text
+                        };
                         let fonts = &self.fonts;
                         // Clip to the button interior (intersected with any
                         // enclosing scroll viewport) so wide glyphs can never
@@ -2053,13 +2355,12 @@ impl<D: UiDispatcher> NativeApp<D> {
                     }
                 }
                 "input" => {
-                    let is_focused =
-                        self.focused_id.as_deref() == lbox.id.as_deref() && lbox.id.is_some();
-                    let border_color = if is_focused {
-                        theme.input_border_focused
-                    } else {
-                        theme.input_border
-                    };
+                    // An inert field can never hold focus, so no caret or
+                    // selection highlight can ever appear inside it.
+                    let is_focused = !lbox.disabled
+                        && lbox.id.is_some()
+                        && self.focused_id.as_deref() == lbox.id.as_deref();
+                    let (bg, border_color) = input_surface(&theme, is_focused, lbox.disabled);
 
                     draw_rounded_rect_box_clipped(
                         &mut buffer,
@@ -2071,7 +2372,7 @@ impl<D: UiDispatcher> NativeApp<D> {
                         lbox.rect.w,
                         lbox.rect.h,
                         CORNER_RADIUS,
-                        theme.input_bg,
+                        bg,
                         border_color,
                     );
 
@@ -2155,7 +2456,11 @@ impl<D: UiDispatcher> NativeApp<D> {
                     // Draw text, clipped to the field interior (and any
                     // enclosing scroll viewport) so glyphs can never bleed
                     // over the rounded border.
-                    let input_text_color = theme.text;
+                    let input_text_color = if lbox.disabled {
+                        theme.text_dim
+                    } else {
+                        theme.text
+                    };
                     let fonts = &self.fonts;
                     let field = Rect {
                         x: rx + 1,
@@ -2305,6 +2610,30 @@ impl<D: UiDispatcher> NativeApp<D> {
             );
         }
 
+        // Tooltip overlay, painted last so it layers over every box, including
+        // those inside a scroll viewport that would otherwise clip it.
+        if let Some(tip) = find_tooltip_in_boxes(
+            &self.layout_boxes,
+            self.scroll_x,
+            self.scroll_y,
+            self.width as i32,
+            self.height as i32,
+            (mx, my),
+        ) {
+            draw_tooltip(
+                &mut buffer,
+                stride,
+                h_usize,
+                &self.fonts,
+                &theme,
+                self.width as i32,
+                self.height as i32,
+                mx,
+                my,
+                &tip,
+            );
+        }
+
         self.render_count += 1;
         let _ = buffer.present();
     }
@@ -2332,14 +2661,21 @@ impl<D: UiDispatcher> NativeApp<D> {
                 continue;
             }
             if lbox.tag == "button" {
-                if let Some(ref id) = lbox.id {
-                    clicked_button = Some(id.clone());
-                } else if let Some(ref on_click) = lbox.on_click {
-                    clicked_button = Some(on_click.clone());
+                if !lbox.disabled {
+                    // Resolve the key exactly the way hover and the pressed
+                    // tone do (id first, then `on_click`), so the box that lit
+                    // up is the one that fires. A button with neither never
+                    // dispatches — it is decoration.
+                    clicked_button = lbox.id.clone().or_else(|| lbox.on_click.clone());
                 }
+                // Either way the press stops here: a disabled control absorbs
+                // the click instead of letting it fall through to a control
+                // stacked behind it.
                 break;
             } else if lbox.tag == "input" {
-                clicked_input = Some(lbox.clone());
+                if !lbox.disabled {
+                    clicked_input = Some(lbox.clone());
+                }
                 break;
             }
         }
@@ -2870,9 +3206,32 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
                 button: MouseButton::Left,
                 ..
             } => {
+                // Resolve the button under the cursor *before* dispatching, so
+                // the pressed tone survives the press itself: dispatch may
+                // already have swapped the view underneath us.
+                self.pressed_id = find_hovered_button_in_boxes(
+                    &self.layout_boxes,
+                    self.scroll_x,
+                    self.scroll_y,
+                    self.cursor_pos,
+                );
                 self.handle_click();
                 if let Some(win) = &self.window {
                     win.request_redraw();
+                }
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button: MouseButton::Left,
+                ..
+            } => {
+                // The tone is held for exactly as long as the button is down.
+                // Released outside the button still clears it, so nothing can
+                // get stuck looking pressed.
+                if self.pressed_id.take().is_some() {
+                    if let Some(win) = &self.window {
+                        win.request_redraw();
+                    }
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
@@ -3111,6 +3470,8 @@ mod tests {
             pan: (0, 0),
             clips: None,
             pad: 0,
+            disabled: false,
+            tooltip: None,
         }];
 
         // Simulate click on line 1, col 2:
@@ -3473,6 +3834,8 @@ mod tests {
             pan: (0, 0),
             clips: None,
             pad: 0,
+            disabled: false,
+            tooltip: None,
         }];
 
         // Initially at (0, 0) - not hovering
@@ -3579,6 +3942,8 @@ mod tests {
             pan: (0, 0),
             clips: None,
             pad: 0,
+            disabled: false,
+            tooltip: None,
         }];
 
         assert!(app.focus_input("test_input"));
@@ -4289,6 +4654,8 @@ mod tests {
             pan: (0, 0),
             clips: None,
             pad: 0,
+            disabled: false,
+            tooltip: None,
         };
         b.clips = Some(vec![outer, inner]);
         assert_eq!(
@@ -4802,6 +5169,8 @@ mod tests {
                 pan: (0, 0),
                 clips: None,
                 pad: 10,
+                disabled: false,
+                tooltip: None,
             },
             // Only 2px below the first: its halo *would* reach back over the
             // first box's bottom edge if drawn inline.
@@ -4821,6 +5190,8 @@ mod tests {
                 pan: (0, 0),
                 clips: None,
                 pad: 10,
+                disabled: false,
+                tooltip: None,
             },
         ];
 
@@ -5146,5 +5517,442 @@ mod tests {
                 "x={x} is past the viewport and must stay background"
             );
         }
+    }
+
+    // -------------------------------------------------------------
+    // 1.6 — Cursor & mouse state
+    // -------------------------------------------------------------
+
+    /// `disabled` and `tooltip` are ordinary props, so they have to survive
+    /// the whole path from the language down to the box the hit-test reads.
+    /// If this ever breaks the renderer silently shows every control as live.
+    #[test]
+    fn test_disabled_and_tooltip_props_reach_layout() {
+        let mut col = UiElement::new("column");
+
+        let mut btn = UiElement::new("button");
+        btn.text = Some("Send".into());
+        btn.on_click = Some("on_send".into());
+        btn.props.insert("disabled".into(), "true".into());
+        btn.props.insert("tooltip".into(), "Send the draft".into());
+
+        let mut inp = UiElement::new("input");
+        inp.id = Some("draft".into());
+        inp.props.insert("disabled".into(), "1".into());
+        inp.props.insert("tooltip".into(), "Type here".into());
+
+        col.children.push(btn);
+        col.children.push(inp);
+
+        let mut boxes = Vec::new();
+        layout_element(&col, 0, 0, 300, &mut boxes);
+
+        let btn_box = boxes
+            .iter()
+            .find(|b| b.tag == "button")
+            .expect("button must lay out");
+        assert!(btn_box.disabled, "`disabled = true` must reach the box");
+        assert_eq!(
+            btn_box.tooltip.as_deref(),
+            Some("Send the draft"),
+            "`tooltip` must reach the box verbatim"
+        );
+
+        let inp_box = boxes
+            .iter()
+            .find(|b| b.tag == "input")
+            .expect("input must lay out");
+        assert!(inp_box.disabled, "the `1` spelling counts as disabled too");
+        assert_eq!(inp_box.tooltip.as_deref(), Some("Type here"));
+
+        // A control that says nothing about either prop stays fully live.
+        let mut plain = UiElement::new("button");
+        plain.text = Some("Go".into());
+        let mut solo = Vec::new();
+        layout_element(&plain, 0, 0, 300, &mut solo);
+        assert!(!solo[0].disabled, "no prop means enabled");
+        assert!(solo[0].tooltip.is_none(), "no prop means no tooltip");
+    }
+
+    fn test_box(tag: &str, id: &str, y: i32, disabled: bool) -> LayoutBox {
+        LayoutBox {
+            rect: Rect {
+                x: 50,
+                y,
+                w: 100,
+                h: 40,
+            },
+            tag: tag.into(),
+            id: Some(id.into()),
+            text: Some(id.into()),
+            on_click: if tag == "button" {
+                Some("click".into())
+            } else {
+                None
+            },
+            on_change: if tag == "input" {
+                Some("changed".into())
+            } else {
+                None
+            },
+            on_key: None,
+            pan: (0, 0),
+            clips: None,
+            pad: 0,
+            disabled,
+            tooltip: None,
+        }
+    }
+
+    /// A disabled control is not merely un-clickable: the press has to *stop*
+    /// with it, so nothing stacked behind it is clicked or focused by mistake.
+    /// Its live neighbours must be entirely unaffected.
+    #[test]
+    fn test_disabled_button_is_inert_and_absorbs_the_click() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "T".into(),
+                width: 300,
+                height: 300,
+            },
+            dummy,
+        );
+
+        app.layout_boxes = vec![
+            test_box("button", "live", 50, false),
+            test_box("button", "off", 110, true),
+            // Stacked exactly behind the disabled one: it must never be hit.
+            test_box("input", "behind", 110, false),
+        ];
+
+        assert_eq!(app.find_hovered_button((60, 120)), None, "not hoverable");
+        app.cursor_pos = (60, 120);
+        app.handle_click();
+        assert_eq!(
+            *app.dispatcher.val, 0,
+            "a disabled button must never dispatch"
+        );
+        assert!(
+            app.focused_id.is_none(),
+            "…and must not let the click fall through to the input behind it"
+        );
+
+        app.cursor_pos = (60, 60);
+        app.handle_click();
+        assert_eq!(
+            *app.dispatcher.val, 1,
+            "the enabled button beside it must still work"
+        );
+    }
+
+    /// Rest → hover → pressed is one continuous ladder of blues, each rung
+    /// darker than the last. Disabled is not a fourth colour but the resting
+    /// pair dimmed toward the background — and no amount of hovering can talk
+    /// an inert control back into a live tone.
+    #[test]
+    fn test_button_tones_form_one_ladder_and_disable_washes_out() {
+        let t = Theme::DARK;
+        let lum = |c: u32| ((c >> 16) & 0xFF) as i64 + ((c >> 8) & 0xFF) as i64 + (c & 0xFF) as i64;
+
+        assert_eq!(
+            button_tones(&t, false, false, false),
+            (t.button_bg_top, t.button_bg),
+            "resting ramp"
+        );
+        assert_eq!(
+            button_tones(&t, true, false, false),
+            (t.button_bg, t.button_bg_hover),
+            "hover drops a rung"
+        );
+        assert_eq!(
+            button_tones(&t, true, true, false),
+            (t.button_bg_hover, t.button_bg_pressed),
+            "pressing drops another"
+        );
+
+        let (rest_top, rest_bot) = button_tones(&t, false, false, false);
+        let (hov_top, _) = button_tones(&t, true, false, false);
+        let (prs_top, _) = button_tones(&t, true, true, false);
+        assert!(
+            lum(rest_top) > lum(hov_top) && lum(hov_top) > lum(prs_top),
+            "each rung must be darker than the one above: rest {} > hover {} > pressed {}",
+            lum(rest_top),
+            lum(hov_top),
+            lum(prs_top)
+        );
+
+        let disabled = button_tones(&t, false, false, true);
+        assert!(
+            lum(disabled.0) < lum(rest_top) && lum(disabled.1) < lum(rest_bot),
+            "disabled must be washed toward the background, not re-tinted"
+        );
+        assert_eq!(
+            button_tones(&t, true, true, true),
+            disabled,
+            "hover and press cannot re-light an inert control"
+        );
+    }
+
+    /// Focus is what the border signals, and an inert field must not be able
+    /// to borrow that ring. Its surface is the resting one washed toward the
+    /// window background — the same treatment the disabled button gets, not a
+    /// colour of its own.
+    #[test]
+    fn test_input_surface_washes_out_when_disabled() {
+        let t = Theme::DARK;
+        assert_eq!(
+            input_surface(&t, false, false),
+            (t.input_bg, t.input_border),
+            "resting"
+        );
+        assert_eq!(
+            input_surface(&t, true, false),
+            (t.input_bg, t.input_border_focused),
+            "focus shows in the border"
+        );
+
+        let inert = input_surface(&t, true, true);
+        assert_eq!(
+            inert,
+            input_surface(&t, false, true),
+            "an inert field ignores focus entirely"
+        );
+        assert_eq!(inert.1, t.border, "…and takes the plain border");
+        assert_ne!(inert.0, t.input_bg, "its surface must be washed out");
+        assert!(
+            (inert.0 & 0xFF) < (t.input_bg & 0xFF),
+            "washed toward the darker window background: got {:08x} vs input_bg {:08x}",
+            inert.0,
+            t.input_bg
+        );
+    }
+
+    /// The cursor shape is what tells a user what a click will do *before*
+    /// they click: the hand over a live button, the I-beam over a text field,
+    /// nothing special anywhere else — least of all over a disabled control,
+    /// which must not advertise an interaction it will refuse.
+    #[test]
+    fn test_cursor_kind_follows_what_is_under_the_pointer() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "T".into(),
+                width: 300,
+                height: 300,
+            },
+            dummy,
+        );
+        app.layout_boxes = vec![
+            test_box("button", "live", 50, false),
+            test_box("input", "draft", 110, false),
+            test_box("button", "off", 170, true),
+        ];
+
+        app.handle_cursor_moved((10, 10));
+        assert_eq!(
+            app.cursor_kind,
+            CursorKind::Default,
+            "empty space takes the arrow"
+        );
+
+        app.handle_cursor_moved((60, 60));
+        assert_eq!(
+            app.cursor_kind,
+            CursorKind::Pointer,
+            "a live button takes the hand"
+        );
+
+        app.handle_cursor_moved((60, 120));
+        assert_eq!(
+            app.cursor_kind,
+            CursorKind::Text,
+            "a text field takes the I-beam"
+        );
+
+        app.handle_cursor_moved((60, 180));
+        assert_eq!(
+            app.cursor_kind,
+            CursorKind::Default,
+            "a disabled button keeps the arrow"
+        );
+    }
+
+    /// The tooltip is an overlay: it paints last, so it covers whatever lies
+    /// beneath it, and because no layout box holds it in the document flow it
+    /// is clamped inside the window instead of running off the edge.
+    #[test]
+    fn test_tooltip_paints_on_top_and_stays_inside_the_window() {
+        const BG: u32 = 0xFF18_181B; // Theme::DARK.bg
+        const UNDER: u32 = 0xFFFF_0000;
+        let t = Theme::DARK;
+        let stride = 140usize;
+        let height = 100usize;
+        let fonts = FontEngine::new(BASE_PX);
+        let label = "Send the draft";
+        let w = fonts.measure_width(FaceKind::Ui, label) + 2 * 7;
+        let h = fonts.cell_h + 2 * 5;
+        let interior = |x: i32, y: i32| ((y + h - 3) as usize) * stride + (x + w / 2) as usize;
+
+        // Content already on screen underneath the pointer.
+        let mut buf = vec![BG; stride * height];
+        draw_rect(&mut buf, stride, height, 40, 40, 60, 30, UNDER);
+
+        draw_tooltip(
+            &mut buf,
+            stride,
+            height,
+            &fonts,
+            &t,
+            stride as i32,
+            height as i32,
+            30,
+            30,
+            label,
+        );
+        assert_eq!(
+            buf[interior(43, 43)],
+            t.input_bg,
+            "the card must cover the content beneath it rather than blend with it"
+        );
+
+        // Pointer in the bottom-right corner: the card slides back inside
+        // instead of running off both edges.
+        let mut buf2 = vec![BG; stride * height];
+        draw_tooltip(
+            &mut buf2,
+            stride,
+            height,
+            &fonts,
+            &t,
+            stride as i32,
+            height as i32,
+            stride as i32 - 4,
+            height as i32 - 4,
+            label,
+        );
+        let x = (stride as i32 - 4 + 13).clamp(0, (stride as i32 - w).max(0));
+        let y = (height as i32 - 4 + 13).clamp(0, (height as i32 - h).max(0));
+        assert!(x + w <= stride as i32, "must still fit horizontally");
+        assert!(y + h <= height as i32, "must still fit vertically");
+        assert_eq!(
+            buf2[interior(x, y)],
+            t.input_bg,
+            "the clamped card still paints its interior"
+        );
+    }
+
+    /// Regression guard: a tooltip both appears and *follows* the pointer, so
+    /// moving onto, within and off a labelled box must each ask for a repaint.
+    /// Keying that off the button-hover change — which never moves here, since
+    /// a text label is not hoverable — left the card frozen on screen and it
+    /// was never erased.
+    #[test]
+    fn test_moving_around_a_labelled_box_requests_repaints() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "T".into(),
+                width: 300,
+                height: 300,
+            },
+            dummy,
+        );
+        let mut labelled = test_box("text", "tip", 50, false);
+        labelled.tooltip = Some("what this does".into());
+        app.layout_boxes = vec![labelled];
+
+        assert!(
+            !app.handle_cursor_moved((10, 10)),
+            "empty space needs no repaint"
+        );
+        assert_eq!(app.hovered_id, None, "a label is not a button");
+        assert!(
+            app.handle_cursor_moved((60, 60)),
+            "entering a labelled box must repaint to show the card"
+        );
+        assert!(app.tooltip_shown, "the card is on screen");
+        assert!(
+            app.handle_cursor_moved((70, 60)),
+            "moving within it must repaint so the card follows the pointer"
+        );
+        assert!(
+            app.handle_cursor_moved((10, 10)),
+            "leaving it must repaint to erase the card"
+        );
+        assert!(!app.tooltip_shown, "…and now it is gone");
+    }
+
+    /// Hover, the pressed tone and the actual dispatch must all resolve a
+    /// button through the same function; otherwise a press can light up one
+    /// box and fire a different one the moment layout order shifts.
+    #[test]
+    fn test_button_key_is_shared_by_hover_press_and_dispatch() {
+        fn btn_box(id: Option<&str>, on_click: Option<&str>) -> LayoutBox {
+            LayoutBox {
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    w: 10,
+                    h: 10,
+                },
+                tag: "button".into(),
+                id: id.map(str::to_string),
+                text: Some("b".into()),
+                on_click: on_click.map(str::to_string),
+                on_change: None,
+                on_key: None,
+                pan: (0, 0),
+                clips: None,
+                pad: 0,
+                disabled: false,
+                tooltip: None,
+            }
+        }
+
+        assert_eq!(
+            button_key(&btn_box(Some("send"), Some("on_send")), 7),
+            "send",
+            "an explicit id wins"
+        );
+        assert_eq!(
+            button_key(&btn_box(None, Some("on_send")), 7),
+            "on_send",
+            "then the handler"
+        );
+        assert_eq!(
+            button_key(&btn_box(None, None), 7),
+            "__btn_7",
+            "then layout order, so the key is never empty"
+        );
+
+        // Hover reports that same shared key.
+        let boxes = vec![btn_box(None, None)];
+        assert_eq!(
+            find_hovered_button_in_boxes(&boxes, 0, 0, (5, 5)),
+            Some("__btn_0".into()),
+            "an unlabelled button still reports the shared key"
+        );
     }
 }
