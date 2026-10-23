@@ -1708,6 +1708,52 @@ fn check_expr_pos(
                         }
                         return Ty::View;
                     }
+                    // A boolean control hands its handler the new value as a
+                    // Bool — that is what the widget *is* — so a handler
+                    // declaring `v: string` would be handed something the type
+                    // could not hold. Caught here rather than at the first
+                    // click, which is the whole point of checking.
+                    "checkbox" | "toggle" => {
+                        for a in args {
+                            check_expr(a, locals, g, errs);
+                        }
+                        for (k, v) in kwargs {
+                            check_expr(v, locals, g, errs);
+                            if k == "on_change" {
+                                if let ExprKind::Ident(ref hname) = v.kind {
+                                    if let Some(effs) = g.fn_effects.get(hname) {
+                                        if !effs.iter().any(|e| e == "UI") {
+                                            errs.push(CheckError {
+                                                span: None,
+                                                code: "E1001",
+                                                msg: format!("event handler '{hname}' missing UI effect: event handlers require `uses UI`"),
+                                            });
+                                        }
+                                    }
+                                    if let Some((params, _)) = g.fns.get(hname) {
+                                        if params.len() > 1 {
+                                            errs.push(CheckError {
+                                                span: None,
+                                                code: "E1003",
+                                                msg: format!("event handler '{hname}' signature mismatch: expected at most 1 parameter"),
+                                            });
+                                        } else if params.len() == 1 {
+                                            let param_ty =
+                                                resolve(&params[0].1, g, &mut Vec::new(), errs);
+                                            if param_ty != Ty::Bool && param_ty != Ty::Unknown {
+                                                errs.push(CheckError {
+                                                    span: None,
+                                                    code: "E1003",
+                                                    msg: format!("event handler '{hname}' signature mismatch: parameter '{}' must be of type bool", params[0].0),
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        return Ty::View;
+                    }
                     "text" | "button" | "input" | "bubble" | "select" => {
                         for a in args {
                             check_expr(a, locals, g, errs);
@@ -1903,7 +1949,7 @@ fn check_expr_pos(
                     } else if prefix == "ui" {
                         match name.as_str() {
                             "column" | "row" | "scroll" | "text" | "button" | "input"
-                            | "bubble" | "select" => return Ty::View,
+                            | "bubble" | "select" | "checkbox" | "toggle" => return Ty::View,
                             other => {
                                 errs.push(CheckError {
                                     span: None,
@@ -5635,5 +5681,66 @@ fn f() -> int | string {
         assert!(errs
             .iter()
             .any(|e| e.code == "E0201" && e.msg.contains("math.abs")));
+    }
+
+    /// A boolean control hands its handler a Bool, so a handler declaring
+    /// `v: string` would be handed something the type could not hold. Caught
+    /// at check time rather than at the first click, which is the whole point
+    /// of checking.
+    #[test]
+    fn test_a_flags_change_handler_must_take_a_bool() {
+        let good = check_src(
+            r#"
+            fn on_dark(v: bool) uses UI {
+            }
+
+            view GoodView() -> View {
+                column [
+                    checkbox("Dark mode", id = "dark", on_change = on_dark)
+                ]
+            }
+        "#,
+        );
+        assert!(
+            good.is_empty(),
+            "a bool handler is exactly right, got {good:?}"
+        );
+
+        let bad = check_src(
+            r#"
+            fn on_dark(v: string) uses UI {
+            }
+
+            view BadView() -> View {
+                column [
+                    toggle("Dark mode", id = "dark", on_change = on_dark)
+                ]
+            }
+        "#,
+        );
+        assert!(
+            bad.iter()
+                .any(|e| e.code == "E1003" && e.msg.contains("must be of type bool")),
+            "expected E1003 requiring bool, got {bad:?}"
+        );
+
+        let no_effect = check_src(
+            r#"
+            fn on_dark(v: bool) {
+            }
+
+            view NoEffectView() -> View {
+                column [
+                    checkbox("Dark mode", id = "dark", on_change = on_dark)
+                ]
+            }
+        "#,
+        );
+        assert!(
+            no_effect
+                .iter()
+                .any(|e| e.code == "E1001" && e.msg.contains("on_dark")),
+            "an event handler still needs `uses UI`, got {no_effect:?}"
+        );
     }
 }

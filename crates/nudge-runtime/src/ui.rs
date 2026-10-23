@@ -603,6 +603,22 @@ pub fn estimate_element_size(elem: &UiElement, max_w: i64) -> (i64, i64) {
             let w = (chars * 16 + 56).min(max_w).max(140);
             (w, 40)
         }
+        "checkbox" | "toggle" => {
+            // The control, a gap, then the label beside it — the same shape
+            // the native renderer lays out, and the same generous
+            // per-character budget the `text` arm uses so an overshoot leaves
+            // room instead of clipping the words.
+            //
+            // Height is fixed for both: neither control grows when the label
+            // is long, it just widens.
+            let control_w: i64 = if elem.tag == "toggle" { 44 } else { 18 };
+            let label = elem.text.as_deref().unwrap_or("");
+            let chars = label.chars().count() as i64;
+            let w = (control_w + 10 + chars * 16 + 8)
+                .min(max_w)
+                .max(control_w + 18);
+            (w, 34)
+        }
         _ => (0, 0),
     }
 }
@@ -889,6 +905,27 @@ impl HeadlessMount {
             }
         }
         self.dispatch_key(_key)
+    }
+}
+
+/// Whether a stored string means "on". Every boolean prop the renderer reads
+/// (`disabled`, a control's `value`) answers to this one spelling, so a form
+/// never has to remember which words this frame happens to accept.
+pub fn is_truthy(v: &str) -> bool {
+    matches!(
+        v.trim().to_ascii_lowercase().as_str(),
+        "true" | "1" | "yes" | "on"
+    )
+}
+
+/// The word a boolean control's `value` prop carries. Spelled the way
+/// `is_truthy` already reads "on", so the two can never disagree about the
+/// same string — one writes what the other parses.
+pub fn flag_str(on: bool) -> &'static str {
+    if on {
+        "true"
+    } else {
+        "false"
     }
 }
 
@@ -1344,5 +1381,38 @@ mod tests {
             elem.props.insert("options".to_string(), options.join("\n"));
         }
         elem
+    }
+
+    /// A boolean control is measured as its whole row — control, gap and the
+    /// label beside it — with the same generous per-character budget the
+    /// `text` arm uses, so an overshoot leaves room where an undershoot would
+    /// clip the words. Neither form grows taller when the label is long; it
+    /// only widens.
+    #[test]
+    fn test_estimate_flag_row_covers_the_control_and_the_label() {
+        let mut chk = UiElement::new("checkbox");
+        chk.text = Some("Dark mode".into());
+        let (w, h) = estimate_element_size(&chk, 1000);
+        assert_eq!(h, 34, "a flag is one row tall whatever the label says");
+        assert!(
+            w >= 18 + 10 + 9 * 16,
+            "the control, the gap and all nine characters fit: {w}"
+        );
+
+        let mut long = UiElement::new("checkbox");
+        long.text = Some("A considerably longer label than the first".into());
+        let (w2, h2) = estimate_element_size(&long, 1000);
+        assert!(w2 > w, "a longer label widens the row");
+        assert_eq!(h2, h, "…but never makes it taller");
+
+        let mut tgl = UiElement::new("toggle");
+        tgl.text = Some("Dark mode".into());
+        let (w3, h3) = estimate_element_size(&tgl, 1000);
+        assert!(w3 > w, "a toggle claims more room for its control");
+        assert_eq!(h3, h, "…without claiming more room down the page");
+
+        // Clamped like every other control, so a very long label cannot push
+        // the estimate past the window it is being measured against.
+        assert!(w2 <= 1000, "never wider than the room there is");
     }
 }

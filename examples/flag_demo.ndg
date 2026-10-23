@@ -1,0 +1,111 @@
+// 2.3 — checkbox / toggle.
+//
+// `checkbox(label, value = ..., id = ..., on_change = ...)` and
+// `toggle(...)` are one widget wearing two different clothes, so they share
+// every layer below the drawing: the same key, the same press, the same
+// change, the same `bool` arriving at the handler.
+//
+// The first positional argument is the *label*, not the value. For a text
+// field the value doubles as the thing you read, so a positional value earns
+// its place; a boolean is never displayed, so a positional one would be
+// useless and the label is the only thing worth writing without a name. The
+// state rides as `value`, spelled the way `disabled` already is.
+//
+// A press dispatches a *change*, never a click: a click that flips a switch
+// has no meaning of its own beside the flip. The whole row — control and the
+// words beside it — is the control, so the label toggles it too, and a
+// control with no `id` is decoration that still takes the press with it
+// rather than letting it fall through to whatever sits behind.
+
+fn onoff(b: bool) -> string {
+    if b { "on" } else { "off" }
+}
+
+view SettingsView(dark: bool, beta: bool, terms: bool, size: string) -> View {
+    column(padding = 20, gap = 12) [
+        text("Dark mode: " + onoff(dark)),
+        text("Beta channel: " + onoff(beta)),
+        checkbox("Dark mode", value = dark, id = "dark", on_change = on_dark,
+                 tooltip = "Draw the window in the dark palette"),
+        toggle("Beta channel", value = beta, id = "beta", on_change = on_beta),
+        checkbox("I agree to the terms", value = terms, id = "terms",
+                 on_change = on_terms),
+        select(size, options = ["Small", "Medium", "Large"], id = "size",
+               on_change = on_size),
+        text("A disabled switch is inert, but it still takes the press:"),
+        checkbox("Locked by policy", value = true, id = "locked", disabled = true),
+        text("nothing stacked behind it is clicked by mistake.")
+    ]
+}
+
+agent SettingsApp {
+    state {
+        dark: bool = false
+        beta: bool = false
+        terms: bool = false
+        size: string = "Medium"
+    }
+
+    fn on_dark(v: bool) uses UI {
+        state.dark = v
+    }
+
+    fn on_beta(v: bool) uses UI {
+        state.beta = v
+    }
+
+    fn on_terms(v: bool) uses UI {
+        state.terms = v
+    }
+
+    fn on_size(v: string) uses UI {
+        state.size = v
+    }
+
+    window SettingsWindow {
+        title: "Nudge Flags",
+        width: 440,
+        height: 470,
+        content: SettingsView(state.dark, state.beta, state.terms, state.size)
+    }
+}
+
+fn main() uses UI {
+    SettingsApp.SettingsWindow.open()
+}
+
+test "a flag flips through its own handler and keeps its label" {
+    let app = SettingsApp.SettingsWindow.mount_headless()
+    assert app.find("dark").exists()
+    assert app.find_text("Dark mode: off").exists()
+    assert app.find_text("Beta channel: off").exists()
+
+    // A change arrives at the handler as a bool, and the next frame reads
+    // the bound state back — so the words beside it move with it.
+    app.dispatch_change("dark", "true")
+    assert SettingsApp.state.dark == true
+    assert app.find_text("Dark mode: on").exists()
+
+    app.dispatch_change("beta", "true")
+    assert SettingsApp.state.beta == true
+    assert app.find_text("Beta channel: on").exists()
+
+    // …and back the other way.
+    app.dispatch_change("dark", "false")
+    assert SettingsApp.state.dark == false
+    assert app.find_text("Dark mode: off").exists()
+
+    // The label rides as the element's `text`, which is what the renderer
+    // draws, so the state changing underneath it never replaces the words
+    // with "true".
+    app.dispatch_change("terms", "true")
+    assert SettingsApp.state.terms == true
+    assert app.find_text("I agree to the terms").exists()
+    assert app.find("terms").exists()
+
+    // The field beside them is unchanged plumbing: a string still arrives
+    // as a string.
+    app.dispatch_change("size", "Large")
+    assert SettingsApp.state.size == "Large"
+    assert app.find_text("Dark mode: off").exists()
+}

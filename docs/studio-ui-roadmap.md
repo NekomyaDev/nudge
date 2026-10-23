@@ -590,7 +590,78 @@ are separate surfaces and only the example exercised the second. Added to the
 preamble alongside its click counterpart.
 
 ### 2.3 `checkbox` / `toggle`  (0.5 day)
-- [ ] Settings switches (on/off)
+- [x] Settings switches (on/off)
+
+**Two tags, one widget.** `checkbox` draws a square with a mark, `toggle`
+draws a track with a knob, and everything below the drawing is shared — the
+dispatch key, the press, the change, the `bool` that reaches the handler. The
+tag is only ever asked which clothes to wear.
+
+- **The first positional argument is the *label*, not the value.** A
+  deliberate deviation from `input`/`select`, where the value doubles as the
+  thing you read and so earns a positional slot. A boolean is never displayed:
+  a positional value would be useless where the words are the only thing worth
+  writing without a name. The state rides as `value`, spelled the way
+  `is_truthy` already reads `disabled` — one word for "on", written by the
+  interpreter and parsed back by the renderer, so the two cannot disagree
+  about the same string.
+- **A press dispatches a *change*, never a click.** A click that flips a switch
+  has no meaning of its own beside the flip, so there is no second event to
+  write and no way to wonder which of two handlers fired. The handler is
+  handed `NudgeVal::Bool`, not the string that spells it — a flag's value *is*
+  a Bool, that is what the widget is.
+- **The whole row is the control.** Box or track, a gap, then the label, laid
+  out as one box: pressing the words presses the control. Text beside a switch
+  that does nothing when clicked is text people learn to avoid. The row's key
+  is `flag_key` — the `id` when there is one, else the layout order.
+- **No `on_click`/`on_key`, and an id-less flag is decoration.** The same rule
+  `select` set: one with nowhere to report the new value must not light up,
+  because lighting a control that will not answer the click is a promise the
+  window cannot keep. It still *absorbs* the press rather than letting it fall
+  through to whatever is stacked behind it.
+- **The drawing never asks a font.** The square, the mark inside it, the track
+  and the knob are all rectangles — a checkbox cannot arrive as a row of letters
+  and a switch cannot lose the one sign saying which way it is set. On wears
+  the same blue a focused field wears, so the form has one idea of *live*
+  rather than two blues arguing over what an accent is; disabled dims and
+  never lights.
+- **`LayoutBox` carries `checked`** — the same snapshot decision `options`
+  made. The drawing, the press and the value written back all have to agree
+  about one state, and a value that changed underneath a painted control would
+  draw a mark for a state that is no longer there.
+
+**Verified:** fmt OK · clippy `-D warnings` clean · **925 passed / 0 failed /
+1 ignored** (13 new tests — the mark being two arms rather than a slab, an on
+box wearing the accent while an off one is bare, the toggle stating itself by
+where the knob sits, the row's layout carrying its value and its words, hover
+lighting only a flag that can report, the press dispatching a change through
+the id with the label pressing too, a flag that cannot report taking the press
+with it, the `ui.rs` estimate, the interpreter's element build and its
+spellings, a change reaching the handler as a Bool with the label surviving,
+an unhandled flip leaving the label alone, and the checker requiring `bool`).
+Live on X11 with the new `examples/flag_demo.ndg`: clicking `Dark mode` filling
+the square with the accent and drawing the white mark while the header word
+changes `off`→`on` (320 px in the box, and 67 px in *exactly* the last word of
+the line); clicking `Beta channel` lighting the whole track and carrying the
+knob to the right end with the second header changing the same way; clicking
+the `disabled` checkbox leaving **every pixel of the window unchanged** —
+inert, and the press went nowhere.
+
+**Two defects the example run caught that the unit tests could not.** Both are
+the lesson 2.2 already learned: the interpreter and the codegen are separate
+surfaces, and only the example exercises the second.
+
+1. `py()` did not lower `ExprKind::If` at all. In an expression slot a bare
+   comment is legal Python, so the value did not fail to compile — it quietly
+   became `None` and every caller downstream read a type it was never handed.
+   `fn onoff(b: bool) -> string { if b { "on" } else { "off" } }` compiled, ran
+   and returned `None`. Now lowered to Python's conditional expression.
+2. The emitted `_HeadlessApp.dispatch_change` passed the value straight to the
+   handler, so a boolean control's handler received the *string* `"true"` and
+   the bound state held a string that the next frame's `if` read as truthy in
+   **both** directions — a switch that could be turned off but never showed it.
+   Now converted for `checkbox`/`toggle` at the same place the interpreter
+   converts it, so the two surfaces hand the handler the same value.
 
 ### 2.4 `slider`  (1 day)
 - [ ] Numeric value slider for temperature, budget, etc.

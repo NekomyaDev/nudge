@@ -396,11 +396,24 @@ impl Interpreter {
             .get_mut(app_id)
             .ok_or_else(|| "invalid app id".to_string())?;
 
-        app.focused_id = Some(target_id.to_string());
-        let st = app.ensure_input_state(target_id);
-        st.text = new_value.to_string();
-        st.cursor = st.cursor.min(st.char_len());
-        st.selection_anchor = None;
+        // A boolean control's value is not its display: `text` carries the
+        // label, so every piece of bookkeeping a text field needs — focus, a
+        // text buffer, the value written back over the words — would be
+        // writing to the wrong thing. (Left alone, the fallback below would
+        // have replaced the label with "true".)
+        let is_flag = app
+            .root
+            .as_ref()
+            .and_then(|r| r.find_by_id(target_id))
+            .is_some_and(|e| Self::is_flag_tag(&e.tag));
+
+        if !is_flag {
+            app.focused_id = Some(target_id.to_string());
+            let st = app.ensure_input_state(target_id);
+            st.text = new_value.to_string();
+            st.cursor = st.cursor.min(st.char_len());
+            st.selection_anchor = None;
+        }
 
         let on_change = app
             .root
@@ -418,7 +431,7 @@ impl Interpreter {
                 self.call_user_fn_with_vals(
                     &fn_item,
                     fn_agent.as_deref().or(agent.as_deref()),
-                    &[NudgeVal::Str(new_value.to_string())],
+                    &[Self::change_arg(is_flag, new_value)],
                     env,
                 )?;
             }
@@ -464,11 +477,36 @@ impl Interpreter {
             .as_mut()
             .and_then(|r| r.find_by_id_mut(target_id))
         {
-            elem.text = Some(new_value.to_string());
-            elem.props
-                .insert("value".to_string(), new_value.to_string());
+            if !is_flag {
+                elem.text = Some(new_value.to_string());
+            }
+            // Stored canonically, so a handler that never runs leaves the
+            // same word the next read will parse.
+            let stored = if is_flag {
+                nudge_runtime::ui::flag_str(nudge_runtime::ui::is_truthy(new_value)).to_string()
+            } else {
+                new_value.to_string()
+            };
+            elem.props.insert("value".to_string(), stored);
         }
         Ok(())
+    }
+
+    /// Whether a tag's value is a boolean rather than displayed text. The
+    /// two boolean controls share every layer below the drawing, so this is
+    /// the one question the plumbing asks about them.
+    fn is_flag_tag(tag: &str) -> bool {
+        matches!(tag, "checkbox" | "toggle")
+    }
+
+    /// What a change handler is handed. A boolean control's value is a Bool —
+    /// that is what the widget *is* — while a text field's is the text.
+    fn change_arg(is_flag: bool, new_value: &str) -> NudgeVal {
+        if is_flag {
+            NudgeVal::Bool(nudge_runtime::ui::is_truthy(new_value))
+        } else {
+            NudgeVal::Str(new_value.to_string())
+        }
     }
 
     /// Types text into an input element and dispatches on_change.
@@ -1261,6 +1299,70 @@ impl Interpreter {
                         other => other.to_string().replace(['\n', '\r'], "\n"),
                     };
                     elem.props.insert("options".to_string(), flat);
+                } else {
+                    let v = self.eval_expr(v_expr, env)?;
+                    elem.props.insert(k.clone(), v.to_string());
+                }
+            }
+            return Ok(Some(NudgeVal::UiElement {
+                found: true,
+                elem: Box::new(elem),
+            }));
+        }
+
+        // A boolean control — `checkbox` (a box with a mark) and `toggle` (a
+        // pill switch) are the same widget wearing different clothes, so they
+        // share every layer below the drawing.
+        //
+        // The first positional argument is the *label*, not the value. For a
+        // text field the value doubles as the thing you read, so a positional
+        // value earns its place; a boolean is never displayed, so a positional
+        // one would be useless and the label is the only thing worth writing
+        // without a name. The state rides as `value`, spelled the way
+        // `is_truthy` already reads "on", so one string answers the same
+        // question everywhere.
+        if name == "checkbox" || name == "toggle" {
+            let mut elem = nudge_runtime::ui::UiElement::new(name);
+            if !args.is_empty() {
+                let label = match self.eval_expr(&args[0], env)? {
+                    NudgeVal::Str(s) => s,
+                    other => other.to_string(),
+                };
+                elem.text = Some(label.clone());
+                elem.props.insert("label".to_string(), label);
+            }
+            for (k, v_expr) in kwargs {
+                if k == "id" {
+                    let v = self.eval_expr(v_expr, env)?;
+                    elem.id = Some(match v {
+                        NudgeVal::Str(s) => s,
+                        other => other.to_string(),
+                    });
+                } else if k == "value" {
+                    let on = match self.eval_expr(v_expr, env)? {
+                        NudgeVal::Bool(b) => b,
+                        NudgeVal::Int(n) => n != 0,
+                        NudgeVal::Unit => false,
+                        NudgeVal::Str(s) => nudge_runtime::ui::is_truthy(&s),
+                        other => nudge_runtime::ui::is_truthy(&other.to_string()),
+                    };
+                    elem.props.insert(
+                        "value".to_string(),
+                        nudge_runtime::ui::flag_str(on).to_string(),
+                    );
+                } else if k == "on_change" {
+                    // Only a change is reported. A click that flips a switch
+                    // has no meaning of its own beside the flip, so there is
+                    // no second handler to write and no way to wonder which
+                    // of the two fired.
+                    let hname = match &v_expr.kind {
+                        ExprKind::Ident(s) => s.clone(),
+                        _ => match self.eval_expr(v_expr, env)? {
+                            NudgeVal::Str(s) => s,
+                            other => other.to_string(),
+                        },
+                    };
+                    elem.on_change = Some(hname);
                 } else {
                     let v = self.eval_expr(v_expr, env)?;
                     elem.props.insert(k.clone(), v.to_string());
@@ -8816,5 +8918,253 @@ with open(out_path, "w", encoding="utf-8") as f:
         {
             assert!(!err.is_empty(), "{err}");
         }
+    }
+
+    /// A boolean control's first positional argument is its *label*, not its
+    /// value: for a text field the value doubles as the thing you read, so a
+    /// positional value earns its place, but a boolean is never displayed —
+    /// so a positional one would be useless and the label is the only thing
+    /// worth writing without a name. The state rides as `value`.
+    #[test]
+    fn test_checkbox_carries_its_label_its_state_and_its_handler() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let src = r#"
+            view SettingsView() -> View {
+                column [
+                    checkbox("Dark mode", value = true, id = "dark", on_change = on_dark),
+                    toggle("Beta channel")
+                ]
+            }
+        "#;
+        let tokens = lex(src).expect("lex failed");
+        let items = parse(tokens).expect("parse failed");
+
+        let Item::View { body, .. } = &items[0] else {
+            panic!("expected a view item, got {:?}", items[0]);
+        };
+        let StmtKind::ExprStmt(expr) = &body[0].kind else {
+            panic!("expected an expression statement in the view body")
+        };
+
+        let mut interp = Interpreter::new();
+        interp.load_items(&items).expect("load_items failed");
+        let env = Rc::new(RefCell::new(Env::new()));
+        let val = interp.eval_expr(expr, &env).expect("eval failed");
+        let NudgeVal::UiElement { found: true, elem } = val else {
+            panic!("expected a UI element, got {val:?}");
+        };
+        assert_eq!(elem.tag, "column", "both flags are children of a row");
+        assert_eq!(elem.children.len(), 2);
+
+        let chk = &elem.children[0];
+        assert_eq!(chk.tag, "checkbox");
+        assert_eq!(
+            chk.text.as_deref(),
+            Some("Dark mode"),
+            "the label is the words the user reads, so it rides as `text`"
+        );
+        assert_eq!(
+            chk.props.get("label").map(String::as_str),
+            Some("Dark mode"),
+            "…and is also named, so the element is self-describing"
+        );
+        assert_eq!(
+            chk.props.get("value").map(String::as_str),
+            Some("true"),
+            "a true `value` is spelled the way `is_truthy` reads \"on\""
+        );
+        assert_eq!(chk.id.as_deref(), Some("dark"));
+        assert_eq!(
+            chk.on_change.as_deref(),
+            Some("on_dark"),
+            "without a handler the flip would have nowhere to go"
+        );
+
+        let tgl = &elem.children[1];
+        assert_eq!(tgl.tag, "toggle", "the two forms are the same widget");
+        assert_eq!(tgl.text.as_deref(), Some("Beta channel"));
+        assert!(
+            !tgl.props.contains_key("value"),
+            "no `value` at all means off — the renderer's default, not a word it has to parse"
+        );
+        assert!(tgl.on_change.is_none(), "and no handler was named");
+    }
+
+    /// One spelling for "on" across the whole language: the boolean literal's
+    /// own output plus the forms people type out of habit, all landing on the
+    /// same word the renderer parses back.
+    #[test]
+    fn test_a_flags_value_accepts_every_word_is_truthy_reads() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let src = r#"
+            view SpellingsView() -> View {
+                column [
+                    toggle("A", value = "yes"),
+                    toggle("B", value = false),
+                    toggle("C", value = "off"),
+                    checkbox("D", value = 1)
+                ]
+            }
+        "#;
+        let tokens = lex(src).expect("lex failed");
+        let items = parse(tokens).expect("parse failed");
+
+        let Item::View { body, .. } = &items[0] else {
+            panic!("expected a view item, got {:?}", items[0]);
+        };
+        let StmtKind::ExprStmt(expr) = &body[0].kind else {
+            panic!("expected an expression statement in the view body")
+        };
+
+        let mut interp = Interpreter::new();
+        interp.load_items(&items).expect("load_items failed");
+        let env = Rc::new(RefCell::new(Env::new()));
+        let val = interp.eval_expr(expr, &env).expect("eval failed");
+        let NudgeVal::UiElement { found: true, elem } = val else {
+            panic!("expected a UI element, got {val:?}");
+        };
+
+        let got: Vec<Option<&str>> = elem
+            .children
+            .iter()
+            .map(|c| c.props.get("value").map(String::as_str))
+            .collect();
+        assert_eq!(
+            got,
+            vec![Some("true"), Some("false"), Some("false"), Some("true")],
+            "\"yes\" and 1 are on; \"off\" and false are not; all four land on one word"
+        );
+    }
+
+    /// A change on a boolean control arrives at its handler as a Bool — that
+    /// is what the widget *is* — rather than as the string that spells it,
+    /// so `fn on_dark(v: bool)` can take it directly. And the label, which is
+    /// the thing the user reads, survives the state changing underneath it.
+    #[cfg(feature = "native-gui")]
+    #[test]
+    fn test_a_change_on_a_flag_reaches_its_handler_as_a_bool() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cleanup = EnvReset::set("NUDGE_UI_HEADLESS", "1");
+
+        let src = r#"
+            view FlagView(dark: bool) -> View {
+                column [
+                    checkbox("Dark mode", value = dark, id = "dark", on_change = on_dark)
+                ]
+            }
+
+            agent FlagApp {
+                state {
+                    dark: bool = false
+                }
+
+                fn on_dark(v: bool) uses UI {
+                    state.dark = v
+                }
+
+                window FlagWindow {
+                    title: "Flags",
+                    content: FlagView(state.dark)
+                }
+            }
+        "#;
+        let tokens = lex(src).expect("lex failed");
+        let items = parse(tokens).expect("parse failed");
+        let mut interp = Interpreter::new();
+        interp.load_items(&items).expect("load_items failed");
+
+        let env = Rc::new(RefCell::new(Env::new()));
+        let app_id = interp
+            .mount_headless_app(&Some("FlagApp".to_string()), "FlagWindow", &env)
+            .expect("mount failed");
+
+        interp
+            .dispatch_change_headless(app_id, "dark", "true", &env)
+            .expect("change failed");
+        assert_eq!(
+            interp.agent_store.get_field("FlagApp", "dark"),
+            Ok(NudgeVal::Bool(true)),
+            "the handler is handed a Bool, not a string that happens to spell one"
+        );
+        let root = interp.headless_apps[app_id]
+            .root
+            .as_ref()
+            .expect("the window has a root");
+        let elem = root.find_by_id("dark").expect("the control is still there");
+        assert_eq!(
+            elem.text.as_deref(),
+            Some("Dark mode"),
+            "the words the user reads survive the flip"
+        );
+        assert_eq!(
+            elem.props.get("value").map(String::as_str),
+            Some("true"),
+            "…and the state followed the handler back into the element"
+        );
+
+        interp
+            .dispatch_change_headless(app_id, "dark", "false", &env)
+            .expect("change failed");
+        assert_eq!(
+            interp.agent_store.get_field("FlagApp", "dark"),
+            Ok(NudgeVal::Bool(false)),
+            "…in both directions"
+        );
+    }
+
+    /// With no handler the window keeps the value itself, and that is exactly
+    /// where the old path was dangerous: it wrote the new value over `text`,
+    /// which for a boolean control is its *label*. An unhandled flip must
+    /// land on the state without replacing the words the user is reading.
+    #[cfg(feature = "native-gui")]
+    #[test]
+    fn test_an_unhandled_flip_still_lands_and_leaves_the_label_alone() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cleanup = EnvReset::set("NUDGE_UI_HEADLESS", "1");
+
+        let src = r#"
+            view QuietView() -> View {
+                column [
+                    checkbox("Dark mode", id = "dark")
+                ]
+            }
+
+            agent QuietApp {
+                window QuietWindow {
+                    title: "Quiet",
+                    content: QuietView()
+                }
+            }
+        "#;
+        let tokens = lex(src).expect("lex failed");
+        let items = parse(tokens).expect("parse failed");
+        let mut interp = Interpreter::new();
+        interp.load_items(&items).expect("load_items failed");
+
+        let env = Rc::new(RefCell::new(Env::new()));
+        let app_id = interp
+            .mount_headless_app(&Some("QuietApp".to_string()), "QuietWindow", &env)
+            .expect("mount failed");
+
+        interp
+            .dispatch_change_headless(app_id, "dark", "true", &env)
+            .expect("change failed");
+        let root = interp.headless_apps[app_id]
+            .root
+            .as_ref()
+            .expect("the window has a root");
+        let elem = root.find_by_id("dark").expect("the control is still there");
+        assert_eq!(
+            elem.props.get("value").map(String::as_str),
+            Some("true"),
+            "the flip still lands, even with nobody listening"
+        );
+        assert_eq!(
+            elem.text.as_deref(),
+            Some("Dark mode"),
+            "…and the label is not overwritten with \"true\""
+        );
     }
 }

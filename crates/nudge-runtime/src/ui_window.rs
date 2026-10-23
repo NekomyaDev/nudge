@@ -3,7 +3,7 @@
 
 use crate::font8x8::get_glyph;
 use crate::font_engine::{FaceKind, FontEngine, BASE_PX, CELL_H, CELL_W};
-use crate::ui::{TextInputState, UiElement};
+use crate::ui::{is_truthy, TextInputState, UiElement};
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -467,6 +467,13 @@ pub struct LayoutBox {
     /// cursor while this box is hovered. Purely an overlay, so it is never
     /// measured and cannot shift layout.
     pub tooltip: Option<String>,
+    /// Whether a `checkbox` or `toggle` is switched on. Carried on the box
+    /// rather than looked up from the element tree for the same reason the
+    /// options are: the drawing, the press and the value written back all have
+    /// to agree about one snapshot, and a value that changed underneath a
+    /// painted control would draw a mark for a state that is no longer there.
+    /// `false` for every other tag.
+    pub checked: bool,
     /// The choice list of a `select`, in order, empty for every other tag.
     /// Carried on the box rather than looked up from the element tree so the
     /// open popup, its hit test and its keyboard highlight all read the same
@@ -980,6 +987,199 @@ pub fn draw_chevron_down(
         };
         if let Some(r) = drawn {
             draw_rect(buf, stride, height, r.x, r.y, r.w, r.h, color);
+        }
+    }
+}
+
+/// The mark a switched-on `checkbox` wears, drawn one column at a time: two
+/// arms meeting at a low vertex. A font need not carry ✓, and a control that
+/// could not draw its own mark would say nothing about whether it is on.
+///
+/// `x, y` is the top-left of the mark's 11 × 8 box — the caller centres it in
+/// the square it belongs to.
+pub fn draw_check_mark(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    clip: Option<Rect>,
+    x: i32,
+    y: i32,
+    color: u32,
+) {
+    for i in 0..6i32 {
+        // The arm that falls to the right, then the arm that climbs away
+        // from it. Two pixels tall so the mark reads as a stroke rather than
+        // a dotted suggestion at the size a checkbox actually is.
+        let marks = [
+            Rect {
+                x: x + i,
+                y: y + 4 + i,
+                w: 1,
+                h: 2,
+            },
+            Rect {
+                x: x + 5 + i,
+                y: y + 8 - i,
+                w: 1,
+                h: 2,
+            },
+        ];
+        for m in marks {
+            let drawn = match clip {
+                None => Some(m),
+                Some(c) => intersect(m, c),
+            };
+            if let Some(r) = drawn {
+                draw_rect(buf, stride, height, r.x, r.y, r.w, r.h, color);
+            }
+        }
+    }
+}
+
+/// Where the control sits inside its row: at the row's left edge, vertically
+/// centred, in whatever size its tag draws. One function, so layout, the
+/// drawing and a test cannot quietly disagree about where it is.
+pub fn flag_control_rect(row: Rect, tag: &str) -> Rect {
+    let h = if tag == "toggle" { TOGGLE_H } else { FLAG_BOX };
+    Rect {
+        x: row.x,
+        y: row.y + ((row.h - h) / 2).max(0),
+        w: flag_control_w(tag),
+        h,
+    }
+}
+
+/// One boolean control as the drawing needs it — where it sits and what
+/// state it is in — so the render pass hands over a single value instead of
+/// five loose ones, and a test can describe a control the same way without
+/// building a window first.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FlagView {
+    /// `"checkbox"` or `"toggle"`. The two share every layer below the
+    /// drawing, so the tag is only ever asked which clothes to wear.
+    pub tag: String,
+    /// The control's own rect, not the row's: the label beside it is the
+    /// row's business, and only the row knows how wide it was made.
+    pub rect: Rect,
+    pub on: bool,
+    /// How far the pointer has travelled from resting to hovered, `0.0` to
+    /// `1.0`. Always zero for a control that is disabled, which never lights.
+    pub hover_t: f32,
+    pub disabled: bool,
+}
+
+impl FlagView {
+    /// A control described from its row: `row` is the whole laid-out row in
+    /// whatever space the caller is drawing in, and the control is placed
+    /// inside it by [`flag_control_rect`].
+    pub fn new(tag: &str, row: Rect, on: bool, hover_t: f32, disabled: bool) -> FlagView {
+        FlagView {
+            tag: tag.to_string(),
+            rect: flag_control_rect(row, tag),
+            on,
+            hover_t,
+            disabled,
+        }
+    }
+}
+
+/// One boolean control — the square of a `checkbox` or the track of a
+/// `toggle`, with the mark or the knob inside it — painted entirely from
+/// rectangles. Nothing here asks a font for a glyph, so a checkbox cannot
+/// arrive as a row of letters and a switch cannot lose the one sign saying
+/// which way it is set.
+///
+/// `rect` is the control itself, not the row it sits in: the label beside it
+/// is drawn by the caller, because only the caller knows how wide the box was
+/// made. Pure, so the drawing can be judged without a window.
+pub fn draw_flag_control(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    clip: Option<Rect>,
+    theme: &Theme,
+    flag: &FlagView,
+) {
+    let rect = flag.rect;
+    let on = flag.on;
+    let disabled = flag.disabled;
+    let is_toggle = flag.tag == "toggle";
+    let (cx, cy, cw, ch) = (rect.x, rect.y, rect.w, rect.h);
+    // "On" wears the same blue a focused field wears, so the form has one
+    // idea of *live* instead of two blues arguing over what an accent is.
+    let accent = theme.input_border_focused;
+    let (fill, mut edge) = if disabled {
+        (lerp_color(theme.input_bg, theme.bg, 0.5), theme.border)
+    } else if on {
+        (accent, accent)
+    } else {
+        (theme.input_bg, theme.input_border)
+    };
+    // Hover lifts the border the way a choice field's does, so the control
+    // that will flip is visible before it does. Disabled never lights — there
+    // is nothing to look forward to — and a control already on has nothing
+    // left to reveal.
+    if !disabled && !on {
+        edge = lerp_color(edge, accent, flag.hover_t);
+    }
+
+    if is_toggle {
+        // A pill: radius half the height, so the two ends
+        // curve as much as they possibly can and the track
+        // reads as one continuous switch rather than a
+        // rectangle with soft corners.
+        draw_rounded_rect_box_clipped(
+            buf,
+            stride,
+            height,
+            clip,
+            cx,
+            cy,
+            cw,
+            ch,
+            ch / 2,
+            fill,
+            edge,
+        );
+        // The knob travels rather than changes: on and off
+        // are told apart by where it sits, which is the one
+        // difference a switch has that does not depend on
+        // reading anything.
+        let knob = ch - 6;
+        let inset = 3;
+        let kx = if on {
+            cx + cw - knob - inset
+        } else {
+            cx + inset
+        };
+        let knob_bg = if disabled {
+            theme.border
+        } else if on {
+            theme.button_text
+        } else {
+            theme.text_dim
+        };
+        draw_rounded_rect_box_clipped(
+            buf,
+            stride,
+            height,
+            clip,
+            kx,
+            cy + inset,
+            knob,
+            knob,
+            knob / 2,
+            knob_bg,
+            knob_bg,
+        );
+    } else {
+        draw_rounded_rect_box_clipped(buf, stride, height, clip, cx, cy, cw, ch, 4, fill, edge);
+        // The mark is white on the accent so it clears
+        // contrast; while the box is off there is nothing to
+        // say, and the empty square is the honest picture of
+        // that.
+        if on {
+            draw_check_mark(buf, stride, height, clip, cx + 3, cy + 5, theme.button_text);
         }
     }
 }
@@ -1939,6 +2139,7 @@ pub fn layout_element_ctx(
                 disabled: false,
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
+                checked: false,
             });
             (w, h)
         }
@@ -2015,6 +2216,7 @@ pub fn layout_element_ctx(
                 disabled: false,
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
+                checked: false,
             });
             (w, h)
         }
@@ -2048,6 +2250,7 @@ pub fn layout_element_ctx(
                 disabled: elem.props.get("disabled").is_some_and(|s| is_truthy(s)),
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
+                checked: false,
             });
             (w, h)
         }
@@ -2079,6 +2282,7 @@ pub fn layout_element_ctx(
                 disabled: elem.props.get("disabled").is_some_and(|s| is_truthy(s)),
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
+                checked: false,
             });
             (w, h)
         }
@@ -2120,6 +2324,45 @@ pub fn layout_element_ctx(
                 disabled: elem.props.get("disabled").is_some_and(|s| is_truthy(s)),
                 tooltip: elem.props.get("tooltip").cloned(),
                 options,
+                checked: false,
+            });
+            (w, h)
+        }
+        // A boolean control: the square or the track, a gap, then the label
+        // beside it — all one box, so pressing the words presses the control.
+        // Making the row the control is deliberate: text next to a switch
+        // that does nothing when clicked is text people learn to avoid.
+        "checkbox" | "toggle" => {
+            let label = elem
+                .text
+                .clone()
+                .or_else(|| elem.props.get("label").cloned())
+                .unwrap_or_default();
+            let control_w = flag_control_w(&elem.tag);
+            let text_w = label.chars().count() as i32 * CELL_W;
+            let w = (control_w + FLAG_GAP + text_w + 8).max(control_w + 18);
+            let h = FLAG_H;
+            boxes.push(LayoutBox {
+                rect: Rect { x, y, w, h },
+                tag: elem.tag.clone(),
+                id: elem.id.clone(),
+                text: Some(label),
+                // No `on_click`: a press that flips the switch *is* the
+                // report, so there is no second event to write and no way to
+                // wonder which of two handlers fired.
+                on_click: None,
+                on_change: elem.on_change.clone(),
+                on_key: elem.on_key.clone(),
+                pan,
+                clips: clips_owned(clips),
+                pad: 0,
+                // Absent means off, and the word is the one `is_truthy`
+                // already reads as "on" — so the interpreter that wrote it
+                // and the arm that reads it cannot disagree.
+                checked: elem.props.get("value").is_some_and(|sv| is_truthy(sv)),
+                disabled: elem.props.get("disabled").is_some_and(|sv| is_truthy(sv)),
+                tooltip: elem.props.get("tooltip").cloned(),
+                options: Vec::new(),
             });
             (w, h)
         }
@@ -2135,17 +2378,6 @@ pub fn layout_element_ctx(
             (max_w_seen, (child_y - y).max(20))
         }
     }
-}
-
-/// Interpret a props value as a boolean. `props` is a flat string map, so
-/// `disabled = true` arrives here as text and every accepted spelling — the
-/// boolean literal's own output plus the forms people type out of habit — has
-/// to be recognised rather than silently falling back to "enabled".
-pub fn is_truthy(v: &str) -> bool {
-    matches!(
-        v.trim().to_ascii_lowercase().as_str(),
-        "true" | "1" | "yes" | "on"
-    )
 }
 
 /// Stable dispatch key for a button: its `id`, else `on_click`, else a
@@ -2164,6 +2396,37 @@ pub fn button_key(lbox: &LayoutBox, index: usize) -> String {
 /// the field that lit up is the one that opens.
 pub fn select_key(lbox: &LayoutBox, index: usize) -> String {
     lbox.id.clone().unwrap_or_else(|| format!("__sel_{index}"))
+}
+
+/// Dispatch key of a boolean control: its `id` when it has one, else the
+/// layout order. Hover, the pressed tone and the flip all resolve it the same
+/// way, so the control that lit up is the one that changes.
+pub fn flag_key(lbox: &LayoutBox, index: usize) -> String {
+    lbox.id.clone().unwrap_or_else(|| format!("__flag_{index}"))
+}
+
+/// Side of the square a `checkbox` draws. Small enough to sit beside its
+/// label without dominating it, large enough that the mark inside has room to
+/// be a mark rather than a smudge.
+pub const FLAG_BOX: i32 = 18;
+/// Size of a `toggle` track: wide enough for the knob to travel visibly
+/// between the two ends, so on and off cannot be told apart at a glance.
+pub const TOGGLE_W: i32 = 44;
+pub const TOGGLE_H: i32 = 24;
+/// Distance between the control and the label that belongs to it.
+pub const FLAG_GAP: i32 = 10;
+/// Height of a whole boolean control — box or track, whatever is taller once
+/// the label's line is accounted for. Fixed: neither control grows when the
+/// label is long, it only widens.
+pub const FLAG_H: i32 = 34;
+
+/// Width a boolean control claims for its own part, before the label.
+pub fn flag_control_w(tag: &str) -> i32 {
+    if tag == "toggle" {
+        TOGGLE_W
+    } else {
+        FLAG_BOX
+    }
 }
 
 /// Height of one row of an open choice list, in pixels.
@@ -2332,7 +2595,13 @@ pub fn find_hovered_button_in_boxes(
         // `select_key` rather than `button_key`, because a choice field has no
         // `on_click` to fall back on and the field's own arm reads hover under
         // that same name.
+        // A boolean control hovers like a button too — a press flips it — but
+        // only when it has an `id`: one with nowhere to report the new value
+        // is decoration, and lighting up a control that will not answer the
+        // click is a lie told in blue.
+        let is_flag = matches!(lbox.tag.as_str(), "checkbox" | "toggle") && lbox.id.is_some();
         let is_control = lbox.tag == "button"
+            || is_flag
             || (lbox.tag == "select" && lbox.id.is_some() && !lbox.options.is_empty());
         if is_control && !lbox.disabled {
             // Pan-aware screen rect; a button scrolled outside its scroll
@@ -2344,6 +2613,8 @@ pub fn find_hovered_button_in_boxes(
             if screen_rect.contains(mx, my) && clip_ok {
                 let key = if lbox.tag == "select" {
                     select_key(lbox, i)
+                } else if is_flag {
+                    flag_key(lbox, i)
                 } else {
                     button_key(lbox, i)
                 };
@@ -3978,6 +4249,78 @@ impl<D: UiDispatcher> NativeApp<D> {
                         chevron_color,
                     );
                 }
+                // A boolean control, drawn entirely from rectangles: the
+                // square, the mark inside it, the track, the knob. The
+                // drawing itself lives in `draw_flag_control` so it can be
+                // judged without a window; the row's own work here is to
+                // find the control's place and then paint the label beside
+                // it, which is the part only the layout can know.
+                "checkbox" | "toggle" => {
+                    let key = flag_key(lbox, box_index);
+                    let hover_t = if lbox.disabled {
+                        0.0
+                    } else {
+                        self.hover_ramps.get(&key).copied().unwrap_or(0.0)
+                    };
+                    let flag = FlagView::new(
+                        &lbox.tag,
+                        Rect {
+                            x: rx,
+                            y: ry,
+                            w: lbox.rect.w,
+                            h: lbox.rect.h,
+                        },
+                        lbox.checked,
+                        hover_t,
+                        lbox.disabled,
+                    );
+                    draw_flag_control(&mut buffer, stride, h_usize, clip, &theme, &flag);
+
+                    // The label belongs to the control and is drawn beside
+                    // it in the same row the press covers.
+                    let label_x = flag.rect.x + flag.rect.w + FLAG_GAP;
+                    let label = lbox.text.clone().unwrap_or_default();
+                    let label_color = if lbox.disabled {
+                        theme.text_dim
+                    } else {
+                        theme.text
+                    };
+                    let region = Rect {
+                        x: label_x,
+                        y: ry,
+                        w: (lbox.rect.w - flag.rect.w - FLAG_GAP).max(0),
+                        h: lbox.rect.h,
+                    };
+                    let label_clip = match clip {
+                        None => Some(region),
+                        Some(c) => intersect(region, c),
+                    };
+                    if let Some(lc) = label_clip {
+                        let fonts = &self.fonts;
+                        let ty = ry + ((lbox.rect.h - cell_h) / 2).max(0);
+                        draw_text_ttf_clipped(
+                            fonts,
+                            FaceKind::Ui,
+                            label_x,
+                            ty,
+                            &label,
+                            lc,
+                            |px, py, w, h, cov| {
+                                draw_rect_alpha(
+                                    &mut buffer,
+                                    stride,
+                                    h_usize,
+                                    px,
+                                    py,
+                                    w,
+                                    h,
+                                    label_color,
+                                    cov,
+                                );
+                            },
+                        );
+                    }
+                }
                 _ => {}
             }
         }
@@ -4143,6 +4486,8 @@ impl<D: UiDispatcher> NativeApp<D> {
         let mut clicked_button = None;
         let mut clicked_input = None;
         let mut clicked_select = None;
+        // The id of a boolean control to flip, and the value it lands on.
+        let mut clicked_flag: Option<(String, bool)> = None;
 
         for (box_index, lbox) in self.layout_boxes.iter().enumerate() {
             // Screen-space test accounts for the window scroll, the enclosing
@@ -4185,6 +4530,17 @@ impl<D: UiDispatcher> NativeApp<D> {
                     clicked_select = Some(select_key(lbox, box_index));
                 }
                 break;
+            } else if matches!(lbox.tag.as_str(), "checkbox" | "toggle") {
+                // The whole row — square or track *and* the label beside it —
+                // is the control, so the words toggle it too. An id-less one
+                // still absorbs the press: it has nowhere to report, so the
+                // press must not reach whatever is stacked behind it.
+                if !lbox.disabled {
+                    if let Some(id) = lbox.id.clone() {
+                        clicked_flag = Some((id, !lbox.checked));
+                    }
+                }
+                break;
             }
         }
 
@@ -4197,6 +4553,13 @@ impl<D: UiDispatcher> NativeApp<D> {
             // the keyboard.
             self.focused_id = None;
             self.open_select(&key);
+        } else if let Some((id, next)) = clicked_flag {
+            // The flip is reported as a change, not a click: the same route a
+            // text field takes, so one handler name covers both kinds of
+            // control and there is no second event to write.
+            self.dispatcher
+                .dispatch_change(&id, if next { "true" } else { "false" });
+            self.render();
         } else if let Some(lbox) = clicked_input {
             // Map the click back into content space for caret placement.
             let cx = mx + self.scroll_x + lbox.pan.0;
@@ -5130,6 +5493,7 @@ mod tests {
             disabled: false,
             tooltip: None,
             options: Vec::new(),
+            checked: false,
         }];
 
         // Simulate click on line 1, col 2:
@@ -5495,6 +5859,7 @@ mod tests {
             disabled: false,
             tooltip: None,
             options: Vec::new(),
+            checked: false,
         }];
 
         // Initially at (0, 0) - not hovering
@@ -5604,6 +5969,7 @@ mod tests {
             disabled: false,
             tooltip: None,
             options: Vec::new(),
+            checked: false,
         }];
 
         assert!(app.focus_input("test_input"));
@@ -6317,6 +6683,7 @@ mod tests {
             disabled: false,
             tooltip: None,
             options: Vec::new(),
+            checked: false,
         };
         b.clips = Some(vec![outer, inner]);
         assert_eq!(
@@ -6833,6 +7200,7 @@ mod tests {
                 disabled: false,
                 tooltip: None,
                 options: Vec::new(),
+                checked: false,
             },
             // Only 2px below the first: its halo *would* reach back over the
             // first box's bottom edge if drawn inline.
@@ -6855,6 +7223,7 @@ mod tests {
                 disabled: false,
                 tooltip: None,
                 options: Vec::new(),
+                checked: false,
             },
         ];
 
@@ -7265,6 +7634,7 @@ mod tests {
             disabled,
             tooltip: None,
             options: Vec::new(),
+            checked: false,
         }
     }
 
@@ -7292,6 +7662,7 @@ mod tests {
             disabled,
             tooltip: None,
             options: options.iter().map(|o| o.to_string()).collect(),
+            checked: false,
         }
     }
 
@@ -8651,6 +9022,7 @@ mod tests {
                 disabled: false,
                 tooltip: None,
                 options: Vec::new(),
+                checked: false,
             }
         }
 
@@ -9267,6 +9639,455 @@ mod tests {
             select_key(&without_id, 3),
             "__sel_3",
             "…and layout order is the fallback"
+        );
+    }
+
+    /// A `checkbox` or `toggle` element laid out the way the renderer lays
+    /// one out, so the interaction tests drive a real box rather than a
+    /// hand-written one.
+    fn flag_box(tag: &str, id: Option<&str>, label: &str, on: bool, disabled: bool) -> LayoutBox {
+        let mut e = UiElement::new(tag);
+        e.id = id.map(str::to_string);
+        e.text = Some(label.into());
+        if on {
+            e.props.insert("value".into(), "true".into());
+        }
+        if disabled {
+            e.props.insert("disabled".into(), "true".into());
+        }
+        let mut boxes = Vec::new();
+        layout_element(&e, 50, 60, 300, &mut boxes);
+        boxes
+            .into_iter()
+            .next()
+            .expect("a flag lays out exactly one box")
+    }
+
+    /// A button sitting exactly where a control does, for the absorption
+    /// checks: if the control stops the press, this one has to stay quiet.
+    fn btn_box_at(rect: Rect) -> LayoutBox {
+        LayoutBox {
+            rect,
+            tag: "button".into(),
+            id: Some("behind".into()),
+            text: Some("behind".into()),
+            on_click: Some("behind".into()),
+            on_change: None,
+            on_key: None,
+            pan: (0, 0),
+            clips: None,
+            pad: 0,
+            disabled: false,
+            tooltip: None,
+            options: Vec::new(),
+            checked: false,
+        }
+    }
+
+    /// The dispatcher the flag tests drive: it keeps *which* control changed
+    /// as well as what it became, because a press that reports the right
+    /// word through the wrong box is a bug a value-only recorder would miss.
+    struct FlagDisp<'a> {
+        id: &'a mut String,
+        value: &'a mut String,
+        clicks: &'a mut i32,
+    }
+
+    impl<'a> UiDispatcher for FlagDisp<'a> {
+        fn root(&mut self) -> Option<UiElement> {
+            None
+        }
+        fn dispatch_click(&mut self, _button_id: &str) {
+            *self.clicks += 1;
+        }
+        fn dispatch_change(&mut self, element_id: &str, value: &str) {
+            *self.id = element_id.to_string();
+            *self.value = value.to_string();
+        }
+        fn dispatch_key(&mut self, _key: &str, _target_id: Option<&str>) {}
+    }
+
+    fn flag_app<'a>(
+        id: &'a mut String,
+        value: &'a mut String,
+        clicks: &'a mut i32,
+    ) -> NativeApp<FlagDisp<'a>> {
+        NativeApp::new(
+            WindowConfig {
+                title: "T".into(),
+                width: 400,
+                height: 400,
+            },
+            FlagDisp { id, value, clicks },
+        )
+    }
+
+    /// The mark is two arms meeting at a low vertex, not a filled square —
+    /// and it stays inside the eleven columns it was given, so a control that
+    /// draws its own mark cannot spill past the square it belongs to.
+    #[test]
+    fn test_the_check_mark_is_two_arms_and_stays_where_it_was_put() {
+        let t = Theme::DARK;
+        let stride = 40usize;
+        let height = 30usize;
+        let mut buf = vec![t.bg; stride * height];
+
+        draw_check_mark(&mut buf, stride, height, None, 10, 8, t.button_text);
+
+        // The falling arm starts high and to the left…
+        assert_eq!(
+            buf[12 * stride + 10],
+            t.button_text,
+            "the mark begins on the left"
+        );
+        // …meets the climbing arm at the bottom…
+        assert_eq!(
+            buf[18 * stride + 15],
+            t.button_text,
+            "the two arms meet at a low vertex"
+        );
+        // …and the climbing arm finishes above where the falling one began.
+        assert_eq!(
+            buf[11 * stride + 20],
+            t.button_text,
+            "the second arm climbs higher than the first started"
+        );
+
+        // One pixel wide, so a check reads as a stroke rather than a slab.
+        assert_eq!(
+            buf[12 * stride + 11],
+            t.bg,
+            "the mark is a stroke, not a filled block"
+        );
+        // The arms do not reach each other's ends: this is a V, not a line.
+        assert_eq!(
+            buf[11 * stride + 10],
+            t.bg,
+            "the falling arm does not start at the top"
+        );
+        assert_eq!(
+            buf[18 * stride + 20],
+            t.bg,
+            "…and the climbing arm does not reach the bottom"
+        );
+    }
+
+    /// On and off must be told apart without reading anything: the square
+    /// that is on wears the accent and carries a white mark, the one that is
+    /// off is just a field — no mark, and nothing that looks switched on.
+    #[test]
+    fn test_an_on_checkbox_paints_accent_and_a_mark_while_an_off_one_is_bare() {
+        let t = Theme::DARK;
+        let stride = 60usize;
+        let height = 60usize;
+        let row = Rect {
+            x: 10,
+            y: 10,
+            w: 200,
+            h: FLAG_H,
+        };
+
+        let on_view = FlagView::new("checkbox", row, true, 0.0, false);
+        let mut on_buf = vec![t.bg; stride * height];
+        draw_flag_control(&mut on_buf, stride, height, None, &t, &on_view);
+
+        let off_view = FlagView::new("checkbox", row, false, 0.0, false);
+        let mut off_buf = vec![t.bg; stride * height];
+        draw_flag_control(&mut off_buf, stride, height, None, &t, &off_view);
+
+        let r = on_view.rect;
+        assert_eq!(
+            r.w, FLAG_BOX,
+            "the square is as wide as a checkbox's own control"
+        );
+        let face = (r.y + 3) as usize * stride + (r.x + 8) as usize;
+        assert_eq!(
+            on_buf[face], t.input_border_focused,
+            "a box that is on wears the accent"
+        );
+        assert_eq!(
+            off_buf[face], t.input_bg,
+            "…and one that is off is an ordinary field"
+        );
+
+        let mark = (r.y + 9) as usize * stride + (r.x + 3) as usize;
+        assert_eq!(
+            on_buf[mark], t.button_text,
+            "the mark is drawn in white so it clears contrast on the accent"
+        );
+        assert_eq!(
+            off_buf[mark], t.input_bg,
+            "an off box carries no mark at all"
+        );
+        let off_white = off_buf
+            .iter()
+            .enumerate()
+            .filter(|(i, c)| {
+                **c == t.button_text
+                    && (*i % stride) >= r.x as usize
+                    && (*i % stride) < (r.x + r.w) as usize
+                    && (*i / stride) >= r.y as usize
+                    && (*i / stride) < (r.y + r.h) as usize
+            })
+            .count();
+        assert_eq!(off_white, 0, "nothing white inside a box that is off");
+
+        // The corners are cut, so the square reads as a control rather than
+        // as a stray pixel block.
+        assert_eq!(
+            on_buf[(r.y as usize) * stride + (r.x as usize)],
+            t.bg,
+            "the corner is rounded away"
+        );
+    }
+
+    /// A toggle states itself by where the knob sits — the one difference a
+    /// switch has that needs no reading — and it is the same size either
+    /// way, so flipping it cannot shove the row it belongs to.
+    #[test]
+    fn test_a_toggle_states_itself_by_where_the_knob_sits() {
+        let t = Theme::DARK;
+        let stride = 60usize;
+        let height = 60usize;
+        let row = Rect {
+            x: 10,
+            y: 10,
+            w: 200,
+            h: FLAG_H,
+        };
+
+        let off = FlagView::new("toggle", row, false, 0.0, false);
+        let on = FlagView::new("toggle", row, true, 0.0, false);
+        assert_eq!(off.rect, on.rect, "flipping a switch must not move it");
+        assert_eq!(off.rect.w, TOGGLE_W, "and it is as wide as a track");
+        assert_eq!(off.rect.h, TOGGLE_H, "and as tall as one too");
+
+        let mut off_buf = vec![t.bg; stride * height];
+        draw_flag_control(&mut off_buf, stride, height, None, &t, &off);
+        let mut on_buf = vec![t.bg; stride * height];
+        draw_flag_control(&mut on_buf, stride, height, None, &t, &on);
+
+        let r = off.rect;
+        let mid = (r.y + r.h / 2) as usize;
+        assert_eq!(
+            off_buf[mid * stride + (r.x + 12) as usize],
+            t.text_dim,
+            "the knob sits at the left end when the switch is off"
+        );
+        assert_eq!(
+            off_buf[mid * stride + (r.x + 36) as usize],
+            t.input_bg,
+            "…and the right end is empty track"
+        );
+        assert_eq!(
+            on_buf[mid * stride + (r.x + 32) as usize],
+            t.button_text,
+            "the knob sits at the right end when it is on"
+        );
+        assert_eq!(
+            on_buf[mid * stride + (r.x + 8) as usize],
+            t.input_border_focused,
+            "…and the left end is the lit track"
+        );
+    }
+
+    /// A flag's row is the control and its label together, measured once.
+    /// The state has to come from the element's `value`, and neither the
+    /// label's length nor the state may change how tall the row is.
+    #[test]
+    fn test_a_flag_layouts_as_one_row_carried_by_its_value_and_its_words() {
+        let on = flag_box("checkbox", Some("dark"), "Dark mode", true, false);
+        assert_eq!(on.tag, "checkbox");
+        assert!(
+            on.checked,
+            "…so the drawing never has to go looking for the value"
+        );
+        assert_eq!(
+            on.text.as_deref(),
+            Some("Dark mode"),
+            "the label rides as the box's text, because that is what is drawn"
+        );
+        assert_eq!(on.id.as_deref(), Some("dark"));
+        assert_eq!(
+            on.rect.h, FLAG_H,
+            "fixed height: a long label widens the row, never makes it taller"
+        );
+        assert_eq!(
+            on.rect.w,
+            FLAG_BOX + FLAG_GAP + 9 * CELL_W + 8,
+            "control, gap, every character, and the room left at the end"
+        );
+
+        let off = flag_box("checkbox", Some("dark"), "Dark mode", false, false);
+        assert!(
+            !off.checked,
+            "an absent or false `value` is off, which is the default"
+        );
+        assert_eq!(
+            off.rect, on.rect,
+            "…and the state does not change the room the row takes"
+        );
+
+        let tgl = flag_box("toggle", None, "Dark mode", false, false);
+        assert_eq!(
+            tgl.rect.w,
+            TOGGLE_W + FLAG_GAP + 9 * CELL_W + 8,
+            "a toggle claims more room for its own control than a checkbox"
+        );
+        assert!(tgl.rect.w > on.rect.w);
+        assert_eq!(tgl.rect.h, FLAG_H, "and is still one row tall");
+    }
+
+    /// Only a flag that can report hovers: one with no `id` has nowhere to
+    /// put the new value, and lighting a control that will not answer the
+    /// click is a promise the window cannot keep. The label counts — it is
+    /// part of the row the press covers.
+    #[test]
+    fn test_hover_lights_a_flag_that_can_report_and_leaves_the_rest_dark() {
+        let with_id = flag_box("checkbox", Some("dark"), "Dark mode", false, false);
+        let no_id = flag_box("checkbox", None, "Light mode", false, false);
+        let disabled = flag_box("toggle", Some("beta"), "Beta", false, true);
+        let label_pos = (
+            with_id.rect.x + with_id.rect.w - 4,
+            with_id.rect.y + with_id.rect.h - 4,
+        );
+
+        assert_eq!(
+            find_hovered_button_in_boxes(std::slice::from_ref(&with_id), 0, 0, label_pos),
+            Some("dark".to_string()),
+            "the whole row — control and label — is the control"
+        );
+        assert_eq!(
+            find_hovered_button_in_boxes(std::slice::from_ref(&no_id), 0, 0, label_pos),
+            None,
+            "one with nowhere to report must not pretend to be live"
+        );
+        assert_eq!(
+            find_hovered_button_in_boxes(&[disabled], 0, 0, label_pos),
+            None,
+            "and a disabled one is inert even though it can report"
+        );
+
+        // Hover and the press resolve the key the same way, so the control
+        // that lit up is the one that flips.
+        assert_eq!(
+            flag_key(&with_id, 7),
+            "dark",
+            "an id is the key when there is one"
+        );
+        assert_eq!(
+            flag_key(&no_id, 7),
+            "__flag_7",
+            "…and layout order is the fallback"
+        );
+    }
+
+    /// A press reports a *change* — the flipped value, through the control's
+    /// id — and never a click, because a click that flips a switch has no
+    /// meaning of its own beside the flip. The label presses too: the words
+    /// belong to the control, and text next to a switch that does nothing
+    /// when clicked is text people learn to avoid.
+    #[test]
+    fn test_pressing_a_flag_reports_the_flip_and_the_label_presses_too() {
+        let mut id = String::new();
+        let mut value = String::new();
+        let mut clicks = 0;
+        let mut app = flag_app(&mut id, &mut value, &mut clicks);
+        app.layout_boxes = vec![flag_box(
+            "checkbox",
+            Some("dark"),
+            "Dark mode",
+            false,
+            false,
+        )];
+
+        let b = app.layout_boxes[0].rect;
+        app.cursor_pos = (b.x + b.w - 4, b.y + b.h - 4);
+        app.handle_click();
+        assert_eq!(
+            *app.dispatcher.id, "dark",
+            "the press reports through the control's id"
+        );
+        assert_eq!(
+            *app.dispatcher.value, "true",
+            "…and an off box comes back on"
+        );
+        assert_eq!(
+            *app.dispatcher.clicks, 0,
+            "a flag reports a change, never a separate click"
+        );
+
+        // The other direction, through the same route.
+        app.layout_boxes[0].checked = true;
+        app.cursor_pos = (b.x + 4, b.y + b.h / 2);
+        app.handle_click();
+        assert_eq!(
+            *app.dispatcher.value, "false",
+            "a box that is on comes back off"
+        );
+
+        // Hover is only the promise; a disabled control keeps it to itself.
+        let mut id2 = String::new();
+        let mut value2 = String::new();
+        let mut clicks2 = 0;
+        let mut off = flag_app(&mut id2, &mut value2, &mut clicks2);
+        off.layout_boxes = vec![flag_box("toggle", Some("beta"), "Beta", false, true)];
+        let rb = off.layout_boxes[0].rect;
+        off.cursor_pos = (rb.x + 4, rb.y + rb.h / 2);
+        off.handle_click();
+        assert!(
+            value2.is_empty(),
+            "a disabled control dispatches nothing at all"
+        );
+        assert_eq!(clicks2, 0, "and is not mistaken for a button either");
+    }
+
+    /// A control that cannot report still has to *take* the press: the words
+    /// next to it absorb it rather than letting it fall through to whatever
+    /// is stacked behind. The control experiment is the button on its own —
+    /// it fires when nothing stands in front of it.
+    #[test]
+    fn test_a_flag_that_cannot_report_takes_the_press_with_it() {
+        let flag = flag_box("checkbox", None, "Decoration", false, false);
+        let behind = btn_box_at(flag.rect);
+
+        // Nothing in front: the button behind is reachable.
+        let mut id = String::new();
+        let mut value = String::new();
+        let mut clicks = 0;
+        let mut bare = flag_app(&mut id, &mut value, &mut clicks);
+        bare.layout_boxes = vec![behind.clone()];
+        bare.cursor_pos = (flag.rect.x + 4, flag.rect.y + flag.rect.h / 2);
+        bare.handle_click();
+        assert_eq!(clicks, 1, "control experiment: the button fires alone");
+
+        // An id-less flag stands in front of it.
+        let mut id1 = String::new();
+        let mut value1 = String::new();
+        let mut clicks1 = 0;
+        let mut no_id = flag_app(&mut id1, &mut value1, &mut clicks1);
+        no_id.layout_boxes = vec![flag.clone(), behind.clone()];
+        no_id.cursor_pos = (flag.rect.x + 4, flag.rect.y + flag.rect.h / 2);
+        no_id.handle_click();
+        assert_eq!(
+            clicks1, 0,
+            "the press stops with the flag instead of reaching the button"
+        );
+        assert!(value1.is_empty(), "…and it reports nothing, since it can't");
+
+        // So does a disabled one.
+        let disabled = flag_box("checkbox", Some("dark"), "Decoration", false, true);
+        let behind2 = btn_box_at(disabled.rect);
+        let mut id2 = String::new();
+        let mut value2 = String::new();
+        let mut clicks2 = 0;
+        let mut dim = flag_app(&mut id2, &mut value2, &mut clicks2);
+        dim.layout_boxes = vec![disabled, behind2];
+        dim.cursor_pos = (flag.rect.x + 4, flag.rect.y + flag.rect.h / 2);
+        dim.handle_click();
+        assert_eq!(
+            clicks2, 0,
+            "a disabled control absorbs the press rather than passing it on"
         );
     }
 }

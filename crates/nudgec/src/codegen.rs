@@ -1035,9 +1035,25 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
             );
             format!("rt.computer_{}({})", method, parts.join(", "))
         }
+        // An `if` used for its value becomes Python's conditional expression.
+        // It used to fall into the catch-all below, which emits a bare comment
+        // — legal Python in an expression slot, so the value did not fail to
+        // compile, it quietly became `None` and every caller downstream read a
+        // type it was never handed.
+        ExprKind::If { cond, then, else_ } => {
+            let alt = match else_ {
+                Some(e) => py(e, aliases),
+                None => "None".to_string(),
+            };
+            format!(
+                "({} if {} else {})",
+                py(then, aliases),
+                py(cond, aliases),
+                alt
+            )
+        }
         ExprKind::RecordLit(_)
         | ExprKind::Index { .. }
-        | ExprKind::If { .. }
         | ExprKind::Spawn(_)
         | ExprKind::Block(_) => "# pack1/pack4 codegen not yet lowered".to_string(),
     }
@@ -1316,6 +1332,13 @@ class _HeadlessApp:
         bound state is what the next find reads back."""
         elem = self.find(target_id)
         if elem.found and elem.on_change:
+            # A boolean control hands its handler a Bool — that is what the
+            # widget *is*. Left as the word it rode in on, the handler would
+            # store the string "true", and the next frame's `if` would read a
+            # non-empty string as truthy in *both* directions: a switch that
+            # could be turned off but never showed it.
+            if getattr(elem, "tag", None) in ("checkbox", "toggle"):
+                value = str(value).strip().lower() in ("true", "1", "yes", "on")
             handler = elem.on_change
             if callable(handler):
                 handler(value)
@@ -1398,6 +1421,33 @@ def select(*args, **kwargs):
     if opts != "":
         props["options"] = str(opts)
     return _UiElement(tag="select", id=sel_id, text=val, on_change=on_change, props=props)
+
+
+def _flag(tag, args, kwargs):
+    # A boolean control: `text` carries the label (the only thing the user
+    # reads) and `value` carries the state, spelled the way is_truthy parses.
+    fid = kwargs.get("id")
+    on_change = kwargs.get("on_change")
+    label = str(args[0]) if args else str(kwargs.get("label", ""))
+    raw = kwargs.get("value", False)
+    on = raw if isinstance(raw, bool) else str(raw).strip().lower() in ("true", "1", "yes", "on")
+    props = {
+        k: str(v)
+        for k, v in kwargs.items()
+        if k not in ("id", "on_change", "value", "label")
+    }
+    props["label"] = label
+    if "value" in kwargs:
+        props["value"] = "true" if on else "false"
+    return _UiElement(tag=tag, id=fid, text=label, on_change=on_change, props=props)
+
+
+def checkbox(*args, **kwargs):
+    return _flag("checkbox", args, kwargs)
+
+
+def toggle(*args, **kwargs):
+    return _flag("toggle", args, kwargs)
 "#;
 
 /// Shared `nudgec test` driver: load a generated module by path and run
