@@ -1309,6 +1309,23 @@ class _HeadlessApp:
             if callable(self._render_fn):
                 self.root = self._render_fn()
 
+    def dispatch_change(self, target_id, value):
+        """Report a new value for a field — the way picking an option out of a
+        `select` list does. It is a change rather than a click, so the handler
+        is handed the value, and the form is re-rendered afterwards so the
+        bound state is what the next find reads back."""
+        elem = self.find(target_id)
+        if elem.found and elem.on_change:
+            handler = elem.on_change
+            if callable(handler):
+                handler(value)
+            elif isinstance(handler, str):
+                fn = getattr(self.agent, handler, None) or globals().get(handler)
+                if callable(fn):
+                    fn(value)
+            if callable(self._render_fn):
+                self.root = self._render_fn()
+
 
 class _Window:
     def __init__(self, title="", width=None, height=None, render_fn=None, agent=None):
@@ -1366,6 +1383,21 @@ def input(*args, **kwargs):
     on_change = kwargs.get("on_change")
     props = {k: str(v) for k, v in kwargs.items() if k not in ("id", "on_change")}
     return _UiElement(tag="input", id=inp_id, on_change=on_change, props=props)
+
+
+def select(*args, **kwargs):
+    sel_id = kwargs.get("id")
+    on_change = kwargs.get("on_change")
+    val = str(args[0]) if args else str(kwargs.get("value", ""))
+    opts = kwargs.get("options", [])
+    if isinstance(opts, (list, tuple)):
+        opts = "\n".join(str(o).replace("\n", " ") for o in opts)
+    props = {k: str(v) for k, v in kwargs.items() if k not in ("id", "on_change", "options")}
+    if args or "value" in kwargs:
+        props["value"] = val
+    if opts != "":
+        props["options"] = str(opts)
+    return _UiElement(tag="select", id=sel_id, text=val, on_change=on_change, props=props)
 "#;
 
 /// Shared `nudgec test` driver: load a generated module by path and run

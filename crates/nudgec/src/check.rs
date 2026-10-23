@@ -1708,7 +1708,7 @@ fn check_expr_pos(
                         }
                         return Ty::View;
                     }
-                    "text" | "button" | "input" | "bubble" => {
+                    "text" | "button" | "input" | "bubble" | "select" => {
                         for a in args {
                             check_expr(a, locals, g, errs);
                         }
@@ -1903,7 +1903,7 @@ fn check_expr_pos(
                     } else if prefix == "ui" {
                         match name.as_str() {
                             "column" | "row" | "scroll" | "text" | "button" | "input"
-                            | "bubble" => return Ty::View,
+                            | "bubble" | "select" => return Ty::View,
                             other => {
                                 errs.push(CheckError {
                                     span: None,

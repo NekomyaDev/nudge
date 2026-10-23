@@ -467,6 +467,12 @@ pub struct LayoutBox {
     /// cursor while this box is hovered. Purely an overlay, so it is never
     /// measured and cannot shift layout.
     pub tooltip: Option<String>,
+    /// The choice list of a `select`, in order, empty for every other tag.
+    /// Carried on the box rather than looked up from the element tree so the
+    /// open popup, its hit test and its keyboard highlight all read the same
+    /// snapshot the width was measured from — a list that changed underneath
+    /// a painted popup would highlight a row that is no longer there.
+    pub options: Vec<String>,
 }
 
 impl LayoutBox {
@@ -945,6 +951,161 @@ pub fn draw_rounded_rect_box(
     border: u32,
 ) {
     draw_rounded_rect_box_clipped(buf, stride, height, None, x, y, w, h, r, fill, border);
+}
+
+/// The `▾` a closed `select` wears. Drawn from rectangles rather than a
+/// glyph, because a font is not obliged to carry that codepoint — and a
+/// choice field that lost the one mark saying it opens would be a field
+/// nobody dares click. Seven pixels wide, four tall: a filled triangle that
+/// still reads at the default UI size.
+pub fn draw_chevron_down(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    clip: Option<Rect>,
+    x: i32,
+    y: i32,
+    color: u32,
+) {
+    for (row, w) in [7i32, 5, 3, 1].into_iter().enumerate() {
+        let row_rect = Rect {
+            x: x + (7 - w) / 2,
+            y: y + row as i32,
+            w,
+            h: 1,
+        };
+        let drawn = match clip {
+            None => Some(row_rect),
+            Some(c) => intersect(row_rect, c),
+        };
+        if let Some(r) = drawn {
+            draw_rect(buf, stride, height, r.x, r.y, r.w, r.h, color);
+        }
+    }
+}
+
+/// The list a `select` opens, painted as one card over everything beneath it.
+/// The rows are drawn rather than laid out, so opening a field never reflows
+/// the form — the card takes the room below the field, or above it when there
+/// is no room below, and takes only as much as the window can show.
+pub fn draw_select_popup(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    fonts: &FontEngine,
+    theme: &Theme,
+    popup: &SelectPopupView,
+    hover_row: Option<usize>,
+) {
+    let r = popup.rect;
+    if r.w <= 0 || r.h <= 0 {
+        return;
+    }
+    // The card wears the input's surface so the list reads as the field's own
+    // contents, with the focused border — an open list is the field's active
+    // state, and the accent is what says so.
+    let (bg, border) = input_surface(theme, true, false);
+    draw_rounded_rect_box(
+        buf,
+        stride,
+        height,
+        r.x,
+        r.y,
+        r.w,
+        r.h,
+        CORNER_RADIUS,
+        bg,
+        border,
+    );
+
+    let cell_h = fonts.cell_h;
+    for row in 0..popup.rows {
+        let Some(idx) = popup.first.checked_add(row) else {
+            break;
+        };
+        let Some(option) = popup.options.get(idx) else {
+            break;
+        };
+        let row_y = r.y + SELECT_POP_PAD + row as i32 * SELECT_ROW_H;
+
+        // The active row is the one the keyboard is on, unless the pointer is
+        // somewhere on the card — then the pointer wins, so what lights up is
+        // always what a press would take. It is also the row drawn wider, from
+        // edge to edge, which is how a list says "this one".
+        let active = hover_row.unwrap_or(popup.highlight) == idx;
+        if active {
+            draw_rect(
+                buf,
+                stride,
+                height,
+                r.x + 1,
+                row_y,
+                r.w - 2,
+                SELECT_ROW_H,
+                theme.selection_bg,
+            );
+        }
+
+        let row_rect = Rect {
+            x: r.x + 1,
+            y: row_y,
+            w: (r.w - 2).max(0),
+            h: SELECT_ROW_H,
+        };
+        let text_y = row_y + ((SELECT_ROW_H - cell_h) / 2).max(2);
+        draw_text_ttf_clipped(
+            fonts,
+            FaceKind::Ui,
+            r.x + 10,
+            text_y,
+            option,
+            row_rect,
+            |px, py, w, h, cov| {
+                draw_rect_alpha(buf, stride, height, px, py, w, h, theme.text, cov);
+            },
+        );
+
+        // The row the field is already showing is marked, so a list opened by
+        // accident shows where it would land before anything is pressed. The
+        // mark is a small square rather than a glyph, for the same reason the
+        // chevron is drawn: no font owes the UI a codepoint.
+        if popup.value.as_deref() == Some(option.as_str()) {
+            for i in 0..4 {
+                let dot = Rect {
+                    x: r.x + r.w - 14,
+                    y: row_y + (SELECT_ROW_H - 7) / 2 + i,
+                    w: if i == 0 || i == 3 { 7 } else { 9 },
+                    h: 1,
+                };
+                if let Some(d) = intersect(dot, row_rect) {
+                    draw_rect(buf, stride, height, d.x, d.y, d.w, d.h, theme.text_dim);
+                }
+            }
+        }
+    }
+
+    // A list taller than its card scrolls inside itself. The thumb is the same
+    // colour as a window scrollbar's, so the two cannot be told apart — which
+    // is the point: they do the same job.
+    let count = popup.options.len();
+    if count > popup.rows && popup.rows > 0 {
+        let track_h = r.h - 2 * SELECT_POP_PAD;
+        let thumb_h = ((track_h * popup.rows as i32) / count as i32).max(16);
+        let scrollable = count - popup.rows;
+        let denom = scrollable.max(1) as i32;
+        let thumb_y =
+            r.y + SELECT_POP_PAD + (track_h - thumb_h) * popup.first.min(scrollable) as i32 / denom;
+        draw_rect(
+            buf,
+            stride,
+            height,
+            r.x + r.w - 4,
+            thumb_y,
+            2,
+            thumb_h,
+            theme.scrollbar_thumb,
+        );
+    }
 }
 
 /// Paint a hover tooltip just below and to the right of the cursor. Called
@@ -1777,6 +1938,7 @@ pub fn layout_element_ctx(
                 pad: 0,
                 disabled: false,
                 tooltip: elem.props.get("tooltip").cloned(),
+                options: Vec::new(),
             });
             (w, h)
         }
@@ -1852,6 +2014,7 @@ pub fn layout_element_ctx(
                 pad,
                 disabled: false,
                 tooltip: elem.props.get("tooltip").cloned(),
+                options: Vec::new(),
             });
             (w, h)
         }
@@ -1884,6 +2047,7 @@ pub fn layout_element_ctx(
                 pad: 0,
                 disabled: elem.props.get("disabled").is_some_and(|s| is_truthy(s)),
                 tooltip: elem.props.get("tooltip").cloned(),
+                options: Vec::new(),
             });
             (w, h)
         }
@@ -1914,6 +2078,48 @@ pub fn layout_element_ctx(
                 pad: 0,
                 disabled: elem.props.get("disabled").is_some_and(|s| is_truthy(s)),
                 tooltip: elem.props.get("tooltip").cloned(),
+                options: Vec::new(),
+            });
+            (w, h)
+        }
+        // A closed choice field. Its width is settled by the widest thing it
+        // can ever show — the current label or any option — so opening the list
+        // never resizes the field, and a row always fits the box that chose it.
+        // The list itself is an overlay drawn by the frame, never laid out here.
+        "select" => {
+            let value = elem
+                .text
+                .clone()
+                .or_else(|| elem.props.get("value").cloned())
+                .unwrap_or_default();
+            let options: Vec<String> = elem
+                .props
+                .get("options")
+                .map(|o| {
+                    o.split('\n')
+                        .filter(|l| !l.is_empty())
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let widest = options.iter().map(|o| o.chars().count()).max().unwrap_or(0);
+            let text_w = value.chars().count().max(widest) as i32 * CELL_W;
+            let w = (text_w + 56).max(140);
+            let h = (CELL_H + 16).max(36);
+            boxes.push(LayoutBox {
+                rect: Rect { x, y, w, h },
+                tag: "select".into(),
+                id: elem.id.clone(),
+                text: Some(value),
+                on_click: None,
+                on_change: elem.on_change.clone(),
+                on_key: elem.on_key.clone(),
+                pan,
+                clips: clips_owned(clips),
+                pad: 0,
+                disabled: elem.props.get("disabled").is_some_and(|s| is_truthy(s)),
+                tooltip: elem.props.get("tooltip").cloned(),
+                options,
             });
             (w, h)
         }
@@ -1951,6 +2157,134 @@ pub fn button_key(lbox: &LayoutBox, index: usize) -> String {
         .clone()
         .or_else(|| lbox.on_click.clone())
         .unwrap_or_else(|| format!("__btn_{index}"))
+}
+
+/// Dispatch key of a `select` box: its `id` when it has one, else the layout
+/// order. Hover, the open list and the press all resolve it the same way, so
+/// the field that lit up is the one that opens.
+pub fn select_key(lbox: &LayoutBox, index: usize) -> String {
+    lbox.id.clone().unwrap_or_else(|| format!("__sel_{index}"))
+}
+
+/// Height of one row of an open choice list, in pixels.
+pub const SELECT_ROW_H: i32 = 28;
+/// Breathing room above the first row and below the last, so rows are not
+/// glued to the card's border.
+pub const SELECT_POP_PAD: i32 = 6;
+
+/// The list an open `select` paints: its card, which end of the field it
+/// hangs from, and how much of it the window can show. Owned, so the draw
+/// pass can hold it while the surface is borrowed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelectPopupView {
+    /// The open field's key, kept so a keyboard move can find its own state.
+    pub key: String,
+    /// Card in screen space, always inside the window.
+    pub rect: Rect,
+    pub options: Vec<String>,
+    /// Index of the first row drawn, and how many rows fit.
+    pub first: usize,
+    pub rows: usize,
+    /// Index of the row the keyboard is on — also what Enter commits.
+    pub highlight: usize,
+    /// What the field is currently showing, so the list can mark it.
+    pub value: Option<String>,
+    /// The field's dispatch id. `None` means the choice goes nowhere, and the
+    /// list never opens in the first place.
+    pub id: Option<String>,
+}
+
+/// Geometry of the list a `select` opens: below the field when the room is
+/// there, above it when it is not, and clipped — never scrolled off the
+/// window — when there is no room on either side. Pure, so the draw pass and
+/// the click/keyboard hit tests cannot disagree about where a row is.
+pub fn select_popup_rect(field: Rect, count: usize, win_w: i32, win_h: i32) -> Rect {
+    let want_h = (count as i32) * SELECT_ROW_H + 2 * SELECT_POP_PAD;
+    let w = field.w.clamp(0, win_w.max(0));
+    let x = field.x.clamp(0, (win_w - w).max(0));
+    let below_y = field.y + field.h;
+    let space_below = (win_h - below_y).max(0);
+    let space_above = field.y.max(0);
+    let (y, avail) = if want_h <= space_below {
+        (below_y, space_below)
+    } else if want_h <= space_above {
+        (field.y - want_h, space_above)
+    } else if space_below >= space_above {
+        (below_y, space_below)
+    } else {
+        (field.y - space_above, space_above)
+    };
+    let h = want_h.min(avail).max(0);
+    Rect {
+        x,
+        y: y.clamp(0, (win_h - h).max(0)),
+        w,
+        h,
+    }
+}
+
+/// How many whole rows a card of this height shows.
+pub fn select_visible_rows(popup_h: i32) -> usize {
+    ((popup_h - 2 * SELECT_POP_PAD) / SELECT_ROW_H).max(0) as usize
+}
+
+/// A list's first shown row, made legal: never past the end of the options.
+/// The highlight is deliberately not dragged along — the wheel may scroll the
+/// list away from it — so this is only a range clamp.
+pub fn select_scroll_clamp(count: usize, visible: usize, scroll: usize) -> usize {
+    scroll.min(count.saturating_sub(visible))
+}
+
+/// The smallest first shown row that still shows `highlight`, so a keyboard
+/// move always lands on screen.
+pub fn select_scroll_for_highlight(count: usize, visible: usize, highlight: usize) -> usize {
+    if visible == 0 {
+        return 0;
+    }
+    highlight
+        .saturating_sub(visible - 1)
+        .min(count.saturating_sub(visible))
+}
+
+/// Which option a pointer position sits on — `None` for the padding, the
+/// thumb gutter, or outside the card.
+pub fn select_row_at(popup: Rect, count: usize, first: usize, pos: (i32, i32)) -> Option<usize> {
+    if !popup.contains(pos.0, pos.1) {
+        return None;
+    }
+    let rel_y = pos.1 - popup.y - SELECT_POP_PAD;
+    if rel_y < 0 {
+        return None;
+    }
+    let row = (rel_y / SELECT_ROW_H) as usize;
+    if row >= select_visible_rows(popup.h) {
+        return None;
+    }
+    let idx = first + row;
+    (idx < count).then_some(idx)
+}
+
+/// The `select` box with this dispatch key, with its layout order. Hover and
+/// the open list both resolve through `select_key`, so an id-less field whose
+/// order shifted still finds itself.
+pub fn find_select_box<'a>(boxes: &'a [LayoutBox], key: &str) -> Option<(usize, &'a LayoutBox)> {
+    boxes
+        .iter()
+        .enumerate()
+        .find(|(i, lbox)| lbox.tag == "select" && select_key(lbox, *i) == key)
+}
+
+/// One open choice list, and where the keyboard is inside it. Keyed the same
+/// way hover is, so a re-layout that reorders boxes cannot leave a list
+/// attached to the wrong control.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpenSelect {
+    pub key: String,
+    /// Index of the option the keyboard is on; also what Enter commits, and
+    /// what the pointer moves to as it passes over rows.
+    pub highlight: usize,
+    /// Index of the first option drawn, for lists taller than the room left.
+    pub scroll: usize,
 }
 
 /// The two vertical gradient ends for a button. `hover_t` is how far the
@@ -1993,7 +2327,14 @@ pub fn find_hovered_button_in_boxes(
 ) -> Option<String> {
     let (mx, my) = pos;
     for (i, lbox) in boxes.iter().enumerate() {
-        if lbox.tag == "button" && !lbox.disabled {
+        // A `select` is hoverable like a button — it opens on a press — so it
+        // earns the same pointer cursor and hover ramp. Its key comes from
+        // `select_key` rather than `button_key`, because a choice field has no
+        // `on_click` to fall back on and the field's own arm reads hover under
+        // that same name.
+        let is_control = lbox.tag == "button"
+            || (lbox.tag == "select" && lbox.id.is_some() && !lbox.options.is_empty());
+        if is_control && !lbox.disabled {
             // Pan-aware screen rect; a button scrolled outside its scroll
             // viewport is not hoverable even where its rect still overlaps.
             let screen_rect = lbox.screen_rect(scroll_x, scroll_y);
@@ -2001,7 +2342,12 @@ pub fn find_hovered_button_in_boxes(
                 .screen_clip(scroll_x, scroll_y)
                 .is_none_or(|c| c.contains(mx, my));
             if screen_rect.contains(mx, my) && clip_ok {
-                return Some(button_key(lbox, i));
+                let key = if lbox.tag == "select" {
+                    select_key(lbox, i)
+                } else {
+                    button_key(lbox, i)
+                };
+                return Some(key);
             }
         }
     }
@@ -2165,6 +2511,10 @@ pub struct NativeApp<D: UiDispatcher> {
     pub render_count: usize,
     pub test_runner: Option<fn(&mut NativeApp<D>, &ActiveEventLoop)>,
     pub focused_id: Option<String>,
+    /// The `select` whose list is on screen, and where the keyboard is inside
+    /// it. `None` means every list is shut. The list is an overlay — never a
+    /// layout box — so this is the whole of its state.
+    pub open_select: Option<OpenSelect>,
     pub text_inputs: HashMap<String, TextInputState>,
     pub scroll_x: i32,
     pub scroll_y: i32,
@@ -2214,6 +2564,7 @@ impl<D: UiDispatcher> NativeApp<D> {
             render_count: 0,
             test_runner: None,
             focused_id: None,
+            open_select: None,
             text_inputs: HashMap::new(),
             scroll_x: 0,
             scroll_y: 0,
@@ -2340,6 +2691,21 @@ impl<D: UiDispatcher> NativeApp<D> {
     }
 
     pub fn find_hovered_button(&self, pos: (i32, i32)) -> Option<String> {
+        // An open list swallows hover for everything but its own field. The
+        // card is drawn over the form, so a box hiding beneath it must not
+        // light up and offer a click that would never arrive — and the field
+        // the list belongs to keeps its ramp, because the list is the field's
+        // own open state rather than something covering it.
+        if let Some(open) = &self.open_select {
+            let (box_index, lbox) = find_select_box(&self.layout_boxes, &open.key)?;
+            if lbox
+                .screen_rect(self.scroll_x, self.scroll_y)
+                .contains(pos.0, pos.1)
+            {
+                return Some(select_key(lbox, box_index));
+            }
+            return None;
+        }
         // A bar under the pointer swallows hover: the tracks run down the very
         // edge of the window, where a control can sit, and a thumb that cannot
         // be told apart from the button behind it is a thumb nobody trusts.
@@ -2365,6 +2731,11 @@ impl<D: UiDispatcher> NativeApp<D> {
     }
 
     pub fn handle_cursor_moved(&mut self, pos: (i32, i32)) -> bool {
+        // The row an open list would light up before the pointer moves, so the
+        // repaint can be asked for on the *change* rather than on every pixel
+        // of travel across a row.
+        let popup_row_before = self.popup_effective_row();
+
         self.cursor_pos = pos;
 
         // A drag owns the pointer entirely: the thumb follows it and nothing
@@ -2386,14 +2757,36 @@ impl<D: UiDispatcher> NativeApp<D> {
         self.hovered_id = new_hovered;
         self.sync_cursor_icon();
 
+        // An open list lights the row the pointer is on, and falls back to the
+        // keyboard's row when the pointer is off the card. The highlight lives
+        // in the *drawing*, not in the state — the pointer brushing past a row
+        // on its way somewhere else must not steal the keyboard's choice.
+        let popup_row_changed = self.popup_effective_row() != popup_row_before;
+
         // A tooltip both appears and *follows* the pointer, so every movement
         // over a labelled box needs a repaint. Keying this off the hover change
         // alone — as the button tone does — leaves the card frozen where the
         // pointer entered and never removes it on the way out.
         let tooltip_here = self.tooltip_here();
-        let needs_redraw = hover_changed || tooltip_here || self.tooltip_shown || bar_changed;
+        let needs_redraw =
+            hover_changed || tooltip_here || self.tooltip_shown || bar_changed || popup_row_changed;
         self.tooltip_shown = tooltip_here;
         needs_redraw
+    }
+
+    /// Which row an open list lights up: the one under the pointer, or the
+    /// keyboard's row when the pointer is off the card. A single source for
+    /// the card's highlight, the pointer cursor and Enter, so the three can
+    /// never light different rows.
+    pub fn popup_effective_row(&self) -> Option<usize> {
+        let popup = self.open_select_popup()?;
+        let row = select_row_at(
+            popup.rect,
+            popup.options.len(),
+            popup.first,
+            self.cursor_pos,
+        );
+        Some(row.unwrap_or(popup.highlight))
     }
 
     /// Whether a tooltip should be painted at the current cursor position.
@@ -2758,13 +3151,16 @@ impl<D: UiDispatcher> NativeApp<D> {
         // thumb nobody trusts.
         let over_thumb =
             self.scrollbar_hover.is_some() && self.scrollbar_geometry().on_thumb(self.cursor_pos);
+        // Rows of an open list are choices, so they take the hand — and they
+        // are drawn, not laid out, so no `LayoutBox` could ever report them.
+        let over_popup_row = self.select_row_hit(self.cursor_pos).is_some();
         let kind = if self.scrollbar_drag.is_some() {
             CursorKind::Grabbing
         } else if over_thumb {
             CursorKind::Grab
         } else if self.scrollbar_hover.is_some() {
             CursorKind::Default
-        } else if self.hovered_id.is_some() {
+        } else if over_popup_row || self.hovered_id.is_some() {
             // `find_hovered_button` already excludes disabled buttons, so the
             // hand never appears over an inert control.
             CursorKind::Pointer
@@ -2786,6 +3182,117 @@ impl<D: UiDispatcher> NativeApp<D> {
                 win.set_cursor(kind.icon());
             }
         }
+    }
+
+    /// Where the open list is, and how much of it the window can show, or
+    /// `None` when nothing is open — or when the field it belongs to has
+    /// scrolled or re-laid out of sight, which is how a list detaches from
+    /// its control and floats over nothing. Resolved from the current layout
+    /// every time rather than remembered, so a scroll or a re-render moves
+    /// the card with the field instead of leaving it behind.
+    pub fn open_select_popup(&self) -> Option<SelectPopupView> {
+        let open = self.open_select.as_ref()?;
+        let (_, lbox) = find_select_box(&self.layout_boxes, &open.key)?;
+        if !lbox.visible_in(
+            self.scroll_x,
+            self.scroll_y,
+            self.width as i32,
+            self.height as i32,
+        ) {
+            return None;
+        }
+        let count = lbox.options.len();
+        let field = lbox.screen_rect(self.scroll_x, self.scroll_y);
+        let rect = select_popup_rect(field, count, self.width as i32, self.height as i32);
+        let rows = select_visible_rows(rect.h).min(count);
+        Some(SelectPopupView {
+            key: open.key.clone(),
+            rect,
+            options: lbox.options.clone(),
+            first: select_scroll_clamp(count, rows, open.scroll),
+            rows,
+            highlight: open.highlight.min(count.saturating_sub(1)),
+            value: lbox.text.clone(),
+            id: lbox.id.clone(),
+        })
+    }
+
+    /// Opens a field's list, starting the keyboard on the option it is
+    /// showing so Enter keeps the current choice unless the user moves. A
+    /// field with no `id` has nowhere to report a choice to, so it opens
+    /// nothing — it is decoration, like a button with no `on_click`.
+    pub fn open_select(&mut self, key: &str) {
+        let Some((_, lbox)) = find_select_box(&self.layout_boxes, key) else {
+            return;
+        };
+        if lbox.disabled || lbox.id.is_none() || lbox.options.is_empty() {
+            return;
+        }
+        let count = lbox.options.len();
+        let highlight = lbox
+            .text
+            .as_deref()
+            .and_then(|v| lbox.options.iter().position(|o| o == v))
+            .unwrap_or(0);
+        let scroll = select_scroll_for_highlight(count, count, highlight);
+        self.open_select = Some(OpenSelect {
+            key: key.to_string(),
+            highlight,
+            scroll,
+        });
+        self.render();
+    }
+
+    /// Shuts the open list, if any.
+    pub fn close_select(&mut self) {
+        if self.open_select.take().is_some() {
+            self.render();
+        }
+    }
+
+    /// Takes an option out of the open list: reports it through the field's
+    /// `on_change`, then shuts the list. The choice is dispatched as a change
+    /// rather than a click, so it reuses the plumbing a text field already
+    /// shares — the handler sees the new value and the frame re-renders.
+    pub fn commit_select(&mut self, index: usize) {
+        let Some(popup) = self.open_select_popup() else {
+            self.open_select = None;
+            return;
+        };
+        let Some(value) = popup.options.get(index).cloned() else {
+            self.open_select = None;
+            return;
+        };
+        self.open_select = None;
+        if let Some(id) = popup.id {
+            self.dispatcher.dispatch_change(&id, &value);
+        }
+        self.render();
+    }
+
+    /// Which option a press on the open list lands on, resolved the same way
+    /// the card is drawn so a click can never strike a row the eye did not see.
+    pub fn select_row_hit(&self, pos: (i32, i32)) -> Option<usize> {
+        let popup = self.open_select_popup()?;
+        select_row_at(popup.rect, popup.options.len(), popup.first, pos)
+    }
+
+    /// Moves the keyboard highlight, pulling the list so it stays visible.
+    /// Returns whether anything moved, so the caller can decide to repaint.
+    pub fn move_select_highlight(&mut self, delta: isize) -> bool {
+        let Some(popup) = self.open_select_popup() else {
+            self.open_select = None;
+            return false;
+        };
+        let count = popup.options.len();
+        let cur = popup.highlight as isize;
+        let next = (cur + delta).clamp(0, count.saturating_sub(1) as isize) as usize;
+        let scroll = select_scroll_for_highlight(count, popup.rows, next);
+        let open = self.open_select.as_mut().expect("open list checked above");
+        let moved = open.highlight != next || open.scroll != scroll;
+        open.highlight = next;
+        open.scroll = scroll;
+        moved
     }
 
     pub fn render(&mut self) {
@@ -2854,7 +3361,27 @@ impl<D: UiDispatcher> NativeApp<D> {
 
         // And the tooltip, which layers over every box rather than sitting in
         // their order, so it too is asked for while `self` can still be read.
-        let tooltip = self.tooltip_at();
+        //
+        // An open choice list owns the pointer outright: while it is up it
+        // takes every press, so a label belonging to a box hiding behind the
+        // card would be describing something the user cannot reach. Suppressing
+        // the tooltip is how the list says it is modal.
+        //
+        // A list whose field has scrolled or re-laid out of view shuts here
+        // rather than drawing a card attached to nothing.
+        if self.open_select.is_some() && self.open_select_popup().is_none() {
+            self.open_select = None;
+        }
+        let popup = self.open_select_popup();
+        let tooltip = if popup.is_some() {
+            None
+        } else {
+            self.tooltip_at()
+        };
+
+        // The row the card lights, resolved here so the pointer cursor and the
+        // drawn row cannot disagree with what the frame already measured.
+        let popup_hover = self.popup_effective_row();
 
         let surface = self.surface.as_mut().unwrap();
         if surface.resize(w_nz, h_nz).is_err() {
@@ -3340,6 +3867,117 @@ impl<D: UiDispatcher> NativeApp<D> {
                         }
                     }
                 }
+                // A closed choice field: the input's chrome, so it reads as
+                // something a value is entered into, plus the value itself
+                // and a chevron. The list it opens is an overlay drawn after
+                // every box, never a box of its own — a real layout would
+                // shove the rest of the form down every time a field opened.
+                "select" => {
+                    let key = select_key(lbox, box_index);
+                    let is_open_here = self
+                        .open_select
+                        .as_ref()
+                        .is_some_and(|open| open.key == key);
+                    // Open reads as focused — the same accent border a text
+                    // field wears while it takes keys — because the list is
+                    // the field's active state.
+                    let (bg, mut border_color) = input_surface(&theme, is_open_here, lbox.disabled);
+                    // Hover lifts the border the way a button lifts its
+                    // surface, so the field that will open is visible before
+                    // it does.
+                    if !lbox.disabled {
+                        let hover_t = self.hover_ramps.get(&key).copied().unwrap_or(0.0);
+                        if hover_t > 0.0 {
+                            border_color =
+                                lerp_color(border_color, theme.input_border_focused, hover_t);
+                        }
+                    }
+
+                    draw_rounded_rect_box_clipped(
+                        &mut buffer,
+                        stride,
+                        h_usize,
+                        clip,
+                        rx,
+                        ry,
+                        lbox.rect.w,
+                        lbox.rect.h,
+                        CORNER_RADIUS,
+                        bg,
+                        border_color,
+                    );
+
+                    // The value, left-aligned and vertically centred: a
+                    // choice field shows exactly one line, so it sits in the
+                    // middle rather than hanging off the top the way a
+                    // multi-line text field does.
+                    let value_text = lbox.text.clone().unwrap_or_default();
+                    let fonts = &self.fonts;
+                    let field = Rect {
+                        x: rx + 1,
+                        y: ry + 1,
+                        // Room is left on the right for the chevron, so a
+                        // long option runs out of room before it would run
+                        // into the one sign that says the field opens.
+                        w: (lbox.rect.w - 28).max(0),
+                        h: (lbox.rect.h - 2).max(0),
+                    };
+                    let text_clip = match clip {
+                        None => Some(field),
+                        Some(c) => intersect(field, c),
+                    };
+                    let text_color = if lbox.disabled {
+                        theme.text_dim
+                    } else {
+                        theme.text
+                    };
+                    if let Some(tc) = text_clip {
+                        let ty = ry + ((lbox.rect.h - cell_h) / 2).max(4);
+                        draw_text_ttf_clipped(
+                            fonts,
+                            FaceKind::Ui,
+                            rx + 8,
+                            ty,
+                            &value_text,
+                            tc,
+                            |px, py, w, h, cov| {
+                                draw_rect_alpha(
+                                    &mut buffer,
+                                    stride,
+                                    h_usize,
+                                    px,
+                                    py,
+                                    w,
+                                    h,
+                                    text_color,
+                                    cov,
+                                );
+                            },
+                        );
+                    }
+
+                    // The chevron is drawn from rectangles, not a glyph: a
+                    // font need not carry ▾, and a field that lost the one
+                    // mark saying it opens would be a field nobody dares
+                    // click. It stays put even when the list is open — the
+                    // mark describes the field, not the list.
+                    let chevron_color = if lbox.disabled {
+                        theme.text_dim
+                    } else if is_open_here {
+                        theme.input_border_focused
+                    } else {
+                        theme.text_dim
+                    };
+                    draw_chevron_down(
+                        &mut buffer,
+                        stride,
+                        h_usize,
+                        clip,
+                        rx + lbox.rect.w - 20,
+                        ry + (lbox.rect.h - 4) / 2,
+                        chevron_color,
+                    );
+                }
                 _ => {}
             }
         }
@@ -3442,6 +4080,22 @@ impl<D: UiDispatcher> NativeApp<D> {
             );
         }
 
+        // The open choice list, painted after every box and after both
+        // scrollbars so it layers over whatever it drops onto, but before the
+        // tooltip — which is suppressed while a list is up, so nothing can
+        // cover the card the user is picking from.
+        if let Some(popup) = &popup {
+            draw_select_popup(
+                &mut buffer,
+                stride,
+                h_usize,
+                &self.fonts,
+                &theme,
+                popup,
+                popup_hover,
+            );
+        }
+
         // Tooltip overlay, painted last so it layers over every box, including
         // those inside a scroll viewport that would otherwise clip it. Asked
         // for above, while `self` could still be read — and already made to
@@ -3468,10 +4122,29 @@ impl<D: UiDispatcher> NativeApp<D> {
     pub fn handle_click(&mut self) {
         let (mx, my) = self.cursor_pos;
 
+        // An open list owns the press before any box does: it is drawn over
+        // everything, so letting the box loop run first would fire whatever
+        // control happens to sit behind the card. A row commits its option; a
+        // press anywhere else — on the field again, or outside it — only shuts
+        // the list, and is spent either way. That is what stops a second
+        // press from reaching a button hiding under the card.
+        if self.open_select.is_some() {
+            match self.select_row_hit((mx, my)) {
+                Some(index) => {
+                    self.commit_select(index);
+                }
+                None => {
+                    self.close_select();
+                }
+            }
+            return;
+        }
+
         let mut clicked_button = None;
         let mut clicked_input = None;
+        let mut clicked_select = None;
 
-        for lbox in &self.layout_boxes {
+        for (box_index, lbox) in self.layout_boxes.iter().enumerate() {
             // Screen-space test accounts for the window scroll, the enclosing
             // scroll containers (pan) and their viewports (clip), so a control
             // scrolled out of view can never be clicked through.
@@ -3504,12 +4177,26 @@ impl<D: UiDispatcher> NativeApp<D> {
                     clicked_input = Some(lbox.clone());
                 }
                 break;
+            } else if lbox.tag == "select" {
+                if !lbox.disabled {
+                    // Same absorption rule as a button: a disabled field takes
+                    // the press and opens nothing, rather than letting it fall
+                    // through to whatever is stacked behind it.
+                    clicked_select = Some(select_key(lbox, box_index));
+                }
+                break;
             }
         }
 
         if let Some(button_id) = clicked_button {
             self.dispatcher.dispatch_click(&button_id);
             self.render();
+        } else if let Some(key) = clicked_select {
+            // Opening a choice field takes focus away from any text field:
+            // the caret must not keep blinking under a list that now owns
+            // the keyboard.
+            self.focused_id = None;
+            self.open_select(&key);
         } else if let Some(lbox) = clicked_input {
             // Map the click back into content space for caret placement.
             let cx = mx + self.scroll_x + lbox.pan.0;
@@ -3566,6 +4253,70 @@ impl<D: UiDispatcher> NativeApp<D> {
         // happens to be mid-blink when the user types would look like the
         // keystroke did nothing.
         self.touch_caret();
+
+        // A list that is up owns the whole keyboard before any field does. It
+        // sits over the form, so a keystroke meant for the list must not reach
+        // a text field hiding behind the card — which is why every branch here
+        // returns, including the ones that change nothing.
+        if self.open_select.is_some() {
+            let (closed, moved) = match logical_key {
+                Key::Named(NamedKey::Escape) | Key::Named(NamedKey::Tab) => (true, false),
+                Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space) => {
+                    // Enter takes whatever the card is lighting: the pointer's
+                    // row when the pointer is on the card, the keyboard's row
+                    // when it is not. Otherwise Enter would commit a row the
+                    // user can see un-highlighted.
+                    let index = self
+                        .popup_effective_row()
+                        .or_else(|| self.open_select_popup().map(|p| p.highlight))
+                        .unwrap_or(0);
+                    self.commit_select(index);
+                    (true, false)
+                }
+                Key::Named(NamedKey::ArrowUp) => (false, self.move_select_highlight(-1)),
+                Key::Named(NamedKey::ArrowDown) => (false, self.move_select_highlight(1)),
+                Key::Named(NamedKey::PageUp) => {
+                    let step = self.open_select_popup().map(|p| p.rows.max(1)).unwrap_or(1);
+                    (false, self.move_select_highlight(-(step as isize)))
+                }
+                Key::Named(NamedKey::PageDown) => {
+                    let step = self.open_select_popup().map(|p| p.rows.max(1)).unwrap_or(1);
+                    (false, self.move_select_highlight(step as isize))
+                }
+                Key::Named(NamedKey::Home) => {
+                    let moved = self.open_select.as_ref().is_some_and(|o| o.highlight != 0);
+                    if let Some(open) = self.open_select.as_mut() {
+                        open.highlight = 0;
+                        open.scroll = 0;
+                    }
+                    (false, moved)
+                }
+                Key::Named(NamedKey::End) => {
+                    let popup = self.open_select_popup();
+                    let last = popup.as_ref().map(|p| p.options.len().saturating_sub(1));
+                    let (count, visible) = match &popup {
+                        Some(p) => (p.options.len(), p.rows),
+                        None => (0, 0),
+                    };
+                    let moved = popup
+                        .as_ref()
+                        .is_some_and(|p| p.highlight + 1 != p.options.len());
+                    if let (Some(open), Some(last)) = (self.open_select.as_mut(), last) {
+                        open.highlight = last;
+                        open.scroll = select_scroll_for_highlight(count, visible, last);
+                    }
+                    (false, moved)
+                }
+                _ => (false, false),
+            };
+            if closed {
+                self.close_select();
+            } else if moved {
+                self.render();
+            }
+            return;
+        }
+
         if let Some(ref focused_id) = self.focused_id.clone() {
             let lbox = self
                 .layout_boxes
@@ -4108,6 +4859,40 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
                     }
                     MouseScrollDelta::PixelDelta(pos) => (-pos.x as i32, -pos.y as i32),
                 };
+                // An open list takes the wheel for itself while the pointer is
+                // over it: a choice list is its own scroll region, and a list
+                // taller than its card has to be reachable. The page behind
+                // the card stays where it is — the card is on top of it, so
+                // scrolling the page would move a menu the user is aiming at.
+                if let Some(popup) = self.open_select_popup() {
+                    if popup.rect.contains(self.cursor_pos.0, self.cursor_pos.1) {
+                        let step = dy / SELECT_ROW_H;
+                        if step != 0 {
+                            let count = popup.options.len();
+                            let want = if step >= 0 {
+                                popup.first.saturating_add(step as usize)
+                            } else {
+                                popup.first.saturating_sub(step.unsigned_abs() as usize)
+                            };
+                            let next = select_scroll_clamp(count, popup.rows, want);
+                            if let Some(open) = self.open_select.as_mut() {
+                                open.scroll = next;
+                            }
+                            self.render();
+                        }
+                        if let Some(win) = &self.window {
+                            win.request_redraw();
+                        }
+                        return;
+                    }
+                    // Outside the card the wheel does nothing at all: a list
+                    // is modal, and scrolling the page out from under it would
+                    // leave the card stranded over different content.
+                    if let Some(win) = &self.window {
+                        win.request_redraw();
+                    }
+                    return;
+                }
                 // A scroll viewport under the cursor swallows the wheel so the
                 // page behind it stays put until the cursor leaves the region.
                 let region_key = self.region_at(self.cursor_pos).map(|r| r.key.clone());
@@ -4344,6 +5129,7 @@ mod tests {
             pad: 0,
             disabled: false,
             tooltip: None,
+            options: Vec::new(),
         }];
 
         // Simulate click on line 1, col 2:
@@ -4708,6 +5494,7 @@ mod tests {
             pad: 0,
             disabled: false,
             tooltip: None,
+            options: Vec::new(),
         }];
 
         // Initially at (0, 0) - not hovering
@@ -4816,6 +5603,7 @@ mod tests {
             pad: 0,
             disabled: false,
             tooltip: None,
+            options: Vec::new(),
         }];
 
         assert!(app.focus_input("test_input"));
@@ -5528,6 +6316,7 @@ mod tests {
             pad: 0,
             disabled: false,
             tooltip: None,
+            options: Vec::new(),
         };
         b.clips = Some(vec![outer, inner]);
         assert_eq!(
@@ -6043,6 +6832,7 @@ mod tests {
                 pad: 10,
                 disabled: false,
                 tooltip: None,
+                options: Vec::new(),
             },
             // Only 2px below the first: its halo *would* reach back over the
             // first box's bottom edge if drawn inline.
@@ -6064,6 +6854,7 @@ mod tests {
                 pad: 10,
                 disabled: false,
                 tooltip: None,
+                options: Vec::new(),
             },
         ];
 
@@ -6473,7 +7264,62 @@ mod tests {
             pad: 0,
             disabled,
             tooltip: None,
+            options: Vec::new(),
         }
+    }
+
+    /// A choice field laid out the way the renderer lays one out: the widest
+    /// option decides the width, so opening the list can never resize the
+    /// field underneath it.
+    fn select_box(id: &str, y: i32, value: &str, options: &[&str], disabled: bool) -> LayoutBox {
+        let widest = options.iter().map(|o| o.chars().count()).max().unwrap_or(0);
+        LayoutBox {
+            rect: Rect {
+                x: 50,
+                y,
+                w: (widest as i32 * 10 + 56).max(140),
+                h: 36,
+            },
+            tag: "select".into(),
+            id: Some(id.into()),
+            text: Some(value.into()),
+            on_click: None,
+            on_change: Some("changed".into()),
+            on_key: None,
+            pan: (0, 0),
+            clips: None,
+            pad: 0,
+            disabled,
+            tooltip: None,
+            options: options.iter().map(|o| o.to_string()).collect(),
+        }
+    }
+
+    /// The app the interaction tests drive. No window, so `render()` is a
+    /// no-op and what is under test is the state — which list is open, what
+    /// the keyboard is on, and what a press reports — rather than pixels. The
+    /// dispatcher borrows the caller's `val` and `notes`, so a test can read
+    /// exactly what a choice dispatched.
+    fn select_app<'a>(
+        val: &'a mut i32,
+        notes: &'a mut String,
+        key: &'a mut String,
+        boxes: Vec<LayoutBox>,
+    ) -> NativeApp<DummyDisp<'a>> {
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "T".into(),
+                width: 400,
+                height: 400,
+            },
+            DummyDisp {
+                val,
+                notes,
+                last_key: key,
+            },
+        );
+        app.layout_boxes = boxes;
+        app
     }
 
     /// A disabled control is not merely un-clickable: the press has to *stop*
@@ -7804,6 +8650,7 @@ mod tests {
                 pad: 0,
                 disabled: false,
                 tooltip: None,
+                options: Vec::new(),
             }
         }
 
@@ -7966,6 +8813,460 @@ mod tests {
             dummy.theme(),
             None,
             "the default hook must express no preference"
+        );
+    }
+
+    // -------------------------------------------------------------
+    // select / dropdown (roadmap 2.2)
+    // -------------------------------------------------------------
+
+    /// The card is drawn where there is room for it: under the field when
+    /// there is, over it only when there is nowhere else to go. It is never
+    /// allowed to leave the window, because a list that runs off the edge is
+    /// a list whose last rows cannot be clicked.
+    #[test]
+    fn test_select_popup_rect_flips_above_and_stays_in_the_window() {
+        // Room below: the card hangs off the field's bottom edge.
+        let below = select_popup_rect(
+            Rect {
+                x: 50,
+                y: 60,
+                w: 200,
+                h: 36,
+            },
+            3,
+            400,
+            400,
+        );
+        assert_eq!(below.y, 96, "below the field when there is room");
+        assert_eq!(below.h, 3 * SELECT_ROW_H + 2 * SELECT_POP_PAD);
+        assert_eq!(below.x, 50, "the card starts where its field starts");
+
+        // No room below: it flips above rather than running off the bottom.
+        let above = select_popup_rect(
+            Rect {
+                x: 50,
+                y: 330,
+                w: 200,
+                h: 36,
+            },
+            3,
+            400,
+            400,
+        );
+        assert_eq!(
+            above.y + above.h,
+            330,
+            "above the field when there is no room below"
+        );
+        assert!(
+            above.y >= 0,
+            "…and it must not be pushed off the top instead"
+        );
+
+        // More options than either side can hold: the card is clipped to the
+        // window and the list scrolls inside itself.
+        let clipped = select_popup_rect(
+            Rect {
+                x: 50,
+                y: 180,
+                w: 200,
+                h: 36,
+            },
+            40,
+            400,
+            400,
+        );
+        assert!(
+            clipped.y + clipped.h <= 400,
+            "a clipped card must still end inside the window"
+        );
+        assert!(
+            select_visible_rows(clipped.h) < 40,
+            "…which means not every option fits, so the list has to scroll"
+        );
+    }
+
+    /// A press has to land on the row the eye sees: the hit test and the draw
+    /// use one geometry, so a click in the padding or past the last drawn row
+    /// takes nothing.
+    #[test]
+    fn test_select_row_hit_matches_the_drawn_rows() {
+        let field = Rect {
+            x: 50,
+            y: 60,
+            w: 200,
+            h: 36,
+        };
+        let popup = select_popup_rect(field, 3, 400, 400);
+        let rows = select_visible_rows(popup.h);
+        assert_eq!(rows, 3, "three options, three rows");
+
+        let first_row_y = popup.y + SELECT_POP_PAD + SELECT_ROW_H / 2;
+        assert_eq!(select_row_at(popup, 3, 0, (60, first_row_y)), Some(0));
+        assert_eq!(
+            select_row_at(popup, 3, 0, (60, first_row_y + SELECT_ROW_H)),
+            Some(1),
+            "the second row is one row-height down, no more, no less"
+        );
+        assert_eq!(
+            select_row_at(popup, 3, 0, (60, popup.y + 2)),
+            None,
+            "the card's own padding is not a row"
+        );
+        assert_eq!(
+            select_row_at(popup, 3, 0, (60, first_row_y + 3 * SELECT_ROW_H)),
+            None,
+            "nor is the space under the last row"
+        );
+        assert_eq!(select_row_at(popup, 3, 0, (10, 10)), None, "nor is outside");
+    }
+
+    /// The whole point of the control: press it, press an option, and the
+    /// handler is handed that option — and the list shuts behind it.
+    #[test]
+    fn test_select_click_opens_then_a_row_click_reports_the_value() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let mut app = select_app(
+            &mut val,
+            &mut notes,
+            &mut key,
+            vec![select_box(
+                "model",
+                60,
+                "Small",
+                &["Small", "Medium", "Large"],
+                false,
+            )],
+        );
+
+        app.cursor_pos = (60, 70);
+        app.handle_click();
+        let popup = app
+            .open_select_popup()
+            .expect("a press on a choice field opens its list");
+        assert_eq!(
+            popup.highlight, 0,
+            "the keyboard starts on the current value"
+        );
+
+        // A press on a row reports that row's option and shuts the list.
+        app.cursor_pos = (
+            60,
+            popup.rect.y + SELECT_POP_PAD + SELECT_ROW_H + SELECT_ROW_H / 2,
+        );
+        app.handle_click();
+        assert_eq!(
+            *app.dispatcher.notes, "Medium",
+            "the pressed row is the value reported"
+        );
+        assert!(app.open_select.is_none(), "and the list shuts behind it");
+    }
+
+    /// The list has to survive the keyboard alone: arrows walk it, Enter takes
+    /// the row they landed on, and Escape abandons the lot.
+    #[test]
+    fn test_select_keyboard_walks_the_list_and_enter_commits() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let mut app = select_app(
+            &mut val,
+            &mut notes,
+            &mut key,
+            vec![select_box(
+                "model",
+                60,
+                "Small",
+                &["Small", "Medium", "Large"],
+                false,
+            )],
+        );
+
+        app.cursor_pos = (60, 70);
+        app.handle_click();
+        app.cursor_pos = (0, 0); // pointer away, so the keyboard owns the row
+        app.handle_key_input(&Key::Named(NamedKey::ArrowDown), None);
+        app.handle_key_input(&Key::Named(NamedKey::ArrowDown), None);
+        assert_eq!(
+            app.open_select.as_ref().map(|o| o.highlight),
+            Some(2),
+            "two presses down walk two rows"
+        );
+
+        app.handle_key_input(&Key::Named(NamedKey::Enter), None);
+        assert_eq!(
+            *app.dispatcher.notes, "Large",
+            "Enter takes the row the keyboard landed on"
+        );
+        assert!(app.open_select.is_none(), "…and shuts the list");
+
+        // A fresh list abandoned with Escape reports nothing at all.
+        app.cursor_pos = (60, 70);
+        app.handle_click();
+        app.handle_key_input(&Key::Named(NamedKey::Escape), None);
+        assert!(app.open_select.is_none(), "Escape shuts the list");
+        assert_eq!(
+            *app.dispatcher.notes, "Large",
+            "…without committing anything"
+        );
+    }
+
+    /// A press outside a list is spent on shutting it. Letting it fall through
+    /// would mean every dismissal also presses whatever control the card was
+    /// covering — which is how people delete things by accident.
+    #[test]
+    fn test_a_press_outside_an_open_list_is_spent_shutting_it() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let mut app = select_app(
+            &mut val,
+            &mut notes,
+            &mut key,
+            vec![
+                select_box("model", 60, "Small", &["Small", "Medium"], false),
+                // A button far from the card, in the clear.
+                test_box("button", "go", 300, false),
+            ],
+        );
+
+        app.cursor_pos = (60, 70);
+        app.handle_click();
+        assert!(app.open_select.is_some(), "the list is up");
+
+        app.cursor_pos = (60, 310);
+        app.handle_click();
+        assert!(app.open_select.is_none(), "the press shuts it");
+        assert_eq!(*app.dispatcher.val, 0, "…and is spent, not passed through");
+    }
+
+    /// An inert field is inert the same way an inert button is: the press
+    /// stops with it and nothing opens.
+    #[test]
+    fn test_a_disabled_select_absorbs_the_press_and_opens_nothing() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let mut app = select_app(
+            &mut val,
+            &mut notes,
+            &mut key,
+            vec![select_box("model", 60, "Small", &["Small", "Medium"], true)],
+        );
+
+        assert_eq!(app.find_hovered_button((60, 70)), None, "not hoverable");
+        app.cursor_pos = (60, 70);
+        app.handle_click();
+        assert!(app.open_select.is_none(), "a disabled field opens nothing");
+    }
+
+    /// A list taller than the room below its field has to reach its last
+    /// option — by scrolling inside its own card, never by growing past the
+    /// window.
+    #[test]
+    fn test_a_long_list_scrolls_and_still_reaches_its_last_option() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let options: Vec<String> = (1..=12).map(|i| format!("Option {i}")).collect();
+        let refs: Vec<&str> = options.iter().map(|s| s.as_str()).collect();
+        let mut app = select_app(
+            &mut val,
+            &mut notes,
+            &mut key,
+            vec![select_box("pick", 60, "Option 1", &refs, false)],
+        );
+
+        app.cursor_pos = (60, 70);
+        app.handle_click();
+        let popup = app.open_select_popup().expect("the list opens");
+        assert!(
+            popup.rows < 12,
+            "the window cannot show every row, so the list must scroll"
+        );
+        assert!(
+            popup.rect.y + popup.rect.h <= 400,
+            "…and stay inside the window"
+        );
+
+        app.cursor_pos = (0, 0);
+        app.handle_key_input(&Key::Named(NamedKey::End), None);
+        let popup = app.open_select_popup().expect("the list is still up");
+        assert_eq!(popup.highlight, 11, "End walks to the last option");
+        // The list scrolled to reach it, so the last option is drawn as the
+        // card's last row rather than past the window's edge.
+        let last_row_y = popup.rect.y + SELECT_POP_PAD + (11 - popup.first) as i32 * SELECT_ROW_H;
+        assert!(
+            last_row_y + SELECT_ROW_H <= popup.rect.y + popup.rect.h,
+            "…and the row it lands on is a row the card actually draws"
+        );
+        assert_eq!(
+            select_row_at(
+                popup.rect,
+                12,
+                popup.first,
+                (60, last_row_y + SELECT_ROW_H / 2)
+            ),
+            Some(11),
+            "so a press there takes exactly that option"
+        );
+
+        app.handle_key_input(&Key::Named(NamedKey::Enter), None);
+        assert_eq!(
+            *app.dispatcher.notes, "Option 12",
+            "Enter takes the option End landed on"
+        );
+    }
+
+    /// Scrolling the field out of view has to take its list with it. A card
+    /// left floating where the field used to be is a card about nothing.
+    #[test]
+    fn test_a_field_scrolled_out_of_sight_has_no_list() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let mut app = select_app(
+            &mut val,
+            &mut notes,
+            &mut key,
+            vec![select_box(
+                "model",
+                60,
+                "Small",
+                &["Small", "Medium"],
+                false,
+            )],
+        );
+
+        app.cursor_pos = (60, 70);
+        app.handle_click();
+        assert!(app.open_select.is_some(), "the list is up");
+
+        app.scroll_y = 400; // the field is now far above the window
+        assert_eq!(
+            app.open_select_popup(),
+            None,
+            "the list is not drawn once its field is out of sight"
+        );
+    }
+
+    /// A choice field has to look like one before it is ever pressed: a value,
+    /// a chevron saying it opens, and a hover so the field that will open is
+    /// visible before it does.
+    #[test]
+    fn test_a_closed_select_paints_its_value_and_a_chevron() {
+        let t = Theme::DARK;
+        let stride = 200usize;
+        let height = 100usize;
+        let mut buf = vec![t.bg; stride * height];
+
+        draw_chevron_down(&mut buf, stride, height, None, 40, 20, t.text_dim);
+        // The chevron is a downward triangle: wide at the top, one pixel at
+        // the bottom, and centred on the width it was given.
+        assert_eq!(buf[20 * stride + 43], t.text_dim, "its top row is wide");
+        assert_eq!(
+            buf[23 * stride + 43],
+            t.text_dim,
+            "its bottom row is a point"
+        );
+        assert_eq!(
+            buf[23 * stride + 40],
+            t.bg,
+            "…so the bottom row is narrower than the top, not a slab"
+        );
+        assert_eq!(
+            buf[21 * stride + 39],
+            t.bg,
+            "the triangle's left flank slopes"
+        );
+    }
+
+    /// The list is drawn over whatever it drops onto — it is a card, not a
+    /// hole — and it lights the row the pointer is on, which is the row a
+    /// press would take.
+    #[test]
+    fn test_the_open_list_covers_the_page_and_lights_the_pointer_row() {
+        let t = Theme::DARK;
+        let fonts = FontEngine::new(BASE_PX);
+        let stride = 300usize;
+        let height = 200usize;
+        let mut buf = vec![t.bg; stride * height];
+        // Content already on screen underneath where the card will land.
+        draw_rect(&mut buf, stride, height, 40, 60, 120, 60, 0xFF00_FF00);
+
+        let popup = SelectPopupView {
+            key: "model".into(),
+            rect: Rect {
+                x: 50,
+                y: 60,
+                w: 160,
+                h: 2 * SELECT_ROW_H + 2 * SELECT_POP_PAD,
+            },
+            options: vec!["Small".into(), "Medium".into()],
+            first: 0,
+            rows: 2,
+            highlight: 0,
+            value: Some("Small".into()),
+            id: Some("model".into()),
+        };
+        draw_select_popup(&mut buf, stride, height, &fonts, &t, &popup, Some(1));
+
+        // The card's own padding, which sits over the green page content:
+        // a card is opaque, so whatever it lands on is replaced, not tinted.
+        assert_eq!(
+            buf[(60 + 2) as usize * stride + 60],
+            t.input_bg,
+            "the card covers the page beneath it rather than blending with it"
+        );
+        let row1_y = 60 + SELECT_POP_PAD + SELECT_ROW_H + 1;
+        assert_eq!(
+            buf[row1_y as usize * stride + 60],
+            t.selection_bg,
+            "the row under the pointer lights up, since that is the row a press would take"
+        );
+        let row0_y = 60 + SELECT_POP_PAD + 1;
+        assert_eq!(
+            buf[row0_y as usize * stride + 60],
+            t.input_bg,
+            "…and the row the pointer is not on stays unlit"
+        );
+    }
+
+    /// An id-less field cannot report a choice — there is nowhere for the
+    /// value to go — so it must not pretend to open one.
+    #[test]
+    fn test_a_select_without_an_id_opens_nothing() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let mut box_ = select_box("model", 60, "Small", &["Small", "Medium"], false);
+        box_.id = None;
+        let mut app = select_app(&mut val, &mut notes, &mut key, vec![box_]);
+
+        app.cursor_pos = (60, 70);
+        app.handle_click();
+        assert!(
+            app.open_select.is_none(),
+            "a field with nowhere to report to opens nothing"
+        );
+    }
+
+    /// Hover and the open list agree on which control is which, so the field
+    /// that lights up is the one that opens.
+    #[test]
+    fn test_select_keys_resolve_the_same_way_for_hover_and_the_open_list() {
+        let with_id = select_box("model", 60, "Small", &["Small"], false);
+        assert_eq!(select_key(&with_id, 3), "model", "an id is the key");
+
+        let mut without_id = select_box("model", 60, "Small", &["Small"], false);
+        without_id.id = None;
+        assert_eq!(
+            select_key(&without_id, 3),
+            "__sel_3",
+            "…and layout order is the fallback"
         );
     }
 }

@@ -34,9 +34,12 @@
 
 ### Capabilities present
 - [x] Horizontal / vertical layout: `row`, `column` (padding / gap supported)
-- [x] Text, button, input (3 base widgets + 2 containers = 5 total)
+- [x] 4 base widgets (`text`, `button`, `input`, `select`) + 3 containers
+      (`column`, `row`, `scroll`) + chat `bubble` = 8 tags total
 - [x] Button hover state (2 tones)
 - [x] Input focus state, cursor, selection highlight, placeholder
+- [x] `select` dropdown: overlay card, keyboard list navigation, modal list
+      (2.2) — list is drawn, never laid out, so opening it never reflows
 - [x] Text wrapping (`wrap_text`, automatic line breaks)
 - [x] Global window scrolling (`scroll_x/scroll_y`, MouseScrollDelta — 1347)
 - [x] Viewport clipping (out-of-bounds elements are not drawn — 628)
@@ -483,9 +486,108 @@ mistake, so worth recording together.**
     silently skips the entire renderer test suite. CI's test job now passes
     `--features native-gui` for this reason.
 
-### 2.2 `select` / dropdown  (1 day)
-- [ ] For model selection, settings menus
-- [ ] Dropdown list, selected item, keyboard navigation
+### 2.2 `select` / dropdown  (1 day) — DONE
+- [x] For model selection, settings menus
+- [x] Dropdown list, selected item, keyboard navigation
+
+**Syntax:** `select(value, options = [...], id = ..., on_change = ...,
+disabled = ..., tooltip = ...)`. The first positional argument is the label
+the field currently shows — the same rule `input` uses, so the two fields read
+as a pair. The parser needed no change at all: `select` is a leaf widget, and
+`is_ui_container_expr` only lists containers.
+
+**Implementation (a card, not a control — so it is drawn, never laid out):**
+- **The option list rides as one prop.** `options = [...]` is folded into a
+  single newline-joined string, the way every other list-valued prop already
+  travels, and an inner `\n`/`\r` inside an option is folded to a space at eval
+  time rather than silently splitting the row it was meant to label. `LayoutBox`
+  gained an `options: Vec<String>` field that is empty for every other tag.
+- **Width is settled by the widest thing the field can ever show** — the
+  current label or any option — so opening the list never resizes the field
+  underneath it, and a row never runs past the box that chose it. `ui.rs`'s
+  estimate follows the same rule, deliberately using the *generous*
+  per-character budget the `text` arm uses rather than the renderer's own
+  measure: an estimate that overshoots leaves room, one that undershoots clips.
+- **`select_popup_rect` is pure geometry asked of by both the brush and the
+  hand**, so what is painted is exactly what answers a press: below the field
+  when there is room, flipped above it when there is not, and clipped to the
+  window — never scrolled off it — when there is no room on either side. It is
+  the *only* source of the card's rectangle, so the draw pass and the click
+  test cannot drift apart.
+- **`OpenSelect { key, highlight, scroll }`** is the whole of a list's state.
+  It is keyed by `select_key` (the id, else `__sel_{index}` — the same rule
+  hover uses), so a re-layout that reorders boxes cannot leave a list attached
+  to the wrong control. The card is resolved fresh from the current layout on
+  every question rather than remembered, so a scroll or a re-render moves it
+  *with* the field instead of leaving it behind; and in the render decision
+  phase, a list whose field has scrolled or re-laid out of view is closed
+  rather than left floating over nothing.
+- **`SelectPopupView` is an owned snapshot**, resolved while `self` can still
+  be read whole — the surface borrow makes an `&self` call afterwards
+  impossible, which is the same constraint that already governs the caret, the
+  scrollbars and the tooltip.
+- **The chevron is drawn from rectangles, not a glyph** (`draw_chevron_down`,
+  a 7×4 filled triangle). A font is not obliged to carry `▾`, and a choice
+  field that lost the one mark saying it opens would be a field nobody dares
+  click. The current-value mark on the matching row is drawn the same way, for
+  the same reason. A closed field wears the input's surface with the value
+  left-aligned and vertically centred; hover lifts the border toward
+  `input_border_focused`, and an open field wears that border outright, because
+  the list *is* the field's active state.
+- **Picking an option dispatches a change, not a click** — `dispatch_change`,
+  the plumbing a text field already shares — so the handler is handed the new
+  value and the next frame reads the bound state back. The list shuts behind
+  it. An uncontrolled field with no `on_change` still remembers its choice
+  through the same direct element mutation `input` relies on.
+- **A field with no `id` opens nothing.** There is nowhere for a choice to be
+  reported to, so it is decoration — the same rule that makes a button with no
+  `on_click` inert. Silently opening a list whose pick goes nowhere would be
+  worse than not opening at all.
+- **The list is modal, and everything that could betray that yields to it.**
+  A press on a row commits it; a press anywhere else — the field again, or
+  empty space — only shuts the list, and is spent either way, so a control
+  hiding under the card is never clicked by a dismissal. The keyboard is
+  intercepted at the very top of `handle_key_input` (arrows, Home/End,
+  PageUp/PageDown, Enter/Space, Escape/Tab) so nothing reaches a field behind
+  the card. The wheel scrolls the list only while the pointer is on the card,
+  and does nothing at all elsewhere — scrolling the page out from under a menu
+  strands the menu over different content. The tooltip is suppressed, because
+  a label describing a control the card covers is a label about something the
+  user cannot reach. Hover is swallowed for everything but the field itself,
+  so no button under the card lights up and offers a click that would never
+  arrive.
+- **Enter takes whatever the card is lighting** — the pointer's row when the
+  pointer is on the card, the keyboard's row when it is not — resolved by
+  `popup_effective_row`, one source shared by the drawn highlight, the pointer
+  cursor and Enter, so the three can never light different rows. The highlight
+  lives in the *drawing*, not in the state: a pointer brushing past a row on
+  its way somewhere else must not steal the keyboard's choice.
+
+**Verified:** fmt OK · clippy `-D warnings` clean · **912 passed / 0 failed /
+1 ignored** (16 new tests — popup geometry flipping above and staying inside
+the window, the hit test matching the drawn rows, open→row-click→value, the
+keyboard walk, the press outside being spent rather than falling through, a
+disabled field absorbing the press, a 12-option list scrolling to reach its
+last option, a field scrolled out of sight having no list, the chevron's
+triangle, the card covering the page beneath it, an id-less field opening
+nothing, key resolution, the interpreter's element build with folded newlines,
+a pick reaching the state through `on_change`, and the `ui.rs` estimate).
+Live on X11 with the new `examples/select_demo.ndg`: the card drawn over the
+`16-bit` field and the text below it, all four options readable, the current
+value banded and marked; clicking `Large` updating the header to
+`Model: Large` and reopening showing **that** value banded; clicking `Small`
+moving the band to row 0 on the next open; an outside press and an Escape each
+closing the list **without** committing — confirmed by reopening and finding
+the band still on row 0.
+
+**One defect the example run caught that the tests had not.** `nudgec test`
+compiles to Python and runs there, and the emitted `_HeadlessApp` had
+`dispatch_click` but no `dispatch_change` — so the interpreter path proved a
+pick reached the state while the *emitted* path failed with `AttributeError`,
+and every example test that picks an option would have failed the same way.
+The interpreter having a method is not evidence the codegen emits one; the two
+are separate surfaces and only the example exercised the second. Added to the
+preamble alongside its click counterpart.
 
 ### 2.3 `checkbox` / `toggle`  (0.5 day)
 - [ ] Settings switches (on/off)

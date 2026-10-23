@@ -583,6 +583,26 @@ pub fn estimate_element_size(elem: &UiElement, max_w: i64) -> (i64, i64) {
                 (max_w, 40)
             }
         }
+        "select" => {
+            // As wide as the widest thing it can ever show — the current label
+            // or any option — so opening the list never widens the field and a
+            // row never runs past the box that chose it. The per-character
+            // budget is the generous one the `text` arm uses, deliberately
+            // wider than the native renderer's own measure: an estimate that
+            // overshoots leaves room, and one that undershoots clips.
+            //
+            // Height is fixed. The list is an overlay, never part of the flow,
+            // so a longer option list must not grow the form around it.
+            let current = elem.text.as_deref().unwrap_or("");
+            let widest_opt = elem
+                .props
+                .get("options")
+                .map(|o| o.split('\n').map(|l| l.chars().count()).max().unwrap_or(0))
+                .unwrap_or(0);
+            let chars = current.chars().count().max(widest_opt) as i64;
+            let w = (chars * 16 + 56).min(max_w).max(140);
+            (w, 40)
+        }
         _ => (0, 0),
     }
 }
@@ -1272,5 +1292,57 @@ mod tests {
             assert!(input.redo());
         }
         assert!(!input.redo());
+    }
+
+    /// A choice field's estimate has to be settled by the widest thing it can
+    /// ever show, and fixed in height no matter how many options it carries.
+    /// A list is an overlay: a longer one must not grow the form around it.
+    #[test]
+    fn test_estimate_select_sizes_to_its_widest_option_and_stays_one_row_tall() {
+        let short = select_elem("Small", &["Small", "Medium", "Large"]);
+        let tall = select_elem("Small", &["Small", "Medium", "Large", "Extra large option"]);
+
+        let (short_w, short_h) = estimate_element_size(&short, 1000);
+        let (tall_w, tall_h) = estimate_element_size(&tall, 1000);
+
+        assert_eq!(
+            short_w,
+            "Medium".len() as i64 * 16 + 56,
+            "the widest option sets the width, not the label showing"
+        );
+        assert!(tall_w > short_w, "a wider option list makes a wider field");
+        assert_eq!(
+            short_h, tall_h,
+            "…but never a taller one: the list is an overlay, not more form"
+        );
+
+        let (_, clipped) = estimate_element_size(&tall, 200);
+        assert_eq!(
+            clipped, 40,
+            "the width is clamped to the room there is, and the height is still one row"
+        );
+    }
+
+    /// A select without options still has to occupy a field's worth of room —
+    /// it is a control the user can see, not a gap.
+    #[test]
+    fn test_estimate_select_without_options_still_occupies_a_field() {
+        let empty = select_elem("Small", &[]);
+        let (w, h) = estimate_element_size(&empty, 1000);
+        assert!(
+            w >= 140,
+            "a field is never narrower than one can be typed into"
+        );
+        assert_eq!(h, 40, "and it is one row tall like any other");
+    }
+
+    fn select_elem(value: &str, options: &[&str]) -> UiElement {
+        let mut elem = UiElement::new("select");
+        elem.text = Some(value.into());
+        elem.props.insert("value".to_string(), value.into());
+        if !options.is_empty() {
+            elem.props.insert("options".to_string(), options.join("\n"));
+        }
+        elem
     }
 }

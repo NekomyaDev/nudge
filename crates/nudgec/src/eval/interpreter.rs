@@ -1200,6 +1200,78 @@ impl Interpreter {
             }));
         }
 
+        // A closed choice field: the current label first (like `input`'s
+        // value), then the list it opens into. The list arrives as an ordinary
+        // expression — a literal, a state list, a slice — so it is flattened to
+        // one option per line here, the same trick `input` uses for a value
+        // that outgrows a single line. Props stay strings, and an option label
+        // is a single row by definition, so a newline inside one is folded to a
+        // space rather than silently inventing an extra entry.
+        if name == "select" {
+            let mut elem = nudge_runtime::ui::UiElement::new("select");
+            if !args.is_empty() {
+                let val = self.eval_expr(&args[0], env)?;
+                let s = match val {
+                    NudgeVal::Str(s) => s,
+                    other => other.to_string(),
+                };
+                elem.text = Some(s.clone());
+                elem.props.insert("value".to_string(), s);
+            }
+            for (k, v_expr) in kwargs {
+                if k == "id" {
+                    let v = self.eval_expr(v_expr, env)?;
+                    elem.id = Some(match v {
+                        NudgeVal::Str(s) => s,
+                        other => other.to_string(),
+                    });
+                } else if k == "on_change" || k == "on_key" {
+                    let hname = match &v_expr.kind {
+                        ExprKind::Ident(s) => s.clone(),
+                        _ => match self.eval_expr(v_expr, env)? {
+                            NudgeVal::Str(s) => s,
+                            other => other.to_string(),
+                        },
+                    };
+                    if k == "on_change" {
+                        elem.on_change = Some(hname);
+                    } else {
+                        elem.on_key = Some(hname);
+                    }
+                } else if k == "value" {
+                    let v = self.eval_expr(v_expr, env)?;
+                    let s = match v {
+                        NudgeVal::Str(s) => s,
+                        other => other.to_string(),
+                    };
+                    elem.text = Some(s.clone());
+                    elem.props.insert("value".to_string(), s);
+                } else if k == "options" {
+                    let v = self.eval_expr(v_expr, env)?;
+                    let flat = match v {
+                        NudgeVal::List(items) => items
+                            .iter()
+                            .map(|it| match it {
+                                NudgeVal::Str(s) => s.replace(['\n', '\r'], " "),
+                                other => other.to_string().replace(['\n', '\r'], " "),
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                        NudgeVal::Str(s) => s.replace(['\n', '\r'], "\n"),
+                        other => other.to_string().replace(['\n', '\r'], "\n"),
+                    };
+                    elem.props.insert("options".to_string(), flat);
+                } else {
+                    let v = self.eval_expr(v_expr, env)?;
+                    elem.props.insert(k.clone(), v.to_string());
+                }
+            }
+            return Ok(Some(NudgeVal::UiElement {
+                found: true,
+                elem: Box::new(elem),
+            }));
+        }
+
         Ok(None)
     }
 
@@ -7294,6 +7366,135 @@ data: [DONE]\n\n";
             Ok(NudgeVal::Int(1)),
             "the bubble view mounted, its messages were findable, and the \
              neighbouring button still dispatched"
+        );
+    }
+
+    /// The full path for a choice field: parsed, typed as View, evaluated into
+    /// an element carrying its value and its option list, and — the point of
+    /// the control — a picked option reported back through `on_change` so the
+    /// state it was bound to actually moves.
+    #[test]
+    fn test_select_combinator_carries_options_and_reports_a_pick() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cleanup = EnvReset::set("NUDGE_UI_HEADLESS", "1");
+
+        let src = r#"
+            view SettingsView(model: string, size: string) -> View {
+                column(padding = 8, gap = 8) [
+                    select(model, options = ["Small", "Medium", "Large"],
+                           id = "model", on_change = on_model),
+                    select(size, options = ["A", "B"], id = "size",
+                           on_change = on_size),
+                    text("picked: " + model + " / " + size)
+                ]
+            }
+
+            agent SettingsApp {
+                state {
+                    model: string = "Small",
+                    size: string = "A"
+                }
+                fn on_model(val: string) uses UI {
+                    state.model = val
+                }
+                fn on_size(val: string) uses UI {
+                    state.size = val
+                }
+                window SettingsWindow {
+                    title: "Settings",
+                    width: 420,
+                    height: 260,
+                    content: SettingsView(state.model, state.size)
+                }
+            }
+
+            test "a picked option reaches the state it was bound to" {
+                let app = SettingsApp.SettingsWindow.mount_headless()
+                assert app.find("model").exists()
+                assert app.find_text("Small").exists()
+
+                app.dispatch_change("model", "Large")
+                assert SettingsApp.state.model == "Large"
+
+                // The second field is untouched by the first one's pick.
+                assert SettingsApp.state.size == "A"
+                app.dispatch_change("size", "B")
+                assert SettingsApp.state.size == "B"
+            }
+        "#;
+        let tokens = lex(src).expect("lex failed");
+        let items = parse(tokens).expect("parse failed");
+        let mut interp = Interpreter::new();
+        interp.load_items(&items).expect("load_items failed");
+        interp.run_all_tests().expect("test execution failed");
+
+        assert_eq!(
+            interp.agent_store.get_field("SettingsApp", "model"),
+            Ok(NudgeVal::Str("Large".into())),
+            "the pick reported through on_change and the state followed it"
+        );
+        assert_eq!(
+            interp.agent_store.get_field("SettingsApp", "size"),
+            Ok(NudgeVal::Str("B".into())),
+            "…and each field reports through its own handler"
+        );
+    }
+
+    /// The option list travels as one newline-joined string, the way every
+    /// other list-valued prop already does — so the renderer reads one prop
+    /// rather than a second tree shape. A newline inside an option is folded
+    /// to a space instead of silently splitting the row it meant to label.
+    #[test]
+    fn test_select_options_are_joined_and_inner_newlines_are_folded() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Literals only: this test is about the element's own props, and the
+        // view's parameters are not bound in a bare evaluation env.
+        let src = r#"
+            view PickView() -> View {
+                select("two", options = ["one", "two\nthree", "four"],
+                       id = "pick", on_change = on_pick)
+            }
+        "#;
+        let tokens = lex(src).expect("lex failed");
+        let items = parse(tokens).expect("parse failed");
+
+        let Item::View { body, .. } = &items[0] else {
+            panic!("expected a view item, got {:?}", items[0]);
+        };
+        let StmtKind::ExprStmt(expr) = &body[0].kind else {
+            panic!("expected an expression statement in the view body")
+        };
+
+        let mut interp = Interpreter::new();
+        interp.load_items(&items).expect("load_items failed");
+        let env = Rc::new(RefCell::new(Env::new()));
+        let val = interp.eval_expr(expr, &env).expect("eval failed");
+        let NudgeVal::UiElement { found: true, elem } = val else {
+            panic!("expected a UI element, got {val:?}");
+        };
+
+        assert_eq!(elem.tag, "select");
+        assert_eq!(
+            elem.text.as_deref(),
+            Some("two"),
+            "the first positional argument is the field's current label"
+        );
+        assert_eq!(
+            elem.props.get("value").map(|s| s.as_str()),
+            Some("two"),
+            "…and rides as `value` too, so the renderer can read either"
+        );
+        assert_eq!(
+            elem.props.get("options").map(|s| s.as_str()),
+            Some("one\ntwo three\nfour"),
+            "one prop, one row per option, and the inner newline folded"
+        );
+        assert_eq!(elem.id.as_deref(), Some("pick"));
+        assert_eq!(
+            elem.on_change.as_deref(),
+            Some("on_pick"),
+            "the handler must ride the element, or a pick reports nowhere"
         );
     }
 

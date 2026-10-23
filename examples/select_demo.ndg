@@ -1,0 +1,72 @@
+// 2.2 — dropdown / select.
+//
+// `select(value, options = [...], id = ..., on_change = ...)`: the first
+// positional argument is the label the field shows, exactly like `input`. The
+// option list travels as one prop and one row per option, so a field whose
+// list grows does not reflow the form around it — the list is an overlay,
+// drawn over whatever it drops onto.
+//
+// Picking an option dispatches a *change*, not a click, so it reuses the
+// plumbing a text field already shares: the handler is handed the new value
+// and the next frame reads the bound state back. Enter takes the row the
+// keyboard is on, Escape abandons the lot, and a press outside a list is
+// spent shutting it rather than falling through to whatever it covered.
+
+view SettingsView(model: string, size: string, note: string) -> View {
+    column(padding = 20, gap = 12) [
+        text("Model: " + model + "   Size: " + size),
+        select(model, options = ["Small", "Medium", "Large", "Extra large"],
+               id = "model", on_change = on_model,
+               tooltip = "Which model to run"),
+        select(size, options = ["8-bit", "16-bit", "32-bit"],
+               id = "size", on_change = on_size),
+        input(note, id = "note", on_change = on_note),
+        text("A list taller than its card scrolls inside itself, so a long"),
+        text("list never pushes the form down or runs off the window.")
+    ]
+}
+
+agent SettingsApp {
+    state {
+        model: string = "Small",
+        size: string = "8-bit",
+        note: string = ""
+    }
+    fn on_model(v: string) uses UI {
+        state.model = v
+    }
+    fn on_size(v: string) uses UI {
+        state.size = v
+    }
+    fn on_note(v: string) uses UI {
+        state.note = v
+    }
+    window SettingsWindow {
+        title: "Nudge Select",
+        width: 460,
+        height: 300,
+        content: SettingsView(state.model, state.size, state.note)
+    }
+}
+
+fn main() uses UI {
+    SettingsApp.SettingsWindow.open()
+}
+
+test "a picked option reaches the state it was bound to, field by field" {
+    let app = SettingsApp.SettingsWindow.mount_headless()
+    assert app.find("model").exists()
+    assert app.find("size").exists()
+    assert app.find_text("Model: Small   Size: 8-bit").exists()
+
+    app.dispatch_change("model", "Large")
+    assert SettingsApp.state.model == "Large"
+    assert SettingsApp.state.size == "8-bit"
+
+    app.dispatch_change("size", "32-bit")
+    assert SettingsApp.state.size == "32-bit"
+    assert SettingsApp.state.model == "Large"
+
+    app.dispatch_change("model", "Extra large")
+    assert SettingsApp.state.model == "Extra large"
+}
