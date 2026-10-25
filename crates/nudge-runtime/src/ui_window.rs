@@ -3059,6 +3059,17 @@ pub fn input_surface(theme: &Theme, focused: bool, disabled: bool) -> (u32, u32)
 // Application Handler and Event Loop
 // -----------------------------------------------------------------------------
 
+/// A cursor position that is not on any control in the tree.
+///
+/// Far enough outside that no box can be laid out there, so every "what is
+/// under the pointer?" question answers the same empty way. It is used when
+/// the pointer leaves the window: the platform stops sending moves, and a
+/// position left parked on the last control would keep that control lit — and
+/// its tooltip card painted — under a pointer that is no longer there.
+const POINTER_OUTSIDE: (i32, i32) = (-100_000, -100_000);
+
+// -----------------------------------------------------------------------------
+
 /// Which cursor shape the window should be showing. A small enum of its own
 /// rather than `CursorIcon` itself purely so it compares cheaply: mouse-move
 /// events arrive several per pixel of travel and the window API should only be
@@ -3410,6 +3421,49 @@ impl<D: UiDispatcher> NativeApp<D> {
             hover_changed || tooltip_here || self.tooltip_shown || bar_changed || popup_row_changed;
         self.tooltip_shown = tooltip_here;
         needs_redraw
+    }
+
+    /// The pointer left the window.
+    ///
+    /// Every hover decision the window makes — the button tone, the scrollbar
+    /// highlight, the text caret, the tooltip card — is derived from
+    /// `cursor_pos`, and the platform sends no further moves once the pointer
+    /// is gone. Left alone, that position stays where the pointer last was, so
+    /// the frame it left stays painted forever: a card explaining a control
+    /// nobody is pointing at, a button lit under an absent hand, an I-beam
+    /// over a field the mouse has nothing to do with. Dismissing it would need
+    /// the pointer to come back and leave again, which is the opposite of
+    /// leaving.
+    ///
+    /// So the position is parked far outside the window rather than merely
+    /// snapped to an edge. An edge coordinate would still be *inside* whatever
+    /// control sits on that edge, so the tooltip would stay up and the button
+    /// would stay lit — just for the wrong box. Far outside, `visible_in`
+    /// rejects every box in the tree, so `tooltip_at`, `find_hovered_button`,
+    /// `input_under_cursor` and `sync_cursor_icon` all answer from the same
+    /// empty position and cannot disagree with each other about what is under
+    /// a pointer that is not here.
+    ///
+    /// A drag in progress is deliberately left holding the control. The
+    /// pointer stepping out mid-drag is the hand still on it — the platform
+    /// still delivers moves once it comes back — and ending the gesture here
+    /// would drop it the moment someone dragged fast enough to cross the edge.
+    pub fn handle_cursor_left(&mut self) -> bool {
+        let was_hovered = self.hovered_id.clone();
+        let was_bar = self.scrollbar_hover;
+        let was_tip = self.tooltip_shown;
+        let was_kind = self.cursor_kind;
+
+        self.cursor_pos = POINTER_OUTSIDE;
+        self.hovered_id = None;
+        self.scrollbar_hover = None;
+        self.tooltip_shown = false;
+        self.sync_cursor_icon();
+
+        // A repaint is owed for whatever the frame that is up is currently
+        // showing, and nothing at all when the pointer was already over empty
+        // space — leaving a window nobody was touching must not flicker it.
+        was_hovered.is_some() || was_bar.is_some() || was_tip || was_kind != self.cursor_kind
     }
 
     /// Which row an open list lights up: the one under the pointer, or the
@@ -5749,6 +5803,18 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
                     }
                 }
             }
+            // The pointer stepped out. Hover, the scrollbar highlight, the
+            // caret and the tooltip are all derived from a position the
+            // pointer is no longer at, and no further moves arrive to correct
+            // them — so without this the last frame before it left stays
+            // painted, with a card explaining a control nobody is pointing at.
+            WindowEvent::CursorLeft { .. } => {
+                if self.handle_cursor_left() {
+                    if let Some(win) = &self.window {
+                        win.request_redraw();
+                    }
+                }
+            }
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
@@ -6508,6 +6574,194 @@ mod tests {
             !redraw_needed,
             "moving in empty space again must NOT trigger redraw"
         );
+    }
+
+    #[test]
+    fn cursor_leaving_the_window_clears_hover_and_asks_for_a_repaint() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "T".into(),
+                width: 300,
+                height: 300,
+            },
+            dummy,
+        );
+        app.layout_boxes = vec![test_box("button", "go", 50, false)];
+        let key_of_btn = button_key(&app.layout_boxes[0], 0);
+
+        // On the button: lit, and the hand.
+        app.handle_cursor_moved((60, 60));
+        assert_eq!(app.hovered_id.as_deref(), Some("go"));
+        assert_eq!(app.cursor_kind, CursorKind::Pointer);
+
+        // Stepping out must take both with it. The platform sends no further
+        // moves once the pointer is gone, so the position it left behind is
+        // the only thing still saying a button is under there.
+        let redraw = app.handle_cursor_left();
+        assert!(
+            redraw,
+            "a lit control that goes dark owes a repaint — otherwise the tone stays"
+        );
+        assert_eq!(app.hovered_id, None, "hover must not outlive the pointer");
+        assert_eq!(
+            app.cursor_kind,
+            CursorKind::Default,
+            "the hand must not stay over a control nobody is pointing at"
+        );
+        assert_eq!(
+            app.cursor_pos, POINTER_OUTSIDE,
+            "and the position must move, or the next frame re-derives the same hover"
+        );
+
+        // Coming back and entering again still works — nothing was left
+        // latched off that a move cannot restore.
+        app.handle_cursor_moved((60, 60));
+        assert_eq!(app.hovered_id, Some(key_of_btn));
+        assert_eq!(app.cursor_kind, CursorKind::Pointer);
+    }
+
+    #[test]
+    fn cursor_leaving_the_window_takes_the_tooltip_card_with_it() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "T".into(),
+                width: 300,
+                height: 300,
+            },
+            dummy,
+        );
+        let mut btn = test_box("button", "go", 50, false);
+        btn.tooltip = Some("Run it".into());
+        app.layout_boxes = vec![btn];
+
+        // Hovering shows the card.
+        app.handle_cursor_moved((60, 60));
+        assert_eq!(app.tooltip_at().as_deref(), Some("Run it"));
+
+        // And leaving takes it. This is the case that used to stick: the
+        // card is not painted from a flag but re-derived from the cursor
+        // position every frame, so a position left parked on the control
+        // keeps the card up forever — with nothing to explain it and no way
+        // to dismiss it but to come back and leave again.
+        let redraw = app.handle_cursor_left();
+        assert!(redraw, "a card that was on and is now off owes a repaint");
+        assert_eq!(
+            app.tooltip_at(),
+            None,
+            "a tooltip must not outlive the pointer that summoned it"
+        );
+
+        // A second leave with nothing showing is free — no flicker on a
+        // window nobody was touching.
+        assert!(
+            !app.handle_cursor_left(),
+            "leaving again over empty space must not repaint"
+        );
+    }
+
+    #[test]
+    fn leaving_the_window_over_empty_space_costs_no_repaint() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "T".into(),
+                width: 300,
+                height: 300,
+            },
+            dummy,
+        );
+        app.layout_boxes = vec![test_box("button", "go", 50, false)];
+
+        // Pointer out in the middle of nowhere — nothing lit, no card, the
+        // arrow already showing. Nothing on screen changes, so nothing is
+        // owed: an event that fires on every window exit must not force a
+        // redraw when there is nothing to redraw.
+        app.handle_cursor_moved((200, 200));
+        assert_eq!(app.hovered_id, None);
+        assert!(
+            !app.handle_cursor_left(),
+            "leaving over empty space must not repaint"
+        );
+    }
+
+    #[test]
+    fn a_drag_keeps_holding_the_control_when_the_pointer_leaves() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "T".into(),
+                width: 400,
+                height: 300,
+            },
+            dummy,
+        );
+        let mut slider = test_box("slider", "dial", 50, false);
+        slider.slider = Some(SliderSpec {
+            value: 50.0,
+            min: 0.0,
+            max: 100.0,
+            step: 1.0,
+        });
+        app.layout_boxes = vec![slider];
+
+        // Press on the groove itself — the track is centred in its row, so
+        // the row's top edge is above the control and would press nothing.
+        let track = slider_track_rect(app.layout_boxes[0].rect);
+        app.cursor_pos = (track.x + 40, track.y + track.h / 2);
+        assert!(
+            app.begin_slider_drag(app.cursor_pos),
+            "a press on a slider's track has to start a drag"
+        );
+        let origin = app.slider_drag.as_ref().unwrap().current;
+
+        // The pointer steps out mid-drag. The hand is still on the control —
+        // the platform keeps delivering moves once it comes back — so the
+        // gesture must survive. Ending it here would drop it the moment
+        // somebody dragged fast enough to cross the edge.
+        app.handle_cursor_left();
+        assert!(
+            app.slider_drag.is_some(),
+            "a drag must not be dropped by the pointer crossing the window edge"
+        );
+        assert_eq!(app.slider_drag.as_ref().unwrap().current, origin);
+
+        // And coming back resumes it rather than stranding it.
+        let moved = app.handle_cursor_moved((track.x + 80, track.y + track.h / 2));
+        assert!(
+            moved,
+            "resuming a drag that changed the value owes a repaint"
+        );
+        assert!(app.slider_drag.is_some());
     }
 
     #[test]

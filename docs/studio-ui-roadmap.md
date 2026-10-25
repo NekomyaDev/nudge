@@ -254,6 +254,31 @@
     repaint was requested, and the card stayed frozen on screen forever.
     `handle_cursor_moved` now also repaints whenever a tooltip is showing or
     was showing — which is also what makes the card follow the pointer at all.
+  - **The same card, and the same three states, still survived the pointer
+    leaving the window entirely.** The fix above runs on `CursorMoved`, and
+    the platform sends no further moves once the pointer is gone — so
+    `cursor_pos` stayed parked on the last control it was over, every
+    "what is under the pointer?" question kept answering *that* control, and
+    the window kept painting a card for a pointer that was no longer there.
+    Nothing could dismiss it but moving back in and out again, which is the
+    opposite of leaving. `WindowEvent::CursorLeft` was not handled at all;
+    it now calls `handle_cursor_left`, which parks `cursor_pos` at
+    `POINTER_OUTSIDE` — far enough outside that `visible_in` rejects every
+    box in the tree, so `tooltip_at`, `find_hovered_button`,
+    `input_under_cursor` and `sync_cursor_icon` all answer from the same
+    empty position and cannot disagree about a pointer that is not here. An
+    edge coordinate would not do: it would still be *inside* whatever sits on
+    that edge, so the card would stay up and the button stay lit, just for
+    the wrong box. A drag in progress is deliberately left holding the
+    control — the hand stepping out mid-drag is still on it.
+    Proven on X11 with `examples/flag_demo.ndg` by building both sides: the
+    pointer hovering `Dark mode` paints the card at **(30,102)–(317,155)**,
+    then moving to (300,200) — outside the window, `WINDOW=10485812` —
+    leaves the old build at `left vs hover = None` with
+    `left vs baseline = (30,102,317,155)`, i.e. the card still painted, while
+    the fixed build reports `left vs hover = (30,102,317,155)` and
+    `left vs baseline = None`: card gone, window byte-identical to how it
+    started.
   - **Note**: the X11 cursor glyph itself cannot be captured by a screenshot
     (`import` and `xwd` composite without the pointer), so the *shape* is
     proved by unit test plus the live hover that drives the same predicate;
