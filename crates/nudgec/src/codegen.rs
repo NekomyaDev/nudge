@@ -1625,6 +1625,28 @@ def _code_block(args, kwargs):
 
 def code_block(*args, **kwargs):
     return _code_block(args, kwargs)
+
+
+def _divider(args, kwargs):
+    did = kwargs.get("id")
+    props = {k: str(v) for k, v in kwargs.items() if k != "id"}
+    return _UiElement(tag="divider", id=did, props=props)
+
+
+def divider(*args, **kwargs):
+    return _divider(args, kwargs)
+
+
+def _spacer(args, kwargs):
+    sid = kwargs.get("id")
+    size = str(args[0]) if args else str(kwargs.get("size", "16"))
+    props = {k: str(v) for k, v in kwargs.items() if k not in ("id", "size")}
+    props["size"] = size
+    return _UiElement(tag="spacer", id=sid, props=props)
+
+
+def spacer(*args, **kwargs):
+    return _spacer(args, kwargs)
 "#;
 
 /// Shared `nudgec test` driver: load a generated module by path and run

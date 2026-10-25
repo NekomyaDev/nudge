@@ -1688,6 +1688,44 @@ impl Interpreter {
             }));
         }
 
+        if name == "divider" {
+            let mut elem = nudge_runtime::ui::UiElement::new(name);
+            for (k, v_expr) in kwargs {
+                if k == "id" {
+                    let v = self.eval_expr(v_expr, env)?;
+                    elem.id = Some(v.to_string());
+                } else {
+                    let v = self.eval_expr(v_expr, env)?;
+                    elem.props.insert(k.clone(), v.to_string());
+                }
+            }
+            return Ok(Some(NudgeVal::UiElement {
+                found: true,
+                elem: Box::new(elem),
+            }));
+        }
+
+        if name == "spacer" {
+            let mut elem = nudge_runtime::ui::UiElement::new(name);
+            if !args.is_empty() {
+                let size = self.eval_expr(&args[0], env)?.to_string();
+                elem.props.insert("size".to_string(), size);
+            }
+            for (k, v_expr) in kwargs {
+                if k == "id" {
+                    let v = self.eval_expr(v_expr, env)?;
+                    elem.id = Some(v.to_string());
+                } else {
+                    let v = self.eval_expr(v_expr, env)?;
+                    elem.props.insert(k.clone(), v.to_string());
+                }
+            }
+            return Ok(Some(NudgeVal::UiElement {
+                found: true,
+                elem: Box::new(elem),
+            }));
+        }
+
         Ok(None)
     }
 

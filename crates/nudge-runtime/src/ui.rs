@@ -691,6 +691,15 @@ pub fn estimate_element_size(elem: &UiElement, max_w: i64) -> (i64, i64) {
             let h = (line_count as i64 * 20 + 24).max(44);
             (w, h)
         }
+        "divider" => (max_w, 16),
+        "spacer" => {
+            let size = elem
+                .props
+                .get("size")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(16);
+            (size, size)
+        }
         _ => (0, 0),
     }
 }

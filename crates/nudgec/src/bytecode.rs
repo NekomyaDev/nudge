@@ -793,6 +793,8 @@ impl<'a> Compiler<'a> {
                             | "icon"
                             | "tabs"
                             | "code_block"
+                            | "divider"
+                            | "spacer"
                     )
                 {
                     self.emit_delegated_expr(expr);
@@ -1028,6 +1030,8 @@ fn check_expr_effects(expr: &Expr, tool_names: &[String]) -> Result<(), String> 
                             | "icon"
                             | "tabs"
                             | "code_block"
+                            | "divider"
+                            | "spacer"
                     )
                 {
                     // Tool call / IO / workspace / store / UI expressions are delegated to the interpreter via DelegateExpr.

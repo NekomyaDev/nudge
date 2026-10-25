@@ -3101,6 +3101,63 @@ pub fn layout_element_ctx(
             });
             (w, h)
         }
+        "divider" => {
+            let h = 16;
+            let w = max_w.max(20);
+            boxes.push(LayoutBox {
+                rect: Rect { x, y, w, h },
+                tag: "divider".into(),
+                id: elem.id.clone(),
+                text: None,
+                on_click: None,
+                on_change: None,
+                on_key: None,
+                pan,
+                clips: clips_owned(clips),
+                pad: 0,
+                checked: false,
+                slider: None,
+                disabled: false,
+                tooltip: None,
+                options: Vec::new(),
+            });
+            (w, h)
+        }
+        "spacer" => {
+            let size = elem
+                .props
+                .get("size")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(16);
+            let w = elem
+                .props
+                .get("width")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(size);
+            let h = elem
+                .props
+                .get("height")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(size);
+            boxes.push(LayoutBox {
+                rect: Rect { x, y, w, h },
+                tag: "spacer".into(),
+                id: elem.id.clone(),
+                text: None,
+                on_click: None,
+                on_change: None,
+                on_key: None,
+                pan,
+                clips: clips_owned(clips),
+                pad: 0,
+                checked: false,
+                slider: None,
+                disabled: false,
+                tooltip: None,
+                options: Vec::new(),
+            });
+            (w, h)
+        }
         _ => {
             // Generic container or unknown tag
             let mut child_y = y;
@@ -5916,6 +5973,31 @@ impl<D: UiDispatcher> NativeApp<D> {
                         }
                     }
                 }
+                "divider" => {
+                    let line_y = ry + lbox.rect.h / 2;
+                    let line_rect = Rect {
+                        x: rx,
+                        y: line_y,
+                        w: lbox.rect.w,
+                        h: 1,
+                    };
+                    if let Some(lc) = match clip {
+                        None => Some(line_rect),
+                        Some(c) => intersect(line_rect, c),
+                    } {
+                        draw_rect(
+                            &mut buffer,
+                            stride,
+                            h_usize,
+                            lc.x,
+                            lc.y,
+                            lc.w,
+                            lc.h,
+                            theme.border,
+                        );
+                    }
+                }
+                "spacer" => {}
                 _ => {}
             }
         }
@@ -7912,6 +7994,26 @@ mod tests {
         // Test tokenizer on comment
         let toks_comment = tokenize_code_line("    // comment");
         assert_eq!(toks_comment[1], ("// comment", SyntaxTokenKind::Comment));
+    }
+
+    #[test]
+    fn test_divider_and_spacer_layout() {
+        let div_elem = UiElement::new("divider");
+        let mut div_boxes = Vec::new();
+        let (dw, dh) = layout_element(&div_elem, 10, 10, 300, &mut div_boxes);
+        assert_eq!(div_boxes.len(), 1);
+        assert_eq!(div_boxes[0].tag, "divider");
+        assert_eq!(dw, 300);
+        assert_eq!(dh, 16);
+
+        let mut sp_elem = UiElement::new("spacer");
+        sp_elem.props.insert("size".into(), "32".into());
+        let mut sp_boxes = Vec::new();
+        let (sw, sh) = layout_element(&sp_elem, 10, 10, 300, &mut sp_boxes);
+        assert_eq!(sp_boxes.len(), 1);
+        assert_eq!(sp_boxes[0].tag, "spacer");
+        assert_eq!(sw, 32);
+        assert_eq!(sh, 32);
     }
 
     #[test]

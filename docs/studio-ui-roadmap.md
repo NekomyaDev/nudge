@@ -864,8 +864,21 @@ token highlighting:
   pixels (`theme.text_dim`). All 9 demo suites pass `nudgec test`.
 
 
-### 2.9 `divider` / `spacer`  (0.5 day)
-- [ ] Separator line, flexible spacing
+### 2.9 `divider` / `spacer`  (0.5 day) — DONE
+- [x] Separator line, flexible spacing
+
+**Visual rhythm and section separators.** `divider` renders a crisp 1px horizontal
+separator line across the available container width using `theme.border`. `spacer`
+allocates customizable empty layout spacing:
+- **`divider(id=)`**: 16px high layout box rendering a 1px centered rule.
+- **`spacer(size=, width=, height=, id=)`**: flexible spacing widget defaulting to 16px.
+- **Python front end parity**: `_divider` and `_spacer` added to `codegen.rs`.
+- **Verified**: fmt OK, clippy -D warnings clean, **963 passed / 0 failed / 1 ignored**
+  (new unit test `test_divider_and_spacer_layout`). Verified live on X11 with
+  `examples/divider_spacer_demo.ndg` (window WID 90177538, 440x360): 744 border pixels
+  rendered, detecting two full-width horizontal divider rules at y=122 (372px wide)
+  and y=278 (372px wide). All 10 demo suites pass `nudgec test`.
+
 
 ### 2.10 `badge` / `tag`  (0.5 day)
 - [ ] Role label (YOU/NUDGE), model name badge

@@ -1,0 +1,37 @@
+// examples/divider_spacer_demo.ndg
+// Demonstrates divider line and spacer elements for clean visual rhythm and separation.
+
+view DividerSpacerDemo() -> View {
+    column(padding = 24, gap = 8) [
+        text("Section 1: Header & Introduction"),
+        text("This is the upper section content."),
+        spacer(16),
+        divider(),
+        spacer(16),
+        text("Section 2: Middle Content Area"),
+        text("Notice the clean separator line and generous whitespace."),
+        spacer(24),
+        divider(),
+        text("Section 3: Footer Information")
+    ]
+}
+
+agent LayoutApp {
+    window MainWindow {
+        title: "Divider and Spacer Demo",
+        width: 440,
+        height: 360,
+        content: DividerSpacerDemo()
+    }
+}
+
+fn main() uses UI {
+    LayoutApp.MainWindow.open()
+}
+
+test "divider and spacer demo mounts and elements exist" {
+    let app = LayoutApp.MainWindow.mount_headless()
+    assert app.find_text("Section 1: Header & Introduction").exists()
+    assert app.find_text("Section 2: Middle Content Area").exists()
+    assert app.find_text("Section 3: Footer Information").exists()
+}
