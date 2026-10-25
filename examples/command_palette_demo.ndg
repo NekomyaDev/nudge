@@ -1,0 +1,60 @@
+// examples/command_palette_demo.ndg
+// Demonstrates modal command palette opened via Ctrl+K with fuzzy search and command execution.
+
+view CommandPaletteDemo(last_cmd: string) -> View {
+    column(padding = 24, gap = 16) [
+        text("Nudge Studio — Command Palette Demo"),
+        text("Press Ctrl+K to open the command palette overlay."),
+        text("Type to fuzzy search ('set' for Settings, 'mod' for Model, etc.), use Up/Down and Enter."),
+        divider(),
+        status_line("Last Command Executed: " + last_cmd, status = "success"),
+        spacer(16),
+        text("Commands available in palette:"),
+        badge("New Chat"),
+        badge("Open Settings"),
+        badge("Change Model"),
+        badge("Toggle Dark Theme"),
+        badge("Clear Conversation"),
+        badge("Export History")
+    ]
+}
+
+agent PaletteApp {
+    state {
+        last: string = "None"
+    }
+
+    fn on_cmd(key: string) uses UI {
+        if key == "Command:Open Settings" {
+            state.last = "Open Settings"
+        } else if key == "Command:Change Model" {
+            state.last = "Change Model"
+        } else if key == "Command:New Chat" {
+            state.last = "New Chat"
+        } else if key == "Ctrl+k" or key == "Ctrl+K" {
+            // Palette opened
+        }
+    }
+
+    window MainWindow {
+        title: "Command Palette Demo",
+        width: 480,
+        height: 380,
+        content: CommandPaletteDemo(state.last)
+    }
+}
+
+fn main() uses UI {
+    PaletteApp.MainWindow.open()
+}
+
+test "command palette executes selected command" {
+    let app = PaletteApp.MainWindow.mount_headless()
+    assert PaletteApp.state.last == "None"
+
+    app.dispatch_key("Command:Open Settings")
+    assert PaletteApp.state.last == "Open Settings"
+
+    app.dispatch_key("Command:Change Model")
+    assert PaletteApp.state.last == "Change Model"
+}

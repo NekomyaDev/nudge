@@ -1789,6 +1789,220 @@ pub fn draw_rich_line<F>(
     }
 }
 
+/// Fuzzy match predicate: returns true if all characters in `pattern` appear
+/// in order (case-insensitively) within `text`.
+pub fn fuzzy_match(pattern: &str, text: &str) -> bool {
+    if pattern.is_empty() {
+        return true;
+    }
+    let mut p_chars = pattern.chars().flat_map(char::to_lowercase);
+    let mut target = match p_chars.next() {
+        Some(c) => c,
+        None => return true,
+    };
+
+    for ch in text.chars().flat_map(char::to_lowercase) {
+        if ch == target {
+            target = match p_chars.next() {
+                Some(c) => c,
+                None => return true,
+            };
+        }
+    }
+
+    false
+}
+
+/// State for the modal Command Palette (`Ctrl+K`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandPaletteState {
+    pub query: String,
+    pub highlight: usize,
+    pub commands: Vec<String>,
+}
+
+impl Default for CommandPaletteState {
+    fn default() -> Self {
+        Self {
+            query: String::new(),
+            highlight: 0,
+            commands: vec![
+                "New Chat".into(),
+                "Open Settings".into(),
+                "Change Model".into(),
+                "Toggle Dark Theme".into(),
+                "Clear Conversation".into(),
+                "Export History".into(),
+            ],
+        }
+    }
+}
+
+impl CommandPaletteState {
+    pub fn filtered_commands(&self) -> Vec<&str> {
+        self.commands
+            .iter()
+            .map(String::as_str)
+            .filter(|cmd| fuzzy_match(&self.query, cmd))
+            .collect()
+    }
+}
+
+/// Draws the modal Command Palette overlay at the top-center of the window.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_command_palette(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    fonts: &FontEngine,
+    theme: &Theme,
+    win_w: i32,
+    _win_h: i32,
+    palette: &CommandPaletteState,
+) {
+    let card_w = 400.min(win_w - 40).max(200);
+    let card_x = (win_w - card_w) / 2;
+    let card_y = 40;
+
+    let filtered = palette.filtered_commands();
+    let row_h = 32;
+    let max_rows = 6;
+    let shown_rows = filtered.len().min(max_rows);
+    let search_h = 40;
+    let card_h = search_h + (shown_rows as i32 * row_h) + 12;
+
+    // Draw backdrop card with drop shadow feel
+    draw_rounded_rect_box(
+        buf,
+        stride,
+        height,
+        card_x,
+        card_y,
+        card_w,
+        card_h,
+        8,
+        theme.input_bg,
+        theme.input_border_focused,
+    );
+
+    // Search query header inside card
+    let prompt_prefix = "> ";
+    let cell_h = fonts.cell_h;
+    let query_y = card_y + (search_h - cell_h) / 2;
+
+    let prefix_w = fonts.measure_width(FaceKind::UiBold, prompt_prefix);
+    draw_text_ttf_clipped(
+        fonts,
+        FaceKind::UiBold,
+        card_x + 16,
+        query_y,
+        prompt_prefix,
+        Rect {
+            x: card_x,
+            y: card_y,
+            w: card_w,
+            h: search_h,
+        },
+        |px, py, w, h, cov| {
+            draw_rect_alpha(
+                buf,
+                stride,
+                height,
+                px,
+                py,
+                w,
+                h,
+                theme.input_border_focused,
+                cov,
+            );
+        },
+    );
+
+    let query_text = if palette.query.is_empty() {
+        "Type a command..."
+    } else {
+        &palette.query
+    };
+    let query_color = if palette.query.is_empty() {
+        theme.text_dim
+    } else {
+        theme.text
+    };
+    draw_text_ttf_clipped(
+        fonts,
+        FaceKind::Ui,
+        card_x + 16 + prefix_w,
+        query_y,
+        query_text,
+        Rect {
+            x: card_x + 16 + prefix_w,
+            y: card_y,
+            w: card_w - 32 - prefix_w,
+            h: search_h,
+        },
+        |px, py, w, h, cov| {
+            draw_rect_alpha(buf, stride, height, px, py, w, h, query_color, cov);
+        },
+    );
+
+    // Separator line under search box
+    draw_rect(
+        buf,
+        stride,
+        height,
+        card_x + 8,
+        card_y + search_h,
+        card_w - 16,
+        1,
+        theme.border,
+    );
+
+    // List of filtered commands
+    let list_start_y = card_y + search_h + 6;
+    for (i, &cmd) in filtered.iter().enumerate().take(shown_rows) {
+        let row_y = list_start_y + (i as i32 * row_h);
+        let is_selected = i == palette.highlight.min(filtered.len().saturating_sub(1));
+
+        if is_selected {
+            draw_rounded_rect_box(
+                buf,
+                stride,
+                height,
+                card_x + 6,
+                row_y,
+                card_w - 12,
+                row_h,
+                4,
+                theme.selection_bg,
+                theme.selection_bg,
+            );
+        }
+
+        let text_color = if is_selected {
+            theme.button_text
+        } else {
+            theme.text
+        };
+        let ty = row_y + (row_h - cell_h) / 2;
+        draw_text_ttf_clipped(
+            fonts,
+            FaceKind::Ui,
+            card_x + 16,
+            ty,
+            cmd,
+            Rect {
+                x: card_x + 12,
+                y: row_y,
+                w: card_w - 24,
+                h: row_h,
+            },
+            |px, py, w, h, cov| {
+                draw_rect_alpha(buf, stride, height, px, py, w, h, text_color, cov);
+            },
+        );
+    }
+}
+
 /// The list a `select` opens, painted as one card over everything beneath it.
 /// The rows are drawn rather than laid out, so opening a field never reflows
 /// the form — the card takes the room below the field, or above it when there
@@ -4002,6 +4216,8 @@ pub struct NativeApp<D: UiDispatcher> {
     scroll_counter: usize,
     /// Cache of decoded PNG images keyed by src URL or file path.
     pub image_cache: HashMap<String, crate::ui::DecodedImage>,
+    /// State of the modal Command Palette (`Ctrl+K`).
+    pub command_palette: Option<CommandPaletteState>,
 }
 
 impl<D: UiDispatcher> NativeApp<D> {
@@ -4050,6 +4266,7 @@ impl<D: UiDispatcher> NativeApp<D> {
             scroll_regions: Vec::new(),
             scroll_counter: 0,
             image_cache: HashMap::new(),
+            command_palette: None,
         }
     }
 
@@ -6532,6 +6749,20 @@ impl<D: UiDispatcher> NativeApp<D> {
             );
         }
 
+        // Modal Command Palette, painted over standard content
+        if let Some(ref pal) = self.command_palette {
+            draw_command_palette(
+                &mut buffer,
+                stride,
+                h_usize,
+                &self.fonts,
+                &theme,
+                self.width as i32,
+                self.height as i32,
+                pal,
+            );
+        }
+
         // Tooltip overlay, painted last so it layers over every box, including
         // those inside a scroll viewport that would otherwise clip it. Asked
         // for above, while `self` could still be read — and already made to
@@ -6557,6 +6788,32 @@ impl<D: UiDispatcher> NativeApp<D> {
 
     pub fn handle_click(&mut self) {
         let (mx, my) = self.cursor_pos;
+
+        // Command palette owns click before anything else
+        if let Some(pal) = self.command_palette.take() {
+            let card_w = 400.min(self.width as i32 - 40).max(200);
+            let card_x = (self.width as i32 - card_w) / 2;
+            let card_y = 40;
+            let filtered = pal.filtered_commands();
+            let row_h = 32;
+            let search_h = 40;
+            let shown_rows = filtered.len().min(6);
+            let card_h = search_h + (shown_rows as i32 * row_h) + 12;
+
+            if mx >= card_x && mx < card_x + card_w && my >= card_y && my < card_y + card_h {
+                let list_y = card_y + search_h + 6;
+                if my >= list_y {
+                    let clicked_row = ((my - list_y) / row_h) as usize;
+                    if let Some(&cmd) = filtered.get(clicked_row) {
+                        self.dispatcher
+                            .dispatch_key(&format!("Command:{cmd}"), None);
+                    }
+                }
+            }
+            // A click anywhere dismisses the palette
+            self.render();
+            return;
+        }
 
         // An open list owns the press before any box does: it is drawn over
         // everything, so letting the box loop run first would fire whatever
@@ -6730,6 +6987,65 @@ impl<D: UiDispatcher> NativeApp<D> {
         // keystroke did nothing.
         self.touch_caret();
 
+        // Modal Command Palette owns keystrokes when active
+        if self.command_palette.is_some() {
+            match logical_key {
+                Key::Named(NamedKey::Escape) => {
+                    self.command_palette = None;
+                    self.render();
+                    return;
+                }
+                Key::Named(NamedKey::ArrowUp) => {
+                    if let Some(pal) = self.command_palette.as_mut() {
+                        let count = pal.filtered_commands().len();
+                        if count > 0 {
+                            pal.highlight = pal.highlight.saturating_sub(1);
+                        }
+                    }
+                    self.render();
+                    return;
+                }
+                Key::Named(NamedKey::ArrowDown) => {
+                    if let Some(pal) = self.command_palette.as_mut() {
+                        let count = pal.filtered_commands().len();
+                        if count > 0 {
+                            pal.highlight = (pal.highlight + 1).min(count.saturating_sub(1));
+                        }
+                    }
+                    self.render();
+                    return;
+                }
+                Key::Named(NamedKey::Enter) => {
+                    if let Some(pal) = self.command_palette.take() {
+                        let filtered = pal.filtered_commands();
+                        if let Some(&cmd) = filtered.get(pal.highlight) {
+                            self.dispatcher
+                                .dispatch_key(&format!("Command:{cmd}"), None);
+                        }
+                    }
+                    self.render();
+                    return;
+                }
+                Key::Named(NamedKey::Backspace) => {
+                    if let Some(pal) = self.command_palette.as_mut() {
+                        pal.query.pop();
+                        pal.highlight = 0;
+                    }
+                    self.render();
+                    return;
+                }
+                Key::Character(s) if !self.ctrl_pressed => {
+                    if let Some(pal) = self.command_palette.as_mut() {
+                        pal.query.push_str(s);
+                        pal.highlight = 0;
+                    }
+                    self.render();
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         // A list that is up owns the whole keyboard before any field does. It
         // sits over the form, so a keystroke meant for the list must not reach
         // a text field hiding behind the card — which is why every branch here
@@ -6875,6 +7191,13 @@ impl<D: UiDispatcher> NativeApp<D> {
                             || s == "/" =>
                     {
                         // Global shortcuts take precedence even when focused in input
+                        if s.eq_ignore_ascii_case("k") {
+                            if self.command_palette.is_some() {
+                                self.command_palette = None;
+                            } else {
+                                self.command_palette = Some(CommandPaletteState::default());
+                            }
+                        }
                         let chord = format!("Ctrl+{s}");
                         self.dispatcher.dispatch_key(&chord, None);
                         self.render();
@@ -7086,6 +7409,13 @@ impl<D: UiDispatcher> NativeApp<D> {
             } else {
                 key_name
             };
+            if chord == "Ctrl+k" || chord == "Ctrl+K" {
+                if self.command_palette.is_some() {
+                    self.command_palette = None;
+                } else {
+                    self.command_palette = Some(CommandPaletteState::default());
+                }
+            }
             self.dispatcher.dispatch_key(&chord, None);
         }
 
@@ -8549,6 +8879,48 @@ mod tests {
         app.ctrl_pressed = true;
         app.handle_key_input(&Key::Character("k".into()), Some("k"));
         assert_eq!(*app.dispatcher.last_key, "Ctrl+k");
+    }
+
+    #[test]
+    fn test_command_palette_interaction_and_filtering() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "Palette".into(),
+                width: 400,
+                height: 400,
+            },
+            dummy,
+        );
+
+        // 1. Open with Ctrl+K
+        app.ctrl_pressed = true;
+        app.handle_key_input(&Key::Character("k".into()), Some("k"));
+        assert!(app.command_palette.is_some());
+        app.ctrl_pressed = false;
+
+        // 2. Type query "set"
+        app.handle_key_input(&Key::Character("s".into()), Some("s"));
+        app.handle_key_input(&Key::Character("e".into()), Some("e"));
+        app.handle_key_input(&Key::Character("t".into()), Some("t"));
+
+        let filtered = app.command_palette.as_ref().unwrap().filtered_commands();
+        assert_eq!(filtered, vec!["Open Settings"]);
+
+        // 3. Press Enter to execute command
+        app.handle_key_input(&Key::Named(NamedKey::Enter), None);
+        assert_eq!(*app.dispatcher.last_key, "Command:Open Settings");
+        assert!(
+            app.command_palette.is_none(),
+            "Enter commits and closes palette"
+        );
     }
 
     #[test]

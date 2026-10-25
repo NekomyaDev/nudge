@@ -1026,9 +1026,26 @@ flexible alignment and distribution options:
   pass `nudgec test`.
 
 
-### 4.2 Command palette  (1–1.5 days)
-- [ ] Searchable list opened with Ctrl+K (new chat, settings, change model...)
-- [ ] Fuzzy search + up/down navigation
+### 4.2 Command palette  (1–1.5 days) — DONE
+- [x] Searchable list opened with Ctrl+K (new chat, settings, change model...)
+- [x] Fuzzy search + up/down navigation
+
+**Modal command palette with fuzzy filtering.** Native floating command palette:
+- **`CommandPaletteState` & `fuzzy_match`**: fast case-insensitive subsequence matcher
+  filters commands as the user types into the query field.
+- **Top-center overlay card**: renders with dark backdrop (`theme.input_bg`), focused border
+  accent, search prompt `> `, and list of filtered actions (e.g. New Chat, Open Settings,
+  Change Model, Toggle Dark Theme).
+- **Keyboard & mouse navigation**: ArrowUp / ArrowDown updates selection highlight; Enter
+  or direct row click executes `Command:<action>` and closes the palette; Escape dismisses.
+- **Python front end fallback**: `_HeadlessApp.dispatch_key` routes agent-level command handlers.
+- **Verified**: fmt OK, clippy -D warnings clean, **969 passed / 0 failed / 1 ignored**
+  (new unit test `test_command_palette_interaction_and_filtering`). Verified live on X11
+  with `examples/command_palette_demo.ndg` (window WID 90177538, 480x380): verified palette
+  overlay with 12,071 blue selection pixels (`0x1D, 0x4E, 0xD8`), and typing `set` + Enter
+  executed `Command:Open Settings` displaying 72 Emerald-500 status line indicator pixels.
+  All 16 demo suites pass `nudgec test`.
+
 
 ### 4.3 Keyboard list navigation  (0.5 day)
 - [ ] Up/down in the chat list + Enter to open

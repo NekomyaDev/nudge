@@ -1379,6 +1379,13 @@ class _HeadlessApp:
                         return h
                 return None
             handler = _find_key(self.root)
+        if not handler and self.agent:
+            # Fall back to an on_cmd / on_shortcut / on_key handler on the agent if present
+            for fn_name in ("on_cmd", "on_shortcut", "on_key"):
+                fn = getattr(self.agent, fn_name, None)
+                if callable(fn):
+                    handler = fn
+                    break
         if handler:
             if callable(handler):
                 handler(key)
