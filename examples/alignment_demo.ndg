@@ -1,0 +1,39 @@
+// examples/alignment_demo.ndg
+// Demonstrates smart spacing and alignment (align, justify, expand) in row and column.
+
+view AlignmentDemo() -> View {
+    column(padding = 24, gap = 16, expand = true) [
+        text("Nudge Studio — Smart Spacing & Alignment Demo"),
+        text("Row with justify='between' across container width:"),
+        row(justify = "between", padding = 8, expand = true) [
+            badge("LEFT"),
+            tag("CENTER-ITEM"),
+            badge("RIGHT")
+        ],
+        divider(),
+        text("Column with align='end' (right-aligned controls):"),
+        column(align = "end", padding = 8, gap = 8, expand = true) [
+            badge("ALIGNED-END"),
+            button("Action Right", id = "action_btn")
+        ]
+    ]
+}
+
+agent AlignApp {
+    window MainWindow {
+        title: "Smart Alignment Demo",
+        width: 480,
+        height: 380,
+        content: AlignmentDemo()
+    }
+}
+
+fn main() uses UI {
+    AlignApp.MainWindow.open()
+}
+
+test "alignment demo mounts and elements exist" {
+    let app = AlignApp.MainWindow.mount_headless()
+    assert app.find_text("Nudge Studio — Smart Spacing & Alignment Demo").exists()
+    assert app.find("action_btn").exists()
+}

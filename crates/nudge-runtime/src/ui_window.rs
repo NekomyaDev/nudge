@@ -2552,7 +2552,14 @@ pub fn layout_element_ctx(
                 .get("gap")
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(10);
+            let align = elem
+                .props
+                .get("align")
+                .map(|s| s.as_str())
+                .unwrap_or("start");
+            let expand = elem.props.get("expand").is_some_and(|v| v == "true");
 
+            let start_box_idx = boxes.len();
             let mut child_y = y + padding;
             let mut max_child_w = 0;
 
@@ -2576,7 +2583,26 @@ pub fn layout_element_ctx(
             } else {
                 child_y - gap + padding - y
             };
-            let total_w = max_child_w + 2 * padding;
+            let total_w = if expand {
+                max_w
+            } else {
+                max_child_w + 2 * padding
+            };
+
+            // Post-pass: apply cross-axis alignment (`align` = "center" | "end")
+            if align == "center" || align == "end" {
+                let avail_w = total_w - 2 * padding;
+                for b in &mut boxes[start_box_idx..] {
+                    let offset = if align == "center" {
+                        (avail_w - b.rect.w) / 2
+                    } else {
+                        avail_w - b.rect.w
+                    };
+                    if offset > 0 {
+                        b.rect.x += offset;
+                    }
+                }
+            }
 
             (total_w, total_h)
         }
@@ -2591,23 +2617,85 @@ pub fn layout_element_ctx(
                 .get("gap")
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(10);
+            let justify = elem
+                .props
+                .get("justify")
+                .map(|s| s.as_str())
+                .unwrap_or("start");
+            let align = elem
+                .props
+                .get("align")
+                .map(|s| s.as_str())
+                .unwrap_or("start");
+            let expand = elem.props.get("expand").is_some_and(|v| v == "true");
 
+            let start_box_idx = boxes.len();
             let mut child_x = x + padding;
             let mut max_child_h = 0;
+            let mut child_box_ranges = Vec::new();
 
             for child in &elem.children {
+                let idx_before = boxes.len();
                 let (cw, ch) =
                     layout_element_ctx(child, child_x, y + padding, max_w, boxes, ctx, pan, clips);
+                let idx_after = boxes.len();
+                child_box_ranges.push((idx_before..idx_after, cw));
                 max_child_h = max_child_h.max(ch);
                 child_x += cw + gap;
             }
 
-            let total_w = if elem.children.is_empty() {
-                2 * padding
+            let content_w = if elem.children.is_empty() {
+                0
             } else {
-                child_x - gap + padding - x
+                child_x - gap - (x + padding)
             };
+            let total_w =
+                if expand || justify == "between" || justify == "end" || justify == "center" {
+                    max_w
+                } else {
+                    content_w + 2 * padding
+                };
             let total_h = max_child_h + 2 * padding;
+
+            // Post-pass: apply main-axis distribution (`justify`) and cross-axis alignment (`align`)
+            let avail_w = total_w - 2 * padding;
+            let count = elem.children.len();
+
+            if (justify == "between" && count > 1) || justify == "end" || justify == "center" {
+                let extra_w = (avail_w - content_w).max(0);
+                if justify == "end" {
+                    for b in &mut boxes[start_box_idx..] {
+                        b.rect.x += extra_w;
+                    }
+                } else if justify == "center" {
+                    let offset = extra_w / 2;
+                    for b in &mut boxes[start_box_idx..] {
+                        b.rect.x += offset;
+                    }
+                } else if justify == "between" && count > 1 {
+                    let bonus_gap = extra_w / (count as i32 - 1);
+                    for (i, (range, _)) in child_box_ranges.iter().enumerate() {
+                        let shift = (i as i32) * bonus_gap;
+                        for b in &mut boxes[range.clone()] {
+                            b.rect.x += shift;
+                        }
+                    }
+                }
+            }
+
+            if align == "center" || align == "end" {
+                let avail_h = total_h - 2 * padding;
+                for b in &mut boxes[start_box_idx..] {
+                    let offset = if align == "center" {
+                        (avail_h - b.rect.h) / 2
+                    } else {
+                        avail_h - b.rect.h
+                    };
+                    if offset > 0 {
+                        b.rect.y += offset;
+                    }
+                }
+            }
 
             (total_w, total_h)
         }
@@ -8370,6 +8458,45 @@ mod tests {
         assert_eq!(boxes[0].options, vec!["success"]);
         assert_eq!(h, 28);
         assert!(w >= 120);
+    }
+
+    #[test]
+    fn test_row_and_column_smart_alignment() {
+        // Test row with justify="between" and expand="true"
+        let mut row_elem = UiElement::new("row");
+        row_elem.props.insert("justify".into(), "between".into());
+        row_elem.props.insert("padding".into(), "0".into());
+        row_elem.props.insert("gap".into(), "0".into());
+
+        let mut b1 = UiElement::new("button");
+        b1.text = Some("A".into());
+        let mut b2 = UiElement::new("button");
+        b2.text = Some("B".into());
+        row_elem.children = vec![b1, b2];
+
+        let mut boxes = Vec::new();
+        let (rw, _rh) = layout_element(&row_elem, 0, 0, 400, &mut boxes);
+        assert_eq!(rw, 400);
+        assert_eq!(boxes.len(), 2);
+        assert_eq!(boxes[0].rect.x, 0);
+        // Second button should be shifted all the way to the right
+        assert!(boxes[1].rect.x > 300);
+
+        // Test column with align="end"
+        let mut col_elem = UiElement::new("column");
+        col_elem.props.insert("align".into(), "end".into());
+        col_elem.props.insert("expand".into(), "true".into());
+        col_elem.props.insert("padding".into(), "0".into());
+
+        let mut btn = UiElement::new("button");
+        btn.text = Some("OK".into());
+        col_elem.children = vec![btn];
+
+        let mut col_boxes = Vec::new();
+        let (cw, _ch) = layout_element(&col_elem, 0, 0, 300, &mut col_boxes);
+        assert_eq!(cw, 300);
+        assert_eq!(col_boxes.len(), 1);
+        assert!(col_boxes[0].rect.x > 200);
     }
 
     #[test]

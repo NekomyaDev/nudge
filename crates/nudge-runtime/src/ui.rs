@@ -480,7 +480,12 @@ pub fn estimate_element_size(elem: &UiElement, max_w: i64) -> (i64, i64) {
             } else {
                 child_y - gap + padding
             };
-            let total_w = max_child_w + 2 * padding;
+            let expand = elem.props.get("expand").is_some_and(|v| v == "true");
+            let total_w = if expand {
+                max_w
+            } else {
+                max_child_w + 2 * padding
+            };
             (total_w, total_h)
         }
         "row" => {
@@ -504,7 +509,10 @@ pub fn estimate_element_size(elem: &UiElement, max_w: i64) -> (i64, i64) {
                 child_x += cw + gap;
             }
 
-            let total_w = if elem.children.is_empty() {
+            let expand = elem.props.get("expand").is_some_and(|v| v == "true");
+            let total_w = if expand {
+                max_w
+            } else if elem.children.is_empty() {
                 2 * padding
             } else {
                 child_x - gap + padding

@@ -985,9 +985,24 @@ log lines, and operation alerts with status-coded indicator accents:
   (error). All 13 demo suites pass `nudgec test`.
 
 
-### 3.4 Smart spacing & alignment  (0.5 day)
-- [ ] Add `align`, `justify`, `expand` to `row` / `column`
-- [ ] Currently fixed padding/gap only — no flexible alignment
+### 3.4 Smart spacing & alignment  (0.5 day) — DONE
+- [x] Add `align`, `justify`, `expand` to `row` / `column`
+- [x] Currently fixed padding/gap only — no flexible alignment
+
+**Smart layout distribution and alignment.** Extends `row` and `column` containers with
+flexible alignment and distribution options:
+- **`expand=true`**: container expands to fill the entire available width (`max_w`).
+- **`align="start"|"center"|"end"`**: controls cross-axis alignment. In a `column`,
+  `align="end"` aligns child elements to the right edge; in a `row`, aligns child elements
+  vertically (center/bottom).
+- **`justify="start"|"center"|"end"|"between"`**: controls main-axis distribution in a `row`.
+  `justify="between"` distributes remaining container width evenly between children.
+- **Verified**: fmt OK, clippy -D warnings clean, **967 passed / 0 failed / 1 ignored**
+  (new unit test `test_row_and_column_smart_alignment`). Verified live on X11 with
+  `examples/alignment_demo.ndg` (window WID 90177538, 480x380): `column(align="end")` aligned
+  button to the right (`x=286..437`), and `row(justify="between")` spread items evenly from
+  left margin (`x=35`) to right margin (`x=479`). All 14 demo suites pass `nudgec test`.
+
 
 ---
 
