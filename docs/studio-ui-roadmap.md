@@ -964,8 +964,26 @@ and chat bubbles:
   and 32,613 bubble background pixels rendered. All 12 demo suites pass `nudgec test`.
 
 
-### 3.3 System message / status line styles
-- [ ] Colored line styles for info / warning / error
+### 3.3 System message / status line styles — DONE
+- [x] Colored line styles for info / warning / error
+
+**Contextual notification & status rows.** `status_line` renders system feedback,
+log lines, and operation alerts with status-coded indicator accents:
+- **`status_line(text, status="info"|"success"|"warning"|"error", id=, tooltip=)`**:
+  28px high status row containing a 4px left-hand indicator bar and formatted message.
+- **Status Indicator Palettes**:
+  - `info`: Blue-500 (`#3B82F6`) indicator.
+  - `success`: Emerald-500 (`#10B981`) indicator.
+  - `warning` / `warn`: Amber-500 (`#F59E0B`) indicator.
+  - `error`: Red-500 (`#EF4444`) indicator.
+- **Rich Text Support**: message body supports inline rich text via `draw_rich_line`.
+- **Python front end parity**: `_status_line` and `status_line` added to `codegen.rs`.
+- **Verified**: fmt OK, clippy -D warnings clean, **966 passed / 0 failed / 1 ignored**
+  (new unit test `test_status_line_layout`). Verified live on X11 with
+  `examples/status_line_demo.ndg` (window WID 90177538, 480x320): detected 64 Blue-500 pixels
+  (info), 64 Emerald-500 pixels (success), 64 Amber-500 pixels (warning), and 64 Red-500 pixels
+  (error). All 13 demo suites pass `nudgec test`.
+
 
 ### 3.4 Smart spacing & alignment  (0.5 day)
 - [ ] Add `align`, `justify`, `expand` to `row` / `column`

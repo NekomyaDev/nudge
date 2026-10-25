@@ -706,6 +706,12 @@ pub fn estimate_element_size(elem: &UiElement, max_w: i64) -> (i64, i64) {
             let w = (chars * 10 + 20).min(max_w).max(36);
             (w, 22)
         }
+        "status_line" => {
+            let text = elem.text.as_deref().unwrap_or("");
+            let chars = text.chars().count() as i64;
+            let w = (chars * 10 + 36).min(max_w).max(120);
+            (w, 28)
+        }
         _ => (0, 0),
     }
 }

@@ -3306,6 +3306,35 @@ pub fn layout_element_ctx(
             });
             (w, h)
         }
+        "status_line" => {
+            let message = elem.text.clone().unwrap_or_default();
+            let text_w = message.chars().count() as i32 * CELL_W;
+            let w = (text_w + 36).min(max_w).max(120);
+            let h = 28;
+            let status = elem
+                .props
+                .get("status")
+                .cloned()
+                .unwrap_or_else(|| "info".into());
+            boxes.push(LayoutBox {
+                rect: Rect { x, y, w, h },
+                tag: "status_line".into(),
+                id: elem.id.clone(),
+                text: Some(message),
+                on_click: elem.on_click.clone(),
+                on_change: None,
+                on_key: None,
+                pan,
+                clips: clips_owned(clips),
+                pad: 8,
+                checked: false,
+                slider: None,
+                disabled: false,
+                tooltip: elem.props.get("tooltip").cloned(),
+                options: vec![status],
+            });
+            (w, h)
+        }
         _ => {
             // Generic container or unknown tag
             let mut child_y = y;
@@ -6206,6 +6235,97 @@ impl<D: UiDispatcher> NativeApp<D> {
                         );
                     }
                 }
+                "status_line" => {
+                    let text = lbox.text.as_deref().unwrap_or("");
+                    let status = lbox.options.first().map(|s| s.as_str()).unwrap_or("info");
+                    let indicator_color = match status {
+                        "error" => 0xFFEF_4444,            // Red-500
+                        "warning" | "warn" => 0xFFF5_9E0B, // Amber-500
+                        "success" => 0xFF10_B981,          // Emerald-500
+                        _ => 0xFF3B_82F6,                  // Blue-500 (info)
+                    };
+
+                    // Background container
+                    draw_rounded_rect_box_clipped(
+                        &mut buffer,
+                        stride,
+                        h_usize,
+                        clip,
+                        rx,
+                        ry,
+                        lbox.rect.w,
+                        lbox.rect.h,
+                        4,
+                        theme.input_bg,
+                        theme.border,
+                    );
+
+                    // Left indicator pill / bar
+                    let bar_w = 4;
+                    let bar_rect = Rect {
+                        x: rx + 2,
+                        y: ry + 4,
+                        w: bar_w,
+                        h: (lbox.rect.h - 8).max(0),
+                    };
+                    if let Some(bc) = match clip {
+                        None => Some(bar_rect),
+                        Some(c) => intersect(bar_rect, c),
+                    } {
+                        draw_rounded_rect_box_clipped(
+                            &mut buffer,
+                            stride,
+                            h_usize,
+                            Some(bc),
+                            bc.x,
+                            bc.y,
+                            bc.w,
+                            bc.h,
+                            2,
+                            indicator_color,
+                            indicator_color,
+                        );
+                    }
+
+                    // Status text label
+                    let fonts = &self.fonts;
+                    let cell_h = fonts.cell_h;
+                    let tx = rx + 16;
+                    let ty = ry + ((lbox.rect.h - cell_h) / 2).max(1);
+                    let text_region = Rect {
+                        x: tx,
+                        y: ry + 1,
+                        w: (lbox.rect.w - 20).max(0),
+                        h: (lbox.rect.h - 2).max(0),
+                    };
+                    if let Some(tc) = match clip {
+                        None => Some(text_region),
+                        Some(c) => intersect(text_region, c),
+                    } {
+                        draw_rich_line(
+                            fonts,
+                            &theme,
+                            tx,
+                            ty,
+                            text,
+                            theme.text,
+                            Some(tc),
+                            |px, py, w, h, col, cov| {
+                                draw_rect_alpha(
+                                    &mut buffer,
+                                    stride,
+                                    h_usize,
+                                    px,
+                                    py,
+                                    w,
+                                    h,
+                                    col,
+                                    cov,
+                                );
+                            },
+                        );
+                    }
+                }
                 _ => {}
             }
         }
@@ -8235,6 +8355,21 @@ mod tests {
         assert_eq!(b_boxes[0].text.as_deref(), Some("YOU"));
         assert_eq!(bh, 22);
         assert!(bw >= 32);
+    }
+
+    #[test]
+    fn test_status_line_layout() {
+        let mut elem = UiElement::new("status_line");
+        elem.text = Some("System ready".into());
+        elem.props.insert("status".into(), "success".into());
+        let mut boxes = Vec::new();
+        let (w, h) = layout_element(&elem, 10, 10, 300, &mut boxes);
+        assert_eq!(boxes.len(), 1);
+        assert_eq!(boxes[0].tag, "status_line");
+        assert_eq!(boxes[0].text.as_deref(), Some("System ready"));
+        assert_eq!(boxes[0].options, vec!["success"]);
+        assert_eq!(h, 28);
+        assert!(w >= 120);
     }
 
     #[test]

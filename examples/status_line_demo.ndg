@@ -1,0 +1,32 @@
+// examples/status_line_demo.ndg
+// Demonstrates status line styles for info, success, warning, and error states.
+
+view StatusLineDemo() -> View {
+    column(padding = 24, gap = 12) [
+        text("Nudge Studio — Status Line Styles Demo"),
+        status_line("System initialization complete. Connected to local runtime.", status = "info"),
+        status_line("Model weights loaded into memory successfully.", status = "success"),
+        status_line("High VRAM usage detected (88% allocated).", status = "warning"),
+        status_line("Connection lost to external provider. Retrying...", status = "error")
+    ]
+}
+
+agent StatusApp {
+    window MainWindow {
+        title: "Status Line Demo",
+        width: 480,
+        height: 320,
+        content: StatusLineDemo()
+    }
+}
+
+fn main() uses UI {
+    StatusApp.MainWindow.open()
+}
+
+test "status line demo mounts and elements exist" {
+    let app = StatusApp.MainWindow.mount_headless()
+    assert app.find_text("Nudge Studio — Status Line Styles Demo").exists()
+    assert app.find_text("Model weights loaded into memory successfully.").exists()
+    assert app.find_text("Connection lost to external provider. Retrying...").exists()
+}

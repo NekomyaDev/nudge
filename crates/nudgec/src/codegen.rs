@@ -1675,6 +1675,19 @@ def _bubble(args, kwargs):
 
 def bubble(*args, **kwargs):
     return _bubble(args, kwargs)
+
+
+def _status_line(args, kwargs):
+    sid = kwargs.get("id")
+    text = str(args[0]) if args else str(kwargs.get("text", ""))
+    status = kwargs.get("status", "info")
+    props = {k: str(v) for k, v in kwargs.items() if k not in ("id", "text", "status")}
+    props["status"] = str(status)
+    return _UiElement(tag="status_line", id=sid, text=text if text else None, props=props)
+
+
+def status_line(*args, **kwargs):
+    return _status_line(args, kwargs)
 "#;
 
 /// Shared `nudgec test` driver: load a generated module by path and run
