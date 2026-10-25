@@ -1503,6 +1503,87 @@ pub fn draw_progress_control(
     }
 }
 
+/// Draws a decoded RGBA image onto the softbuffer buffer with scaling, alpha blending,
+/// optional corner radius, and viewport clipping.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_image_rgba(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    clip: Option<Rect>,
+    dest: Rect,
+    img: &crate::ui::DecodedImage,
+    corner_radius: i32,
+    alpha: f32,
+) {
+    if dest.w <= 0 || dest.h <= 0 || img.width == 0 || img.height == 0 || alpha <= 0.0 {
+        return;
+    }
+    if let Some(c) = clip {
+        if intersect(dest, c).is_none() {
+            return;
+        }
+    }
+
+    let x0 = dest.x.max(0);
+    let y0 = dest.y.max(0);
+    let x1 = (dest.x + dest.w).min(stride as i32);
+    let y1 = (dest.y + dest.h).min(height as i32);
+
+    let src_w = img.width as f32;
+    let src_h = img.height as f32;
+    let dst_w = dest.w as f32;
+    let dst_h = dest.h as f32;
+
+    let cr = corner_radius.min(dest.w / 2).min(dest.h / 2).max(0);
+
+    for y in y0..y1 {
+        let v = (y - dest.y) as f32 / dst_h;
+        let sy = ((v * src_h).floor() as u32).min(img.height - 1);
+        let row_offset = y as usize * stride;
+
+        for x in x0..x1 {
+            if let Some(c) = clip {
+                if !c.contains(x, y) {
+                    continue;
+                }
+            }
+
+            let u = (x - dest.x) as f32 / dst_w;
+            let sx = ((u * src_w).floor() as u32).min(img.width - 1);
+
+            let sidx = ((sy * img.width + sx) * 4) as usize;
+            let sr = img.data[sidx] as u32;
+            let sg = img.data[sidx + 1] as u32;
+            let sb = img.data[sidx + 2] as u32;
+            let sa = (img.data[sidx + 3] as f32 / 255.0) * alpha;
+
+            if sa <= 0.0 {
+                continue;
+            }
+
+            let cov = if cr > 0 {
+                rounded_rect_coverage(dest.x, dest.y, dest.w, dest.h, cr, x, y)
+            } else {
+                1.0
+            };
+
+            let eff_a = sa * cov;
+            if eff_a <= 0.0 {
+                continue;
+            }
+
+            let color = (sr << 16) | (sg << 8) | sb;
+            let didx = row_offset + x as usize;
+            if eff_a >= 1.0 {
+                buf[didx] = 0xFF00_0000 | color;
+            } else {
+                blend_px(buf, didx, color, eff_a);
+            }
+        }
+    }
+}
+
 /// The list a `select` opens, painted as one card over everything beneath it.
 /// The rows are drawn rather than laid out, so opening a field never reflows
 /// the form — the card takes the room below the field, or above it when there
@@ -2839,6 +2920,38 @@ pub fn layout_element_ctx(
             });
             (w, h)
         }
+        "image" | "icon" => {
+            let default_size = if elem.tag == "icon" { 24 } else { 48 };
+            let w: i32 = elem
+                .props
+                .get("width")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(default_size);
+            let h: i32 = elem
+                .props
+                .get("height")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(default_size);
+            let src = elem.text.clone().or_else(|| elem.props.get("src").cloned());
+            boxes.push(LayoutBox {
+                rect: Rect { x, y, w, h },
+                tag: elem.tag.clone(),
+                id: elem.id.clone(),
+                text: src,
+                on_click: elem.on_click.clone(),
+                on_change: None,
+                on_key: None,
+                pan,
+                clips: clips_owned(clips),
+                pad: 0,
+                checked: false,
+                slider: None,
+                disabled: elem.props.get("disabled").is_some_and(|sv| is_truthy(sv)),
+                tooltip: elem.props.get("tooltip").cloned(),
+                options: Vec::new(),
+            });
+            (w, h)
+        }
         _ => {
             // Generic container or unknown tag
             let mut child_y = y;
@@ -3414,6 +3527,8 @@ pub struct NativeApp<D: UiDispatcher> {
     /// Mints stable keys for `scroll` containers without an `id`; reset on
     /// every layout pass so keys track layout order.
     scroll_counter: usize,
+    /// Cache of decoded PNG images keyed by src URL or file path.
+    pub image_cache: HashMap<String, crate::ui::DecodedImage>,
 }
 
 impl<D: UiDispatcher> NativeApp<D> {
@@ -3461,6 +3576,7 @@ impl<D: UiDispatcher> NativeApp<D> {
             scroll_offsets: HashMap::new(),
             scroll_regions: Vec::new(),
             scroll_counter: 0,
+            image_cache: HashMap::new(),
         }
     }
 
@@ -5361,6 +5477,37 @@ impl<D: UiDispatcher> NativeApp<D> {
                         }
                     }
                 }
+                "image" | "icon" => {
+                    let dest = Rect {
+                        x: rx,
+                        y: ry,
+                        w: lbox.rect.w,
+                        h: lbox.rect.h,
+                    };
+                    if let Some(ref path) = lbox.text {
+                        if !self.image_cache.contains_key(path) {
+                            if let Ok(bytes) = std::fs::read(path) {
+                                if let Ok(decoded) = crate::ui::decode_png(&bytes) {
+                                    self.image_cache.insert(path.clone(), decoded);
+                                }
+                            }
+                        }
+                        if let Some(img) = self.image_cache.get(path) {
+                            let cr = if lbox.tag == "image" { 6 } else { 0 };
+                            let alpha = if lbox.disabled { 0.5 } else { 1.0 };
+                            draw_image_rgba(
+                                &mut buffer,
+                                stride,
+                                h_usize,
+                                clip,
+                                dest,
+                                img,
+                                cr,
+                                alpha,
+                            );
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -7233,6 +7380,34 @@ mod tests {
         assert_eq!(spec.max, 100.0);
         assert_eq!(h, PROGRESS_H);
         assert!(w >= PROGRESS_TRACK_W);
+    }
+
+    #[test]
+    fn test_image_and_icon_layout_and_decode() {
+        // 1. Layout element check
+        let mut img_elem = UiElement::new("image");
+        img_elem.props.insert("width".into(), "64".into());
+        img_elem.props.insert("height".into(), "64".into());
+        img_elem.text = Some("/tmp/avatar.png".into());
+
+        let mut boxes = Vec::new();
+        let (w, h) = layout_element(&img_elem, 20, 30, 400, &mut boxes);
+        assert_eq!(boxes.len(), 1);
+        assert_eq!(boxes[0].tag, "image");
+        assert_eq!(boxes[0].rect.w, 64);
+        assert_eq!(boxes[0].rect.h, 64);
+        assert_eq!(boxes[0].text.as_deref(), Some("/tmp/avatar.png"));
+        assert_eq!(w, 64);
+        assert_eq!(h, 64);
+
+        // 2. Decode test on valid PNG bytes
+        let raw_png = std::fs::read("/tmp/opencode/test4x4.png").expect("test PNG");
+        let decoded = crate::ui::decode_png(&raw_png).expect("decode PNG");
+        assert_eq!(decoded.width, 4);
+        assert_eq!(decoded.height, 4);
+        assert_eq!(decoded.data.len(), 4 * 4 * 4);
+        // First pixel was red (255, 0, 0, 255)
+        assert_eq!(&decoded.data[0..4], &[255, 0, 0, 255]);
     }
 
     #[test]

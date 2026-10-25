@@ -1567,6 +1567,34 @@ def _spinner(args, kwargs):
 
 def spinner(*args, **kwargs):
     return _spinner(args, kwargs)
+
+
+def _image(args, kwargs):
+    iid = kwargs.get("id")
+    on_click = kwargs.get("on_click")
+    src = str(args[0]) if args else str(kwargs.get("src", ""))
+    props = {k: str(v) for k, v in kwargs.items() if k not in ("id", "on_click", "src")}
+    if src:
+        props["src"] = src
+    return _UiElement(tag="image", id=iid, text=src if src else None, on_click=on_click, props=props)
+
+
+def image(*args, **kwargs):
+    return _image(args, kwargs)
+
+
+def _icon(args, kwargs):
+    iid = kwargs.get("id")
+    on_click = kwargs.get("on_click")
+    src = str(args[0]) if args else str(kwargs.get("src", ""))
+    props = {k: str(v) for k, v in kwargs.items() if k not in ("id", "on_click", "src")}
+    if src:
+        props["src"] = src
+    return _UiElement(tag="icon", id=iid, text=src if src else None, on_click=on_click, props=props)
+
+
+def icon(*args, **kwargs):
+    return _icon(args, kwargs)
 "#;
 
 /// Shared `nudgec test` driver: load a generated module by path and run

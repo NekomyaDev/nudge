@@ -1591,6 +1591,36 @@ impl Interpreter {
             }));
         }
 
+        if name == "image" || name == "icon" {
+            let mut elem = nudge_runtime::ui::UiElement::new(name);
+            if !args.is_empty() {
+                let src = match self.eval_expr(&args[0], env)? {
+                    NudgeVal::Str(s) => s,
+                    other => other.to_string(),
+                };
+                elem.text = Some(src.clone());
+                elem.props.insert("src".to_string(), src);
+            }
+            for (k, v_expr) in kwargs {
+                let v = self.eval_expr(v_expr, env)?;
+                if k == "id" {
+                    elem.id = Some(v.to_string());
+                } else if k == "on_click" {
+                    let hname = match &v_expr.kind {
+                        ExprKind::Ident(s) => s.clone(),
+                        _ => v.to_string(),
+                    };
+                    elem.on_click = Some(hname);
+                } else {
+                    elem.props.insert(k.clone(), v.to_string());
+                }
+            }
+            return Ok(Some(NudgeVal::UiElement {
+                found: true,
+                elem: Box::new(elem),
+            }));
+        }
+
         Ok(None)
     }
 

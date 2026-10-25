@@ -1,0 +1,79 @@
+// examples/image_demo.ndg
+// Demonstrates PNG image decoding, scaling, alpha blending and icons.
+
+view ImageDemo(count: int) -> View {
+    column(padding = 24, gap = 16) [
+        text("Nudge Studio — Image & Icon Demo"),
+        row(gap = 16) [
+            image("examples/avatar.png", width = 48, height = 48, id = "avatar_img"),
+            column(gap = 4) [
+                text("Agent Avatar"),
+                text("Status: Active and ready"),
+                text("Clicks on avatar: " + clicks_text(count))
+            ]
+        ],
+        row(gap = 12) [
+            button("Click Avatar", on_click = tap_avatar, id = "btn_tap"),
+            button("Reset", on_click = reset_taps, id = "btn_reset")
+        ],
+        text("Scaled down to icon (24x24):"),
+        row(gap = 8) [
+            icon("examples/avatar.png", width = 24, height = 24, id = "small_icon"),
+            text("Inline status icon")
+        ]
+    ]
+}
+
+fn clicks_text(c: int) -> string {
+    if c == 0 {
+        "none yet"
+    } else if c == 1 {
+        "1 click"
+    } else {
+        "multiple clicks"
+    }
+}
+
+agent ImageApp {
+    state {
+        count: int = 0
+    }
+
+    fn tap_avatar() uses UI {
+        state.count = state.count + 1
+    }
+
+    fn reset_taps() uses UI {
+        state.count = 0
+    }
+
+    window MainWindow {
+        title: "Image & Icon Demo",
+        width: 440,
+        height: 380,
+        content: ImageDemo(state.count)
+    }
+}
+
+fn main() uses UI {
+    ImageApp.MainWindow.open()
+}
+
+test "image demo mounts and handles interactions" {
+    let app = ImageApp.MainWindow.mount_headless()
+    assert app.find("avatar_img").exists()
+    assert app.find("small_icon").exists()
+    assert app.find_text("Clicks on avatar: none yet").exists()
+
+    app.dispatch_click("btn_tap")
+    assert ImageApp.state.count == 1
+    assert app.find_text("Clicks on avatar: 1 click").exists()
+
+    app.dispatch_click("btn_tap")
+    assert ImageApp.state.count == 2
+    assert app.find_text("Clicks on avatar: multiple clicks").exists()
+
+    app.dispatch_click("btn_reset")
+    assert ImageApp.state.count == 0
+    assert app.find_text("Clicks on avatar: none yet").exists()
+}

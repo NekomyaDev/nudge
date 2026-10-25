@@ -789,6 +789,8 @@ impl<'a> Compiler<'a> {
                             | "slider"
                             | "progress"
                             | "spinner"
+                            | "image"
+                            | "icon"
                     )
                 {
                     self.emit_delegated_expr(expr);
@@ -1020,6 +1022,8 @@ fn check_expr_effects(expr: &Expr, tool_names: &[String]) -> Result<(), String> 
                             | "slider"
                             | "progress"
                             | "spinner"
+                            | "image"
+                            | "icon"
                     )
                 {
                     // Tool call / IO / workspace / store / UI expressions are delegated to the interpreter via DelegateExpr.

@@ -659,6 +659,19 @@ pub fn estimate_element_size(elem: &UiElement, max_w: i64) -> (i64, i64) {
             };
             (w, PROGRESS_H as i64)
         }
+        "image" | "icon" => {
+            let w: i64 = elem
+                .props
+                .get("width")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(if elem.tag == "icon" { 24 } else { 48 });
+            let h: i64 = elem
+                .props
+                .get("height")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(if elem.tag == "icon" { 24 } else { 48 });
+            (w.min(max_w), h)
+        }
         _ => (0, 0),
     }
 }
@@ -1013,6 +1026,65 @@ pub const PROGRESS_TRACK_W: i32 = 160;
 pub const PROGRESS_TRACK_H: i32 = 8;
 /// Row height for a progress bar or spinner row.
 pub const PROGRESS_H: i32 = 34;
+
+/// Decoded RGBA image data ready for blitting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedImage {
+    pub width: u32,
+    pub height: u32,
+    /// RGBA pixels in row-major order: `4 * width * height` bytes.
+    pub data: Vec<u8>,
+}
+
+/// Decodes PNG bytes into raw RGBA pixels.
+pub fn decode_png(bytes: &[u8]) -> Result<DecodedImage, String> {
+    let cursor = std::io::Cursor::new(bytes);
+    let decoder = png::Decoder::new(cursor);
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| format!("PNG decode error: {e}"))?;
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let info = reader
+        .next_frame(&mut buf)
+        .map_err(|e| format!("PNG frame error: {e}"))?;
+    buf.truncate(info.buffer_size());
+
+    let width = info.width;
+    let height = info.height;
+
+    // Expand RGB or Grayscale to standard RGBA8 if necessary
+    let rgba_data = match info.color_type {
+        png::ColorType::Rgba => buf,
+        png::ColorType::Rgb => {
+            let mut out = Vec::with_capacity((width * height * 4) as usize);
+            for &[r, g, b] in buf.as_chunks::<3>().0 {
+                out.extend_from_slice(&[r, g, b, 255]);
+            }
+            out
+        }
+        png::ColorType::Grayscale => {
+            let mut out = Vec::with_capacity((width * height * 4) as usize);
+            for &g in &buf {
+                out.extend_from_slice(&[g, g, g, 255]);
+            }
+            out
+        }
+        png::ColorType::GrayscaleAlpha => {
+            let mut out = Vec::with_capacity((width * height * 4) as usize);
+            for &[g, a] in buf.as_chunks::<2>().0 {
+                out.extend_from_slice(&[g, g, g, a]);
+            }
+            out
+        }
+        other => return Err(format!("Unsupported PNG color type: {:?}", other)),
+    };
+
+    Ok(DecodedImage {
+        width,
+        height,
+        data: rgba_data,
+    })
+}
 
 /// Where a drag lands: clamped to `[min, max]`, then pulled onto the nearest
 /// rung of `step` counted from `min`, so a slider never rests between two

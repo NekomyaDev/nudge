@@ -790,9 +790,32 @@ support, differing only in what they render and how they drive the frame clock:
   to 100px (65%) live on screen. All 6 demo suites pass `nudgec test`.
 
 
-### 2.6 `image` / `icon`  (1 day)
-- [ ] Avatar, logo, icon drawing
-- [ ] PNG decode (crate: `image` or lightweight `png`) + scaling + alpha
+### 2.6 `image` / `icon`  (1 day) — DONE
+- [x] Avatar, logo, icon drawing
+- [x] PNG decode (crate: `png` v0.17.16) + scaling + alpha
+
+**Display and brand chrome.** `image` and `icon` display local or bundled PNG
+assets with scaling, alpha transparency, corner rounding, and caching:
+- **`image(src, width=, height=, id=, on_click=, disabled=, tooltip=)`**:
+  avatar/media widget defaulting to `48x48` with `6px` rounded corners.
+- **`icon(src, width=, height=, id=, on_click=, disabled=, tooltip=)`**:
+  inline UI icon defaulting to `24x24` without corner radius.
+- **PNG decode & decoding pipeline**: `decode_png` decodes raw PNG bytes into
+  standard RGBA8 format (`DecodedImage`), converting RGB, Grayscale, and
+  Grayscale+Alpha formats on the fly.
+- **Rendering & blitting**: `draw_image_rgba` performs nearest-neighbour scaling,
+  alpha blending (`blend_px`), viewport clipping, and anti-aliased corner
+  rounding via `rounded_rect_coverage`.
+- **In-memory cache**: `NativeApp.image_cache` caches decoded assets by path/src
+  so repeated frames avoid disk I/O and re-decoding.
+- **Python front end parity**: `_image` and `_icon` functions added to `codegen.rs`.
+- **Verified**: fmt OK, clippy -D warnings clean, **960 passed / 0 failed / 1 ignored**
+  (new unit test `test_image_and_icon_layout_and_decode`). Verified live on X11
+  with `examples/image_demo.ndg` and `examples/avatar.png` (window WID 90177538,
+  440x380): 1628 avatar rose pixels detected on screen at `(53, 89)` (42x42 rendered)
+  and 325 small icon pixels at `(52, 356)` (21x21 rendered). All 7 demo suites
+  pass `nudgec test`.
+
 
 ### 2.7 `tabs`  (0.5 day)
 - [ ] Chat tabs, settings sections
