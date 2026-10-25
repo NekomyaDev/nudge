@@ -765,9 +765,30 @@ snap_identically` now computes the expected spelling and snap with
 `nudge_runtime::ui`'s own functions and compares the generated module against
 them — the test fails against either bug, verified by reverting each in turn.
 
-### 2.5 `progress` / `spinner`  (1 day)
-- [ ] Rotating indicator while a reply is loading; indeterminate mode
-- [ ] Depends on the 1.7 timer
+### 2.5 `progress` / `spinner`  (1 day) — DONE
+- [x] Rotating indicator while a reply is loading; indeterminate mode
+- [x] Depends on the 1.7 timer
+
+**Two tags, one mechanism.** Like 2.3's `checkbox`/`toggle`, `progress` and
+`spinner` share the layout, the optional label, disabled dimming and tooltip
+support, differing only in what they render and how they drive the frame clock:
+- **`progress(label, value=, min=, max=, id=, disabled=, tooltip=)`**:
+  determinate progress bar with groove and filled pill portion proportional to
+  `clamp(value, min, max)`. Static — no timer ticks or idle cost.
+- **`spinner(label, id=, disabled=, tooltip=)`**: rotating indeterminate arc
+  segment (90° sweep) rendered with signed-distance field (SDF) anti-aliasing.
+- **Zero-cost idle discipline**: `schedule_frames` checks `has_visible_spinner()`.
+  The continuous animation timer (`SPINNER_TICK` = 33ms, ~30fps) is armed ONLY
+  when a spinner is actually in the viewport. When no spinner is on screen,
+  `spinner_origin` is dropped and the clock sleeps with 0% idle CPU.
+- **Pure display widgets**: completely inert, absorbing no clicks or focus.
+- **Verified**: fmt OK, clippy -D warnings clean, **959 passed / 0 failed / 1 ignored**
+  (2 new unit tests). Verified live on X11 with `examples/progress_demo.ndg`
+  (window WID 90177538 at 730,329, 440x400): spinner confirmed actively
+  animating across consecutive frames (bbox `(50, 323, 68, 338)` changing),
+  and progress bar +25% button click proved fill width growing from 60px (40%)
+  to 100px (65%) live on screen. All 6 demo suites pass `nudgec test`.
+
 
 ### 2.6 `image` / `icon`  (1 day)
 - [ ] Avatar, logo, icon drawing

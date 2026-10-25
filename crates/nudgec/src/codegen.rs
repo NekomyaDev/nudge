@@ -1530,6 +1530,43 @@ def _slider(args, kwargs):
 
 def slider(*args, **kwargs):
     return _slider(args, kwargs)
+
+
+def _progress(args, kwargs):
+    pid = kwargs.get("id")
+    label = str(args[0]) if args else str(kwargs.get("label", ""))
+    lo = float(kwargs.get("min", 0))
+    hi = float(kwargs.get("max", 100))
+    val = float(kwargs.get("value", lo))
+    clamped = max(lo, min(hi, val))
+    props = {
+        k: str(v)
+        for k, v in kwargs.items()
+        if k not in ("id", "value", "label", "min", "max")
+    }
+    if label:
+        props["label"] = label
+    props["min"] = str(lo)
+    props["max"] = str(hi)
+    props["value"] = str(clamped)
+    return _UiElement(tag="progress", id=pid, text=label if label else None, props=props)
+
+
+def progress(*args, **kwargs):
+    return _progress(args, kwargs)
+
+
+def _spinner(args, kwargs):
+    sid = kwargs.get("id")
+    label = str(args[0]) if args else str(kwargs.get("label", ""))
+    props = {k: str(v) for k, v in kwargs.items() if k not in ("id", "label")}
+    if label:
+        props["label"] = label
+    return _UiElement(tag="spinner", id=sid, text=label if label else None, props=props)
+
+
+def spinner(*args, **kwargs):
+    return _spinner(args, kwargs)
 "#;
 
 /// Shared `nudgec test` driver: load a generated module by path and run

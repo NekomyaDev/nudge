@@ -4,7 +4,9 @@
 use crate::font8x8::get_glyph;
 use crate::font_engine::{FaceKind, FontEngine, BASE_PX, CELL_H, CELL_W};
 use crate::ui::{
-    is_truthy, TextInputState, UiElement, SLIDER_H, SLIDER_KNOB, SLIDER_TRACK_H, SLIDER_TRACK_W,
+    is_truthy, TextInputState, UiElement, PROGRESS_H, PROGRESS_TRACK_H, PROGRESS_TRACK_W, SLIDER_H,
+    SLIDER_KNOB, SLIDER_TRACK_H, SLIDER_TRACK_W, SPINNER_ARC_DEG, SPINNER_PERIOD_SECS,
+    SPINNER_SIZE, SPINNER_STROKE,
 };
 use std::collections::HashMap;
 use std::num::NonZeroU32;
@@ -659,6 +661,9 @@ const HOVER_RAMP_SECS: f32 = 0.12;
 /// deadline while an animation is actually outstanding — an idle window
 /// schedules nothing and never wakes for it.
 const RAMP_TICK: Duration = Duration::from_millis(16);
+
+/// Frame duration for an indeterminate spinner rotating smoothly (~30fps).
+const SPINNER_TICK: Duration = Duration::from_millis(33);
 
 /// Ceiling on how much time a single frame may claim to have covered. Without
 /// it, the first frame after a long idle would carry the whole stall as `dt`
@@ -1347,6 +1352,153 @@ pub fn draw_slider_control(
             knob.w / 2,
             knob_fill,
             knob_fill,
+        );
+    }
+}
+
+/// Signed distance to a ring sector (arc) with center at `(cx, cy)`, radius `r`,
+/// stroke thickness `stroke`, spanning an arc from `start_rad` by `sweep_rad`.
+#[allow(clippy::too_many_arguments)]
+fn arc_sector_sdf(
+    px: f32,
+    py: f32,
+    cx: f32,
+    cy: f32,
+    r: f32,
+    stroke: f32,
+    start_rad: f32,
+    sweep_rad: f32,
+) -> f32 {
+    let dx = px - cx;
+    let dy = py - cy;
+    let dist = dx.hypot(dy);
+    let radial_sdf = (dist - r).abs() - stroke * 0.5;
+
+    // The two half-plane end-caps for an arc spanning less than 180 degrees.
+    let end_rad = start_rad + sweep_rad;
+    let u0x = start_rad.cos();
+    let u0y = start_rad.sin();
+    let u1x = end_rad.cos();
+    let u1y = end_rad.sin();
+
+    // Cross products in screen coords (y down):
+    // cross(u0, d) = u0.x * dy - u0.y * dx. Positive when past start_rad.
+    let cross0 = u0x * dy - u0y * dx;
+    let sdf_start = -cross0;
+
+    // cross(u1, d) = u1.x * dy - u1.y * dx. Negative when before end_rad.
+    let cross1 = u1x * dy - u1y * dx;
+    let sdf_end = cross1;
+
+    radial_sdf.max(sdf_start).max(sdf_end)
+}
+
+/// Draw an indeterminate spinner arc.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_spinner_control(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    clip: Option<Rect>,
+    theme: &Theme,
+    r: Rect,
+    disabled: bool,
+    phase: f32,
+) {
+    if r.w <= 0 || r.h <= 0 {
+        return;
+    }
+    let cx = r.x as f32 + r.w as f32 * 0.5;
+    let cy = r.y as f32 + r.h as f32 * 0.5;
+    let radius = (r.w.min(r.h) as f32 - SPINNER_STROKE) * 0.5;
+    if radius <= 0.0 {
+        return;
+    }
+
+    let color = if disabled {
+        lerp_color(theme.input_border_focused, theme.bg, 0.5)
+    } else {
+        theme.input_border_focused
+    };
+
+    let start_rad = phase * std::f32::consts::TAU;
+    let sweep_rad = (SPINNER_ARC_DEG / 360.0) * std::f32::consts::TAU;
+
+    let x0 = r.x.max(0);
+    let y0 = r.y.max(0);
+    let x1 = (r.x + r.w).min(stride as i32);
+    let y1 = (r.y + r.h).min(height as i32);
+
+    for y in y0..y1 {
+        for x in x0..x1 {
+            if let Some(c) = clip {
+                if !c.contains(x, y) {
+                    continue;
+                }
+            }
+            let px = x as f32 + 0.5;
+            let py = y as f32 + 0.5;
+            let sdf = arc_sector_sdf(px, py, cx, cy, radius, SPINNER_STROKE, start_rad, sweep_rad);
+            let cov = (0.5 - sdf).clamp(0.0, 1.0);
+            if cov > 0.0 {
+                let idx = y as usize * stride + x as usize;
+                blend_px(buf, idx, color, cov);
+            }
+        }
+    }
+}
+
+/// Draw a determinate progress bar.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_progress_control(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    clip: Option<Rect>,
+    theme: &Theme,
+    r: Rect,
+    value: f64,
+    min: f64,
+    max: f64,
+    disabled: bool,
+) {
+    if r.w <= 0 || r.h <= 0 {
+        return;
+    }
+    let accent = theme.input_border_focused;
+    let radius = r.h / 2;
+    let (groove_bg, groove_edge) = if disabled {
+        (lerp_color(theme.input_bg, theme.bg, 0.5), theme.border)
+    } else {
+        (theme.input_bg, theme.input_border)
+    };
+
+    draw_rounded_rect_box_clipped(
+        buf,
+        stride,
+        height,
+        clip,
+        r.x,
+        r.y,
+        r.w,
+        r.h,
+        radius,
+        groove_bg,
+        groove_edge,
+    );
+
+    let range = (max - min).max(0.000001);
+    let frac = ((value - min) / range).clamp(0.0, 1.0);
+    let fill_w = (r.w as f64 * frac).round() as i32;
+
+    if fill_w > 0 {
+        let fill_color = if disabled {
+            lerp_color(accent, theme.bg, 0.5)
+        } else {
+            accent
+        };
+        draw_rounded_rect_box_clipped(
+            buf, stride, height, clip, r.x, r.y, fill_w, r.h, radius, fill_color, fill_color,
         );
     }
 }
@@ -2603,6 +2755,90 @@ pub fn layout_element_ctx(
             });
             (w, h)
         }
+        "progress" => {
+            let label = elem
+                .text
+                .clone()
+                .or_else(|| elem.props.get("label").cloned())
+                .unwrap_or_default();
+            let text_w = if label.is_empty() {
+                0
+            } else {
+                FLAG_GAP + label.chars().count() as i32 * CELL_W + 8
+            };
+            let w = PROGRESS_TRACK_W + text_w;
+            let h = PROGRESS_H;
+            let min: f64 = elem
+                .props
+                .get("min")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0.0);
+            let max: f64 = elem
+                .props
+                .get("max")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(100.0);
+            let val: f64 = elem
+                .props
+                .get("value")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(min);
+            boxes.push(LayoutBox {
+                rect: Rect { x, y, w, h },
+                tag: "progress".into(),
+                id: elem.id.clone(),
+                text: if label.is_empty() { None } else { Some(label) },
+                on_click: None,
+                on_change: None,
+                on_key: None,
+                pan,
+                clips: clips_owned(clips),
+                pad: 0,
+                checked: false,
+                slider: Some(SliderSpec {
+                    value: val.clamp(min, max),
+                    min,
+                    max,
+                    step: 1.0,
+                }),
+                disabled: elem.props.get("disabled").is_some_and(|sv| is_truthy(sv)),
+                tooltip: elem.props.get("tooltip").cloned(),
+                options: Vec::new(),
+            });
+            (w, h)
+        }
+        "spinner" => {
+            let label = elem
+                .text
+                .clone()
+                .or_else(|| elem.props.get("label").cloned())
+                .unwrap_or_default();
+            let text_w = if label.is_empty() {
+                0
+            } else {
+                FLAG_GAP + label.chars().count() as i32 * CELL_W + 8
+            };
+            let w = SPINNER_SIZE + text_w;
+            let h = PROGRESS_H;
+            boxes.push(LayoutBox {
+                rect: Rect { x, y, w, h },
+                tag: "spinner".into(),
+                id: elem.id.clone(),
+                text: if label.is_empty() { None } else { Some(label) },
+                on_click: None,
+                on_change: None,
+                on_key: None,
+                pan,
+                clips: clips_owned(clips),
+                pad: 0,
+                checked: false,
+                slider: None,
+                disabled: elem.props.get("disabled").is_some_and(|sv| is_truthy(sv)),
+                tooltip: elem.props.get("tooltip").cloned(),
+                options: Vec::new(),
+            });
+            (w, h)
+        }
         _ => {
             // Generic container or unknown tag
             let mut child_y = y;
@@ -3131,6 +3367,9 @@ pub struct NativeApp<D: UiDispatcher> {
     /// When the caret last moved. The blink phase derives from it, so typing
     /// or clicking restarts the visible phase instead of landing mid-blink.
     caret_blink_origin: Option<Instant>,
+    /// When an active spinner was first laid out. The continuous rotation
+    /// angle derives from it, and is dropped when no spinner remains visible.
+    spinner_origin: Option<Instant>,
     /// When the previous animation tick ran, so the next one can measure `dt`.
     last_tick: Option<Instant>,
     /// Which window scrollbar the pointer is currently over, driving the hover
@@ -3199,6 +3438,7 @@ impl<D: UiDispatcher> NativeApp<D> {
             clock: FrameClock::new(),
             hover_ramps: HashMap::new(),
             caret_blink_origin: None,
+            spinner_origin: None,
             last_tick: None,
             scrollbar_hover: None,
             scrollbar_drag: None,
@@ -3520,6 +3760,20 @@ impl<D: UiDispatcher> NativeApp<D> {
             .any(|b| b.tag == "input" && !b.disabled && b.id.as_deref() == Some(id.as_str()))
     }
 
+    /// Whether any spinner in the layout tree is currently within view.
+    /// An off-screen or un-laid-out spinner costs zero frame wake-ups.
+    fn has_visible_spinner(&self) -> bool {
+        self.layout_boxes.iter().any(|b| {
+            b.tag == "spinner"
+                && b.visible_in(
+                    self.scroll_x,
+                    self.scroll_y,
+                    self.width as i32,
+                    self.height as i32,
+                )
+        })
+    }
+
     /// Restart the caret's visible phase. Typing or clicking somewhere new has
     /// to *show* the caret immediately rather than land in the middle of a
     /// blink, which would make the very act of moving it look like nothing
@@ -3649,6 +3903,16 @@ impl<D: UiDispatcher> NativeApp<D> {
                 // The caret it belonged to is gone; stop paying for it.
                 self.caret_blink_origin = None;
             }
+        }
+
+        if self.has_visible_spinner() {
+            if self.spinner_origin.is_none() {
+                self.spinner_origin = Some(now);
+            }
+            self.clock.wake_in(now, SPINNER_TICK);
+        } else {
+            // No spinner remains in view: drop the origin so idle cost is 0.
+            self.spinner_origin = None;
         }
     }
 
@@ -4960,6 +5224,141 @@ impl<D: UiDispatcher> NativeApp<D> {
                                 );
                             },
                         );
+                    }
+                }
+                "progress" => {
+                    let Some(spec) = lbox.slider else {
+                        continue;
+                    };
+                    let track_r = Rect {
+                        x: rx,
+                        y: ry + ((lbox.rect.h - PROGRESS_TRACK_H) / 2).max(0),
+                        w: PROGRESS_TRACK_W,
+                        h: PROGRESS_TRACK_H,
+                    };
+                    draw_progress_control(
+                        &mut buffer,
+                        stride,
+                        h_usize,
+                        clip,
+                        &theme,
+                        track_r,
+                        spec.value,
+                        spec.min,
+                        spec.max,
+                        lbox.disabled,
+                    );
+                    if let Some(ref label) = lbox.text {
+                        let label_x = track_r.x + track_r.w + FLAG_GAP;
+                        let region = Rect {
+                            x: label_x,
+                            y: ry,
+                            w: (lbox.rect.w - track_r.w - FLAG_GAP).max(0),
+                            h: lbox.rect.h,
+                        };
+                        let label_clip = match clip {
+                            None => Some(region),
+                            Some(c) => intersect(region, c),
+                        };
+                        if let Some(lc) = label_clip {
+                            let fonts = &self.fonts;
+                            let ty = ry + ((lbox.rect.h - cell_h) / 2).max(0);
+                            let label_color = if lbox.disabled {
+                                theme.text_dim
+                            } else {
+                                theme.text
+                            };
+                            draw_text_ttf_clipped(
+                                fonts,
+                                FaceKind::Ui,
+                                label_x,
+                                ty,
+                                label,
+                                lc,
+                                |px, py, w, h, cov| {
+                                    draw_rect_alpha(
+                                        &mut buffer,
+                                        stride,
+                                        h_usize,
+                                        px,
+                                        py,
+                                        w,
+                                        h,
+                                        label_color,
+                                        cov,
+                                    );
+                                },
+                            );
+                        }
+                    }
+                }
+                "spinner" => {
+                    let spinner_r = Rect {
+                        x: rx,
+                        y: ry + ((lbox.rect.h - SPINNER_SIZE) / 2).max(0),
+                        w: SPINNER_SIZE,
+                        h: SPINNER_SIZE,
+                    };
+                    let phase = match self.spinner_origin {
+                        Some(origin) => {
+                            (Instant::now().duration_since(origin).as_secs_f32()
+                                / SPINNER_PERIOD_SECS)
+                                % 1.0
+                        }
+                        None => 0.0,
+                    };
+                    draw_spinner_control(
+                        &mut buffer,
+                        stride,
+                        h_usize,
+                        clip,
+                        &theme,
+                        spinner_r,
+                        lbox.disabled,
+                        phase,
+                    );
+                    if let Some(ref label) = lbox.text {
+                        let label_x = spinner_r.x + spinner_r.w + FLAG_GAP;
+                        let region = Rect {
+                            x: label_x,
+                            y: ry,
+                            w: (lbox.rect.w - spinner_r.w - FLAG_GAP).max(0),
+                            h: lbox.rect.h,
+                        };
+                        let label_clip = match clip {
+                            None => Some(region),
+                            Some(c) => intersect(region, c),
+                        };
+                        if let Some(lc) = label_clip {
+                            let fonts = &self.fonts;
+                            let ty = ry + ((lbox.rect.h - cell_h) / 2).max(0);
+                            let label_color = if lbox.disabled {
+                                theme.text_dim
+                            } else {
+                                theme.text
+                            };
+                            draw_text_ttf_clipped(
+                                fonts,
+                                FaceKind::Ui,
+                                label_x,
+                                ty,
+                                label,
+                                lc,
+                                |px, py, w, h, cov| {
+                                    draw_rect_alpha(
+                                        &mut buffer,
+                                        stride,
+                                        h_usize,
+                                        px,
+                                        py,
+                                        w,
+                                        h,
+                                        label_color,
+                                        cov,
+                                    );
+                                },
+                            );
+                        }
                     }
                 }
                 _ => {}
@@ -6762,6 +7161,78 @@ mod tests {
             "resuming a drag that changed the value owes a repaint"
         );
         assert!(app.slider_drag.is_some());
+    }
+
+    #[test]
+    fn test_spinner_animates_and_schedules_frames_only_while_visible() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "T".into(),
+                width: 300,
+                height: 300,
+            },
+            dummy,
+        );
+
+        // Still app with no spinner: idle cost must be 0%.
+        let now = Instant::now();
+        app.schedule_frames(now);
+        assert!(
+            app.clock.is_idle(),
+            "an interface without a spinner must schedule zero frames"
+        );
+        assert!(app.spinner_origin.is_none());
+
+        // Add a spinner in view.
+        app.layout_boxes = vec![test_box("spinner", "spin", 50, false)];
+        app.schedule_frames(now);
+        assert!(
+            !app.clock.is_idle(),
+            "a visible spinner MUST wake the clock for continuous animation"
+        );
+        assert!(app.spinner_origin.is_some());
+
+        // When the spinner is removed/disappears, clock returns to idle and origin is dropped.
+        app.layout_boxes.clear();
+        app.schedule_frames(now);
+        assert!(
+            app.clock.is_idle(),
+            "removing the spinner must return the frame clock to idle"
+        );
+        assert!(
+            app.spinner_origin.is_none(),
+            "dropping the spinner must drop its orphaned origin"
+        );
+    }
+
+    #[test]
+    fn test_progress_bar_clamping_and_layout() {
+        let mut elem = UiElement::new("progress");
+        elem.props.insert("value".into(), "150".into());
+        elem.props.insert("min".into(), "0".into());
+        elem.props.insert("max".into(), "100".into());
+        elem.text = Some("Downloading".into());
+
+        let mut boxes = Vec::new();
+        let (w, h) = layout_element(&elem, 10, 10, 400, &mut boxes);
+        assert_eq!(boxes.len(), 1);
+        let b = &boxes[0];
+        assert_eq!(b.tag, "progress");
+        assert_eq!(b.text.as_deref(), Some("Downloading"));
+        let spec = b.slider.expect("progress carries its numeric spec");
+        assert_eq!(spec.value, 100.0, "value must be clamped to max");
+        assert_eq!(spec.min, 0.0);
+        assert_eq!(spec.max, 100.0);
+        assert_eq!(h, PROGRESS_H);
+        assert!(w >= PROGRESS_TRACK_W);
     }
 
     #[test]

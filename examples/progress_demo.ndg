@@ -1,0 +1,81 @@
+// examples/progress_demo.ndg
+// Demonstrates progress bar and rotating indeterminate spinner.
+
+view ProgressDemo(done: int, loading: bool) -> View {
+    column(padding = 24, gap = 16) [
+        text("Nudge Studio — Progress & Spinner Demo"),
+        text("Progress bar (determinate):"),
+        progress("Task progress", value = done, min = 0, max = 100, id = "bar"),
+        row(gap = 12) [
+            button("+25%", on_click = add_step, id = "btn_add"),
+            button("Reset", on_click = reset_progress, id = "btn_reset"),
+            button("Toggle Spinner", on_click = toggle_loading, id = "btn_toggle")
+        ],
+        text("Spinner (indeterminate):"),
+        if loading {
+            row(gap = 8) [
+                spinner("Working in background...", id = "spin"),
+                text("Model is thinking...")
+            ]
+        } else {
+            text("Spinner stopped (idle)")
+        }
+    ]
+}
+
+agent ProgressApp {
+    state {
+        done: int = 40
+        loading: bool = true
+    }
+
+    fn add_step() uses UI {
+        let next_val = state.done + 25
+        if next_val > 100 {
+            state.done = 100
+        } else {
+            state.done = next_val
+        }
+    }
+
+    fn reset_progress() uses UI {
+        state.done = 0
+    }
+
+    fn toggle_loading() uses UI {
+        state.loading = !state.loading
+    }
+
+    window MainWindow {
+        title: "Progress & Spinner",
+        width: 440,
+        height: 400,
+        content: ProgressDemo(state.done, state.loading)
+    }
+}
+
+fn main() uses UI {
+    ProgressApp.MainWindow.open()
+}
+
+test "progress demo loads and steps" {
+    let app = ProgressApp.MainWindow.mount_headless()
+    assert app.find("bar").exists()
+    assert app.find("spin").exists()
+
+    app.dispatch_click("btn_add")
+    assert ProgressApp.state.done == 65
+
+    app.dispatch_click("btn_add")
+    assert ProgressApp.state.done == 90
+
+    app.dispatch_click("btn_add")
+    assert ProgressApp.state.done == 100
+
+    app.dispatch_click("btn_reset")
+    assert ProgressApp.state.done == 0
+
+    app.dispatch_click("btn_toggle")
+    assert ProgressApp.state.loading == false
+    assert app.find_text("Spinner stopped (idle)").exists()
+}

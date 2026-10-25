@@ -635,6 +635,30 @@ pub fn estimate_element_size(elem: &UiElement, max_w: i64) -> (i64, i64) {
                 .max(SLIDER_TRACK_W as i64 + 18);
             (w, 34)
         }
+        "progress" => {
+            let label = elem.text.as_deref().unwrap_or("");
+            let chars = label.chars().count() as i64;
+            let w = if chars > 0 {
+                (PROGRESS_TRACK_W as i64 + 10 + chars * 16 + 8)
+                    .min(max_w)
+                    .max(PROGRESS_TRACK_W as i64 + 18)
+            } else {
+                PROGRESS_TRACK_W as i64
+            };
+            (w, PROGRESS_H as i64)
+        }
+        "spinner" => {
+            let label = elem.text.as_deref().unwrap_or("");
+            let chars = label.chars().count() as i64;
+            let w = if chars > 0 {
+                (SPINNER_SIZE as i64 + 10 + chars * 16 + 8)
+                    .min(max_w)
+                    .max(SPINNER_SIZE as i64 + 18)
+            } else {
+                SPINNER_SIZE as i64
+            };
+            (w, PROGRESS_H as i64)
+        }
         _ => (0, 0),
     }
 }
@@ -972,6 +996,23 @@ pub const SLIDER_TRACK_H: i32 = 8;
 pub const SLIDER_KNOB: i32 = 18;
 /// Height of a whole slider row — track plus its label's line.
 pub const SLIDER_H: i32 = 34;
+
+/// Outer diameter of an indeterminate spinner indicator.
+pub const SPINNER_SIZE: i32 = 18;
+/// Stroke thickness of the spinner's rotating ring segment.
+pub const SPINNER_STROKE: f32 = 2.5;
+/// Sweep of the spinner's visible arc in degrees.
+pub const SPINNER_ARC_DEG: f32 = 90.0;
+/// Duration of one complete 360-degree rotation of the spinner.
+pub const SPINNER_PERIOD_SECS: f32 = 0.9;
+
+/// Width of a determinate progress bar's track, matching the slider track
+/// so the two numeric indicators share visual rhythm.
+pub const PROGRESS_TRACK_W: i32 = 160;
+/// Height of the progress bar groove.
+pub const PROGRESS_TRACK_H: i32 = 8;
+/// Row height for a progress bar or spinner row.
+pub const PROGRESS_H: i32 = 34;
 
 /// Where a drag lands: clamped to `[min, max]`, then pulled onto the nearest
 /// rung of `step` counted from `min`, so a slider never rests between two

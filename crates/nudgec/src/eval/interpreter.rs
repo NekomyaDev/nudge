@@ -1524,6 +1524,73 @@ impl Interpreter {
             }));
         }
 
+        if name == "progress" {
+            let mut elem = nudge_runtime::ui::UiElement::new(name);
+            let mut raw: HashMap<String, String> = HashMap::new();
+            if !args.is_empty() {
+                let label = match self.eval_expr(&args[0], env)? {
+                    NudgeVal::Str(s) => s,
+                    other => other.to_string(),
+                };
+                elem.text = Some(label.clone());
+                elem.props.insert("label".to_string(), label);
+            }
+            for (k, v_expr) in kwargs {
+                let v = self.eval_expr(v_expr, env)?;
+                raw.insert(k.clone(), v.to_string());
+            }
+            if let Some(id) = raw.remove("id") {
+                elem.id = Some(id);
+            }
+            let min: f64 = raw
+                .remove("min")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0.0);
+            let max: f64 = raw
+                .remove("max")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(100.0);
+            let val: f64 = raw
+                .remove("value")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(min);
+            for (k, v) in raw {
+                elem.props.insert(k, v);
+            }
+            elem.props.insert("min".to_string(), min.to_string());
+            elem.props.insert("max".to_string(), max.to_string());
+            elem.props
+                .insert("value".to_string(), val.clamp(min, max).to_string());
+            return Ok(Some(NudgeVal::UiElement {
+                found: true,
+                elem: Box::new(elem),
+            }));
+        }
+
+        if name == "spinner" {
+            let mut elem = nudge_runtime::ui::UiElement::new(name);
+            if !args.is_empty() {
+                let label = match self.eval_expr(&args[0], env)? {
+                    NudgeVal::Str(s) => s,
+                    other => other.to_string(),
+                };
+                elem.text = Some(label.clone());
+                elem.props.insert("label".to_string(), label);
+            }
+            for (k, v_expr) in kwargs {
+                let v = self.eval_expr(v_expr, env)?;
+                if k == "id" {
+                    elem.id = Some(v.to_string());
+                } else {
+                    elem.props.insert(k.clone(), v.to_string());
+                }
+            }
+            return Ok(Some(NudgeVal::UiElement {
+                found: true,
+                elem: Box::new(elem),
+            }));
+        }
+
         Ok(None)
     }
 
