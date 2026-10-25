@@ -3158,6 +3158,30 @@ pub fn layout_element_ctx(
             });
             (w, h)
         }
+        "badge" | "tag" => {
+            let label = elem.text.clone().unwrap_or_default();
+            let text_w = label.chars().count() as i32 * CELL_W;
+            let w = (text_w + 16).min(max_w).max(32);
+            let h = 22;
+            boxes.push(LayoutBox {
+                rect: Rect { x, y, w, h },
+                tag: elem.tag.clone(),
+                id: elem.id.clone(),
+                text: Some(label),
+                on_click: elem.on_click.clone(),
+                on_change: None,
+                on_key: None,
+                pan,
+                clips: clips_owned(clips),
+                pad: 4,
+                checked: false,
+                slider: None,
+                disabled: false,
+                tooltip: elem.props.get("tooltip").cloned(),
+                options: Vec::new(),
+            });
+            (w, h)
+        }
         _ => {
             // Generic container or unknown tag
             let mut child_y = y;
@@ -5998,6 +6022,78 @@ impl<D: UiDispatcher> NativeApp<D> {
                     }
                 }
                 "spacer" => {}
+                "badge" | "tag" => {
+                    let text = lbox.text.as_deref().unwrap_or("");
+                    let (bg, border, text_color) = match text.to_ascii_uppercase().as_str() {
+                        "YOU" | "USER" => (theme.button_bg, theme.button_border, theme.button_text),
+                        "NUDGE" | "AI" | "ASSISTANT" => (
+                            0xFF10_B981, // Emerald-500
+                            0xFF34_D399, // Emerald-400
+                            0xFFFF_FFFF,
+                        ),
+                        "SYSTEM" | "WARN" | "WARNING" => (
+                            0xFFF5_9E0B, // Amber-500
+                            0xFFFBBF24,  // Amber-400
+                            0xFF00_0000,
+                        ),
+                        _ => (theme.input_bg, theme.border, theme.text),
+                    };
+
+                    draw_rounded_rect_box_clipped(
+                        &mut buffer,
+                        stride,
+                        h_usize,
+                        clip,
+                        rx,
+                        ry,
+                        lbox.rect.w,
+                        lbox.rect.h,
+                        4,
+                        bg,
+                        border,
+                    );
+
+                    let fonts = &self.fonts;
+                    let cell_h = fonts.cell_h;
+                    let text_w = fonts.measure_width(FaceKind::Ui, text);
+                    let tx = rx + ((lbox.rect.w - text_w) / 2).max(4);
+                    let ty = ry + ((lbox.rect.h - cell_h) / 2).max(1);
+
+                    let text_region = Rect {
+                        x: rx + 2,
+                        y: ry + 1,
+                        w: (lbox.rect.w - 4).max(0),
+                        h: (lbox.rect.h - 2).max(0),
+                    };
+                    let text_clip = match clip {
+                        None => Some(text_region),
+                        Some(c) => intersect(text_region, c),
+                    };
+
+                    if let Some(tc) = text_clip {
+                        draw_text_ttf_clipped(
+                            fonts,
+                            FaceKind::Ui,
+                            tx,
+                            ty,
+                            text,
+                            tc,
+                            |px, py, w, h, cov| {
+                                draw_rect_alpha(
+                                    &mut buffer,
+                                    stride,
+                                    h_usize,
+                                    px,
+                                    py,
+                                    w,
+                                    h,
+                                    text_color,
+                                    cov,
+                                );
+                            },
+                        );
+                    }
+                }
                 _ => {}
             }
         }
@@ -8014,6 +8110,19 @@ mod tests {
         assert_eq!(sp_boxes[0].tag, "spacer");
         assert_eq!(sw, 32);
         assert_eq!(sh, 32);
+    }
+
+    #[test]
+    fn test_badge_and_tag_layout() {
+        let mut b_elem = UiElement::new("badge");
+        b_elem.text = Some("YOU".into());
+        let mut b_boxes = Vec::new();
+        let (bw, bh) = layout_element(&b_elem, 10, 10, 300, &mut b_boxes);
+        assert_eq!(b_boxes.len(), 1);
+        assert_eq!(b_boxes[0].tag, "badge");
+        assert_eq!(b_boxes[0].text.as_deref(), Some("YOU"));
+        assert_eq!(bh, 22);
+        assert!(bw >= 32);
     }
 
     #[test]

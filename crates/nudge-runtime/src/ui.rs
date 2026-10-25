@@ -700,6 +700,12 @@ pub fn estimate_element_size(elem: &UiElement, max_w: i64) -> (i64, i64) {
                 .unwrap_or(16);
             (size, size)
         }
+        "badge" | "tag" => {
+            let text = elem.text.as_deref().unwrap_or("");
+            let chars = text.chars().count() as i64;
+            let w = (chars * 10 + 20).min(max_w).max(36);
+            (w, 22)
+        }
         _ => (0, 0),
     }
 }

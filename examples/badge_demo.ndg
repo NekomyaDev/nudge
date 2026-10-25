@@ -1,0 +1,41 @@
+// examples/badge_demo.ndg
+// Demonstrates badge / tag indicators for role labels and model names.
+
+view BadgeDemo() -> View {
+    column(padding = 24, gap = 12) [
+        text("Nudge Studio — Badges & Tags Demo"),
+        row(gap = 8) [
+            badge("YOU"),
+            text("Hello! Can you summarize the system metrics?")
+        ],
+        row(gap = 8) [
+            badge("NUDGE"),
+            tag("gemini-3.8-flash"),
+            text("Everything is operating nominally at 0% idle CPU.")
+        ],
+        row(gap = 8) [
+            badge("SYSTEM"),
+            text("Auto-save completed.")
+        ]
+    ]
+}
+
+agent BadgeApp {
+    window MainWindow {
+        title: "Badges and Tags Demo",
+        width: 480,
+        height: 280,
+        content: BadgeDemo()
+    }
+}
+
+fn main() uses UI {
+    BadgeApp.MainWindow.open()
+}
+
+test "badge demo mounts and elements exist" {
+    let app = BadgeApp.MainWindow.mount_headless()
+    assert app.find_text("Nudge Studio — Badges & Tags Demo").exists()
+    assert app.find_text("Hello! Can you summarize the system metrics?").exists()
+    assert app.find_text("Everything is operating nominally at 0% idle CPU.").exists()
+}

@@ -1647,6 +1647,21 @@ def _spacer(args, kwargs):
 
 def spacer(*args, **kwargs):
     return _spacer(args, kwargs)
+
+
+def _badge(args, kwargs):
+    bid = kwargs.get("id")
+    text = str(args[0]) if args else str(kwargs.get("text", ""))
+    props = {k: str(v) for k, v in kwargs.items() if k not in ("id", "text")}
+    return _UiElement(tag="badge", id=bid, text=text if text else None, props=props)
+
+
+def badge(*args, **kwargs):
+    return _badge(args, kwargs)
+
+
+def tag(*args, **kwargs):
+    return _badge(args, kwargs)
 "#;
 
 /// Shared `nudgec test` driver: load a generated module by path and run

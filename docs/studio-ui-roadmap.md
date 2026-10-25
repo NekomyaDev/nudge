@@ -880,8 +880,26 @@ allocates customizable empty layout spacing:
   and y=278 (372px wide). All 10 demo suites pass `nudgec test`.
 
 
-### 2.10 `badge` / `tag`  (0.5 day)
-- [ ] Role label (YOU/NUDGE), model name badge
+### 2.10 `badge` / `tag`  (0.5 day) — DONE
+- [x] Role label (YOU/NUDGE), model name badge
+
+**Role indicator labels and metadata badges.** `badge` and `tag` render compact,
+rounded pill labels for chat roles and metadata:
+- **`badge(text, id=, tooltip=)` / `tag(text, id=, tooltip=)`**: 22px high pill
+  label with centered typography and rounded corners (4px radius).
+- **Contextual role palettes**:
+  - `YOU` / `USER`: Blue-500 accent surface (`theme.button_bg`) with white text.
+  - `NUDGE` / `AI` / `ASSISTANT`: Emerald-500 surface (`#10B981`) with white text.
+  - `SYSTEM` / `WARN`: Amber-500 surface (`#F59E0B`) with dark text.
+  - General tags (e.g. model name `gemini-3.8-flash`): muted card surface (`theme.input_bg`)
+    with border.
+- **Python front end parity**: `_badge`, `badge`, and `tag` added to `codegen.rs`.
+- **Verified**: fmt OK, clippy -D warnings clean, **964 passed / 0 failed / 1 ignored**
+  (new unit test `test_badge_and_tag_layout`). Verified live on X11 with
+  `examples/badge_demo.ndg` (window WID 90177538, 480x280): 696 Blue-500 pixels (YOU),
+  952 Emerald-500 pixels (NUDGE), and 1,012 Amber-500 pixels (SYSTEM) detected on screen.
+  All 11 demo suites pass `nudgec test`.
+
 
 ---
 

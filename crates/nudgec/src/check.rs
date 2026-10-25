@@ -1804,7 +1804,8 @@ fn check_expr_pos(
                         return Ty::View;
                     }
                     "text" | "button" | "input" | "bubble" | "select" | "progress" | "spinner"
-                    | "image" | "icon" | "tabs" | "code_block" | "divider" | "spacer" => {
+                    | "image" | "icon" | "tabs" | "code_block" | "divider" | "spacer" | "badge"
+                    | "tag" => {
                         for a in args {
                             check_expr(a, locals, g, errs);
                         }
@@ -2001,7 +2002,7 @@ fn check_expr_pos(
                             "column" | "row" | "scroll" | "text" | "button" | "input"
                             | "bubble" | "select" | "checkbox" | "toggle" | "slider"
                             | "progress" | "spinner" | "image" | "icon" | "tabs" | "code_block"
-                            | "divider" | "spacer" => return Ty::View,
+                            | "divider" | "spacer" | "badge" | "tag" => return Ty::View,
                             other => {
                                 errs.push(CheckError {
                                     span: None,
