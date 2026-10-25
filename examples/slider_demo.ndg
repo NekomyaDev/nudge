@@ -1,0 +1,134 @@
+// 2.4 — slider.
+//
+// `slider(label, value = ..., min = ..., max = ..., step = ..., id = ...,
+//         on_change = ..., disabled = ..., tooltip = ...)`
+//
+// A slider is the boolean machinery's third face: like a checkbox or a toggle
+// its value is never read as text — the handle's position *is* the reading —
+// so the first positional argument is the label and the number rides as
+// `value`. A press dispatches a *change*, never a click, for the same reason
+// a flip does: a drag that moves a handle has no meaning of its own beside
+// the number it reports.
+//
+// What is new here is the number itself. `min`, `max` and `step` decide the
+// grid the control may rest on, and that grid is decided once and written
+// down — into the element, into the drag, and into the spelling of the value
+// that reaches the handler. A whole-numbered step writes `1500` and hands its
+// handler an `Int`; a fractional one writes `0.70` and hands its handler a
+// Float. One control, one parameter type, for the whole of its travel.
+//
+// The whole row — track *and* the words beside it — is the control, exactly
+// as with the flags: text beside a dial that ignores you is text people
+// learn to avoid.
+
+view DialView(budget: int, quality: float, volume: int) -> View {
+    column(padding = 20, gap = 14) [
+        text("Budget: " + budget_text(budget)),
+        text("Quality: " + quality_text(quality)),
+        text("Volume: " + volume_text(volume)),
+        slider("Budget", value = budget, min = 0, max = 2000, step = 100,
+               id = "budget", on_change = on_budget,
+               tooltip = "Whole numbers, in hundreds"),
+        slider("Quality", value = quality, min = 0, max = 1, step = 0.1,
+               id = "quality", on_change = on_quality,
+               tooltip = "Tenths — the handler gets a float"),
+        slider("Volume", value = volume, min = 0, max = 100, step = 1,
+               id = "volume", on_change = on_volume),
+        text("A disabled slider is inert, but it still takes the press:"),
+        slider("Locked by policy", value = 50, min = 0, max = 100, step = 1,
+               id = "locked", disabled = true),
+        text("nothing stacked behind it is dragged by mistake.")
+    ]
+}
+
+agent DialApp {
+    state {
+        budget: int = 500
+        quality: float = 0.3
+        volume: int = 80
+    }
+
+    fn on_budget(v: int) uses UI {
+        state.budget = v
+    }
+
+    fn on_quality(v: float) uses UI {
+        state.quality = v
+    }
+
+    fn on_volume(v: int) uses UI {
+        state.volume = v
+    }
+
+    window DialWindow {
+        title: "Nudge Sliders",
+        width: 420,
+        height: 400,
+        content: DialView(state.budget, state.quality, state.volume)
+    }
+}
+
+// The demo's own readouts. Written as plain functions rather than left as
+// bare numbers so the state is visible beside the control that owns it — the
+// point of a slider is that you can read the number without asking for it,
+// and the point of these is that you can check the number is the right one.
+fn budget_text(n: int) -> string {
+    if n < 1000 {
+        "under a thousand"
+    } else {
+        "four figures"
+    }
+}
+
+fn quality_text(q: float) -> string {
+    if q > 0.7 {
+        "high"
+    } else {
+        "not high"
+    }
+}
+
+fn volume_text(v: int) -> string {
+    if v > 50 {
+        "loud"
+    } else {
+        "quiet"
+    }
+}
+
+fn main() uses UI {
+    DialApp.DialWindow.open()
+}
+
+test "a slider reports a number and its label survives the drag" {
+    let app = DialApp.DialWindow.mount_headless()
+    assert app.find("budget").exists()
+    assert app.find_text("Budget: under a thousand").exists()
+
+    // A whole-numbered step reports an Int — the declared type — and the
+    // bound state is what the next frame reads back.
+    app.dispatch_change("budget", "1500")
+    assert DialApp.state.budget == 1500
+    assert app.find_text("Budget: four figures").exists()
+
+    // …and a fractional one reports a Float, not the string it rode in on.
+    app.dispatch_change("quality", "0.8")
+    assert DialApp.state.quality == 0.8
+    assert app.find_text("Quality: high").exists()
+
+    app.dispatch_change("volume", "20")
+    assert DialApp.state.volume == 20
+    assert app.find_text("Volume: quiet").exists()
+
+    // The label rides as the element's `text`, which is what the renderer
+    // draws — so a number arriving never replaces the words with "1500",
+    // exactly as a checkbox's "true" never replaces its label.
+    app.dispatch_change("volume", "90")
+    assert DialApp.state.volume == 90
+    assert app.find_text("Volume").exists()
+    assert app.find_text("Locked by policy").exists()
+
+    // The disabled slider is still there, still laid out, and still holds
+    // its own number — it simply has nowhere to report a change.
+    assert app.find("locked").exists()
+}

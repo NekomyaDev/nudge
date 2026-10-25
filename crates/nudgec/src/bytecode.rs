@@ -786,6 +786,7 @@ impl<'a> Compiler<'a> {
                             | "select"
                             | "checkbox"
                             | "toggle"
+                            | "slider"
                     )
                 {
                     self.emit_delegated_expr(expr);
@@ -1014,6 +1015,7 @@ fn check_expr_effects(expr: &Expr, tool_names: &[String]) -> Result<(), String> 
                             | "select"
                             | "checkbox"
                             | "toggle"
+                            | "slider"
                     )
                 {
                     // Tool call / IO / workspace / store / UI expressions are delegated to the interpreter via DelegateExpr.

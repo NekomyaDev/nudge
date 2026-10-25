@@ -3,7 +3,9 @@
 
 use crate::font8x8::get_glyph;
 use crate::font_engine::{FaceKind, FontEngine, BASE_PX, CELL_H, CELL_W};
-use crate::ui::{is_truthy, TextInputState, UiElement};
+use crate::ui::{
+    is_truthy, TextInputState, UiElement, SLIDER_H, SLIDER_KNOB, SLIDER_TRACK_H, SLIDER_TRACK_W,
+};
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -474,6 +476,13 @@ pub struct LayoutBox {
     /// painted control would draw a mark for a state that is no longer there.
     /// `false` for every other tag.
     pub checked: bool,
+    /// The number a `slider` is showing, and the grid it may rest on. Carried
+    /// on the box for the same reason the boolean state is: the drawing, the
+    /// drag and the value written back all have to agree about one snapshot,
+    /// and a value that changed underneath a dragging handle would draw the
+    /// handle at a position the number no longer names. `None` for every
+    /// other tag.
+    pub slider: Option<SliderSpec>,
     /// The choice list of a `select`, in order, empty for every other tag.
     /// Carried on the box rather than looked up from the element tree so the
     /// open popup, its hit test and its keyboard highlight all read the same
@@ -1181,6 +1190,164 @@ pub fn draw_flag_control(
         if on {
             draw_check_mark(buf, stride, height, clip, cx + 3, cy + 5, theme.button_text);
         }
+    }
+}
+
+/// One `slider` as the drawing needs it — where its track sits, what number it
+/// is on, and how far along the range that number is. Bundled into a struct
+/// for the same reason `FlagView` is: the render pass hands the painter one
+/// value instead of seven loose ones, and a test can describe a slider the
+/// same way without building a window first.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SliderView {
+    /// The track's rect — the whole control, since the label beside it is the
+    /// row's business and only the row knows how wide it was made.
+    pub rect: Rect,
+    /// Where the pointer has travelled from resting to hovered, `0.0` to
+    /// `1.0`. Always zero for a slider that is disabled, which never lights.
+    pub hover_t: f32,
+    pub disabled: bool,
+    /// The track's own geometry: bounds, step, and the position along the
+    /// track the handle should sit at. Everything about the *value* is read
+    /// from here rather than recomputed, so the handle cannot end up drawn at
+    /// a place the number does not name.
+    pub spec: SliderSpec,
+    /// How much of the track to fill in the accent, in pixels from the left.
+    /// Computed by the caller from `spec`, not here, so this function stays
+    /// arithmetic-free about geometry the caller already settled.
+    pub filled: i32,
+}
+
+impl SliderView {
+    /// A slider described from its row: `row` is the whole laid-out row, and
+    /// the track is placed inside it by [`slider_track_rect`].
+    pub fn new(row: Rect, hover_t: f32, disabled: bool, spec: SliderSpec) -> SliderView {
+        let track = slider_track_rect(row);
+        // `value_to_x` answers in track-local pixels, which is exactly the
+        // unit the fill's width is measured in — subtracting the track's
+        // absolute x here would measure the fill against the window edge
+        // instead of against the groove it lives in.
+        let filled = spec.value_to_x(spec.value).round() as i32;
+        SliderView {
+            rect: track,
+            hover_t,
+            disabled,
+            spec,
+            filled: filled.clamp(0, track.w),
+        }
+    }
+
+    /// The handle's rectangle, centred on its track position. The radius is
+    /// half its own side, so the corner routine rounds it all the way to a
+    /// circle without a separate code path.
+    pub fn knob_rect(&self) -> Rect {
+        let half = SLIDER_KNOB / 2;
+        let cx = self.rect.x + self.spec.value_to_x(self.spec.value).round() as i32;
+        Rect {
+            x: cx - half,
+            y: self.rect.y + (self.rect.h - SLIDER_KNOB) / 2,
+            w: SLIDER_KNOB,
+            h: SLIDER_KNOB,
+        }
+    }
+}
+
+/// One `slider` — the groove it sits in, the part of it already travelled, and
+/// the handle marking where the value is — painted entirely from rounded
+/// rectangles. Nothing here asks a font for a glyph, so a slider cannot
+/// arrive as a row of letters and its handle cannot be lost among them.
+///
+/// `rect` is the track itself, not the row it sits in: the label beside it is
+/// drawn by the caller, because only the caller knows how wide the box was
+/// made. Pure, so the drawing can be judged without a window.
+pub fn draw_slider_control(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    clip: Option<Rect>,
+    theme: &Theme,
+    slider: &SliderView,
+) {
+    let r = slider.rect;
+    if r.w <= 0 || r.h <= 0 {
+        return;
+    }
+    let accent = theme.input_border_focused;
+    let radius = r.h / 2;
+    // The groove. Disabled dims the way a disabled field does, and hover
+    // lifts the border the way a choice field's does, so the control that
+    // will move is visible before it does.
+    let (groove_bg, mut groove_edge) = if slider.disabled {
+        (lerp_color(theme.input_bg, theme.bg, 0.5), theme.border)
+    } else {
+        (theme.input_bg, theme.input_border)
+    };
+    if !slider.disabled {
+        groove_edge = lerp_color(groove_edge, accent, slider.hover_t);
+    }
+    draw_rounded_rect_box_clipped(
+        buf,
+        stride,
+        height,
+        clip,
+        r.x,
+        r.y,
+        r.w,
+        r.h,
+        radius,
+        groove_bg,
+        groove_edge,
+    );
+    // The travelled part. It starts at the left edge rather than at the
+    // handle's own radius, so the fill reads as *how much* rather than as a
+    // second object floating in the groove.
+    let fill_w = slider.filled.max(0);
+    if fill_w > 0 {
+        draw_rounded_rect_box_clipped(
+            buf,
+            stride,
+            height,
+            clip,
+            r.x,
+            r.y,
+            fill_w,
+            r.h,
+            radius,
+            if slider.disabled {
+                lerp_color(accent, theme.bg, 0.5)
+            } else {
+                accent
+            },
+            if slider.disabled {
+                lerp_color(accent, theme.bg, 0.5)
+            } else {
+                accent
+            },
+        );
+    }
+    // The handle. White while the slider is live, because a blue handle on a
+    // blue fill would be one shape, and a handle that cannot be seen is a
+    // control that cannot be used.
+    let knob = slider.knob_rect();
+    if knob.w > 0 {
+        let knob_fill = if slider.disabled {
+            theme.border
+        } else {
+            theme.button_text
+        };
+        draw_rounded_rect_box_clipped(
+            buf,
+            stride,
+            height,
+            clip,
+            knob.x,
+            knob.y,
+            knob.w,
+            knob.h,
+            knob.w / 2,
+            knob_fill,
+            knob_fill,
+        );
     }
 }
 
@@ -2140,6 +2307,7 @@ pub fn layout_element_ctx(
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
                 checked: false,
+                slider: None,
             });
             (w, h)
         }
@@ -2217,6 +2385,7 @@ pub fn layout_element_ctx(
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
                 checked: false,
+                slider: None,
             });
             (w, h)
         }
@@ -2251,6 +2420,7 @@ pub fn layout_element_ctx(
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
                 checked: false,
+                slider: None,
             });
             (w, h)
         }
@@ -2283,6 +2453,7 @@ pub fn layout_element_ctx(
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
                 checked: false,
+                slider: None,
             });
             (w, h)
         }
@@ -2325,6 +2496,7 @@ pub fn layout_element_ctx(
                 tooltip: elem.props.get("tooltip").cloned(),
                 options,
                 checked: false,
+                slider: None,
             });
             (w, h)
         }
@@ -2360,6 +2532,71 @@ pub fn layout_element_ctx(
                 // already reads as "on" — so the interpreter that wrote it
                 // and the arm that reads it cannot disagree.
                 checked: elem.props.get("value").is_some_and(|sv| is_truthy(sv)),
+                slider: None,
+                disabled: elem.props.get("disabled").is_some_and(|sv| is_truthy(sv)),
+                tooltip: elem.props.get("tooltip").cloned(),
+                options: Vec::new(),
+            });
+            (w, h)
+        }
+        // A slider: the track, a gap, then the label beside it — again all one
+        // box, so pressing the words presses the control. The track is a fixed
+        // length on purpose: a dial that grew with its window would be a
+        // different control in every layout, and the mapping from value to
+        // handle position is the only thing the eye learns.
+        "slider" => {
+            let label = elem
+                .text
+                .clone()
+                .or_else(|| elem.props.get("label").cloned())
+                .unwrap_or_default();
+            let text_w = label.chars().count() as i32 * CELL_W;
+            let w = (SLIDER_TRACK_W + FLAG_GAP + text_w + 8).max(SLIDER_TRACK_W + 18);
+            let h = SLIDER_H;
+            // Bounds first, because the value is read back already snapped onto
+            // the control's own grid: a position the program can never be
+            // handed must not be the position the handle starts at either.
+            let min: f64 = elem
+                .props
+                .get("min")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0.0);
+            let max: f64 = elem
+                .props
+                .get("max")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(100.0);
+            let given: f64 = elem
+                .props
+                .get("value")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(min);
+            let step: f64 = elem
+                .props
+                .get("step")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(1.0);
+            boxes.push(LayoutBox {
+                rect: Rect { x, y, w, h },
+                tag: elem.tag.clone(),
+                id: elem.id.clone(),
+                text: Some(label),
+                // No `on_click`: a drag that moves the handle *is* the report,
+                // so there is no second event to write and no way to wonder
+                // which of two handlers fired.
+                on_click: None,
+                on_change: elem.on_change.clone(),
+                on_key: elem.on_key.clone(),
+                pan,
+                clips: clips_owned(clips),
+                pad: 0,
+                checked: false,
+                slider: Some(SliderSpec {
+                    value: crate::ui::slider_snap(given, min, max, step),
+                    min,
+                    max,
+                    step,
+                }),
                 disabled: elem.props.get("disabled").is_some_and(|sv| is_truthy(sv)),
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
@@ -2426,6 +2663,116 @@ pub fn flag_control_w(tag: &str) -> i32 {
         TOGGLE_W
     } else {
         FLAG_BOX
+    }
+}
+
+/// The number a `slider` is showing, and the grid it may rest on.
+///
+/// Four numbers rather than one because a slider has no other state: the
+/// handle's position, the fill's length and the number handed to a handler
+/// are all one thing seen at three moments, and letting them drift apart is
+/// how a control ends up drawing a handle for a value it cannot produce.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SliderSpec {
+    pub value: f64,
+    pub min: f64,
+    pub max: f64,
+    pub step: f64,
+}
+
+impl SliderSpec {
+    /// Where the pointer has to be for the handle to be at `value`: the whole
+    /// track travels the whole range, inset by the handle's own radius so the
+    /// handle cannot hang off either end and read as a different value.
+    pub fn track_span(&self) -> (f32, f32) {
+        let half = SLIDER_KNOB as f32 / 2.0;
+        (half, (SLIDER_TRACK_W as f32 - half).max(half))
+    }
+
+    /// Handle centre x inside the track for a value. Pure, so the drawing, the
+    /// drag's reverse mapping and every test read the same curve.
+    pub fn value_to_x(&self, value: f64) -> f32 {
+        let (lo, hi) = self.track_span();
+        if self.max <= self.min {
+            return lo;
+        }
+        let t = ((value - self.min) / (self.max - self.min)).clamp(0.0, 1.0);
+        lo + t as f32 * (hi - lo)
+    }
+
+    /// The value a pointer at `x` inside the track reports, snapped onto the
+    /// control's own grid. The inverse of `value_to_x` up to that snap, which
+    /// is what lets a drag be stepped without the handle jumping.
+    pub fn x_to_value(&self, x: f32) -> f64 {
+        let (lo, hi) = self.track_span();
+        if hi <= lo {
+            return self.min;
+        }
+        let t = ((x - lo) / (hi - lo)).clamp(0.0, 1.0);
+        crate::ui::slider_snap(
+            self.min + t as f64 * (self.max - self.min),
+            self.min,
+            self.max,
+            self.step,
+        )
+    }
+
+    /// The value a drag by `dx` pixels from `value` lands on, snapped. Used
+    /// with the grab offset recorded at press, so pressing the handle moves
+    /// the number by as much as the finger did rather than teleporting it to
+    /// wherever the pointer happened to be.
+    pub fn value_after_dx(&self, dx: f32) -> f64 {
+        self.x_to_value(self.value_to_x(self.value) + dx)
+    }
+}
+
+/// One in-flight slider drag.
+///
+/// The grab offset is recorded rather than assuming the press was at the
+/// handle's centre — otherwise the handle jumps the instant it is pressed,
+/// which makes precise positioning impossible. The track's own left edge is
+/// recorded too, so scrolling the form under a held handle cannot throw the
+/// value by the amount the form moved.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SliderDrag {
+    /// How far the press landed from the handle's centre, in pixels. Signed,
+    /// so a press on the handle's left edge does not throw the value the
+    /// width of a handle to the right of the finger.
+    pub grab_dx: f32,
+    /// Screen-space x of the track's left edge when the press arrived.
+    pub track_x: i32,
+    /// The bounds, the step and the value the press landed on. The mapping
+    /// from pointer to number is read from here, never re-derived from a tree
+    /// that may have re-laid out mid-drag.
+    pub origin: SliderSpec,
+    /// The value last reported, so a drag that has not moved costs nothing.
+    pub current: f64,
+    /// The control's dispatch key — where the new number goes.
+    pub id: String,
+}
+
+/// Dispatch key of a `slider`: its `id` when it has one, else the layout
+/// order. Hover, the pressed tone and the drag all resolve it the same way,
+/// so the control that lit up is the one that moves.
+pub fn slider_key(lbox: &LayoutBox, index: usize) -> String {
+    lbox.id
+        .clone()
+        .unwrap_or_else(|| format!("__slider_{index}"))
+}
+
+/// The track a `slider` draws: the full length, vertically centred in its row
+/// and flush with the left edge, with the label to its right. Pure, so the
+/// drawing, the press's hit test and the drag's arithmetic cannot disagree
+/// about where the number lives.
+pub fn slider_track_rect(row: Rect) -> Rect {
+    Rect {
+        x: row.x,
+        // Never above its own row: a row shorter than the groove would
+        // otherwise centre a negative offset and paint the control over
+        // whatever sits above it.
+        y: row.y + ((row.h - SLIDER_TRACK_H) / 2).max(0),
+        w: SLIDER_TRACK_W,
+        h: SLIDER_TRACK_H,
     }
 }
 
@@ -2598,10 +2945,14 @@ pub fn find_hovered_button_in_boxes(
         // A boolean control hovers like a button too — a press flips it — but
         // only when it has an `id`: one with nowhere to report the new value
         // is decoration, and lighting up a control that will not answer the
-        // click is a lie told in blue.
+        // click is a lie told in blue. A `slider` follows the same rule for
+        // the same reason: a dial whose moves go nowhere is decoration, and
+        // the handle lights only if the drag will be answered.
         let is_flag = matches!(lbox.tag.as_str(), "checkbox" | "toggle") && lbox.id.is_some();
+        let is_slider = lbox.tag == "slider" && lbox.id.is_some();
         let is_control = lbox.tag == "button"
             || is_flag
+            || is_slider
             || (lbox.tag == "select" && lbox.id.is_some() && !lbox.options.is_empty());
         if is_control && !lbox.disabled {
             // Pan-aware screen rect; a button scrolled outside its scroll
@@ -2615,6 +2966,8 @@ pub fn find_hovered_button_in_boxes(
                     select_key(lbox, i)
                 } else if is_flag {
                     flag_key(lbox, i)
+                } else if is_slider {
+                    slider_key(lbox, i)
                 } else {
                     button_key(lbox, i)
                 };
@@ -2778,6 +3131,13 @@ pub struct NativeApp<D: UiDispatcher> {
     /// landed, so the thumb does not jump to the pointer's centre), and the
     /// offset the drag started from.
     scrollbar_drag: Option<(ScrollbarAxis, i32, i32)>,
+    /// Set while the pointer is down on a slider: the control's dispatch key,
+    /// the grab offset (how far the press landed from the handle's centre, so
+    /// pressing the handle moves the number by as much as the finger did
+    /// instead of teleporting it to the pointer), and the value that offset
+    /// was measured against. Keyed the same way hover is, so the control that
+    /// lit up is the one that moves.
+    slider_drag: Option<SliderDrag>,
     pub layout_boxes: Vec<LayoutBox>,
     pub render_count: usize,
     pub test_runner: Option<fn(&mut NativeApp<D>, &ActiveEventLoop)>,
@@ -2831,6 +3191,7 @@ impl<D: UiDispatcher> NativeApp<D> {
             last_tick: None,
             scrollbar_hover: None,
             scrollbar_drag: None,
+            slider_drag: None,
             layout_boxes: Vec::new(),
             render_count: 0,
             test_runner: None,
@@ -3014,6 +3375,12 @@ impl<D: UiDispatcher> NativeApp<D> {
         // the cursor mid-drag from hijacking the gesture.
         if self.scrollbar_drag.is_some() {
             return self.update_scrollbar_drag(pos);
+        }
+        // A slider being dragged is the same claim on the pointer: the handle
+        // follows the finger and nothing under it lights up, so a control the
+        // hand slides over mid-drag cannot steal the gesture.
+        if self.slider_drag.is_some() {
+            return self.update_slider_drag(pos);
         }
 
         let g = self.scrollbar_geometry();
@@ -3385,6 +3752,148 @@ impl<D: UiDispatcher> NativeApp<D> {
         }
         self.handle_cursor_moved(self.cursor_pos);
         true
+    }
+
+    /// The `slider` the press landed on, if any, and the track it draws in.
+    fn slider_at(&self, pos: (i32, i32)) -> Option<(usize, LayoutBox, Rect)> {
+        let (mx, my) = pos;
+        for (i, lbox) in self.layout_boxes.iter().enumerate() {
+            if lbox.tag != "slider" {
+                continue;
+            }
+            let sr = lbox.screen_rect(self.scroll_x, self.scroll_y);
+            if !sr.contains(mx, my) {
+                continue;
+            }
+            if !lbox.visible_in(
+                self.scroll_x,
+                self.scroll_y,
+                self.width as i32,
+                self.height as i32,
+            ) {
+                continue;
+            }
+            return Some((i, lbox.clone(), slider_track_rect(sr)));
+        }
+        None
+    }
+
+    /// Begin a slider interaction at `pos`. Returns whether a slider took the
+    /// press — which it always does when one is under the pointer, disabled or
+    /// not, because a control that cannot move must still absorb the press
+    /// rather than let it fall through to whatever is stacked behind it.
+    ///
+    /// Pressing the *handle* records how far off centre the press landed, so
+    /// the handle follows the finger instead of jumping its own width to the
+    /// right. Pressing bare track moves the value straight to the pointer,
+    /// because that is the obvious reading of the gesture.
+    ///
+    /// Pressing the *label* — anywhere on the row past the groove — moves
+    /// nothing at all. The row is one box so the words take the press with the
+    /// control, but the words are not the dial: `x_to_value` clamps, so
+    /// letting a label click reach it would slam a 500 to 1993, which is a
+    /// value nobody asked for by reading a caption. Still swallowed, so a
+    /// control behind the row cannot be fired through it either.
+    fn begin_slider_drag(&mut self, pos: (i32, i32)) -> bool {
+        let Some((_, lbox, track)) = self.slider_at(pos) else {
+            return false;
+        };
+        let Some(spec) = lbox.slider else {
+            return true;
+        };
+        if lbox.disabled || lbox.id.is_none() {
+            return true;
+        }
+        // The groove spans the track, and the handle's own radius overhangs
+        // its ends by design — so a little past either stop is still the dial,
+        // while the label beside it is not.
+        let overhang = SLIDER_KNOB / 2;
+        if pos.0 < track.x - overhang || pos.0 > track.x + track.w + overhang {
+            return true;
+        }
+        let id = lbox.id.clone().expect("checked above");
+        let handle_x = track.x + spec.value_to_x(spec.value).round() as i32;
+        let grab_dx = (pos.0 - handle_x) as f32;
+        let on_handle = (pos.0 - handle_x).abs() <= SLIDER_KNOB / 2;
+        let first = if on_handle {
+            spec.value
+        } else {
+            spec.x_to_value((pos.0 - track.x) as f32)
+        };
+        // Pressing bare track moves the value first, so the grab offset is
+        // re-measured from where the handle *now* is: the handle then sits
+        // under the finger for the rest of the drag instead of leaping a
+        // handle's width on the first pixel of movement.
+        let grab_dx = if on_handle {
+            grab_dx
+        } else {
+            (pos.0 - (track.x + spec.value_to_x(first).round() as i32)) as f32
+        };
+        self.slider_drag = Some(SliderDrag {
+            grab_dx,
+            track_x: track.x,
+            origin: SliderSpec {
+                value: first,
+                ..spec
+            },
+            current: first,
+            id: id.clone(),
+        });
+        if first != spec.value {
+            let step = spec.step;
+            self.apply_slider_value(&id, first, step);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Follow the pointer with the handle being dragged. Returns whether the
+    /// value moved — and so whether a change was reported and a repaint owed.
+    fn update_slider_drag(&mut self, pos: (i32, i32)) -> bool {
+        let Some((id, track_x, grab_dx, origin, current)) = self
+            .slider_drag
+            .as_ref()
+            .map(|d| (d.id.clone(), d.track_x, d.grab_dx, d.origin, d.current))
+        else {
+            return false;
+        };
+        // The offset the press landed at is carried through the whole drag, so
+        // the handle stays under the finger rather than leaping to its own
+        // centre. `track_x` is the value remembered at the press — re-reading
+        // it from a form that scrolled under a held handle would throw the
+        // value by the amount the form moved.
+        let value = origin.x_to_value((pos.0 - track_x) as f32 - grab_dx);
+        if value == current {
+            return false;
+        }
+        let step = origin.step;
+        if let Some(drag) = self.slider_drag.as_mut() {
+            drag.current = value;
+        }
+        self.apply_slider_value(&id, value, step);
+        true
+    }
+
+    /// Let go of the handle being dragged. Returns whether there was one, and
+    /// re-derives hover the same way a released scrollbar does — the drag owns
+    /// the pointer while it runs, so what the released pointer sits on is
+    /// whatever was under the hand when it stopped.
+    fn end_slider_drag(&mut self) -> bool {
+        if self.slider_drag.take().is_none() {
+            return false;
+        }
+        self.handle_cursor_moved(self.cursor_pos);
+        true
+    }
+
+    /// Write a slider's new number: report it, then re-read the tree so the
+    /// handle, the fill and the state all show the value that was just
+    /// accepted.
+    fn apply_slider_value(&mut self, id: &str, value: f64, step: f64) {
+        self.dispatcher
+            .dispatch_change(id, &crate::ui::slider_num_str(value, step));
+        self.render();
     }
 
     /// Write an offset to whichever axis' scroll state it belongs to, clamped
@@ -4321,6 +4830,84 @@ impl<D: UiDispatcher> NativeApp<D> {
                         );
                     }
                 }
+                // A slider, drawn entirely from rounded rectangles: the groove,
+                // the part of it travelled, the handle sitting on the value.
+                // As with the flag, the drawing lives in `draw_slider_control`
+                // so it can be judged without a window; the row's work here is
+                // to find the track's place and paint the label beside it,
+                // which is the part only the layout can know.
+                "slider" => {
+                    let key = slider_key(lbox, box_index);
+                    let hover_t = if lbox.disabled {
+                        0.0
+                    } else {
+                        self.hover_ramps.get(&key).copied().unwrap_or(0.0)
+                    };
+                    // The spec is read off the box — the snapshot layout took
+                    // — rather than re-parsed out of the tree here, so the
+                    // handle is drawn where the press and the written-back
+                    // value also believe it is.
+                    let Some(spec) = lbox.slider else {
+                        continue;
+                    };
+                    let view = SliderView::new(
+                        Rect {
+                            x: rx,
+                            y: ry,
+                            w: lbox.rect.w,
+                            h: lbox.rect.h,
+                        },
+                        hover_t,
+                        lbox.disabled,
+                        spec,
+                    );
+                    draw_slider_control(&mut buffer, stride, h_usize, clip, &theme, &view);
+
+                    // The label belongs to the control and is drawn beside it
+                    // in the same row the press covers.
+                    let label_x = view.rect.x + view.rect.w + FLAG_GAP;
+                    let label = lbox.text.clone().unwrap_or_default();
+                    let label_color = if lbox.disabled {
+                        theme.text_dim
+                    } else {
+                        theme.text
+                    };
+                    let region = Rect {
+                        x: label_x,
+                        y: ry,
+                        w: (lbox.rect.w - view.rect.w - FLAG_GAP).max(0),
+                        h: lbox.rect.h,
+                    };
+                    let label_clip = match clip {
+                        None => Some(region),
+                        Some(c) => intersect(region, c),
+                    };
+                    if let Some(lc) = label_clip {
+                        let fonts = &self.fonts;
+                        let ty = ry + ((lbox.rect.h - cell_h) / 2).max(0);
+                        draw_text_ttf_clipped(
+                            fonts,
+                            FaceKind::Ui,
+                            label_x,
+                            ty,
+                            &label,
+                            lc,
+                            |px, py, w, h, cov| {
+                                draw_rect_alpha(
+                                    &mut buffer,
+                                    stride,
+                                    h_usize,
+                                    px,
+                                    py,
+                                    w,
+                                    h,
+                                    label_color,
+                                    cov,
+                                );
+                            },
+                        );
+                    }
+                }
                 _ => {}
             }
         }
@@ -5179,6 +5766,18 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
                     }
                     return;
                 }
+                // A slider takes the next press, for the same reason the bar
+                // does: the control absorbs it whether or not it can move, so
+                // a disabled slider stops the press reaching whatever is
+                // stacked behind it instead of silently falling through.
+                if self.begin_slider_drag(self.cursor_pos) {
+                    self.pressed_id = None;
+                    self.sync_cursor_icon();
+                    if let Some(win) = &self.window {
+                        win.request_redraw();
+                    }
+                    return;
+                }
                 // Resolve the button under the cursor *before* dispatching, so
                 // the pressed tone survives the press itself: dispatch may
                 // already have swapped the view underneath us.
@@ -5201,6 +5800,15 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
                 // Ending a drag outranks a button release: nothing can be both
                 // pressed and dragged, and the hand has to come back.
                 if self.end_scrollbar_drag() {
+                    if let Some(win) = &self.window {
+                        win.request_redraw();
+                    }
+                    return;
+                }
+                // A slider drag ends the same way, and for the same reason:
+                // the handle has been under the finger this whole time, so
+                // nothing was pressed and the release belongs to the drag.
+                if self.end_slider_drag() {
                     if let Some(win) = &self.window {
                         win.request_redraw();
                     }
@@ -5494,6 +6102,7 @@ mod tests {
             tooltip: None,
             options: Vec::new(),
             checked: false,
+            slider: None,
         }];
 
         // Simulate click on line 1, col 2:
@@ -5860,6 +6469,7 @@ mod tests {
             tooltip: None,
             options: Vec::new(),
             checked: false,
+            slider: None,
         }];
 
         // Initially at (0, 0) - not hovering
@@ -5970,6 +6580,7 @@ mod tests {
             tooltip: None,
             options: Vec::new(),
             checked: false,
+            slider: None,
         }];
 
         assert!(app.focus_input("test_input"));
@@ -6684,6 +7295,7 @@ mod tests {
             tooltip: None,
             options: Vec::new(),
             checked: false,
+            slider: None,
         };
         b.clips = Some(vec![outer, inner]);
         assert_eq!(
@@ -7201,6 +7813,7 @@ mod tests {
                 tooltip: None,
                 options: Vec::new(),
                 checked: false,
+                slider: None,
             },
             // Only 2px below the first: its halo *would* reach back over the
             // first box's bottom edge if drawn inline.
@@ -7224,6 +7837,7 @@ mod tests {
                 tooltip: None,
                 options: Vec::new(),
                 checked: false,
+                slider: None,
             },
         ];
 
@@ -7635,6 +8249,7 @@ mod tests {
             tooltip: None,
             options: Vec::new(),
             checked: false,
+            slider: None,
         }
     }
 
@@ -7663,6 +8278,7 @@ mod tests {
             tooltip: None,
             options: options.iter().map(|o| o.to_string()).collect(),
             checked: false,
+            slider: None,
         }
     }
 
@@ -9023,6 +9639,7 @@ mod tests {
                 tooltip: None,
                 options: Vec::new(),
                 checked: false,
+                slider: None,
             }
         }
 
@@ -9681,6 +10298,7 @@ mod tests {
             tooltip: None,
             options: Vec::new(),
             checked: false,
+            slider: None,
         }
     }
 
@@ -10088,6 +10706,828 @@ mod tests {
         assert_eq!(
             clicks2, 0,
             "a disabled control absorbs the press rather than passing it on"
+        );
+    }
+
+    // -------------------------------------------------------------
+    // slider (roadmap 2.4)
+    // -------------------------------------------------------------
+
+    /// A `slider` element laid out the way the renderer lays one out, so the
+    /// interaction tests drive a real box rather than a hand-written one.
+    fn slider_box(
+        id: Option<&str>,
+        label: &str,
+        value: f64,
+        min: f64,
+        max: f64,
+        step: f64,
+        disabled: bool,
+    ) -> LayoutBox {
+        let mut e = UiElement::new("slider");
+        e.id = id.map(str::to_string);
+        e.text = Some(label.into());
+        e.props.insert("value".into(), value.to_string());
+        e.props.insert("min".into(), min.to_string());
+        e.props.insert("max".into(), max.to_string());
+        e.props.insert("step".into(), step.to_string());
+        if disabled {
+            e.props.insert("disabled".into(), "true".into());
+        }
+        let mut boxes = Vec::new();
+        layout_element(&e, 50, 60, 300, &mut boxes);
+        boxes
+            .into_iter()
+            .next()
+            .expect("a slider lays out exactly one box")
+    }
+
+    /// The middle of a laid-out slider's track, at a given fraction of its
+    /// travel — the point a test wants to press or drag to.
+    fn slider_track_at(lbox: &LayoutBox, t: f32) -> (i32, i32) {
+        let track = slider_track_rect(lbox.rect);
+        (
+            track.x + (t * SLIDER_TRACK_W as f32) as i32,
+            track.y + track.h / 2,
+        )
+    }
+
+    /// The two mappings have to be inverses, and both have to leave the
+    /// handle inside the groove: a control whose handle can be asked for one
+    /// place and put somewhere else cannot be aimed at.
+    #[test]
+    fn test_slider_value_and_position_are_inverses() {
+        let spec = SliderSpec {
+            value: 25.0,
+            min: 0.0,
+            max: 100.0,
+            step: 1.0,
+        };
+        // Every rung round-trips through a pixel position.
+        for v in [0.0, 1.0, 25.0, 99.0, 100.0] {
+            let x = spec.value_to_x(v);
+            assert_eq!(spec.x_to_value(x), v, "value {v} round-trips through x");
+        }
+        // The extremes put the handle *inside* the track, not hanging off it.
+        let half = SLIDER_KNOB / 2;
+        assert_eq!(
+            spec.value_to_x(0.0),
+            half as f32,
+            "min sits at the left stop"
+        );
+        assert_eq!(
+            spec.value_to_x(100.0),
+            (SLIDER_TRACK_W - half) as f32,
+            "max sits at the right stop"
+        );
+
+        // A fractional slider is the same shape, one pixel further apart.
+        let frac = SliderSpec {
+            value: 0.7,
+            min: 0.0,
+            max: 1.0,
+            step: 0.1,
+        };
+        assert_eq!(frac.x_to_value(frac.value_to_x(0.7)), 0.7);
+        assert_eq!(frac.x_to_value(frac.value_to_x(0.0)), 0.0);
+        assert_eq!(frac.x_to_value(frac.value_to_x(1.0)), 1.0);
+
+        // Off both ends the answer is still a legal value, never an overshoot.
+        assert_eq!(spec.x_to_value(-500.0), 0.0);
+        assert_eq!(spec.x_to_value(5000.0), 100.0);
+    }
+
+    /// A handle must stay inside the groove it belongs to, at any value — a
+    /// handle drawn past the end would read as a number the control cannot
+    /// produce.
+    #[test]
+    fn test_slider_handle_stays_inside_its_groove() {
+        let row = Rect {
+            x: 40,
+            y: 90,
+            w: 260,
+            h: SLIDER_H,
+        };
+        for value in [0.0, 33.3, 50.0, 100.0] {
+            let spec = SliderSpec {
+                value,
+                min: 0.0,
+                max: 100.0,
+                step: 0.1,
+            };
+            let view = SliderView::new(row, 0.0, false, spec);
+            let knob = view.knob_rect();
+            // Horizontally the handle belongs to the *groove*: it may never
+            // hang off either end, because a handle past the stop would read
+            // as a value the control cannot produce.
+            assert!(
+                knob.x >= view.rect.x,
+                "handle {knob:?} leaves the groove's left"
+            );
+            assert!(
+                knob.x + knob.w <= view.rect.x + view.rect.w,
+                "…or its right: {knob:?}"
+            );
+            // Vertically it belongs to the *row*: the handle is deliberately
+            // taller than the groove it rides in, the way a knob rides a
+            // switch, so only the row is the limit there.
+            assert!(knob.y >= row.y, "…or above its own row: {knob:?}");
+            assert!(
+                knob.y + knob.h <= row.y + row.h,
+                "…or below its own row: {knob:?}"
+            );
+            assert_eq!(
+                view.filled,
+                (spec.value_to_x(value).round() as i32).clamp(0, SLIDER_TRACK_W)
+            );
+        }
+    }
+
+    /// The point of the control: press it, drag it, and the handler is handed
+    /// each number the finger passed over — and the handle is where the finger
+    /// left it, not where the press happened to land.
+    #[test]
+    fn test_slider_drag_reports_each_step_and_leaves_the_handle_under_the_finger() {
+        let mut id = String::new();
+        let mut value = String::new();
+        let mut clicks = 0;
+        let box_ = slider_box(Some("temp"), "Temp", 0.0, 0.0, 100.0, 1.0, false);
+        let track = slider_track_rect(box_.rect);
+        let spec = box_.slider.expect("a slider carries its spec");
+        let mut app = flag_app(&mut id, &mut value, &mut clicks);
+        app.layout_boxes = vec![box_.clone()];
+
+        // Press at the far left of the track and drag to the far right.
+        app.cursor_pos = (track.x + 1, track.y + track.h / 2);
+        app.begin_slider_drag(app.cursor_pos);
+        assert!(
+            app.dispatcher.value.is_empty(),
+            "the slider already starts at the left stop, so there is nothing to report yet"
+        );
+
+        for x in [track.x + 40, track.x + 80, track.x + SLIDER_TRACK_W - 1] {
+            app.update_slider_drag((x, track.y + track.h / 2));
+        }
+        assert_eq!(
+            *app.dispatcher.value, "100",
+            "…and the drag walked to the far end"
+        );
+        assert_eq!(
+            app.dispatcher.id, "temp",
+            "reported through the slider's own id"
+        );
+
+        // The handle is where the drag left it, which is the mapping's own
+        // answer — not a value recomputed somewhere else. Rebuilt from the
+        // value that was actually reported, so the drawing and the report are
+        // checked against each other rather than against the start.
+        let at_100 = SliderSpec {
+            value: 100.0,
+            ..spec
+        };
+        let handle = SliderView::new(box_.rect, 0.0, false, at_100).knob_rect();
+        // The travel is inset by the handle's own radius, so at the right
+        // stop the handle sits just inside the groove rather than hanging off
+        // it — which is the whole reason the mapping insets in the first
+        // place. Checked against the mapping's answer, not against the pixel
+        // the finger reached.
+        let stop = track.x + at_100.value_to_x(100.0).round() as i32;
+        assert_eq!(
+            handle.x + handle.w / 2,
+            stop,
+            "the handle sits on the mapping's own right stop: {handle:?}"
+        );
+        assert!(
+            handle.x + handle.w <= track.x + SLIDER_TRACK_W,
+            "…so it never hangs off the end of the groove: {handle:?}"
+        );
+    }
+
+    /// Pressing the *handle* must not teleport it: the offset the press
+    /// arrived at is carried through the whole drag, which is the difference
+    /// between a control you can aim and one you can only shove.
+    #[test]
+    fn test_slider_press_on_the_handle_keeps_its_offset() {
+        let mut id = String::new();
+        let mut value = String::new();
+        let mut clicks = 0;
+        let box_ = slider_box(Some("temp"), "Temp", 50.0, 0.0, 100.0, 1.0, false);
+        let track = slider_track_rect(box_.rect);
+        let handle_x = track.x
+            + SliderSpec {
+                value: 50.0,
+                min: 0.0,
+                max: 100.0,
+                step: 1.0,
+            }
+            .value_to_x(50.0)
+            .round() as i32;
+
+        // Press five pixels left of the handle's centre. The handle must not
+        // leap under the pointer: the press alone reports nothing, because the
+        // value has not moved.
+        let mut app = flag_app(&mut id, &mut value, &mut clicks);
+        app.layout_boxes = vec![box_.clone()];
+        app.cursor_pos = (handle_x - 5, track.y + track.h / 2);
+        app.begin_slider_drag(app.cursor_pos);
+        assert!(
+            app.dispatcher.value.is_empty(),
+            "pressing off centre does not teleport the handle: nothing has moved yet"
+        );
+        // Without the recorded offset this press would have reported ~46,
+        // which is the number at the *pointer*, not at the handle.
+        let naive = SliderSpec {
+            value: 50.0,
+            min: 0.0,
+            max: 100.0,
+            step: 1.0,
+        }
+        .x_to_value((handle_x - 5 - track.x) as f32);
+        assert!(
+            naive < 48.0,
+            "the naive answer is well below the value: {naive}"
+        );
+
+        app.update_slider_drag((handle_x - 4, track.y + track.h / 2));
+
+        // Press dead centre and drag the same one pixel.
+        let mut id2 = String::new();
+        let mut value2 = String::new();
+        let mut clicks2 = 0;
+        let mut centred = flag_app(&mut id2, &mut value2, &mut clicks2);
+        centred.layout_boxes = vec![slider_box(
+            Some("temp"),
+            "Temp",
+            50.0,
+            0.0,
+            100.0,
+            1.0,
+            false,
+        )];
+        centred.cursor_pos = (handle_x, track.y + track.h / 2);
+        centred.begin_slider_drag(centred.cursor_pos);
+        centred.update_slider_drag((handle_x + 1, track.y + track.h / 2));
+
+        // One pixel of drag is one step of the handle — the offset shifts
+        // where the handle sits relative to the finger, not how it responds.
+        assert_eq!(
+            *app.dispatcher.value, "51",
+            "one pixel of drag moves the handle one pixel: {}",
+            *app.dispatcher.value
+        );
+        assert_eq!(
+            *centred.dispatcher.value, "51",
+            "pressing on centre moves the value by the distance dragged"
+        );
+    }
+
+    /// Pressing bare track is the obvious reading of the gesture: the value
+    /// goes to where the pointer landed, and the handle then stays under the
+    /// finger for the rest of the drag.
+    #[test]
+    fn test_slider_press_on_bare_track_jumps_to_the_pointer() {
+        let mut id = String::new();
+        let mut value = String::new();
+        let mut clicks = 0;
+        let box_ = slider_box(Some("temp"), "Temp", 0.0, 0.0, 100.0, 1.0, false);
+        let track = slider_track_rect(box_.rect);
+        let mut app = flag_app(&mut id, &mut value, &mut clicks);
+        app.layout_boxes = vec![box_.clone()];
+
+        let press = slider_track_at(&box_, 0.75);
+        let spec = box_.slider.expect("a slider carries its spec");
+        app.cursor_pos = press;
+        app.begin_slider_drag(app.cursor_pos);
+        // The press lands on exactly the value the mapping names for that
+        // pixel — which is *not* three-quarters of 100, because the handle's
+        // travel is inset by its own radius and so starts a little in.
+        let expected = spec.x_to_value((press.0 - track.x) as f32);
+        assert_eq!(
+            *app.dispatcher.value,
+            crate::ui::slider_num_str(expected, spec.step),
+            "a press on bare track lands at the mapping's own answer for that pixel"
+        );
+        assert_ne!(
+            *app.dispatcher.value, "75",
+            "a fraction of the row is not a fraction of the travel — the inset is real"
+        );
+
+        // …and the very next pixel of drag does not fling the handle, because
+        // the grab offset was re-measured from where the handle now is.
+        app.update_slider_drag((press.0 + 1, track.y + 5));
+        let next = spec.x_to_value((press.0 + 1 - track.x) as f32);
+        assert_eq!(
+            *app.dispatcher.value,
+            crate::ui::slider_num_str(next, spec.step),
+            "one pixel of drag is one step, not a handle's width"
+        );
+    }
+
+    /// A slider with nowhere to report is decoration: it lights up only if the
+    /// drag will be answered, and a disabled one is dim and inert.
+    #[test]
+    fn test_a_slider_only_lights_when_it_can_answer() {
+        let live = slider_box(Some("temp"), "Temp", 0.0, 0.0, 100.0, 1.0, false);
+        let mut no_id = live.clone();
+        no_id.id = None;
+        let dim = slider_box(Some("temp"), "Temp", 0.0, 0.0, 100.0, 1.0, true);
+
+        let here = slider_track_at(&live, 0.5);
+        assert_eq!(
+            find_hovered_button_in_boxes(std::slice::from_ref(&live), 0, 0, here),
+            Some("temp".into()),
+            "a live slider lights up under the pointer"
+        );
+        assert_eq!(
+            find_hovered_button_in_boxes(std::slice::from_ref(&no_id), 0, 0, here),
+            None,
+            "…an id-less one does not: there is nowhere to put the value"
+        );
+        assert_eq!(
+            find_hovered_button_in_boxes(std::slice::from_ref(&dim), 0, 0, here),
+            None,
+            "…and neither does a disabled one"
+        );
+
+        // Off the row entirely, no control claims it.
+        assert_eq!(
+            find_hovered_button_in_boxes(std::slice::from_ref(&live), 0, 0, (2, 2)),
+            None
+        );
+    }
+
+    /// A slider that cannot move must still take the press: letting it fall
+    /// through would fire whatever control is stacked behind it.
+    #[test]
+    fn test_a_slider_absorbs_the_press_even_when_it_cannot_move() {
+        let behind = |lbox: &LayoutBox| btn_box_at(lbox.rect);
+
+        // Control experiment: with no slider in front, the button fires.
+        let live = slider_box(Some("temp"), "Temp", 0.0, 0.0, 100.0, 1.0, false);
+        let mut id = String::new();
+        let mut value = String::new();
+        let mut clicks = 0;
+        let mut bare = flag_app(&mut id, &mut value, &mut clicks);
+        bare.layout_boxes = vec![behind(&live)];
+        bare.cursor_pos = slider_track_at(&live, 0.5);
+        bare.handle_click();
+        assert_eq!(clicks, 1, "control experiment: the button fires alone");
+
+        // A disabled slider stands in front of it.
+        let dim = slider_box(Some("temp"), "Temp", 0.0, 0.0, 100.0, 1.0, true);
+        let mut id2 = String::new();
+        let mut value2 = String::new();
+        let mut clicks2 = 0;
+        let mut app = flag_app(&mut id2, &mut value2, &mut clicks2);
+        app.layout_boxes = vec![dim.clone(), behind(&dim)];
+        app.cursor_pos = slider_track_at(&dim, 0.5);
+        app.begin_slider_drag(app.cursor_pos);
+        assert_eq!(
+            clicks2, 0,
+            "a disabled slider absorbs the press rather than passing it on"
+        );
+        assert!(
+            value2.is_empty(),
+            "…and reports nothing, since it cannot move"
+        );
+
+        // So does an id-less one.
+        let mut no_id = live.clone();
+        no_id.id = None;
+        let mut id3 = String::new();
+        let mut value3 = String::new();
+        let mut clicks3 = 0;
+        let mut inert = flag_app(&mut id3, &mut value3, &mut clicks3);
+        inert.layout_boxes = vec![no_id.clone(), behind(&no_id)];
+        inert.cursor_pos = slider_track_at(&no_id, 0.5);
+        inert.begin_slider_drag(inert.cursor_pos);
+        assert_eq!(clicks3, 0, "an id-less slider absorbs it too");
+    }
+
+    /// Dragging owns the pointer the way a scrollbar drag does: releasing it
+    /// clears the drag, and nothing can be dragged twice.
+    #[test]
+    fn test_a_slider_drag_ends_on_release() {
+        let mut id = String::new();
+        let mut value = String::new();
+        let mut clicks = 0;
+        let box_ = slider_box(Some("temp"), "Temp", 0.0, 0.0, 100.0, 1.0, false);
+        let track = slider_track_rect(box_.rect);
+        let mut app = flag_app(&mut id, &mut value, &mut clicks);
+        app.layout_boxes = vec![box_.clone()];
+        app.cursor_pos = slider_track_at(&box_, 0.5);
+
+        assert!(app.begin_slider_drag(app.cursor_pos), "the press was taken");
+        assert!(app.slider_drag.is_some(), "…and is now held");
+        // The drag is holding the control it started on, at the track's own
+        // left edge — so the value it computes is measured from the groove
+        // and not from wherever the window happens to begin.
+        assert_eq!(
+            app.slider_drag.as_ref().map(|d| d.track_x),
+            Some(track.x),
+            "the drag remembers the track it grabbed"
+        );
+        assert!(app.end_slider_drag(), "there was a drag to end");
+        assert!(app.slider_drag.is_none(), "…and it is over");
+        assert!(!app.end_slider_drag(), "ending twice ends nothing");
+    }
+
+    /// The drawing: a groove, a travelled part in the accent, and a handle
+    /// whose position *is* the number. Painted, so the proof is pixels rather
+    /// than an assertion about arithmetic the painter might ignore.
+    #[test]
+    fn test_the_slider_paints_a_groove_a_fill_and_a_handle_on_its_value() {
+        let t = Theme::DARK;
+        let stride = SLIDER_TRACK_W as usize + 8;
+        let height = SLIDER_H as usize;
+        let row = Rect {
+            x: 0,
+            y: 0,
+            w: SLIDER_TRACK_W + 40,
+            h: SLIDER_H,
+        };
+        let track = slider_track_rect(row);
+        let mid_y = (track.y + track.h / 2) as usize;
+
+        let paint = |value: f64| -> Vec<u32> {
+            let spec = SliderSpec {
+                value,
+                min: 0.0,
+                max: 100.0,
+                step: 1.0,
+            };
+            let mut buf = vec![t.bg; stride * height];
+            let view = SliderView::new(row, 0.0, false, spec);
+            draw_slider_control(&mut buf, stride, height, None, &t, &view);
+            buf
+        };
+
+        // At the left stop there is no travelled part to speak of, and the
+        // handle is at the left end of the groove.
+        let left = paint(0.0);
+        let knob = SliderView::new(
+            row,
+            0.0,
+            false,
+            SliderSpec {
+                value: 0.0,
+                min: 0.0,
+                max: 100.0,
+                step: 1.0,
+            },
+        )
+        .knob_rect();
+        assert_eq!(
+            left[mid_y * stride + (knob.x + knob.w / 2) as usize],
+            t.button_text,
+            "at the left stop the handle itself is the only bright thing"
+        );
+        assert_eq!(
+            left[mid_y * stride + (track.x + track.w - 8) as usize],
+            t.input_bg,
+            "…and the far end of the groove is still empty"
+        );
+
+        // Half way, the handle has moved and the accent has travelled with it.
+        let half = paint(50.0);
+        let half_knob = SliderView::new(
+            row,
+            0.0,
+            false,
+            SliderSpec {
+                value: 50.0,
+                min: 0.0,
+                max: 100.0,
+                step: 1.0,
+            },
+        )
+        .knob_rect();
+        assert_eq!(
+            half[mid_y * stride + (half_knob.x + half_knob.w / 2) as usize],
+            t.button_text,
+            "half way the handle has moved to the middle"
+        );
+        assert_ne!(
+            half_knob.x, knob.x,
+            "…which is the whole proof: the handle's position is the value"
+        );
+        assert_eq!(
+            half[mid_y * stride + (track.x + 4) as usize],
+            t.input_border_focused,
+            "the travelled part is painted in the accent"
+        );
+        assert_eq!(
+            half[mid_y * stride + (track.x + track.w - 8) as usize],
+            t.input_bg,
+            "the rest of the groove is not"
+        );
+
+        // And the two ends are never the same picture.
+        assert_ne!(left, half, "0 and 50 are different drawings");
+    }
+
+    /// A disabled slider still draws — dimmed, so it reads as unavailable
+    /// rather than absent — but nothing about it lights.
+    #[test]
+    fn test_a_disabled_slider_draws_dimmed() {
+        let t = Theme::DARK;
+        let stride = SLIDER_TRACK_W as usize + 8;
+        let height = SLIDER_H as usize;
+        let row = Rect {
+            x: 0,
+            y: 0,
+            w: SLIDER_TRACK_W + 40,
+            h: SLIDER_H,
+        };
+        let spec = SliderSpec {
+            value: 50.0,
+            min: 0.0,
+            max: 100.0,
+            step: 1.0,
+        };
+
+        let live = {
+            let mut b = vec![t.bg; stride * height];
+            let v = SliderView::new(row, 1.0, false, spec);
+            draw_slider_control(&mut b, stride, height, None, &t, &v);
+            b
+        };
+        let dim = {
+            let mut b = vec![t.bg; stride * height];
+            let v = SliderView::new(row, 0.0, true, spec);
+            draw_slider_control(&mut b, stride, height, None, &t, &v);
+            b
+        };
+        assert_ne!(
+            live, dim,
+            "a disabled slider is a visibly different drawing"
+        );
+
+        let track = slider_track_rect(row);
+        let mid_y = (track.y + track.h / 2) as usize;
+        let knob = SliderView::new(row, 0.0, true, spec).knob_rect();
+        assert_ne!(
+            dim[mid_y * stride + (knob.x + knob.w / 2) as usize],
+            t.button_text,
+            "the handle is not the bright white it is when live"
+        );
+        assert_ne!(
+            dim[mid_y * stride + (track.x + 4) as usize],
+            t.input_border_focused,
+            "…and the travelled part is not the live accent either"
+        );
+    }
+
+    /// A zero-width or zero-height track paints nothing rather than dividing
+    /// by it: a control measured into nothing must not take the frame with it.
+    #[test]
+    fn test_an_empty_slider_track_paints_nothing() {
+        let t = Theme::DARK;
+        let stride = 8usize;
+        let height = 8usize;
+        let mut buf = vec![t.bg; stride * height];
+        let view = SliderView {
+            rect: Rect {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+            },
+            hover_t: 0.0,
+            disabled: false,
+            spec: SliderSpec {
+                value: 50.0,
+                min: 0.0,
+                max: 100.0,
+                step: 1.0,
+            },
+            filled: 0,
+        };
+        draw_slider_control(&mut buf, stride, height, None, &t, &view);
+        assert!(
+            buf.iter().all(|p| *p == t.bg),
+            "a track with no room paints nothing at all"
+        );
+    }
+
+    /// The dispatch key: its `id` when it has one, layout order when it does
+    /// not — so hover, the drag and the written-back value all resolve the
+    /// same control.
+    #[test]
+    fn test_slider_key_falls_back_to_the_layout_order() {
+        let with_id = slider_box(Some("temp"), "Temp", 0.0, 0.0, 100.0, 1.0, false);
+        assert_eq!(slider_key(&with_id, 7), "temp");
+
+        let mut no_id = with_id.clone();
+        no_id.id = None;
+        assert_eq!(slider_key(&no_id, 7), "__slider_7");
+    }
+
+    /// The track is one shape: flush with the row's left edge, vertically
+    /// centred, and as long as the constant says — because the drawing, the
+    /// press and the drag all read this one function.
+    #[test]
+    fn test_slider_track_rect_is_one_shape() {
+        let row = Rect {
+            x: 40,
+            y: 90,
+            w: 260,
+            h: SLIDER_H,
+        };
+        let track = slider_track_rect(row);
+        assert_eq!(track.x, 40, "flush with the row's left edge");
+        assert_eq!(track.w, SLIDER_TRACK_W, "the length the mapping assumes");
+        assert_eq!(track.h, SLIDER_TRACK_H, "and the groove's own height");
+        assert_eq!(
+            track.y,
+            row.y + (row.h - SLIDER_TRACK_H) / 2,
+            "vertically centred in its row"
+        );
+
+        // A row too short for the knob still puts the track somewhere
+        // computable rather than above the row.
+        let short = slider_track_rect(Rect {
+            x: 0,
+            y: 10,
+            w: 100,
+            h: 4,
+        });
+        assert!(short.y >= 10, "never above its own row: {short:?}");
+    }
+
+    /// The layout arm records the number the element carried, already snapped
+    /// onto the control's own grid — so a starting value the program can never
+    /// be handed is never the position the handle starts at either.
+    #[test]
+    fn test_the_layout_records_a_sliders_number_and_grid() {
+        let lbox = slider_box(Some("temp"), "Temp", 33.0, 0.0, 100.0, 5.0, false);
+        assert_eq!(lbox.tag, "slider");
+        let spec = lbox.slider.expect("a slider carries its spec onto the box");
+        assert_eq!(
+            spec.value, 35.0,
+            "33 is pulled onto the nearest rung of a five-wide step"
+        );
+        assert_eq!(spec.min, 0.0);
+        assert_eq!(spec.max, 100.0);
+        assert_eq!(
+            spec.step, 5.0,
+            "and the grid is the one the handler sees too"
+        );
+
+        // The row is the control: the track at the left edge, the label's
+        // room beside it, one row tall.
+        assert_eq!(lbox.rect.h, SLIDER_H);
+        assert!(lbox.rect.w >= SLIDER_TRACK_W + FLAG_GAP);
+        assert_eq!(
+            lbox.text.as_deref(),
+            Some("Temp"),
+            "the label rides in `text`"
+        );
+
+        // A value already on a rung is left exactly where it is.
+        let exact = slider_box(Some("t"), "T", 35.0, 0.0, 100.0, 5.0, false);
+        assert_eq!(exact.slider.expect("spec").value, 35.0);
+
+        // Out-of-range starts are clamped rather than drawn off the end.
+        let over = slider_box(Some("t"), "T", 900.0, 0.0, 100.0, 5.0, false);
+        assert_eq!(over.slider.expect("spec").value, 100.0);
+        let under = slider_box(Some("t"), "T", -900.0, 0.0, 100.0, 5.0, false);
+        assert_eq!(under.slider.expect("spec").value, 0.0);
+
+        // A disabled slider still lays out and still records its number: it
+        // only stops answering.
+        let dim = slider_box(Some("t"), "T", 40.0, 0.0, 100.0, 10.0, true);
+        assert!(dim.disabled, "the flag carries the dimmed state");
+        assert_eq!(dim.slider.expect("spec").value, 40.0);
+
+        // Every other tag has no slider at all, so nothing has to ask.
+        let flag = flag_box("checkbox", Some("dark"), "Dark", false, false);
+        assert!(flag.slider.is_none());
+    }
+
+    /// The row's whole width is the control — track *and* label — because
+    /// pressing the words of a slider that does nothing is text people learn
+    /// to avoid, exactly as with the flags.
+    #[test]
+    fn test_the_whole_slider_row_is_pressable() {
+        let lbox = slider_box(
+            Some("temp"),
+            "A very long label here",
+            0.0,
+            0.0,
+            100.0,
+            1.0,
+            false,
+        );
+        let label_x = lbox.rect.x + SLIDER_TRACK_W + FLAG_GAP;
+        assert!(
+            label_x < lbox.rect.x + lbox.rect.w,
+            "the label has room beside the track"
+        );
+        // A press on the label is still a press on the control: the box's own
+        // rect covers it, which is what `slider_at` hit-tests against.
+        assert!(
+            lbox.rect
+                .contains(label_x + 2, lbox.rect.y + lbox.rect.h / 2),
+            "…and the row's rect covers the label"
+        );
+    }
+
+    /// The label takes the press but not the value. `x_to_value` clamps at
+    /// both ends, so a caption click reaching it would throw a 500 to the
+    /// maximum — a number nobody asked for by reading some words.
+    #[test]
+    fn test_pressing_the_label_absorbs_the_press_and_moves_nothing() {
+        let lbox = slider_box(
+            Some("temp"),
+            "A very long label here",
+            50.0,
+            0.0,
+            100.0,
+            1.0,
+            false,
+        );
+        // The label starts just past the groove, with the row's own margin
+        // after it — all of it part of the pressable row.
+        let label_x = lbox.rect.x + SLIDER_TRACK_W + FLAG_GAP + 4;
+        assert!(
+            lbox.rect.contains(label_x, lbox.rect.y + lbox.rect.h / 2),
+            "the label really is inside the row"
+        );
+
+        let mut id = String::new();
+        let mut value = String::new();
+        let mut clicks = 0;
+        let mut app = flag_app(&mut id, &mut value, &mut clicks);
+        app.layout_boxes = vec![lbox.clone()];
+
+        // Nothing behind the row can be fired through it…
+        let behind = btn_box_at(lbox.rect);
+        app.layout_boxes = vec![lbox.clone(), behind.clone()];
+        app.cursor_pos = (label_x, lbox.rect.y + lbox.rect.h / 2);
+        let taken = app.begin_slider_drag(app.cursor_pos);
+        assert!(taken, "the row takes the press either way");
+        assert_eq!(
+            *app.dispatcher.clicks, 0,
+            "…but the button behind still cannot be reached"
+        );
+        assert!(
+            app.dispatcher.value.is_empty(),
+            "and the label reports no number, because none was picked"
+        );
+        assert!(
+            app.slider_drag.is_none(),
+            "…so there is no drag to carry on with"
+        );
+
+        // While the same press on the groove does the obvious thing.
+        let mut id2 = String::new();
+        let mut value2 = String::new();
+        let mut clicks2 = 0;
+        let mut dial = flag_app(&mut id2, &mut value2, &mut clicks2);
+        dial.layout_boxes = vec![lbox.clone()];
+        dial.cursor_pos = (
+            lbox.rect.x + SLIDER_TRACK_W - 2,
+            lbox.rect.y + lbox.rect.h / 2,
+        );
+        assert!(dial.begin_slider_drag(dial.cursor_pos));
+        assert_eq!(
+            *dial.dispatcher.value, "100",
+            "the right end of the groove is still the dial"
+        );
+        assert!(dial.slider_drag.is_some(), "…and it begins a drag");
+    }
+
+    /// The boundary between "the dial" and "the words beside it" is one
+    /// pixel wide and has to fall in the gap, or the two readings collide:
+    /// everything up to the groove's right stop plus the handle's own
+    /// overhang is the dial, and the label's very first pixel is beyond it.
+    #[test]
+    fn test_the_groove_ends_before_the_label_begins() {
+        let lbox = slider_box(Some("t"), "Label", 0.0, 0.0, 100.0, 1.0, false);
+        let track = slider_track_rect(lbox.rect);
+        let overhang = SLIDER_KNOB / 2;
+        let dial_end = track.x + track.w + overhang;
+        let label_x = track.x + track.w + FLAG_GAP;
+
+        // The track is flush with the row's left edge, so the row's own edge
+        // *is* the left stop — there is nothing further left to press, and
+        // nothing there could be mistaken for the label.
+        assert_eq!(track.x, lbox.rect.x, "the groove starts the row");
+        assert!(
+            lbox.rect.contains(track.x, track.y),
+            "…so the left stop is in it"
+        );
+
+        // The far end: still the dial up to and including the overhang…
+        assert!(lbox.rect.contains(dial_end, track.y));
+        // …and the label begins on the very next pixel, inside the row but
+        // past the dial's reach. A one-pixel margin is enough precisely
+        // because both are integers — no pointer position is between them.
+        assert_eq!(label_x, dial_end + 1, "the gap leaves exactly one pixel");
+        assert!(
+            lbox.rect.contains(label_x, track.y),
+            "…and the label is in the row"
         );
     }
 }

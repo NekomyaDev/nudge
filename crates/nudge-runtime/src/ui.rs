@@ -619,6 +619,22 @@ pub fn estimate_element_size(elem: &UiElement, max_w: i64) -> (i64, i64) {
                 .max(control_w + 18);
             (w, 34)
         }
+        "slider" => {
+            // A track of fixed length, a gap, then the label beside it — the
+            // same shape the flag controls lay out, and the same generous
+            // per-character budget the `text` arm uses so an overshoot leaves
+            // room instead of clipping the words.
+            //
+            // The track does not stretch with its bounds the way a text field
+            // does: a 1000-wide window and a 200-wide one should show the same
+            // dial, not a different one.
+            let label = elem.text.as_deref().unwrap_or("");
+            let chars = label.chars().count() as i64;
+            let w = (SLIDER_TRACK_W as i64 + 10 + chars * 16 + 8)
+                .min(max_w)
+                .max(SLIDER_TRACK_W as i64 + 18);
+            (w, 34)
+        }
         _ => (0, 0),
     }
 }
@@ -927,6 +943,77 @@ pub fn flag_str(on: bool) -> &'static str {
     } else {
         "false"
     }
+}
+
+/// How many decimal places a slider's `step` speaks in. Derived from the
+/// step's own shortest spelling, so `step = 0.5` is one place wide and
+/// `step = 1` is none — which is what decides whether the control's values
+/// are written with a decimal point at all.
+fn step_decimals(step: f64) -> usize {
+    // Not a usable step: nothing to derive a precision from.
+    if !(step.is_finite() && step > 0.0) {
+        return 0;
+    }
+    match format!("{step}").split_once('.') {
+        Some((_, frac)) => frac.chars().count().min(6),
+        None => 0,
+    }
+}
+
+/// Length of a slider's track. Fixed rather than proportional to the row, so
+/// a slider looks like the same dial in a narrow window as in a wide one —
+/// only the label gets to grow with the text.
+pub const SLIDER_TRACK_W: i32 = 160;
+/// Height of the track itself. Wide enough to read as a groove the handle
+/// sits in, narrow enough to stay a detail beside its label.
+pub const SLIDER_TRACK_H: i32 = 8;
+/// Side of the square the handle is drawn as, then rounded to a circle by
+/// its own radius in the renderer.
+pub const SLIDER_KNOB: i32 = 18;
+/// Height of a whole slider row — track plus its label's line.
+pub const SLIDER_H: i32 = 34;
+
+/// Where a drag lands: clamped to `[min, max]`, then pulled onto the nearest
+/// rung of `step` counted from `min`, so a slider never rests between two
+/// values the program cannot tell apart.
+pub fn slider_snap(value: f64, min: f64, max: f64, step: f64) -> f64 {
+    if max <= min {
+        return min;
+    }
+    let v = value.clamp(min, max);
+    // An un-runnable step is not an error: the value simply stays where it
+    // was clamped. A NaN step included, which is the case a plain `> 0.0`
+    // would silently let through by comparing false.
+    if !(step.is_finite() && step > 0.0) {
+        return v;
+    }
+    let rung = (min + ((v - min) / step).round() * step).clamp(min, max);
+    // Shake off the dust a float leaves on a rung (`0.1 * 3` is not exactly
+    // `0.3`), so the same position always produces the same bits. Without
+    // this, two neighbouring pixels that both belong to one rung can differ
+    // in the last place and be read as two different values — which is a drag
+    // that reports the same number twice.
+    if rung.abs() < 1e9 {
+        ((rung * 1e9).round() / 1e9).clamp(min, max)
+    } else {
+        rung
+    }
+}
+
+/// The word a slider's `value` prop carries, and the value a handler is
+/// handed — one spelling for both, so a control can never report a number the
+/// state was not written with.
+///
+/// The decimal places come from the *step*, not from wherever the drag
+/// happened to stop: a `step = 1` budget therefore always writes `1500` and
+/// always hands its handler an `Int`, while a `step = 0.1` temperature always
+/// writes `0.7` and always hands its handler a `Float`. A value whose type
+/// flipped mid-drag would make `state.budget = v` type-jitter for no reason
+/// the programmer wrote down. Rounding to the step's own precision is also
+/// what keeps a float's dust (`0.30000000000000004`) out of state the next
+/// read will print.
+pub fn slider_num_str(value: f64, step: f64) -> String {
+    format!("{:.*}", step_decimals(step), value)
 }
 
 #[cfg(test)]
@@ -1414,5 +1501,102 @@ mod tests {
         // Clamped like every other control, so a very long label cannot push
         // the estimate past the window it is being measured against.
         assert!(w2 <= 1000, "never wider than the room there is");
+    }
+
+    /// A drag's arithmetic: clamped to the ends, pulled onto the step's own
+    /// rungs, and never resting between two numbers the program would read
+    /// the same way.
+    #[test]
+    fn test_slider_snap_clamps_and_steps() {
+        // Whole-numbered steps land exactly on their rungs.
+        assert_eq!(slider_snap(37.0, 0.0, 100.0, 10.0), 40.0);
+        assert_eq!(
+            slider_snap(32.0, 0.0, 100.0, 10.0),
+            30.0,
+            "halfway goes down"
+        );
+        assert_eq!(slider_snap(35.0, 0.0, 100.0, 10.0), 40.0, "halfway goes up");
+
+        // A float's dust is gone before it reaches state: `0.1 * 3` is not
+        // `0.3`, and a slider must not report that to a handler.
+        let sum = 0.1f64 + 0.1 + 0.1;
+        assert_eq!(slider_snap(sum, 0.0, 1.0, 0.1), 0.3);
+
+        // Clamped at both ends, so a drag past the track cannot overshoot.
+        assert_eq!(slider_snap(500.0, 0.0, 100.0, 10.0), 100.0);
+        assert_eq!(slider_snap(-5.0, 0.0, 100.0, 10.0), 0.0);
+
+        // Counted from `min`, so a range that does not start at zero still
+        // has a rung at its own bottom.
+        assert_eq!(slider_snap(3.0, -10.0, 10.0, 5.0), 5.0, "13/5 rounds to 3");
+        assert_eq!(slider_snap(-8.0, -10.0, 10.0, 5.0), -10.0);
+        assert_eq!(slider_snap(-9.0, -10.0, 10.0, 5.0), -10.0);
+
+        // A degenerate range is a single position, not a division by zero.
+        assert_eq!(slider_snap(42.0, 5.0, 5.0, 1.0), 5.0);
+        // …and so is a nonsense step.
+        assert_eq!(slider_snap(3.7, 0.0, 10.0, 0.0), 3.7);
+    }
+
+    /// The spelling decides the *type* a handler is handed, and it has to be
+    /// the same on every drag of one control: a handler declaring `v: float`
+    /// must not be handed an Int because the value happened to land whole.
+    #[test]
+    fn test_slider_num_str_keeps_one_type_per_control() {
+        // A whole-numbered step never grows a point: an Int, every time.
+        assert_eq!(slider_num_str(42.0, 1.0), "42");
+        assert_eq!(slider_num_str(1500.0, 1.0), "1500");
+        assert_eq!(slider_num_str(0.0, 1.0), "0");
+
+        // A fractional step always has one — including when the value lands
+        // on a whole number, which is the case that would otherwise flip the
+        // handler's parameter type mid-drag.
+        assert_eq!(slider_num_str(42.0, 0.5), "42.0");
+        assert_eq!(slider_num_str(42.5, 0.5), "42.5");
+        assert_eq!(slider_num_str(0.30000000000000004, 0.1), "0.3");
+
+        // The precision comes from the step, so a coarse float step does not
+        // print a page of digits nobody asked for.
+        assert_eq!(slider_num_str(0.123456789, 0.25), "0.12");
+        assert_eq!(
+            slider_num_str(slider_snap(0.2499999, 0.0, 1.0, 0.25), 0.25),
+            "0.25",
+            "…and a value that belongs to a quarter lands exactly on it"
+        );
+    }
+
+    /// A slider claims a fixed dial's worth of room and one row's height, and
+    /// a longer label only ever widens it — the same shape the flags lay out.
+    #[test]
+    fn test_estimate_element_size_slider_is_a_fixed_track_and_one_row() {
+        let mut s = UiElement::new("slider");
+        s.text = Some("Temp".into());
+        let (w, h) = estimate_element_size(&s, 1000);
+        assert_eq!(h, 34, "a slider is one row tall whatever the label says");
+        assert!(
+            w >= SLIDER_TRACK_W as i64 + 10 + 4 * 16,
+            "the track, the gap and all four characters fit: {w}"
+        );
+
+        let mut long = UiElement::new("slider");
+        long.text = Some("A considerably longer label than the first".into());
+        let (w2, h2) = estimate_element_size(&long, 1000);
+        assert!(w2 > w, "a longer label widens the row");
+        assert_eq!(h2, h, "…but never makes it taller");
+
+        // The floor wins over the clamp: the track has a fixed length, so a
+        // window too narrow to hold it cannot squeeze the dial smaller — it
+        // gets clipped by the renderer instead. (Same as a toggle in a window
+        // narrower than the toggle itself.)
+        let narrow = estimate_element_size(&s, 120);
+        assert_eq!(
+            narrow.0,
+            (SLIDER_TRACK_W + 18) as i64,
+            "the track never shrinks below itself plus its own margin"
+        );
+        assert_eq!(
+            narrow.1, 34,
+            "and a narrow window shortens the label, not the track"
+        );
     }
 }

@@ -79,6 +79,19 @@ impl HeadlessAppRecord {
     }
 }
 
+/// What kind of value a control reports when its `on_change` fires, and so
+/// what its handler is handed. One place decides it, so the element that gets
+/// built, the value written back and the argument all agree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChangeKind {
+    /// A `text`-carrying control: the value *is* the words, handed over whole.
+    Text,
+    /// `checkbox` / `toggle`: a Bool, because that is what the widget is.
+    Flag,
+    /// `slider`: a number, spelled as an Int or a Float (see `change_arg`).
+    Number,
+}
+
 /// Runtime context holding global functions, tools, tests, agent store, and active agent.
 #[derive(Debug, Clone)]
 pub struct Interpreter {
@@ -396,18 +409,21 @@ impl Interpreter {
             .get_mut(app_id)
             .ok_or_else(|| "invalid app id".to_string())?;
 
-        // A boolean control's value is not its display: `text` carries the
-        // label, so every piece of bookkeeping a text field needs — focus, a
-        // text buffer, the value written back over the words — would be
-        // writing to the wrong thing. (Left alone, the fallback below would
-        // have replaced the label with "true".)
-        let is_flag = app
+        // A boolean or numeric control's value is not its display: `text`
+        // carries the label, so every piece of bookkeeping a text field needs
+        // — focus, a text buffer, the value written back over the words —
+        // would be writing to the wrong thing. (Left alone, the fallback
+        // below would have replaced the label with "true".)
+        let tag = app
             .root
             .as_ref()
             .and_then(|r| r.find_by_id(target_id))
-            .is_some_and(|e| Self::is_flag_tag(&e.tag));
+            .map(|e| e.tag.as_str());
+        let is_labelled = tag.is_some_and(Self::is_labelled_tag);
+        // Copied out before `app` is borrowed mutably again below.
+        let change_kind = Self::change_kind(tag);
 
-        if !is_flag {
+        if !is_labelled {
             app.focused_id = Some(target_id.to_string());
             let st = app.ensure_input_state(target_id);
             st.text = new_value.to_string();
@@ -431,7 +447,7 @@ impl Interpreter {
                 self.call_user_fn_with_vals(
                     &fn_item,
                     fn_agent.as_deref().or(agent.as_deref()),
-                    &[Self::change_arg(is_flag, new_value)],
+                    &[Self::change_arg(change_kind, new_value)],
                     env,
                 )?;
             }
@@ -477,35 +493,83 @@ impl Interpreter {
             .as_mut()
             .and_then(|r| r.find_by_id_mut(target_id))
         {
-            if !is_flag {
+            if !is_labelled {
                 elem.text = Some(new_value.to_string());
             }
             // Stored canonically, so a handler that never runs leaves the
-            // same word the next read will parse.
-            let stored = if is_flag {
-                nudge_runtime::ui::flag_str(nudge_runtime::ui::is_truthy(new_value)).to_string()
-            } else {
-                new_value.to_string()
+            // same word the next read will parse. A slider's number is also
+            // snapped here, so a value that arrived un-rung — a replayed
+            // change, a hand-written test — rests on the same grid a drag
+            // would have left it on.
+            let stored = match change_kind {
+                ChangeKind::Flag => {
+                    nudge_runtime::ui::flag_str(nudge_runtime::ui::is_truthy(new_value)).to_string()
+                }
+                ChangeKind::Number => {
+                    let min: f64 = elem
+                        .props
+                        .get("min")
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0.0);
+                    let max: f64 = elem
+                        .props
+                        .get("max")
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(100.0);
+                    let step: f64 = elem
+                        .props
+                        .get("step")
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(1.0);
+                    let v: f64 = new_value.parse().unwrap_or(min);
+                    nudge_runtime::ui::slider_num_str(
+                        nudge_runtime::ui::slider_snap(v, min, max, step),
+                        step,
+                    )
+                }
+                ChangeKind::Text => new_value.to_string(),
             };
             elem.props.insert("value".to_string(), stored);
         }
         Ok(())
     }
 
-    /// Whether a tag's value is a boolean rather than displayed text. The
-    /// two boolean controls share every layer below the drawing, so this is
-    /// the one question the plumbing asks about them.
-    fn is_flag_tag(tag: &str) -> bool {
-        matches!(tag, "checkbox" | "toggle")
+    /// Whether a tag's value is not its display. The boolean controls and the
+    /// slider all carry their label in `text`, so every layer that asks
+    /// "is this value the words on the box?" gets one answer.
+    fn is_labelled_tag(tag: &str) -> bool {
+        matches!(tag, "checkbox" | "toggle" | "slider")
+    }
+
+    /// What kind of value a tag reports on a change.
+    fn change_kind(tag: Option<&str>) -> ChangeKind {
+        match tag {
+            Some("checkbox") | Some("toggle") => ChangeKind::Flag,
+            Some("slider") => ChangeKind::Number,
+            _ => ChangeKind::Text,
+        }
     }
 
     /// What a change handler is handed. A boolean control's value is a Bool —
-    /// that is what the widget *is* — while a text field's is the text.
-    fn change_arg(is_flag: bool, new_value: &str) -> NudgeVal {
-        if is_flag {
-            NudgeVal::Bool(nudge_runtime::ui::is_truthy(new_value))
-        } else {
-            NudgeVal::Str(new_value.to_string())
+    /// that is what the widget *is* — and a slider's is a number, while a
+    /// text field's is the text.
+    ///
+    /// A slider's number is an Int or a Float by the shape of the *spelling*
+    /// rather than by the digits: `slider_num_str` writes a decimal point
+    /// whenever the control's step has one, so one slider hands its handler
+    /// the same type on every drag instead of flipping at `72.0`.
+    fn change_arg(kind: ChangeKind, new_value: &str) -> NudgeVal {
+        match kind {
+            ChangeKind::Flag => NudgeVal::Bool(nudge_runtime::ui::is_truthy(new_value)),
+            ChangeKind::Number => {
+                let v: f64 = new_value.parse().unwrap_or(0.0);
+                if new_value.contains('.') {
+                    NudgeVal::Float(v)
+                } else {
+                    NudgeVal::Int(v as i64)
+                }
+            }
+            ChangeKind::Text => NudgeVal::Str(new_value.to_string()),
         }
     }
 
@@ -1368,6 +1432,92 @@ impl Interpreter {
                     elem.props.insert(k.clone(), v.to_string());
                 }
             }
+            return Ok(Some(NudgeVal::UiElement {
+                found: true,
+                elem: Box::new(elem),
+            }));
+        }
+
+        // A slider — the third face of the same machinery. Like the boolean
+        // controls its value is not read as text (the handle's position *is*
+        // the reading), so the first positional argument is the label and the
+        // value travels as `props["value"]`, spelled the way
+        // `slider_num_str` spells it. `min`, `max` and `step` decide where a
+        // drag may rest; the handler is handed a number, never a string.
+        if name == "slider" {
+            let mut elem = nudge_runtime::ui::UiElement::new(name);
+            let mut raw: HashMap<String, String> = HashMap::new();
+            if !args.is_empty() {
+                let label = match self.eval_expr(&args[0], env)? {
+                    NudgeVal::Str(s) => s,
+                    other => other.to_string(),
+                };
+                elem.text = Some(label.clone());
+                elem.props.insert("label".to_string(), label);
+            }
+            for (k, v_expr) in kwargs {
+                if k == "on_change" {
+                    let hname = match &v_expr.kind {
+                        ExprKind::Ident(s) => s.clone(),
+                        _ => match self.eval_expr(v_expr, env)? {
+                            NudgeVal::Str(s) => s,
+                            other => other.to_string(),
+                        },
+                    };
+                    elem.on_change = Some(hname);
+                } else {
+                    let v = self.eval_expr(v_expr, env)?;
+                    raw.insert(k.clone(), v.to_string());
+                }
+            }
+            if let Some(id) = raw.remove("id") {
+                elem.id = Some(id);
+            }
+            // The bounds are read before the value, because the value is
+            // written back already snapped onto the control's own grid: a
+            // number the program can never be handed must not appear as the
+            // starting position either. All four are *taken* out of `raw`, so
+            // the spill of ordinary props below cannot put an unsnapped value
+            // back over the one the renderer and the handler will read.
+            let min: f64 = raw
+                .remove("min")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0.0);
+            let max: f64 = raw
+                .remove("max")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(100.0);
+            let given: f64 = raw
+                .remove("value")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(min);
+            let step: f64 = raw
+                .remove("step")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_else(|| {
+                    // No step written down: a range of whole numbers steps by
+                    // whole numbers, anything else takes a hundredth of the
+                    // range so a fractional slider is usable without having
+                    // to be told twice.
+                    if min.fract() == 0.0 && max.fract() == 0.0 && given.fract() == 0.0 {
+                        1.0
+                    } else {
+                        (max - min) / 100.0
+                    }
+                });
+            for (k, v) in raw {
+                elem.props.insert(k, v);
+            }
+            elem.props.insert("min".to_string(), min.to_string());
+            elem.props.insert("max".to_string(), max.to_string());
+            elem.props.insert("step".to_string(), step.to_string());
+            elem.props.insert(
+                "value".to_string(),
+                nudge_runtime::ui::slider_num_str(
+                    nudge_runtime::ui::slider_snap(given, min, max, step),
+                    step,
+                ),
+            );
             return Ok(Some(NudgeVal::UiElement {
                 found: true,
                 elem: Box::new(elem),
@@ -9166,5 +9316,365 @@ with open(out_path, "w", encoding="utf-8") as f:
             Some("Dark mode"),
             "…and the label is not overwritten with \"true\""
         );
+    }
+
+    /// A slider is the boolean machinery's third face: the first positional
+    /// argument is the *label*, the number rides as `value`, and the grid it
+    /// may rest on is decided once so the drawing, the drag and the handler
+    /// can never name three different numbers.
+    #[test]
+    fn test_a_slider_carries_its_label_its_number_and_its_grid() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let src = r#"
+            view SlidersView() -> View {
+                column [
+                    slider("Budget", value = 500, min = 0, max = 2000, step = 100, id = "budget"),
+                    slider("Temperature", value = 0.7, min = 0, max = 1),
+                    slider("Quality", id = "quality")
+                ]
+            }
+        "#;
+        let tokens = lex(src).expect("lex failed");
+        let items = parse(tokens).expect("parse failed");
+
+        let Item::View { body, .. } = &items[0] else {
+            panic!("expected a view item, got {:?}", items[0]);
+        };
+        let StmtKind::ExprStmt(expr) = &body[0].kind else {
+            panic!("expected an expression statement in the view body")
+        };
+
+        let mut interp = Interpreter::new();
+        interp.load_items(&items).expect("load_items failed");
+        let env = Rc::new(RefCell::new(Env::new()));
+        let val = interp.eval_expr(expr, &env).expect("eval failed");
+        let NudgeVal::UiElement { found: true, elem } = val else {
+            panic!("expected a UI element, got {val:?}");
+        };
+        let root = &elem;
+        assert_eq!(root.tag, "column");
+        assert_eq!(root.children.len(), 3);
+
+        let budget = &root.children[0];
+        assert_eq!(budget.tag, "slider");
+        assert_eq!(
+            budget.text.as_deref(),
+            Some("Budget"),
+            "the label is the words the user reads, so it rides as `text`"
+        );
+        assert_eq!(
+            budget.props.get("label").map(String::as_str),
+            Some("Budget"),
+            "…and is also named, so the element is self-describing"
+        );
+        assert_eq!(budget.id.as_deref(), Some("budget"));
+        assert_eq!(
+            budget.props.get("value").map(String::as_str),
+            Some("500"),
+            "a whole-numbered step spells a whole number, with no decimal point"
+        );
+        assert_eq!(budget.props.get("min").map(String::as_str), Some("0"));
+        assert_eq!(budget.props.get("max").map(String::as_str), Some("2000"));
+        assert_eq!(
+            budget.props.get("step").map(String::as_str),
+            Some("100"),
+            "the grid is written down, so every layer reads the same one"
+        );
+
+        // No `step` on a whole-numbered range steps by whole numbers…
+        let temp = &root.children[1];
+        // …and a fractional range takes a hundredth of itself, so a
+        // fractional slider is usable without being told twice.
+        assert_eq!(temp.props.get("step").map(String::as_str), Some("0.01"));
+        // The value is spelled in the step's own two places, which is also
+        // what keeps its handler's parameter type steady: `0.70` has a point
+        // on every drag, whole or not.
+        assert_eq!(temp.props.get("value").map(String::as_str), Some("0.70"));
+        assert!(
+            temp.props.get("value").unwrap().contains('.'),
+            "so its numbers keep their decimal point, and its handler always gets a float"
+        );
+
+        // A slider with no bounds at all is still a control, not a crash.
+        let quality = &root.children[2];
+        assert_eq!(quality.props.get("value").map(String::as_str), Some("0"));
+        assert_eq!(quality.props.get("min").map(String::as_str), Some("0"));
+        assert_eq!(quality.props.get("max").map(String::as_str), Some("100"));
+        assert_eq!(quality.props.get("step").map(String::as_str), Some("1"));
+        assert!(quality.on_change.is_none(), "and no handler was named");
+    }
+
+    /// A start that is not on the grid is pulled onto it before it is stored:
+    /// a number the program can never be handed must not be the number the
+    /// handle starts at either.
+    #[test]
+    fn test_a_sliders_starting_value_is_pulled_onto_its_own_grid() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let src = r#"
+            view SnappedView() -> View {
+                column [
+                    slider("Budget", value = 537, min = 0, max = 2000, step = 100, id = "a"),
+                    slider("Half", value = 0.34, min = 0, max = 1, step = 0.5, id = "b"),
+                    slider("Over", value = 9000, min = 0, max = 100, step = 5, id = "c"),
+                    slider("Under", value = -9, min = 0, max = 100, step = 5, id = "d")
+                ]
+            }
+        "#;
+        let tokens = lex(src).expect("lex failed");
+        let items = parse(tokens).expect("parse failed");
+        let Item::View { body, .. } = &items[0] else {
+            panic!("expected a view item")
+        };
+        let StmtKind::ExprStmt(expr) = &body[0].kind else {
+            panic!("expected an expression statement")
+        };
+        let mut interp = Interpreter::new();
+        interp.load_items(&items).expect("load failed");
+        let env = Rc::new(RefCell::new(Env::new()));
+        let NudgeVal::UiElement { found: true, elem } =
+            interp.eval_expr(expr, &env).expect("eval failed")
+        else {
+            panic!("expected a UI element")
+        };
+
+        let value_of = |i: usize| {
+            elem.children[i]
+                .props
+                .get("value")
+                .cloned()
+                .unwrap_or_default()
+        };
+        assert_eq!(value_of(0), "500", "537 is nearer 500 than 600");
+        assert_eq!(value_of(1), "0.5", "0.34 is nearer 0.5 than 0");
+        assert_eq!(value_of(2), "100", "out of range at the top clamps to max");
+        assert_eq!(value_of(3), "0", "…and out of range at the bottom to min");
+    }
+
+    /// The whole point of the control: drag it and the handler is handed a
+    /// *number* — an Int for a whole-numbered step, a Float for a fractional
+    /// one — and the label it wears survives untouched.
+    #[test]
+    fn test_a_change_on_a_slider_reaches_its_handler_as_a_number() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cleanup = EnvReset::set("NUDGE_UI_HEADLESS", "1");
+
+        let src = r#"
+            view DialView(budget: int, rate: float) -> View {
+                column [
+                    slider("Budget", value = budget, min = 0, max = 2000, step = 100, id = "budget", on_change = on_budget),
+                    slider("Rate", value = rate, min = 0, max = 1, step = 0.1, id = "rate", on_change = on_rate)
+                ]
+            }
+
+            agent DialApp {
+                state {
+                    budget: int = 500
+                    rate: float = 0.3
+                }
+
+                fn on_budget(v: int) uses UI {
+                    state.budget = v
+                }
+
+                fn on_rate(v: float) uses UI {
+                    state.rate = v
+                }
+
+                window DialWindow {
+                    title: "Dials",
+                    content: DialView(state.budget, state.rate)
+                }
+            }
+        "#;
+        let tokens = lex(src).expect("lex failed");
+        let items = parse(tokens).expect("parse failed");
+        let mut interp = Interpreter::new();
+        interp.load_items(&items).expect("load_items failed");
+
+        let env = Rc::new(RefCell::new(Env::new()));
+        let app_id = interp
+            .mount_headless_app(&Some("DialApp".to_string()), "DialWindow", &env)
+            .expect("mount failed");
+
+        interp
+            .dispatch_change_headless(app_id, "budget", "1500", &env)
+            .expect("change failed");
+        assert_eq!(
+            interp.agent_store.get_field("DialApp", "budget"),
+            Ok(NudgeVal::Int(1500)),
+            "a whole-numbered step hands its handler an Int — the declared type"
+        );
+
+        interp
+            .dispatch_change_headless(app_id, "rate", "0.7", &env)
+            .expect("change failed");
+        assert_eq!(
+            interp.agent_store.get_field("DialApp", "rate"),
+            Ok(NudgeVal::Float(0.7)),
+            "…and a fractional one a Float, never a string that looks like one"
+        );
+
+        let root = interp.headless_apps[app_id]
+            .root
+            .as_ref()
+            .expect("the window has a root");
+        let elem = root
+            .find_by_id("budget")
+            .expect("the control is still there");
+        assert_eq!(
+            elem.text.as_deref(),
+            Some("Budget"),
+            "the words the user reads survive the drag"
+        );
+        assert_eq!(
+            elem.props.get("value").map(String::as_str),
+            Some("1500"),
+            "…and the state followed the handler back into the element"
+        );
+
+        // A number that arrives off the grid is pulled onto it on the way in,
+        // so a replayed or hand-written change cannot park the handle where
+        // the control's own step says it cannot rest.
+        interp
+            .dispatch_change_headless(app_id, "budget", "1537", &env)
+            .expect("change failed");
+        let root = interp.headless_apps[app_id]
+            .root
+            .as_ref()
+            .expect("still mounted");
+        let elem = root.find_by_id("budget").expect("still there");
+        assert_eq!(
+            elem.props.get("value").map(String::as_str),
+            Some("1500"),
+            "1537 is nearer the 1500 rung than the 1600 one, so it lands there"
+        );
+    }
+
+    /// With no handler the window keeps the number itself — and, exactly as
+    /// with the flags, must never write it over `text`, which for a slider is
+    /// its *label*.
+    #[cfg(feature = "native-gui")]
+    #[test]
+    fn test_an_unheard_slider_change_lands_and_leaves_the_label_alone() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _cleanup = EnvReset::set("NUDGE_UI_HEADLESS", "1");
+
+        let src = r#"
+            view QuietDialView() -> View {
+                column [
+                    slider("Volume", id = "volume")
+                ]
+            }
+
+            agent QuietDialApp {
+                window QuietDialWindow {
+                    title: "Quiet",
+                    content: QuietDialView()
+                }
+            }
+        "#;
+        let tokens = lex(src).expect("lex failed");
+        let items = parse(tokens).expect("parse failed");
+        let mut interp = Interpreter::new();
+        interp.load_items(&items).expect("load_items failed");
+
+        let env = Rc::new(RefCell::new(Env::new()));
+        let app_id = interp
+            .mount_headless_app(&Some("QuietDialApp".to_string()), "QuietDialWindow", &env)
+            .expect("mount failed");
+
+        interp
+            .dispatch_change_headless(app_id, "volume", "80", &env)
+            .expect("change failed");
+        let root = interp.headless_apps[app_id]
+            .root
+            .as_ref()
+            .expect("the window has a root");
+        let elem = root
+            .find_by_id("volume")
+            .expect("the control is still there");
+        assert_eq!(
+            elem.props.get("value").map(String::as_str),
+            Some("80"),
+            "the move still lands, even with nobody listening"
+        );
+        assert_eq!(
+            elem.text.as_deref(),
+            Some("Volume"),
+            "…and the label is not overwritten with \"80\""
+        );
+    }
+
+    /// The shape of a value decides what its handler is handed: a slider
+    /// spells a decimal point exactly when its step has one, so one control
+    /// hands its handler the same type on every drag instead of flipping at
+    /// `72.0`.
+    #[test]
+    fn test_the_kind_of_a_change_is_decided_by_the_tag() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        assert_eq!(
+            Interpreter::change_kind(Some("checkbox")),
+            ChangeKind::Flag,
+            "a boolean control is what it is"
+        );
+        assert_eq!(
+            Interpreter::change_kind(Some("toggle")),
+            ChangeKind::Flag,
+            "…in both of its clothes"
+        );
+        assert_eq!(
+            Interpreter::change_kind(Some("slider")),
+            ChangeKind::Number,
+            "a slider is a number"
+        );
+        assert_eq!(
+            Interpreter::change_kind(Some("input")),
+            ChangeKind::Text,
+            "and a text field is the text"
+        );
+        assert_eq!(
+            Interpreter::change_kind(None),
+            ChangeKind::Text,
+            "an unknown tag reports what it was given"
+        );
+
+        // The spelling, not the digits, decides Int from Float.
+        assert_eq!(
+            Interpreter::change_arg(ChangeKind::Number, "1500"),
+            NudgeVal::Int(1500)
+        );
+        assert_eq!(
+            Interpreter::change_arg(ChangeKind::Number, "0.7"),
+            NudgeVal::Float(0.7)
+        );
+        // A whole number written with a point is still a Float — that point
+        // is the control's own step talking, and the handler's declared type
+        // has to survive the whole range.
+        assert_eq!(
+            Interpreter::change_arg(ChangeKind::Number, "42.0"),
+            NudgeVal::Float(42.0)
+        );
+        assert_eq!(
+            Interpreter::change_arg(ChangeKind::Number, "-3"),
+            NudgeVal::Int(-3)
+        );
+        assert_eq!(
+            Interpreter::change_arg(ChangeKind::Flag, "on"),
+            NudgeVal::Bool(true)
+        );
+        assert_eq!(
+            Interpreter::change_arg(ChangeKind::Text, "hello"),
+            NudgeVal::Str("hello".into())
+        );
+
+        // And the tags that carry their label rather than their value.
+        assert!(Interpreter::is_labelled_tag("checkbox"));
+        assert!(Interpreter::is_labelled_tag("toggle"));
+        assert!(Interpreter::is_labelled_tag("slider"));
+        assert!(!Interpreter::is_labelled_tag("input"));
+        assert!(!Interpreter::is_labelled_tag("button"));
     }
 }

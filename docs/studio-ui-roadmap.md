@@ -664,7 +664,81 @@ surfaces, and only the example exercises the second.
    converts it, so the two surfaces hand the handler the same value.
 
 ### 2.4 `slider`  (1 day)
-- [ ] Numeric value slider for temperature, budget, etc.
+- [x] Numeric value slider for temperature, budget, etc.
+
+**One control, two front ends, one number.** A slider is the first widget
+whose *value* has to survive being written down twice — the interpreter
+lowers it for the native renderer, and the codegen lowers it again for
+`nudgec test`. Every previous control disagreed about nothing that mattered:
+a flag is `true`/`false` whichever way you spell it. A slider is a real
+number, and a real number has a shape.
+
+- **The first positional argument is the label**, the same rule 2.3 set. A
+  number is read off the track, never off the words beside it, so the words
+  earn no positional slot.
+- **`slider(label, value=, min=, max=, step=, id=, on_change=, disabled,
+  tooltip)`.** Bounds default to `0`…`100`. The step defaults to `1` when
+  the value, min and max are all whole numbers and to `(max-min)/100`
+  otherwise — the whole-numbered case is the one people actually write, and
+  a `1/100` step on a budget of 2000 is a control you cannot hit with a
+  mouse.
+- **Decimals come from the *step*, never from the drag.** The number of
+  decimal places is read off the step's own shortest spelling
+  (`ui::step_decimals`), capped at six. A step of `1` therefore spells
+  `1400`, never `1400.0` — which is what makes the handler's type stable.
+- **The handler gets `Int` when the spelling carries no point and `Float`
+  when it does** (`ui::slider_num_str` → `change_arg`). A whole-numbered
+  slider must hand its handler the same type on every drag; the alternative
+  is a `state.budget` that flips from `int` to `float` the first time it is
+  written, and every downstream `if` reading a type it was never handed.
+- **A press outside the track is absorbed and does nothing.** The label is
+  part of the row — pressing it must not slam the value to a bound.
+  `x_to_value` clamps, so a click at the far right of the *label* used to
+  land on the maximum: a read-only click that silently rewrote the number.
+  `begin_slider_drag` now rejects a press outside `[track.x - overhang,
+  track.x + track.w + overhang]`.
+- **Id-less and disabled sliders are inert** and never light, the rule 2.2
+  and 2.3 both set. They still absorb the press.
+- **Drag owns the pointer.** A drag that lets a second control steal the
+  move is a drag that changes two things at once. The scrollbar is asked
+  first (it was there first), then the slider, then buttons and flags.
+- **`LayoutBox` carries `slider: Option<SliderSpec>`**, the same snapshot
+  decision `options` and `checked` made before it: the drawing, the press
+  and the value written back have to agree about one state.
+- **The drawing asks the theme, not the caller.** Groove, accent fill and a
+  circular handle; the label is drawn by the caller beside it, so a slider
+  sits in a row like every other labelled control.
+
+**Verified:** fmt OK · clippy `-D warnings` clean · **953 passed / 0 failed /
+1 ignored** (27 new tests across `ui.rs`, `ui_window.rs`, `check.rs`,
+`bytecode.rs` and the interpreter — the step deriving its decimals, the snap
+landing on a rung, the handle never hanging off a stop, the drag carrying the
+value, the label press being absorbed without moving anything, a disabled
+slider changing no pixel, the dimmed fill being the accent lerped to the
+background, the checker requiring `int or float`, and the codegen spelling
+matching Rust). Live on X11 with the new `examples/slider_demo.ndg`: the
+handles sitting where `value_to_x` predicted (74.5 / 81.5 / 152.5 against a
+track at x=30), a drag carrying `500`→`1400` while only that row and its
+readout changed and the other two rows stayed byte-identical, the same drag
+snapping back to the rung **500** and leaving the window **byte-identical to
+its original baseline** (bbox `None`), a groove press landing on rung 1700,
+and a disabled slider drag leaving **zero pixels changed**.
+
+**A third defect the example caught, and the reason the codegen is now
+tested against Rust rather than against a second copy of the expectation.**
+`nudgec test` runs the generated Python, not the native renderer, so a slider
+has its arithmetic written down twice. The Python port spelled `1.0` as
+`"1.0"` where Rust writes `"1"` — one extra decimal point. The consequence
+was not cosmetic: the point is what decides whether the handler is handed an
+`Int` or a `Float`, so a budget slider reported `500.0` in `nudgec test` and
+`500` in the window. A second drift in the same port — Python's `round()`
+sends a halfway case to the *even* neighbour where Rust's `f64::round()`
+sends it *away from zero* — put a drag resting exactly between two rungs on a
+different rung in each front end (25 with step 10 → 20 in Python, 30 in
+Rust). Both fixed in `codegen.rs`, and `slider_python_and_native_spell_and_
+snap_identically` now computes the expected spelling and snap with
+`nudge_runtime::ui`'s own functions and compares the generated module against
+them — the test fails against either bug, verified by reverting each in turn.
 
 ### 2.5 `progress` / `spinner`  (1 day)
 - [ ] Rotating indicator while a reply is loading; indeterminate mode

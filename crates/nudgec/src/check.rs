@@ -1754,6 +1754,55 @@ fn check_expr_pos(
                         }
                         return Ty::View;
                     }
+                    // A slider hands its handler the new value as a number —
+                    // an Int when the value lands on a whole number, a Float
+                    // otherwise — so a handler declaring `v: string` would be
+                    // handed something the type could not hold. Caught here
+                    // rather than at the first drag.
+                    "slider" => {
+                        for a in args {
+                            check_expr(a, locals, g, errs);
+                        }
+                        for (k, v) in kwargs {
+                            check_expr(v, locals, g, errs);
+                            if k == "on_change" {
+                                if let ExprKind::Ident(ref hname) = v.kind {
+                                    if let Some(effs) = g.fn_effects.get(hname) {
+                                        if !effs.iter().any(|e| e == "UI") {
+                                            errs.push(CheckError {
+                                                span: None,
+                                                code: "E1001",
+                                                msg: format!("event handler '{hname}' missing UI effect: event handlers require `uses UI`"),
+                                            });
+                                        }
+                                    }
+                                    if let Some((params, _)) = g.fns.get(hname) {
+                                        if params.len() > 1 {
+                                            errs.push(CheckError {
+                                                span: None,
+                                                code: "E1003",
+                                                msg: format!("event handler '{hname}' signature mismatch: expected at most 1 parameter"),
+                                            });
+                                        } else if params.len() == 1 {
+                                            let param_ty =
+                                                resolve(&params[0].1, g, &mut Vec::new(), errs);
+                                            if param_ty != Ty::Int
+                                                && param_ty != Ty::Float
+                                                && param_ty != Ty::Unknown
+                                            {
+                                                errs.push(CheckError {
+                                                    span: None,
+                                                    code: "E1003",
+                                                    msg: format!("event handler '{hname}' signature mismatch: parameter '{}' must be of type int or float", params[0].0),
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        return Ty::View;
+                    }
                     "text" | "button" | "input" | "bubble" | "select" => {
                         for a in args {
                             check_expr(a, locals, g, errs);
@@ -1949,7 +1998,9 @@ fn check_expr_pos(
                     } else if prefix == "ui" {
                         match name.as_str() {
                             "column" | "row" | "scroll" | "text" | "button" | "input"
-                            | "bubble" | "select" | "checkbox" | "toggle" => return Ty::View,
+                            | "bubble" | "select" | "checkbox" | "toggle" | "slider" => {
+                                return Ty::View
+                            }
                             other => {
                                 errs.push(CheckError {
                                     span: None,
@@ -5741,6 +5792,142 @@ fn f() -> int | string {
                 .iter()
                 .any(|e| e.code == "E1001" && e.msg.contains("on_dark")),
             "an event handler still needs `uses UI`, got {no_effect:?}"
+        );
+    }
+
+    /// A slider hands its handler a *number*, so a handler declaring a
+    /// string would be handed something the type cannot hold. Caught at check
+    /// time rather than at the first drag, when the value is already gone.
+    #[test]
+    fn test_a_sliders_change_handler_must_take_a_number() {
+        // Both number spellings are right: a whole-numbered step arrives as
+        // an Int, a fractional one as a Float, and a handler may declare
+        // either — the runtime picks by the step.
+        for decl in ["int", "float"] {
+            let good = check_src(&format!(
+                r#"
+            fn on_volume(v: {decl}) uses UI {{
+            }}
+
+            view GoodView() -> View {{
+                column [
+                    slider("Volume", id = "volume", on_change = on_volume)
+                ]
+            }}
+        "#
+            ));
+            assert!(
+                good.is_empty(),
+                "a {decl} handler is exactly right, got {good:?}"
+            );
+        }
+
+        let bad = check_src(
+            r#"
+            fn on_volume(v: string) uses UI {
+            }
+
+            view BadView() -> View {
+                column [
+                    slider("Volume", id = "volume", on_change = on_volume)
+                ]
+            }
+        "#,
+        );
+        assert!(
+            bad.iter()
+                .any(|e| e.code == "E1003" && e.msg.contains("must be of type int or float")),
+            "expected E1003 requiring a number, got {bad:?}"
+        );
+
+        // A handler with nothing declared still passes: the type is inferred
+        // at the call, and refusing it would break every handler that never
+        // wrote a signature down.
+        let bare = check_src(
+            r#"
+            fn on_volume() uses UI {
+            }
+
+            view BareView() -> View {
+                column [
+                    slider("Volume", id = "volume", on_change = on_volume)
+                ]
+            }
+        "#,
+        );
+        assert!(
+            bare.is_empty(),
+            "a parameterless handler is fine, it just ignores the value: {bare:?}"
+        );
+
+        // As with every other control, an event handler still needs the UI
+        // effect it is reaching into.
+        let no_effect = check_src(
+            r#"
+            fn on_volume(v: int) {
+            }
+
+            view NoEffectView() -> View {
+                column [
+                    slider("Volume", id = "volume", on_change = on_volume)
+                ]
+            }
+        "#,
+        );
+        assert!(
+            no_effect
+                .iter()
+                .any(|e| e.code == "E1001" && e.msg.contains("on_volume")),
+            "an event handler still needs `uses UI`, got {no_effect:?}"
+        );
+
+        // Two parameters is one too many: the slider has only the value to
+        // give, and a handler that would need a second is a handler about a
+        // different control.
+        let too_many = check_src(
+            r#"
+            fn on_volume(v: int, w: int) uses UI {
+            }
+
+            view WideView() -> View {
+                column [
+                    slider("Volume", id = "volume", on_change = on_volume)
+                ]
+            }
+        "#,
+        );
+        assert!(
+            too_many
+                .iter()
+                .any(|e| e.code == "E1003" && e.msg.contains("at most 1 parameter")),
+            "expected E1003 for the arity, got {too_many:?}"
+        );
+    }
+
+    /// `slider` is a first-class element name: it typechecks as a View and is
+    /// accepted wherever the other controls are.
+    #[test]
+    fn test_slider_is_an_element_wherever_elements_are() {
+        let ok = check_src(
+            r#"
+            fn on_volume(v: int) uses UI {
+            }
+
+            fn quiet() -> bool {
+                false
+            }
+
+            view DialsView() -> View {
+                column [
+                    slider("Volume", value = 20, min = 0, max = 100, step = 1, id = "volume", on_change = on_volume, disabled = false, tooltip = "Louder"),
+                    text("20")
+                ]
+            }
+        "#,
+        );
+        assert!(
+            ok.is_empty(),
+            "every documented property is accepted: {ok:?}"
         );
     }
 }
