@@ -1665,6 +1665,130 @@ pub fn tokenize_code_line(line: &str) -> Vec<(&str, SyntaxTokenKind)> {
     tokens
 }
 
+/// Rich text span style within an inline text run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RichSpanKind {
+    Plain,
+    Bold,
+    Code,
+    Link,
+}
+
+/// Tokenize an inline text line into rich formatting spans (**bold**, `code`, [link](url)).
+pub fn parse_rich_spans(line: &str) -> Vec<(&str, RichSpanKind)> {
+    let mut spans = Vec::new();
+    let bytes = line.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        if bytes[i] == b'*' && i + 1 < len && bytes[i + 1] == b'*' {
+            if let Some(rel_end) = line[i + 2..].find("**") {
+                let end = i + 2 + rel_end;
+                spans.push((&line[i + 2..end], RichSpanKind::Bold));
+                i = end + 2;
+                continue;
+            }
+        }
+        if bytes[i] == b'`' {
+            if let Some(rel_end) = line[i + 1..].find('`') {
+                let end = i + 1 + rel_end;
+                spans.push((&line[i + 1..end], RichSpanKind::Code));
+                i = end + 1;
+                continue;
+            }
+        }
+        if bytes[i] == b'[' {
+            if let Some(bracket_end) = line[i + 1..].find(']') {
+                let label_end = i + 1 + bracket_end;
+                if label_end + 1 < len && bytes[label_end + 1] == b'(' {
+                    if let Some(paren_end) = line[label_end + 2..].find(')') {
+                        let link_end = label_end + 2 + paren_end;
+                        spans.push((&line[i + 1..label_end], RichSpanKind::Link));
+                        i = link_end + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Plain text run until next markdown delimiter
+        let mut next_delim = len;
+        for (idx, &b) in bytes[i..].iter().enumerate() {
+            if (b == b'*' && i + idx + 1 < len && bytes[i + idx + 1] == b'*')
+                || b == b'`'
+                || b == b'['
+            {
+                next_delim = i + idx;
+                break;
+            }
+        }
+        if next_delim > i {
+            spans.push((&line[i..next_delim], RichSpanKind::Plain));
+            i = next_delim;
+        } else {
+            spans.push((&line[i..i + 1], RichSpanKind::Plain));
+            i += 1;
+        }
+    }
+
+    spans
+}
+
+/// Draws an inline rich text line (`line_str`) honouring **bold**, `code`, and [link](url) markup.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_rich_line<F>(
+    fonts: &FontEngine,
+    theme: &Theme,
+    start_x: i32,
+    start_y: i32,
+    line_str: &str,
+    default_color: u32,
+    clip: Option<Rect>,
+    mut draw_px: F,
+) where
+    F: FnMut(i32, i32, i32, i32, u32, f32),
+{
+    let spans = parse_rich_spans(line_str);
+    let mut cur_x = start_x;
+
+    for (span_text, kind) in spans {
+        let (face, color) = match kind {
+            RichSpanKind::Plain => (FaceKind::Ui, default_color),
+            RichSpanKind::Bold => (FaceKind::UiBold, default_color),
+            RichSpanKind::Code => (FaceKind::Mono, theme.input_border_focused),
+            RichSpanKind::Link => (FaceKind::Ui, theme.button_bg),
+        };
+
+        if let Some(c) = clip {
+            draw_text_ttf_clipped(
+                fonts,
+                face,
+                cur_x,
+                start_y,
+                span_text,
+                c,
+                |px, py, w, h, cov| {
+                    draw_px(px, py, w, h, color, cov);
+                },
+            );
+        } else {
+            draw_text_ttf(
+                fonts,
+                face,
+                cur_x,
+                start_y,
+                span_text,
+                |px, py, w, h, cov| {
+                    draw_px(px, py, w, h, color, cov);
+                },
+            );
+        }
+
+        cur_x += fonts.prefix_width(face, span_text, span_text.chars().count());
+    }
+}
+
 /// The list a `select` opens, painted as one card over everything beneath it.
 /// The rows are drawn rather than laid out, so opening a field never reflows
 /// the form — the card takes the room below the field, or above it when there
@@ -4896,15 +5020,18 @@ impl<D: UiDispatcher> NativeApp<D> {
                     if let Some(ref text) = lbox.text {
                         let color = theme.text;
                         let fonts = &self.fonts;
-                        match clip {
-                            Some(c) => draw_text_ttf_clipped(
+                        let cell_h = fonts.cell_h;
+                        for (idx, line) in text.split('\n').enumerate() {
+                            let line_y = ry + 2 + (idx as i32 * cell_h);
+                            draw_rich_line(
                                 fonts,
-                                FaceKind::Ui,
+                                &theme,
                                 rx,
-                                ry + 2,
-                                text,
-                                c,
-                                |px, py, w, h, cov| {
+                                line_y,
+                                line,
+                                color,
+                                clip,
+                                |px, py, w, h, col, cov| {
                                     draw_rect_alpha(
                                         &mut buffer,
                                         stride,
@@ -4913,31 +5040,11 @@ impl<D: UiDispatcher> NativeApp<D> {
                                         py,
                                         w,
                                         h,
-                                        color,
+                                        col,
                                         cov,
                                     );
                                 },
-                            ),
-                            None => draw_text_ttf(
-                                fonts,
-                                FaceKind::Ui,
-                                rx,
-                                ry + 2,
-                                text,
-                                |px, py, w, h, cov| {
-                                    draw_rect_alpha(
-                                        &mut buffer,
-                                        stride,
-                                        h_usize,
-                                        px,
-                                        py,
-                                        w,
-                                        h,
-                                        color,
-                                        cov,
-                                    );
-                                },
-                            ),
+                            );
                         }
                     }
                 }
@@ -5003,27 +5110,32 @@ impl<D: UiDispatcher> NativeApp<D> {
                             }),
                         };
                         if let Some(tc) = text_clip {
-                            draw_text_ttf_clipped(
-                                fonts,
-                                FaceKind::Ui,
-                                tx,
-                                ty,
-                                text,
-                                tc,
-                                |px, py, w, h, cov| {
-                                    draw_rect_alpha(
-                                        &mut buffer,
-                                        stride,
-                                        h_usize,
-                                        px,
-                                        py,
-                                        w,
-                                        h,
-                                        fg,
-                                        cov,
-                                    );
-                                },
-                            );
+                            let cell_h = fonts.cell_h;
+                            for (idx, line) in text.split('\n').enumerate() {
+                                let line_y = ty + (idx as i32 * cell_h);
+                                draw_rich_line(
+                                    fonts,
+                                    &theme,
+                                    tx,
+                                    line_y,
+                                    line,
+                                    fg,
+                                    Some(tc),
+                                    |px, py, w, h, col, cov| {
+                                        draw_rect_alpha(
+                                            &mut buffer,
+                                            stride,
+                                            h_usize,
+                                            px,
+                                            py,
+                                            w,
+                                            h,
+                                            col,
+                                            cov,
+                                        );
+                                    },
+                                );
+                            }
                         }
                     }
                 }
@@ -8123,6 +8235,19 @@ mod tests {
         assert_eq!(b_boxes[0].text.as_deref(), Some("YOU"));
         assert_eq!(bh, 22);
         assert!(bw >= 32);
+    }
+
+    #[test]
+    fn test_parse_rich_spans() {
+        let input = "Hello **world**, check `cargo test` and [docs](https://nudge.dev) today!";
+        let spans = parse_rich_spans(input);
+        assert_eq!(spans[0], ("Hello ", RichSpanKind::Plain));
+        assert_eq!(spans[1], ("world", RichSpanKind::Bold));
+        assert_eq!(spans[2], (", check ", RichSpanKind::Plain));
+        assert_eq!(spans[3], ("cargo test", RichSpanKind::Code));
+        assert_eq!(spans[4], (" and ", RichSpanKind::Plain));
+        assert_eq!(spans[5], ("docs", RichSpanKind::Link));
+        assert_eq!(spans[6], (" today!", RichSpanKind::Plain));
     }
 
     #[test]

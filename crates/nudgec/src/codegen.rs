@@ -1662,6 +1662,19 @@ def badge(*args, **kwargs):
 
 def tag(*args, **kwargs):
     return _badge(args, kwargs)
+
+
+def _bubble(args, kwargs):
+    bid = kwargs.get("id")
+    text = str(args[0]) if args else str(kwargs.get("text", ""))
+    role = kwargs.get("role", "assistant")
+    props = {k: str(v) for k, v in kwargs.items() if k not in ("id", "text", "role")}
+    props["role"] = str(role)
+    return _UiElement(tag="bubble", id=bid, text=text if text else None, props=props)
+
+
+def bubble(*args, **kwargs):
+    return _bubble(args, kwargs)
 "#;
 
 /// Shared `nudgec test` driver: load a generated module by path and run

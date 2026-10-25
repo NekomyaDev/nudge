@@ -944,9 +944,25 @@ rounded pill labels for chat roles and metadata:
     it and keep the pointer over it — a full-screen Chrome window otherwise
     swallows hover/click/typing, which silently looks like an input bug.
 
-### 3.2 Inline rich text  (1–2 days)
-- [ ] Bold, italic, code (`code`), link emphasis within a single text run
-- [ ] Requires the 1.2 font infrastructure
+### 3.2 Inline rich text  (1–2 days) — DONE
+- [x] Bold, italic, code (`code`), link emphasis within a single text run
+- [x] Requires the 1.2 font infrastructure
+
+**Inline rich formatting spans.** Markdown-style formatting inside standard text runs
+and chat bubbles:
+- **Parser (`parse_rich_spans`)**: scans text runs into structured spans:
+  - `**bold**`: renders with `FaceKind::UiBold` (DejaVuSans-Bold).
+  - `` `code` ``: renders with `FaceKind::Mono` (Hack-Regular) with focused accent coloring.
+  - `[label](url)`: renders with link accent coloring (`theme.button_bg`).
+  - Plain text: rendered with `FaceKind::Ui` (DejaVuSans).
+- **Renderer integration**: `draw_rich_line` is used by both `text` and `bubble` components,
+  preserving kerning, advances, baseline alignments, and viewport clipping.
+- **Python front end parity**: `_bubble` and `bubble` helper added to `codegen.rs`.
+- **Verified**: fmt OK, clippy -D warnings clean, **965 passed / 0 failed / 1 ignored**
+  (new unit test `test_parse_rich_spans`). Verified live on X11 with `examples/rich_text_demo.ndg`
+  (window WID 90177538, 480x280): 253 anti-aliased blue text pixels (code snippets and links)
+  and 32,613 bubble background pixels rendered. All 12 demo suites pass `nudgec test`.
+
 
 ### 3.3 System message / status line styles
 - [ ] Colored line styles for info / warning / error

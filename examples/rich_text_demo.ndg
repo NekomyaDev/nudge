@@ -1,0 +1,28 @@
+// examples/rich_text_demo.ndg
+// Demonstrates inline rich text rendering (**bold**, `code`, and [link](url)) within text and chat bubbles.
+
+view RichTextDemo() -> View {
+    column(padding = 24, gap = 16) [
+        text("Nudge Studio — Inline Rich Text Demo"),
+        text("Here is standard text with **bold emphasis**, an inline `code snippet`, and a [docs reference](https://nudge.dev)."),
+        bubble("Nudge Studio supports **bold typography**, `Hack monospace code`, and [links](https://nudge.dev) inside chat bubbles too!", role = "assistant")
+    ]
+}
+
+agent RichApp {
+    window MainWindow {
+        title: "Inline Rich Text Demo",
+        width: 480,
+        height: 280,
+        content: RichTextDemo()
+    }
+}
+
+fn main() uses UI {
+    RichApp.MainWindow.open()
+}
+
+test "rich text demo mounts and text elements exist" {
+    let app = RichApp.MainWindow.mount_headless()
+    assert app.find_text("Nudge Studio — Inline Rich Text Demo").exists()
+}
