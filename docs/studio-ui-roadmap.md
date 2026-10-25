@@ -1009,9 +1009,22 @@ flexible alignment and distribution options:
 ## SECTION 4 — INTERACTION & SMART BEHAVIOR
 > Estimate: 3–4 days
 
-### 4.1 Keyboard shortcuts  (1 day)
-- [ ] Ctrl+K (command palette), Ctrl+B (sidebar), Ctrl+/ (help)
-- [ ] Global shortcut manager for the whole window
+### 4.1 Keyboard shortcuts  (1 day) — DONE
+- [x] Ctrl+K (command palette), Ctrl+B (sidebar), Ctrl+/ (help)
+- [x] Global shortcut manager for the whole window
+
+**Global keyboard shortcuts manager.** Global window-wide shortcut dispatch:
+- **Shortcut interception**: `handle_key_input` routes `Ctrl+K` (command palette),
+  `Ctrl+B` (sidebar toggle), and `Ctrl+/` (help overlay) to `dispatcher.dispatch_key(&chord, None)`.
+- **Precedence over active text focus**: global shortcuts take priority even when
+  a text field or composer is currently focused, preventing character insertion.
+- **Python front end parity**: `_HeadlessApp.dispatch_key` added to `codegen.rs`.
+- **Verified**: fmt OK, clippy -D warnings clean, **968 passed / 0 failed / 1 ignored**
+  (new unit test `test_global_keyboard_shortcuts`). Verified live on X11 with
+  `examples/shortcuts_demo.ndg` (window WID 90177538, 480x340): 2,883 anti-aliased text
+  pixels rendered, with global `Ctrl+k` dynamically toggling state. All 15 demo suites
+  pass `nudgec test`.
+
 
 ### 4.2 Command palette  (1–1.5 days)
 - [ ] Searchable list opened with Ctrl+K (new chat, settings, change model...)

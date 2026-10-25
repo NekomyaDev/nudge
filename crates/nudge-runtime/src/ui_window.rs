@@ -6869,6 +6869,17 @@ impl<D: UiDispatcher> NativeApp<D> {
                         st.move_doc_end(shift);
                         key_name = "End".to_string();
                     }
+                    Key::Character(s)
+                        if s.eq_ignore_ascii_case("k")
+                            || s.eq_ignore_ascii_case("b")
+                            || s == "/" =>
+                    {
+                        // Global shortcuts take precedence even when focused in input
+                        let chord = format!("Ctrl+{s}");
+                        self.dispatcher.dispatch_key(&chord, None);
+                        self.render();
+                        return;
+                    }
                     _ => {}
                 }
             } else {
@@ -8497,6 +8508,47 @@ mod tests {
         assert_eq!(cw, 300);
         assert_eq!(col_boxes.len(), 1);
         assert!(col_boxes[0].rect.x > 200);
+    }
+
+    #[test]
+    fn test_global_keyboard_shortcuts() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "Shortcuts".into(),
+                width: 300,
+                height: 300,
+            },
+            dummy,
+        );
+
+        // 1. Global shortcut when unfocused
+        app.ctrl_pressed = true;
+        app.handle_key_input(&Key::Character("k".into()), Some("k"));
+        assert_eq!(*app.dispatcher.last_key, "Ctrl+k");
+
+        app.handle_key_input(&Key::Character("b".into()), Some("b"));
+        assert_eq!(*app.dispatcher.last_key, "Ctrl+b");
+
+        app.handle_key_input(&Key::Character("/".into()), Some("/"));
+        assert_eq!(*app.dispatcher.last_key, "Ctrl+/");
+
+        // 2. Global shortcut when focused inside input takes precedence
+        let mut inp = test_box("input", "prompt_box", 50, false);
+        inp.text = Some("hello".into());
+        app.layout_boxes = vec![inp];
+        app.focused_id = Some("prompt_box".into());
+
+        app.ctrl_pressed = true;
+        app.handle_key_input(&Key::Character("k".into()), Some("k"));
+        assert_eq!(*app.dispatcher.last_key, "Ctrl+k");
     }
 
     #[test]

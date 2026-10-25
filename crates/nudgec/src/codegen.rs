@@ -1219,7 +1219,7 @@ pub const UI_RUNTIME_PY: &str = r#"class _TextStr(str):
 
 
 class _UiElement:
-    def __init__(self, tag="", id=None, text=None, props=None, children=None, on_click=None, on_change=None, found=True):
+    def __init__(self, tag="", id=None, text=None, props=None, children=None, on_click=None, on_change=None, on_key=None, found=True):
         self.tag = tag
         self.id = id
         self._raw_text = text
@@ -1227,6 +1227,7 @@ class _UiElement:
         self.children = children or []
         self.on_click = on_click
         self.on_change = on_change
+        self.on_key = on_key
         self.found = found
 
     @property
@@ -1359,6 +1360,35 @@ class _HeadlessApp:
             if callable(self._render_fn):
                 self.root = self._render_fn()
 
+    def dispatch_key(self, *args):
+        """Dispatch a keystroke or shortcut either to a specific element or to
+        the active/first element with on_key."""
+        target_id = args[0] if len(args) >= 2 else None
+        key = args[1] if len(args) >= 2 else args[0]
+        elem = self.find(target_id) if target_id else None
+        handler = None
+        if elem and elem.found and elem.on_key:
+            handler = elem.on_key
+        elif self.root:
+            def _find_key(node):
+                if node.on_key:
+                    return node.on_key
+                for c in node.children:
+                    h = _find_key(c)
+                    if h:
+                        return h
+                return None
+            handler = _find_key(self.root)
+        if handler:
+            if callable(handler):
+                handler(key)
+            elif isinstance(handler, str):
+                fn = getattr(self.agent, handler, None) or globals().get(handler)
+                if callable(fn):
+                    fn(key)
+            if callable(self._render_fn):
+                self.root = self._render_fn()
+
 
 class _Window:
     def __init__(self, title="", width=None, height=None, render_fn=None, agent=None):
@@ -1414,8 +1444,9 @@ def button(*args, **kwargs):
 def input(*args, **kwargs):
     inp_id = kwargs.get("id")
     on_change = kwargs.get("on_change")
-    props = {k: str(v) for k, v in kwargs.items() if k not in ("id", "on_change")}
-    return _UiElement(tag="input", id=inp_id, on_change=on_change, props=props)
+    on_key = kwargs.get("on_key")
+    props = {k: str(v) for k, v in kwargs.items() if k not in ("id", "on_change", "on_key")}
+    return _UiElement(tag="input", id=inp_id, on_change=on_change, on_key=on_key, props=props)
 
 
 def select(*args, **kwargs):

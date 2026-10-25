@@ -1,0 +1,68 @@
+// examples/shortcuts_demo.ndg
+// Demonstrates window-wide global keyboard shortcuts (Ctrl+K, Ctrl+B, Ctrl+/).
+
+view ShortcutsDemo(palette_open: bool, sidebar_open: bool, help_open: bool, last_key: string) -> View {
+    column(padding = 24, gap = 14) [
+        text("Nudge Studio — Keyboard Shortcuts Demo"),
+        text("Press Ctrl+K (Palette), Ctrl+B (Sidebar), or Ctrl+/ (Help) anywhere!"),
+        divider(),
+        row(gap = 12) [
+            badge("COMMAND PALETTE: " + if palette_open { "OPEN" } else { "CLOSED" }),
+            badge("SIDEBAR: " + if sidebar_open { "OPEN" } else { "CLOSED" }),
+            badge("HELP: " + if help_open { "OPEN" } else { "CLOSED" })
+        ],
+        text("Last Shortcut Received: " + last_key),
+        divider(),
+        text("Try typing inside input — global shortcuts still trigger:"),
+        input(id = "composer", on_key = on_shortcut, placeholder = "Focus here and press Ctrl+K")
+    ]
+}
+
+agent ShortcutsApp {
+    state {
+        palette: bool = false
+        sidebar: bool = false
+        help: bool = false
+        last: string = "None"
+    }
+
+    fn on_shortcut(key: string) uses UI {
+        state.last = key
+        if key == "Ctrl+k" or key == "Ctrl+K" {
+            state.palette = !state.palette
+        } else if key == "Ctrl+b" or key == "Ctrl+B" {
+            state.sidebar = !state.sidebar
+        } else if key == "Ctrl+/" {
+            state.help = !state.help
+        }
+    }
+
+    window MainWindow {
+        title: "Shortcuts Demo",
+        width: 480,
+        height: 340,
+        content: ShortcutsDemo(state.palette, state.sidebar, state.help, state.last)
+    }
+}
+
+fn main() uses UI {
+    ShortcutsApp.MainWindow.open()
+}
+
+test "shortcuts demo toggles on global keys" {
+    let app = ShortcutsApp.MainWindow.mount_headless()
+    assert ShortcutsApp.state.palette == false
+    assert ShortcutsApp.state.sidebar == false
+
+    app.dispatch_key("Ctrl+k")
+    assert ShortcutsApp.state.palette == true
+    assert ShortcutsApp.state.last == "Ctrl+k"
+
+    app.dispatch_key("Ctrl+b")
+    assert ShortcutsApp.state.sidebar == true
+    assert ShortcutsApp.state.last == "Ctrl+b"
+
+    app.dispatch_key("Ctrl+/")
+    assert ShortcutsApp.state.help == true
+    assert ShortcutsApp.state.last == "Ctrl+/"
+}
