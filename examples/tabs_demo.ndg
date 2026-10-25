@@ -1,0 +1,73 @@
+// examples/tabs_demo.ndg
+// Demonstrates tabbed navigation between Chat, Settings, and Logs.
+
+view TabsDemo(active: string, model: string, dark: bool) -> View {
+    column(padding = 24, gap = 16) [
+        text("Nudge Studio — Tabs Demo"),
+        tabs(active, options = ["Chat", "Settings", "Logs"], id = "nav_tabs", on_change = on_tab),
+        if active == "Chat" {
+            column(gap = 8) [
+                text("Active Tab: Chat Window"),
+                text("Model selected: " + model),
+                text("Chat history empty. Ready to prompt.")
+            ]
+        } else if active == "Settings" {
+            column(gap = 8) [
+                text("Active Tab: Settings"),
+                checkbox("Dark theme enabled", value = dark, id = "dark_toggle", on_change = on_dark),
+                text("System prompt settings: Default")
+            ]
+        } else {
+            column(gap = 8) [
+                text("Active Tab: System Logs"),
+                text("[12:00:01] System initialised successfully."),
+                text("[12:00:02] Model ready.")
+            ]
+        }
+    ]
+}
+
+agent TabsApp {
+    state {
+        active: string = "Chat"
+        model: string = "gemini-3.8-flash"
+        dark: bool = true
+    }
+
+    fn on_tab(tab: string) uses UI {
+        state.active = tab
+    }
+
+    fn on_dark(val: bool) uses UI {
+        state.dark = val
+    }
+
+    window MainWindow {
+        title: "Tabs Navigation",
+        width: 440,
+        height: 380,
+        content: TabsDemo(state.active, state.model, state.dark)
+    }
+}
+
+fn main() uses UI {
+    TabsApp.MainWindow.open()
+}
+
+test "tabs demo switches tabs and state" {
+    let app = TabsApp.MainWindow.mount_headless()
+    assert app.find("nav_tabs").exists()
+    assert app.find_text("Active Tab: Chat Window").exists()
+
+    app.dispatch_change("nav_tabs", "Settings")
+    assert TabsApp.state.active == "Settings"
+    assert app.find_text("Active Tab: Settings").exists()
+
+    app.dispatch_change("nav_tabs", "Logs")
+    assert TabsApp.state.active == "Logs"
+    assert app.find_text("Active Tab: System Logs").exists()
+
+    app.dispatch_change("nav_tabs", "Chat")
+    assert TabsApp.state.active == "Chat"
+    assert app.find_text("Active Tab: Chat Window").exists()
+}

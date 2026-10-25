@@ -817,8 +817,28 @@ assets with scaling, alpha transparency, corner rounding, and caching:
   pass `nudgec test`.
 
 
-### 2.7 `tabs`  (0.5 day)
-- [ ] Chat tabs, settings sections
+### 2.7 `tabs`  (0.5 day) — DONE
+- [x] Chat tabs, settings sections
+
+**Section and conversation switcher.** `tabs` displays a horizontal list of tab
+choices, highlighting the active tab with an accent surface and bottom indicator:
+- **`tabs(active, options = [...], id=, on_change=, disabled=, tooltip=)`**:
+  first positional specifies the currently active tab label.
+- **Rendering**: each tab segment is rendered with proportional text advance,
+  a rounded pill-tab outline, and the active tab receives `theme.input_bg` surface
+  plus a 2px high accent underline (`theme.input_border_focused`).
+- **Hit testing & dispatch**: a click calculates which segment was pressed along
+  the horizontal span and triggers `on_change(chosen_tab)`. Disabled tabs rows
+  absorb the click without dispatching.
+- **Python front end parity**: `_tabs` helper added to `codegen.rs`.
+- **Verified**: fmt OK, clippy -D warnings clean, **961 passed / 0 failed / 1 ignored**
+  (new unit test `test_tabs_layout_and_interaction`). Verified live on X11 with
+  `examples/tabs_demo.ndg` (window WID 90177538, 440x380): initial state rendered
+  Chat tab active at `(34, 70)` to `(97, 103)` (width 64); clicking Settings tab
+  at `(880, 415)` live on screen moved active accent bounds to `(98, 70)` to `(201, 103)`
+  (width 104) and switched view to Settings containing the Dark mode checkbox.
+  All 8 demo suites pass `nudgec test`.
+
 
 ### 2.8 `code_block`  (2 days)
 - [ ] Syntax-highlighted code block, line numbers, indentation (monospace)

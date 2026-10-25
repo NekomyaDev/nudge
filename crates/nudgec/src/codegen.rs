@@ -1595,6 +1595,25 @@ def _icon(args, kwargs):
 
 def icon(*args, **kwargs):
     return _icon(args, kwargs)
+
+
+def _tabs(args, kwargs):
+    tid = kwargs.get("id")
+    on_change = kwargs.get("on_change")
+    val = str(args[0]) if args else str(kwargs.get("value", ""))
+    options = kwargs.get("options", [])
+    if isinstance(options, list):
+        opt_str = "\n".join(str(o) for o in options)
+    else:
+        opt_str = str(options)
+    props = {k: str(v) for k, v in kwargs.items() if k not in ("id", "on_change", "value", "options")}
+    props["options"] = opt_str
+    props["value"] = val
+    return _UiElement(tag="tabs", id=tid, text=val if val else None, on_change=on_change, props=props)
+
+
+def tabs(*args, **kwargs):
+    return _tabs(args, kwargs)
 "#;
 
 /// Shared `nudgec test` driver: load a generated module by path and run

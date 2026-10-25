@@ -672,6 +672,16 @@ pub fn estimate_element_size(elem: &UiElement, max_w: i64) -> (i64, i64) {
                 .unwrap_or(if elem.tag == "icon" { 24 } else { 48 });
             (w.min(max_w), h)
         }
+        "tabs" => {
+            let options: Vec<&str> = elem
+                .props
+                .get("options")
+                .map(|o| o.split('\n').filter(|s| !s.is_empty()).collect())
+                .unwrap_or_default();
+            let total_chars: usize = options.iter().map(|s| s.chars().count()).sum();
+            let w = (total_chars * 14 + options.len() * 24).max(120) as i64;
+            (w.min(max_w), 36)
+        }
         _ => (0, 0),
     }
 }

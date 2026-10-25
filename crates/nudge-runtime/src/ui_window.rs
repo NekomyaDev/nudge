@@ -2952,6 +2952,48 @@ pub fn layout_element_ctx(
             });
             (w, h)
         }
+        "tabs" => {
+            let active = elem
+                .text
+                .clone()
+                .or_else(|| elem.props.get("value").cloned())
+                .unwrap_or_default();
+            let options: Vec<String> = elem
+                .props
+                .get("options")
+                .map(|o| {
+                    o.split('\n')
+                        .filter(|l| !l.is_empty())
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut total_w = 0;
+            for opt in &options {
+                let tw = opt.chars().count() as i32 * CELL_W + 24;
+                total_w += tw;
+            }
+            let w = total_w.max(80);
+            let h = 34;
+            boxes.push(LayoutBox {
+                rect: Rect { x, y, w, h },
+                tag: "tabs".into(),
+                id: elem.id.clone(),
+                text: Some(active),
+                on_click: None,
+                on_change: elem.on_change.clone(),
+                on_key: elem.on_key.clone(),
+                pan,
+                clips: clips_owned(clips),
+                pad: 0,
+                checked: false,
+                slider: None,
+                disabled: elem.props.get("disabled").is_some_and(|sv| is_truthy(sv)),
+                tooltip: elem.props.get("tooltip").cloned(),
+                options,
+            });
+            (w, h)
+        }
         _ => {
             // Generic container or unknown tag
             let mut child_y = y;
@@ -3299,9 +3341,11 @@ pub fn find_hovered_button_in_boxes(
         // the handle lights only if the drag will be answered.
         let is_flag = matches!(lbox.tag.as_str(), "checkbox" | "toggle") && lbox.id.is_some();
         let is_slider = lbox.tag == "slider" && lbox.id.is_some();
+        let is_tabs = lbox.tag == "tabs" && lbox.id.is_some() && !lbox.options.is_empty();
         let is_control = lbox.tag == "button"
             || is_flag
             || is_slider
+            || is_tabs
             || (lbox.tag == "select" && lbox.id.is_some() && !lbox.options.is_empty());
         if is_control && !lbox.disabled {
             // Pan-aware screen rect; a button scrolled outside its scroll
@@ -5508,6 +5552,104 @@ impl<D: UiDispatcher> NativeApp<D> {
                         }
                     }
                 }
+                "tabs" => {
+                    let active = lbox.text.as_deref().unwrap_or("");
+                    let mut cur_x = rx;
+                    let cell_h = self.fonts.cell_h;
+                    let accent = theme.input_border_focused;
+
+                    for opt in &lbox.options {
+                        let tw = opt.chars().count() as i32 * CELL_W + 24;
+                        let tab_rect = Rect {
+                            x: cur_x,
+                            y: ry,
+                            w: tw,
+                            h: lbox.rect.h,
+                        };
+                        let is_active = opt == active;
+
+                        // Tab background
+                        let (bg_color, border_color) = if is_active {
+                            (theme.input_bg, accent)
+                        } else {
+                            (theme.bg, theme.border)
+                        };
+                        draw_rounded_rect_box_clipped(
+                            &mut buffer,
+                            stride,
+                            h_usize,
+                            clip,
+                            tab_rect.x,
+                            tab_rect.y,
+                            tab_rect.w,
+                            tab_rect.h,
+                            4,
+                            bg_color,
+                            border_color,
+                        );
+
+                        // Active bottom indicator bar
+                        if is_active {
+                            let ind_h = 2;
+                            draw_rect_alpha(
+                                &mut buffer,
+                                stride,
+                                h_usize,
+                                tab_rect.x + 2,
+                                tab_rect.y + tab_rect.h - ind_h - 1,
+                                tab_rect.w - 4,
+                                ind_h,
+                                accent,
+                                1.0,
+                            );
+                        }
+
+                        // Tab text label
+                        let text_color = if is_active {
+                            theme.text
+                        } else {
+                            theme.text_dim
+                        };
+                        let ty = ry + ((lbox.rect.h - cell_h) / 2).max(0);
+                        let tx = cur_x + 12;
+                        let region = Rect {
+                            x: tx,
+                            y: ry,
+                            w: (tw - 16).max(0),
+                            h: lbox.rect.h,
+                        };
+                        let text_clip = match clip {
+                            None => Some(region),
+                            Some(c) => intersect(region, c),
+                        };
+                        if let Some(tc) = text_clip {
+                            let fonts = &self.fonts;
+                            draw_text_ttf_clipped(
+                                fonts,
+                                FaceKind::Ui,
+                                tx,
+                                ty,
+                                opt,
+                                tc,
+                                |px, py, w, h, cov| {
+                                    draw_rect_alpha(
+                                        &mut buffer,
+                                        stride,
+                                        h_usize,
+                                        px,
+                                        py,
+                                        w,
+                                        h,
+                                        text_color,
+                                        cov,
+                                    );
+                                },
+                            );
+                        }
+
+                        cur_x += tw;
+                    }
+                }
                 _ => {}
             }
         }
@@ -5675,6 +5817,7 @@ impl<D: UiDispatcher> NativeApp<D> {
         let mut clicked_select = None;
         // The id of a boolean control to flip, and the value it lands on.
         let mut clicked_flag: Option<(String, bool)> = None;
+        let mut clicked_tab: Option<(String, String)> = None;
 
         for (box_index, lbox) in self.layout_boxes.iter().enumerate() {
             // Screen-space test accounts for the window scroll, the enclosing
@@ -5728,6 +5871,22 @@ impl<D: UiDispatcher> NativeApp<D> {
                     }
                 }
                 break;
+            } else if lbox.tag == "tabs" {
+                if !lbox.disabled {
+                    if let Some(id) = lbox.id.clone() {
+                        let rel_x = mx - sr.x;
+                        let mut cur_x = 0;
+                        for opt in &lbox.options {
+                            let tw = opt.chars().count() as i32 * CELL_W + 24;
+                            if rel_x >= cur_x && rel_x < cur_x + tw {
+                                clicked_tab = Some((id.clone(), opt.clone()));
+                                break;
+                            }
+                            cur_x += tw;
+                        }
+                    }
+                }
+                break;
             }
         }
 
@@ -5746,6 +5905,9 @@ impl<D: UiDispatcher> NativeApp<D> {
             // control and there is no second event to write.
             self.dispatcher
                 .dispatch_change(&id, if next { "true" } else { "false" });
+            self.render();
+        } else if let Some((id, chosen)) = clicked_tab {
+            self.dispatcher.dispatch_change(&id, &chosen);
             self.render();
         } else if let Some(lbox) = clicked_input {
             // Map the click back into content space for caret placement.
@@ -7408,6 +7570,51 @@ mod tests {
         assert_eq!(decoded.data.len(), 4 * 4 * 4);
         // First pixel was red (255, 0, 0, 255)
         assert_eq!(&decoded.data[0..4], &[255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn test_tabs_layout_and_interaction() {
+        let mut elem = UiElement::new("tabs");
+        elem.text = Some("Chat".into());
+        elem.props
+            .insert("options".into(), "Chat\nSettings\nLogs".into());
+        elem.id = Some("main_tabs".into());
+
+        let mut boxes = Vec::new();
+        let (w, h) = layout_element(&elem, 10, 10, 400, &mut boxes);
+        assert_eq!(boxes.len(), 1);
+        let b = &boxes[0];
+        assert_eq!(b.tag, "tabs");
+        assert_eq!(b.text.as_deref(), Some("Chat"));
+        assert_eq!(b.options, vec!["Chat", "Settings", "Logs"]);
+        assert_eq!(h, 34);
+        assert!(w > 100);
+
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "T".into(),
+                width: 400,
+                height: 300,
+            },
+            dummy,
+        );
+        app.layout_boxes = boxes;
+
+        // Click on the second tab "Settings"
+        // Tab 1 "Chat" takes: 4 * CELL_W + 24
+        let tab1_w = 4 * CELL_W + 24;
+        let click_x = 10 + tab1_w + 10;
+        app.cursor_pos = (click_x, 20);
+        app.handle_click();
+        assert_eq!(*app.dispatcher.notes, "Settings");
     }
 
     #[test]
