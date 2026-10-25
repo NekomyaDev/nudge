@@ -1664,6 +1664,30 @@ impl Interpreter {
             }));
         }
 
+        if name == "code_block" {
+            let mut elem = nudge_runtime::ui::UiElement::new(name);
+            if !args.is_empty() {
+                let code = match self.eval_expr(&args[0], env)? {
+                    NudgeVal::Str(s) => s,
+                    other => other.to_string(),
+                };
+                elem.text = Some(code);
+            }
+            for (k, v_expr) in kwargs {
+                if k == "id" {
+                    let v = self.eval_expr(v_expr, env)?;
+                    elem.id = Some(v.to_string());
+                } else {
+                    let v = self.eval_expr(v_expr, env)?;
+                    elem.props.insert(k.clone(), v.to_string());
+                }
+            }
+            return Ok(Some(NudgeVal::UiElement {
+                found: true,
+                elem: Box::new(elem),
+            }));
+        }
+
         Ok(None)
     }
 

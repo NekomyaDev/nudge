@@ -1584,6 +1584,87 @@ pub fn draw_image_rgba(
     }
 }
 
+/// Token classification for syntax highlighting inside `code_block`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyntaxTokenKind {
+    Keyword,
+    String,
+    Number,
+    Comment,
+    Punctuation,
+    Ident,
+    Whitespace,
+}
+
+/// Tokenize a single line of source code into syntax token slices and kinds.
+pub fn tokenize_code_line(line: &str) -> Vec<(&str, SyntaxTokenKind)> {
+    let mut tokens = Vec::new();
+    let bytes = line.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        let b = bytes[i];
+        if (b == b'/' && i + 1 < len && bytes[i + 1] == b'/') || b == b'#' {
+            tokens.push((&line[i..], SyntaxTokenKind::Comment));
+            break;
+        } else if b == b'"' || b == b'\'' {
+            let quote = b;
+            let start = i;
+            i += 1;
+            while i < len && bytes[i] != quote {
+                if bytes[i] == b'\\' && i + 1 < len {
+                    i += 1;
+                }
+                i += 1;
+            }
+            if i < len {
+                i += 1;
+            }
+            tokens.push((&line[start..i], SyntaxTokenKind::String));
+        } else if b.is_ascii_digit() {
+            let start = i;
+            while i < len
+                && (bytes[i].is_ascii_digit()
+                    || bytes[i] == b'.'
+                    || bytes[i] == b'x'
+                    || bytes[i] == b'X'
+                    || bytes[i].is_ascii_hexdigit())
+            {
+                i += 1;
+            }
+            tokens.push((&line[start..i], SyntaxTokenKind::Number));
+        } else if b.is_ascii_alphabetic() || b == b'_' {
+            let start = i;
+            while i < len && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            let word = &line[start..i];
+            let kind = match word {
+                "fn" | "let" | "mut" | "if" | "else" | "for" | "in" | "return" | "true"
+                | "false" | "type" | "agent" | "state" | "view" | "uses" | "test" | "assert"
+                | "def" | "class" | "import" | "from" | "const" | "var" | "async" | "await" => {
+                    SyntaxTokenKind::Keyword
+                }
+                _ => SyntaxTokenKind::Ident,
+            };
+            tokens.push((word, kind));
+        } else if b.is_ascii_whitespace() {
+            let start = i;
+            while i < len && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            tokens.push((&line[start..i], SyntaxTokenKind::Whitespace));
+        } else {
+            let start = i;
+            i += 1;
+            tokens.push((&line[start..i], SyntaxTokenKind::Punctuation));
+        }
+    }
+
+    tokens
+}
+
 /// The list a `select` opens, painted as one card over everything beneath it.
 /// The rows are drawn rather than laid out, so opening a field never reflows
 /// the form — the card takes the room below the field, or above it when there
@@ -2991,6 +3072,32 @@ pub fn layout_element_ctx(
                 disabled: elem.props.get("disabled").is_some_and(|sv| is_truthy(sv)),
                 tooltip: elem.props.get("tooltip").cloned(),
                 options,
+            });
+            (w, h)
+        }
+        "code_block" => {
+            let code = elem.text.clone().unwrap_or_default();
+            let lines: Vec<&str> = code.split('\n').collect();
+            let line_count = lines.len().max(1);
+            let max_line_len = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+            let w = (max_line_len as i32 * CELL_W + 64).min(max_w).max(160);
+            let h = (line_count as i32 * 20 + 24).max(44);
+            boxes.push(LayoutBox {
+                rect: Rect { x, y, w, h },
+                tag: "code_block".into(),
+                id: elem.id.clone(),
+                text: Some(code),
+                on_click: elem.on_click.clone(),
+                on_change: None,
+                on_key: None,
+                pan,
+                clips: clips_owned(clips),
+                pad: 12,
+                checked: false,
+                slider: None,
+                disabled: false,
+                tooltip: elem.props.get("tooltip").cloned(),
+                options: Vec::new(),
             });
             (w, h)
         }
@@ -5650,6 +5757,165 @@ impl<D: UiDispatcher> NativeApp<D> {
                         cur_x += tw;
                     }
                 }
+                "code_block" => {
+                    let code = lbox.text.as_deref().unwrap_or("");
+                    let lines: Vec<&str> = code.split('\n').collect();
+                    let bg_color = theme.input_bg;
+                    let border_color = theme.border;
+                    let radius = 6;
+
+                    // Container background & border
+                    draw_rounded_rect_box_clipped(
+                        &mut buffer,
+                        stride,
+                        h_usize,
+                        clip,
+                        rx,
+                        ry,
+                        lbox.rect.w,
+                        lbox.rect.h,
+                        radius,
+                        bg_color,
+                        border_color,
+                    );
+
+                    let gutter_w = 40;
+                    // Gutter separator line
+                    let sep_rect = Rect {
+                        x: rx + gutter_w,
+                        y: ry + 1,
+                        w: 1,
+                        h: (lbox.rect.h - 2).max(0),
+                    };
+                    if let Some(sc) = match clip {
+                        None => Some(sep_rect),
+                        Some(c) => intersect(sep_rect, c),
+                    } {
+                        draw_rect(
+                            &mut buffer,
+                            stride,
+                            h_usize,
+                            sc.x,
+                            sc.y,
+                            sc.w,
+                            sc.h,
+                            theme.border,
+                        );
+                    }
+
+                    let line_h = 20;
+                    let pad_top = 10;
+                    let fonts = &self.fonts;
+
+                    // Draw each line: line number in gutter + highlighted code tokens
+                    for (line_idx, line_str) in lines.iter().enumerate() {
+                        let line_y = ry + pad_top + (line_idx as i32 * line_h);
+                        if line_y + line_h < ry || line_y > ry + lbox.rect.h {
+                            continue;
+                        }
+
+                        // 1. Line number in gutter
+                        let num_str = format!("{}", line_idx + 1);
+                        let num_w = fonts.measure_width(FaceKind::Mono, &num_str);
+                        let num_x = rx + gutter_w - 8 - num_w;
+                        let num_clip = match clip {
+                            None => Some(Rect {
+                                x: rx + 2,
+                                y: ry + 2,
+                                w: gutter_w - 4,
+                                h: (lbox.rect.h - 4).max(0),
+                            }),
+                            Some(c) => intersect(
+                                Rect {
+                                    x: rx + 2,
+                                    y: ry + 2,
+                                    w: gutter_w - 4,
+                                    h: (lbox.rect.h - 4).max(0),
+                                },
+                                c,
+                            ),
+                        };
+                        if let Some(nc) = num_clip {
+                            draw_text_ttf_clipped(
+                                fonts,
+                                FaceKind::Mono,
+                                num_x,
+                                line_y,
+                                &num_str,
+                                nc,
+                                |px, py, w, h, cov| {
+                                    draw_rect_alpha(
+                                        &mut buffer,
+                                        stride,
+                                        h_usize,
+                                        px,
+                                        py,
+                                        w,
+                                        h,
+                                        theme.text_dim,
+                                        cov,
+                                    );
+                                },
+                            );
+                        }
+
+                        // 2. Code tokens in body
+                        let code_area = Rect {
+                            x: rx + gutter_w + 12,
+                            y: ry + 2,
+                            w: (lbox.rect.w - gutter_w - 16).max(0),
+                            h: (lbox.rect.h - 4).max(0),
+                        };
+                        let code_clip = match clip {
+                            None => Some(code_area),
+                            Some(c) => intersect(code_area, c),
+                        };
+
+                        if let Some(cc) = code_clip {
+                            let mut tok_x = rx + gutter_w + 12;
+                            let tokens = tokenize_code_line(line_str);
+                            for (tok_text, tok_kind) in tokens {
+                                let tok_color = match tok_kind {
+                                    SyntaxTokenKind::Keyword => theme.input_border_focused, // Blue accent
+                                    SyntaxTokenKind::String => 0xFF10_B981, // Green Emerald-500
+                                    SyntaxTokenKind::Number => 0xFFF5_9E0B, // Amber-500
+                                    SyntaxTokenKind::Comment => theme.text_dim, // Muted grey
+                                    SyntaxTokenKind::Punctuation => 0xFF94_A3B8, // Slate-400
+                                    SyntaxTokenKind::Ident => theme.text,
+                                    SyntaxTokenKind::Whitespace => theme.text,
+                                };
+
+                                draw_text_ttf_clipped(
+                                    fonts,
+                                    FaceKind::Mono,
+                                    tok_x,
+                                    line_y,
+                                    tok_text,
+                                    cc,
+                                    |px, py, w, h, cov| {
+                                        draw_rect_alpha(
+                                            &mut buffer,
+                                            stride,
+                                            h_usize,
+                                            px,
+                                            py,
+                                            w,
+                                            h,
+                                            tok_color,
+                                            cov,
+                                        );
+                                    },
+                                );
+
+                                tok_x += fonts.prefix_width(
+                                    FaceKind::Mono,
+                                    tok_text,
+                                    tok_text.chars().count(),
+                                );
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -7615,6 +7881,37 @@ mod tests {
         app.cursor_pos = (click_x, 20);
         app.handle_click();
         assert_eq!(*app.dispatcher.notes, "Settings");
+    }
+
+    #[test]
+    fn test_code_block_layout_and_tokenization() {
+        let code = "fn main() {\n    let x = 42;\n    // comment\n    return x;\n}";
+        let mut elem = UiElement::new("code_block");
+        elem.text = Some(code.into());
+        elem.id = Some("snippet".into());
+
+        let mut boxes = Vec::new();
+        let (w, h) = layout_element(&elem, 10, 10, 400, &mut boxes);
+        assert_eq!(boxes.len(), 1);
+        let b = &boxes[0];
+        assert_eq!(b.tag, "code_block");
+        assert_eq!(b.text.as_deref(), Some(code));
+        assert!(h >= 5 * 20 + 24);
+        assert!(w >= 160);
+
+        // Test tokenizer on line 2: "    let x = 42;"
+        let toks = tokenize_code_line("    let x = 42;");
+        assert_eq!(toks[0], ("    ", SyntaxTokenKind::Whitespace));
+        assert_eq!(toks[1], ("let", SyntaxTokenKind::Keyword));
+        assert_eq!(toks[2], (" ", SyntaxTokenKind::Whitespace));
+        assert_eq!(toks[3], ("x", SyntaxTokenKind::Ident));
+        assert_eq!(toks[5], ("=", SyntaxTokenKind::Punctuation));
+        assert_eq!(toks[7], ("42", SyntaxTokenKind::Number));
+        assert_eq!(toks[8], (";", SyntaxTokenKind::Punctuation));
+
+        // Test tokenizer on comment
+        let toks_comment = tokenize_code_line("    // comment");
+        assert_eq!(toks_comment[1], ("// comment", SyntaxTokenKind::Comment));
     }
 
     #[test]

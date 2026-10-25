@@ -1,0 +1,35 @@
+// examples/code_block_demo.ndg
+// Demonstrates syntax-highlighted code block with line numbers, indentation, and monospace font.
+
+view CodeDemo(code: string) -> View {
+    column(padding = 24, gap = 16) [
+        text("Nudge Studio — Code Block Demo"),
+        text("Embedded Hack Monospace Font & Syntax Highlighting:"),
+        code_block(code, id = "snippet"),
+        text("Status: Syntax parsed and rendered with line numbers.")
+    ]
+}
+
+agent CodeApp {
+    state {
+        sample: string = "fn calculate(n: int) -> int {\n    // Fibonacci sequence\n    if n <= 1 {\n        return n;\n    }\n    let mut a = 0;\n    let mut b = 1;\n    return a + b;\n}"
+    }
+
+    window MainWindow {
+        title: "Code Block Highlight",
+        width: 480,
+        height: 380,
+        content: CodeDemo(state.sample)
+    }
+}
+
+fn main() uses UI {
+    CodeApp.MainWindow.open()
+}
+
+test "code block element exists in tree" {
+    let app = CodeApp.MainWindow.mount_headless()
+    assert app.find("snippet").exists()
+    assert app.find_text("Nudge Studio — Code Block Demo").exists()
+    assert app.find_text("Status: Syntax parsed and rendered with line numbers.").exists()
+}

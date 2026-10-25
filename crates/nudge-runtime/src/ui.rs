@@ -682,6 +682,15 @@ pub fn estimate_element_size(elem: &UiElement, max_w: i64) -> (i64, i64) {
             let w = (total_chars * 14 + options.len() * 24).max(120) as i64;
             (w.min(max_w), 36)
         }
+        "code_block" => {
+            let raw = elem.text.as_deref().unwrap_or("");
+            let lines: Vec<&str> = raw.split('\n').collect();
+            let line_count = lines.len().max(1);
+            let max_line_len = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+            let w = (max_line_len as i64 * 10 + 64).min(max_w).max(160);
+            let h = (line_count as i64 * 20 + 24).max(44);
+            (w, h)
+        }
         _ => (0, 0),
     }
 }

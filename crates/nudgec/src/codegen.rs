@@ -1614,6 +1614,17 @@ def _tabs(args, kwargs):
 
 def tabs(*args, **kwargs):
     return _tabs(args, kwargs)
+
+
+def _code_block(args, kwargs):
+    cid = kwargs.get("id")
+    code = str(args[0]) if args else str(kwargs.get("code", ""))
+    props = {k: str(v) for k, v in kwargs.items() if k not in ("id", "code")}
+    return _UiElement(tag="code_block", id=cid, text=code if code else None, props=props)
+
+
+def code_block(*args, **kwargs):
+    return _code_block(args, kwargs)
 "#;
 
 /// Shared `nudgec test` driver: load a generated module by path and run

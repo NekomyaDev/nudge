@@ -840,9 +840,29 @@ choices, highlighting the active tab with an accent surface and bottom indicator
   All 8 demo suites pass `nudgec test`.
 
 
-### 2.8 `code_block`  (2 days)
-- [ ] Syntax-highlighted code block, line numbers, indentation (monospace)
-- [ ] Requires the 1.2 font infrastructure (Hack already bundled)
+### 2.8 `code_block`  (2 days) — DONE
+- [x] Syntax-highlighted code block, line numbers, indentation (monospace)
+- [x] Requires the 1.2 font infrastructure (Hack already bundled)
+
+**Syntax-highlighted code block.** `code_block` renders multi-line source code
+using embedded Hack monospace typography, a line-numbered gutter, and syntax
+token highlighting:
+- **`code_block(code, id=, tooltip=)`**: displays source code lines in monospace.
+- **Typography & Font**: uses `FaceKind::Mono` backed by embedded `Hack-Regular.ttf`
+  ensuring crisp character alignment, predictable indentation, and anti-aliasing.
+- **Line numbering gutter**: renders a left-hand 40px gutter with right-aligned
+  dim line numbers (`theme.text_dim`) separated by a 1px border rule.
+- **Syntax token highlighting**: `tokenize_code_line` classifies tokens into
+  keywords (Blue-500 accent), string literals (Emerald-500), numeric literals
+  (Amber-500), comments (Zinc-500 dim), punctuation (Slate-400), and identifiers.
+- **Python front end parity**: `_code_block` added to `codegen.rs`.
+- **Verified**: fmt OK, clippy -D warnings clean, **962 passed / 0 failed / 1 ignored**
+  (new unit test `test_code_block_layout_and_tokenization`). Verified live on X11
+  with `examples/code_block_demo.ndg` (window WID 90177538, 480x380): container
+  rendered with 67,701 background pixels (`theme.input_bg`), 89 keyword pixels
+  (Blue-500), 32 number pixels (Amber-500), and 2,208 gutter line numbers & comment
+  pixels (`theme.text_dim`). All 9 demo suites pass `nudgec test`.
+
 
 ### 2.9 `divider` / `spacer`  (0.5 day)
 - [ ] Separator line, flexible spacing
