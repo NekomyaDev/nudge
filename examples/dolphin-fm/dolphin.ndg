@@ -410,6 +410,7 @@ view InspectorPanel(
                     text("CAS Hash:"),
                     badge(selected_cas, status = "success")
                 ],
+                button("📂 Open Folder", id = "btn_open_selected_dir", on_click = open_selected_directory),
                 divider(),
                 text("Content Preview:", bold = true),
                 if preview_content != "" {
@@ -554,10 +555,11 @@ agent DolphinApp {
         // Breadcrumb vs raw input mode
         edit_path_mode: bool = false
 
-        // Clipboard
+        // Clipboard & Undo
         clipboard_path: string = ""
         clipboard_name: string = ""
         clipboard_content: string = ""
+        last_created_path: string = ""
     }
 
     fn refresh() uses Workspace {
@@ -759,7 +761,30 @@ agent DolphinApp {
     fn create_new_folder() uses UI, Workspace {
         let new_folder_path = if state.current_path == "." { "New_Folder/.keep" } else { state.current_path + "/New_Folder/.keep" }
         workspace.write(new_folder_path, "")
+        state.last_created_path = new_folder_path
         DolphinApp.refresh()
+    }
+
+    fn undo_last_action() uses UI, Workspace, WorkspaceDelete {
+        if state.last_created_path != "" {
+            workspace.delete(state.last_created_path, recursive = true)
+            state.last_created_path = ""
+            DolphinApp.refresh()
+        }
+    }
+
+    fn open_selected_directory() uses UI, Workspace {
+        if state.selected_path != "" {
+            let mut is_d = false
+            for e in state.filtered_entries {
+                if e.path == state.selected_path {
+                    is_d = e.is_dir
+                }
+            }
+            if is_d {
+                DolphinApp.navigate_to(state.selected_path)
+            }
+        }
     }
 
     fn delete_selected() uses UI, Workspace, WorkspaceDelete {
