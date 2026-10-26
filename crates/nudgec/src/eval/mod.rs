@@ -1184,4 +1184,103 @@ fn test_http_framing() -> bool {{
         let ok = run_program(&items, "test_http_framing", &[]).expect("http framing succeeds");
         assert_eq!(ok, NudgeVal::Bool(true));
     }
+
+    #[test]
+    fn test_eval_index_assign_list_and_map() {
+        let src = r#"
+            fn test_list_assign() -> [int] {
+                let mut xs = [10, 20, 30]
+                xs[1] = 99
+                xs
+            }
+
+            fn test_map_assign() -> int {
+                let mut m = { a: 1, b: 2 }
+                m["b"] = 42
+                m["c"] = 100
+                m["b"] + m["c"]
+            }
+        "#;
+        let items = parse_src(src);
+        let list_res = run_program(&items, "test_list_assign", &[]).unwrap();
+        assert_eq!(
+            list_res,
+            NudgeVal::List(vec![NudgeVal::Int(10), NudgeVal::Int(99), NudgeVal::Int(30)])
+        );
+
+        let map_res = run_program(&items, "test_map_assign", &[]).unwrap();
+        assert_eq!(map_res, NudgeVal::Int(142));
+    }
+
+    #[test]
+    fn test_eval_mem_store_primitives() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let src = r#"
+            fn test_mem() -> bool uses MemStore {
+                mem.clear()
+                assert !mem.has("user:1")
+                mem.set("user:1", "alice")
+                assert mem.has("user:1")
+                let val = mem.get("user:1", "default")
+                assert val == "alice"
+                let missing = mem.get("user:missing", "fallback")
+                assert missing == "fallback"
+
+                mem.set("user:2", "bob")
+                let ks = mem.keys()
+                assert len(ks) == 2
+
+                let del_ok = mem.delete("user:1")
+                assert del_ok
+                assert !mem.has("user:1")
+                true
+            }
+        "#;
+        let items = parse_src(src);
+        let ok = run_program(&items, "test_mem", &[]).unwrap();
+        assert_eq!(ok, NudgeVal::Bool(true));
+    }
+
+    #[test]
+    fn test_eval_str_char_code_and_hash() {
+        let src = r#"
+            fn test_primitives() -> bool {
+                let c_a = str.char_code("ABC", 0)
+                let c_b = str.char_code("ABC", 1)
+                let h1 = str.hash("hello world")
+                let h2 = str.hash("hello world")
+                let h3 = str.hash("other text")
+                c_a == 65 and c_b == 66 and h1 == h2 and h1 != h3
+            }
+        "#;
+        let items = parse_src(src);
+        let ok = run_program(&items, "test_primitives", &[]).unwrap();
+        assert_eq!(ok, NudgeVal::Bool(true));
+    }
+
+    #[test]
+    fn test_eval_workspace_stat() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let temp_dir = std::env::temp_dir().join(format!("nudge_test_stat_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let file_path = temp_dir.join("test_stat.txt");
+        std::fs::write(&file_path, "hello world 12345").unwrap();
+
+        let _guard_ws = crate::eval::interpreter::tests::EnvReset::set(
+            "NUDGE_WORKSPACE_DIR",
+            temp_dir.to_str().unwrap(),
+        );
+
+        let src = r#"
+            fn test_stat() -> bool uses Workspace {
+                let st = workspace.stat("test_stat.txt")
+                st.size == 17 and !st.is_dir and st.mtime_ms > 0
+            }
+        "#;
+        let items = parse_src(src);
+        let ok = run_program(&items, "test_stat", &[]).unwrap();
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        assert_eq!(ok, NudgeVal::Bool(true));
+    }
 }

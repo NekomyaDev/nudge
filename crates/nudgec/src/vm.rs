@@ -2810,4 +2810,34 @@ mod tests {
         let prog_res = run_program(&items, "main", &[]).expect("run_program should succeed");
         assert_eq!(prog_res, NudgeVal::Int(3));
     }
+
+    #[test]
+    fn test_parity_index_assign_list_and_map() {
+        let src_list = r#"
+            fn main() -> int {
+                let mut xs = [1, 2, 3]
+                xs[1] = 42
+                xs[0] + xs[1] + xs[2]
+            }
+        "#;
+        assert_parity(src_list, "main", &[]);
+
+        let src_map = r#"
+            fn main() -> int {
+                let mut m = { a: 10, b: 20 }
+                m["b"] = 100
+                m["a"] + m["b"]
+            }
+        "#;
+        assert_parity(src_map, "main", &[]);
+
+        let src_oob = r#"
+            fn main() -> int {
+                let mut xs = [1, 2]
+                xs[10] = 5
+                0
+            }
+        "#;
+        assert_parity_error(src_oob, "main", &[]);
+    }
 }
