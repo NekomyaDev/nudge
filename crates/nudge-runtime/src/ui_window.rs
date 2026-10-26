@@ -3897,6 +3897,174 @@ pub fn draw_rounded_rect_box_clipped(
     }
 }
 
+/// Draws an accessible, high-contrast outer keyboard focus ring around a component.
+/// Complies with WCAG 2.4.7 (Focus Visible) and WCAG 1.4.11 (Non-text Contrast).
+#[allow(clippy::too_many_arguments)]
+pub fn draw_focus_ring(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    clip: Option<Rect>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    radius: i32,
+    ring_color: u32,
+) {
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    let offset = 2;
+    let ring_thickness = 2;
+    let ox = x - offset;
+    let oy = y - offset;
+    let ow = w + offset * 2;
+    let oh = h + offset * 2;
+    let or = (radius + offset).min(ow / 2).min(oh / 2);
+
+    let ix = ox + ring_thickness;
+    let iy = oy + ring_thickness;
+    let iw = ow - ring_thickness * 2;
+    let ih = oh - ring_thickness * 2;
+    let ir = (or - ring_thickness).max(0);
+
+    let x_start = ox.max(0) as usize;
+    let y_start = oy.max(0) as usize;
+    let x_end = ((ox + ow).max(0) as usize).min(stride);
+    let y_end = ((oy + oh).max(0) as usize).min(height);
+
+    for row in y_start..y_end {
+        let row_offset = row * stride;
+        for col in x_start..x_end {
+            let (px, py) = (col as i32, row as i32);
+            if let Some(c) = clip {
+                if px < c.x || py < c.y || px >= c.x + c.w || py >= c.y + c.h {
+                    continue;
+                }
+            }
+            let outer = rounded_rect_coverage(ox, oy, ow, oh, or, px, py);
+            if outer <= 0.0 {
+                continue;
+            }
+            let inner = if iw > 0 && ih > 0 {
+                rounded_rect_coverage(ix, iy, iw, ih, ir, px, py)
+            } else {
+                0.0
+            };
+            let ring_a = (outer * (1.0 - inner)).clamp(0.0, 1.0);
+            if ring_a > 0.0 {
+                if ring_a >= 1.0 {
+                    buf[row_offset + col] = ring_color;
+                } else {
+                    blend_px(buf, row_offset + col, ring_color, ring_a);
+                }
+            }
+        }
+    }
+}
+
+/// WCAG 2.1 relative luminance calculation of an ARGB/RGB color.
+pub fn relative_luminance(color: u32) -> f32 {
+    let r = ((color >> 16) & 0xFF) as f32 / 255.0;
+    let g = ((color >> 8) & 0xFF) as f32 / 255.0;
+    let b = (color & 0xFF) as f32 / 255.0;
+
+    let to_linear = |v: f32| -> f32 {
+        if v <= 0.03928 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+
+    0.2126 * to_linear(r) + 0.7152 * to_linear(g) + 0.0722 * to_linear(b)
+}
+
+/// Computes the WCAG 2.1 contrast ratio between two colors (range: 1.0 to 21.0).
+pub fn contrast_ratio(c1: u32, c2: u32) -> f32 {
+    let l1 = relative_luminance(c1);
+    let l2 = relative_luminance(c2);
+    let (lighter, darker) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
+    (lighter + 0.05) / (darker + 0.05)
+}
+
+/// Checks whether a foreground/background color pair satisfies WCAG 2.1 AA (4.5:1 normal, 3.0:1 large/UI).
+pub fn wcag_aa_compliant(fg: u32, bg: u32, is_large_or_ui: bool) -> bool {
+    let ratio = contrast_ratio(fg, bg);
+    if is_large_or_ui {
+        ratio >= 3.0
+    } else {
+        ratio >= 4.5
+    }
+}
+
+/// Checks whether a foreground/background color pair satisfies WCAG 2.1 AAA (7.0:1 normal, 4.5:1 large/UI).
+pub fn wcag_aaa_compliant(fg: u32, bg: u32, is_large_or_ui: bool) -> bool {
+    let ratio = contrast_ratio(fg, bg);
+    if is_large_or_ui {
+        ratio >= 4.5
+    } else {
+        ratio >= 7.0
+    }
+}
+
+/// Accessible semantic roles for screen readers and accessibility inspection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessibleRole {
+    Window,
+    Dialog,
+    Button,
+    TextInput,
+    Checkbox,
+    Slider,
+    Select,
+    StaticText,
+    Heading,
+    StatusLine,
+    List,
+    ListItem,
+    CodeBlock,
+    ScrollArea,
+    Unknown,
+}
+
+impl AccessibleRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AccessibleRole::Window => "window",
+            AccessibleRole::Dialog => "dialog",
+            AccessibleRole::Button => "button",
+            AccessibleRole::TextInput => "textbox",
+            AccessibleRole::Checkbox => "checkbox",
+            AccessibleRole::Slider => "slider",
+            AccessibleRole::Select => "combobox",
+            AccessibleRole::StaticText => "text",
+            AccessibleRole::Heading => "heading",
+            AccessibleRole::StatusLine => "status",
+            AccessibleRole::List => "list",
+            AccessibleRole::ListItem => "listitem",
+            AccessibleRole::CodeBlock => "code",
+            AccessibleRole::ScrollArea => "region",
+            AccessibleRole::Unknown => "generic",
+        }
+    }
+}
+
+/// Accessible node hierarchy for screen readers and UI accessibility audit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AccessibleNode {
+    pub id: Option<String>,
+    pub role: AccessibleRole,
+    pub name: String,
+    pub value: Option<String>,
+    pub rect: Rect,
+    pub disabled: bool,
+    pub focused: bool,
+    pub checked: Option<bool>,
+    pub children: Vec<AccessibleNode>,
+}
+
 /// Linear interpolation between two ARGB colours: `t = 0.0` is `top`,
 /// `t = 1.0` is `bottom`, blended per channel. The alpha byte is carried over
 /// from `top`, so a fully opaque gradient writes straight through without a
@@ -6102,6 +6270,122 @@ impl<D: UiDispatcher> NativeApp<D> {
         }
     }
 
+    /// Builds the complete semantic accessibility tree for screen readers and automated testing.
+    pub fn build_accessible_tree(&self) -> AccessibleNode {
+        let mut children = Vec::new();
+
+        for lbox in &self.layout_boxes {
+            let role = match lbox.tag.as_str() {
+                "button" => AccessibleRole::Button,
+                "input" => AccessibleRole::TextInput,
+                "checkbox" | "toggle" => AccessibleRole::Checkbox,
+                "slider" => AccessibleRole::Slider,
+                "select" => AccessibleRole::Select,
+                "text" => AccessibleRole::StaticText,
+                "status_line" => AccessibleRole::StatusLine,
+                "code_block" => AccessibleRole::CodeBlock,
+                "scroll" => AccessibleRole::ScrollArea,
+                _ => AccessibleRole::Unknown,
+            };
+
+            let name = lbox
+                .text
+                .clone()
+                .or_else(|| lbox.tooltip.clone())
+                .or_else(|| lbox.id.clone())
+                .unwrap_or_default();
+
+            let value = if lbox.tag == "input" {
+                lbox.id
+                    .as_deref()
+                    .and_then(|id| self.text_inputs.get(id).map(|st| st.text.clone()))
+                    .or_else(|| lbox.text.clone())
+            } else if lbox.tag == "slider" {
+                lbox.slider.as_ref().map(|s| s.value.to_string())
+            } else {
+                None
+            };
+
+            let focused = lbox
+                .id
+                .as_ref()
+                .is_some_and(|id| self.focused_id.as_deref() == Some(id));
+            let checked = if matches!(lbox.tag.as_str(), "checkbox" | "toggle") {
+                Some(lbox.checked)
+            } else {
+                None
+            };
+
+            children.push(AccessibleNode {
+                id: lbox.id.clone(),
+                role,
+                name,
+                value,
+                rect: lbox.rect,
+                disabled: lbox.disabled,
+                focused,
+                checked,
+                children: Vec::new(),
+            });
+        }
+
+        if self.settings_dialog.open {
+            children.push(AccessibleNode {
+                id: Some("settings_dialog".into()),
+                role: AccessibleRole::Dialog,
+                name: "Settings & Preferences".into(),
+                value: None,
+                rect: Rect {
+                    x: (self.width as i32 - 420) / 2,
+                    y: (self.height as i32 - 300) / 2,
+                    w: 420,
+                    h: 300,
+                },
+                disabled: false,
+                focused: true,
+                checked: None,
+                children: vec![AccessibleNode {
+                    id: Some("settings_tab".into()),
+                    role: AccessibleRole::ListItem,
+                    name: match self.settings_dialog.active_tab {
+                        0 => "General",
+                        1 => "Model",
+                        _ => "About",
+                    }
+                    .into(),
+                    value: Some(self.settings_dialog.active_tab.to_string()),
+                    rect: Rect {
+                        x: 0,
+                        y: 0,
+                        w: 90,
+                        h: 26,
+                    },
+                    disabled: false,
+                    focused: false,
+                    checked: None,
+                    children: Vec::new(),
+                }],
+            });
+        }
+
+        AccessibleNode {
+            id: Some("main_window".into()),
+            role: AccessibleRole::Window,
+            name: self.config.title.clone(),
+            value: None,
+            rect: Rect {
+                x: 0,
+                y: 0,
+                w: self.width as i32,
+                h: self.height as i32,
+            },
+            disabled: false,
+            focused: self.focused_id.is_none(),
+            checked: None,
+            children,
+        }
+    }
+
     /// Requests spawning a separate chat window.
     pub fn request_spawn_window(
         &mut self,
@@ -7650,6 +7934,20 @@ impl<D: UiDispatcher> NativeApp<D> {
                         border_color,
                         false,
                     );
+                    if is_focused {
+                        draw_focus_ring(
+                            &mut buffer,
+                            stride,
+                            h_usize,
+                            clip,
+                            rx,
+                            ry,
+                            lbox.rect.w,
+                            lbox.rect.h,
+                            CORNER_RADIUS,
+                            theme.input_border_focused,
+                        );
+                    }
                     if let Some(ref text) = lbox.text {
                         let text_w = self.fonts.measure_width(FaceKind::Ui, text);
                         let tx = rx + ((lbox.rect.w - text_w) / 2).max(8);
@@ -7720,6 +8018,20 @@ impl<D: UiDispatcher> NativeApp<D> {
                         bg,
                         border_color,
                     );
+                    if is_focused {
+                        draw_focus_ring(
+                            &mut buffer,
+                            stride,
+                            h_usize,
+                            clip,
+                            rx,
+                            ry,
+                            lbox.rect.w,
+                            lbox.rect.h,
+                            CORNER_RADIUS,
+                            theme.input_border_focused,
+                        );
+                    }
 
                     let (display_text, cursor_opt, selection_opt) = if let Some(ref id) = lbox.id {
                         if let Some(st) = self.text_inputs.get(id) {
@@ -7929,6 +8241,21 @@ impl<D: UiDispatcher> NativeApp<D> {
                         bg,
                         border_color,
                     );
+                    let is_focused = self.focused_id.as_deref() == lbox.id.as_deref();
+                    if is_focused {
+                        draw_focus_ring(
+                            &mut buffer,
+                            stride,
+                            h_usize,
+                            clip,
+                            rx,
+                            ry,
+                            lbox.rect.w,
+                            lbox.rect.h,
+                            CORNER_RADIUS,
+                            theme.input_border_focused,
+                        );
+                    }
 
                     // The value, left-aligned and vertically centred: a
                     // choice field shows exactly one line, so it sits in the
@@ -8027,6 +8354,21 @@ impl<D: UiDispatcher> NativeApp<D> {
                         lbox.disabled,
                     );
                     draw_flag_control(&mut buffer, stride, h_usize, clip, &theme, &flag);
+                    let is_focused = self.focused_id.as_deref() == lbox.id.as_deref();
+                    if is_focused {
+                        draw_focus_ring(
+                            &mut buffer,
+                            stride,
+                            h_usize,
+                            clip,
+                            flag.rect.x,
+                            flag.rect.y,
+                            flag.rect.w,
+                            flag.rect.h,
+                            4,
+                            theme.input_border_focused,
+                        );
+                    }
 
                     // The label belongs to the control and is drawn beside
                     // it in the same row the press covers.
@@ -8105,6 +8447,21 @@ impl<D: UiDispatcher> NativeApp<D> {
                         spec,
                     );
                     draw_slider_control(&mut buffer, stride, h_usize, clip, &theme, &view);
+                    let is_focused = self.focused_id.as_deref() == lbox.id.as_deref();
+                    if is_focused {
+                        draw_focus_ring(
+                            &mut buffer,
+                            stride,
+                            h_usize,
+                            clip,
+                            view.rect.x,
+                            view.rect.y,
+                            view.rect.w,
+                            view.rect.h,
+                            4,
+                            theme.input_border_focused,
+                        );
+                    }
 
                     // The label belongs to the control and is drawn beside it
                     // in the same row the press covers.
@@ -9680,18 +10037,49 @@ impl<D: UiDispatcher> NativeApp<D> {
                 .cloned();
 
             let tag = lbox.as_ref().map(|b| b.tag.as_str()).unwrap_or("");
-            if tag == "button" {
+            if tag != "input" {
                 let focusable_ids: Vec<String> = self
                     .layout_boxes
                     .iter()
                     .filter(|b| {
-                        !b.disabled && (b.tag == "button" || b.tag == "input") && b.id.is_some()
+                        !b.disabled
+                            && (b.tag == "button"
+                                || b.tag == "input"
+                                || b.tag == "select"
+                                || b.tag == "slider"
+                                || matches!(b.tag.as_str(), "checkbox" | "toggle"))
+                            && b.id.is_some()
                     })
                     .filter_map(|b| b.id.clone())
                     .collect();
 
                 match logical_key {
-                    Key::Named(NamedKey::ArrowDown) | Key::Named(NamedKey::Tab) => {
+                    Key::Named(NamedKey::Tab) => {
+                        if !focusable_ids.is_empty() {
+                            let curr_pos = focusable_ids.iter().position(|id| id == focused_id);
+                            let next_idx = if self.shift_pressed {
+                                match curr_pos {
+                                    Some(pos) => {
+                                        if pos == 0 {
+                                            focusable_ids.len().saturating_sub(1)
+                                        } else {
+                                            pos - 1
+                                        }
+                                    }
+                                    None => 0,
+                                }
+                            } else {
+                                match curr_pos {
+                                    Some(pos) => (pos + 1) % focusable_ids.len(),
+                                    None => 0,
+                                }
+                            };
+                            self.focused_id = Some(focusable_ids[next_idx].clone());
+                            self.render();
+                            return;
+                        }
+                    }
+                    Key::Named(NamedKey::ArrowDown) => {
                         if !focusable_ids.is_empty() {
                             let curr_pos = focusable_ids.iter().position(|id| id == focused_id);
                             let next_idx = match curr_pos {
@@ -9722,15 +10110,54 @@ impl<D: UiDispatcher> NativeApp<D> {
                         }
                     }
                     Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space) => {
-                        if let Some(target_b) = lbox {
-                            let click_target =
-                                target_b.id.clone().or_else(|| target_b.on_click.clone());
-                            if let Some(target) = click_target {
-                                self.dispatcher.dispatch_click(&target);
+                        if tag == "button" {
+                            if let Some(ref target_b) = lbox {
+                                let click_target =
+                                    target_b.id.clone().or_else(|| target_b.on_click.clone());
+                                if let Some(target) = click_target {
+                                    self.dispatcher.dispatch_click(&target);
+                                }
+                            }
+                        } else if matches!(tag, "checkbox" | "toggle") {
+                            if let Some(ref target_b) = lbox {
+                                let next_val = !target_b.checked;
+                                self.dispatcher.dispatch_change(
+                                    focused_id,
+                                    if next_val { "true" } else { "false" },
+                                );
+                            }
+                        } else if tag == "select" {
+                            if let Some(ref target_b) = lbox {
+                                let key = select_key(target_b, 0);
+                                self.open_select(&key);
                             }
                         }
                         self.render();
                         return;
+                    }
+                    Key::Named(NamedKey::ArrowLeft) => {
+                        if tag == "slider" {
+                            if let Some(ref target_b) = lbox {
+                                if let Some(ref sl) = target_b.slider {
+                                    let new_val = (sl.value - sl.step).max(sl.min).to_string();
+                                    self.dispatcher.dispatch_change(focused_id, &new_val);
+                                    self.render();
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    Key::Named(NamedKey::ArrowRight) => {
+                        if tag == "slider" {
+                            if let Some(ref target_b) = lbox {
+                                if let Some(ref sl) = target_b.slider {
+                                    let new_val = (sl.value + sl.step).min(sl.max).to_string();
+                                    self.dispatcher.dispatch_change(focused_id, &new_val);
+                                    self.render();
+                                    return;
+                                }
+                            }
+                        }
                     }
                     Key::Named(NamedKey::Escape) => {
                         self.focused_id = None;
@@ -9897,16 +10324,33 @@ impl<D: UiDispatcher> NativeApp<D> {
                             .iter()
                             .filter(|b| {
                                 !b.disabled
-                                    && (b.tag == "input" || b.tag == "button")
+                                    && (b.tag == "input"
+                                        || b.tag == "button"
+                                        || b.tag == "select"
+                                        || b.tag == "slider"
+                                        || matches!(b.tag.as_str(), "checkbox" | "toggle"))
                                     && b.id.is_some()
                             })
                             .filter_map(|b| b.id.clone())
                             .collect();
                         if !focusable_ids.is_empty() {
                             let curr_pos = focusable_ids.iter().position(|id| id == focused_id);
-                            let next_idx = match curr_pos {
-                                Some(pos) => (pos + 1) % focusable_ids.len(),
-                                None => 0,
+                            let next_idx = if self.shift_pressed {
+                                match curr_pos {
+                                    Some(pos) => {
+                                        if pos == 0 {
+                                            focusable_ids.len().saturating_sub(1)
+                                        } else {
+                                            pos - 1
+                                        }
+                                    }
+                                    None => 0,
+                                }
+                            } else {
+                                match curr_pos {
+                                    Some(pos) => (pos + 1) % focusable_ids.len(),
+                                    None => 0,
+                                }
                             };
                             self.focused_id = Some(focusable_ids[next_idx].clone());
                         }
@@ -10008,7 +10452,13 @@ impl<D: UiDispatcher> NativeApp<D> {
                         .layout_boxes
                         .iter()
                         .filter(|b| {
-                            !b.disabled && (b.tag == "button" || b.tag == "input") && b.id.is_some()
+                            !b.disabled
+                                && (b.tag == "button"
+                                    || b.tag == "input"
+                                    || b.tag == "select"
+                                    || b.tag == "slider"
+                                    || matches!(b.tag.as_str(), "checkbox" | "toggle"))
+                                && b.id.is_some()
                         })
                         .filter_map(|b| b.id.clone())
                         .collect();
@@ -10030,7 +10480,13 @@ impl<D: UiDispatcher> NativeApp<D> {
                         .layout_boxes
                         .iter()
                         .filter(|b| {
-                            !b.disabled && (b.tag == "button" || b.tag == "input") && b.id.is_some()
+                            !b.disabled
+                                && (b.tag == "button"
+                                    || b.tag == "input"
+                                    || b.tag == "select"
+                                    || b.tag == "slider"
+                                    || matches!(b.tag.as_str(), "checkbox" | "toggle"))
+                                && b.id.is_some()
                         })
                         .filter_map(|b| b.id.clone())
                         .collect();
@@ -10048,14 +10504,27 @@ impl<D: UiDispatcher> NativeApp<D> {
                     .layout_boxes
                     .iter()
                     .filter(|b| {
-                        !b.disabled && (b.tag == "button" || b.tag == "input") && b.id.is_some()
+                        !b.disabled
+                            && (b.tag == "button"
+                                || b.tag == "input"
+                                || b.tag == "select"
+                                || b.tag == "slider"
+                                || matches!(b.tag.as_str(), "checkbox" | "toggle"))
+                            && b.id.is_some()
                     })
                     .filter_map(|b| b.id.clone())
                     .collect();
-                if let Some(first) = focusable_ids.first() {
-                    self.focused_id = Some(first.clone());
-                    self.render();
-                    return;
+                if !focusable_ids.is_empty() {
+                    let target_id = if self.shift_pressed {
+                        focusable_ids.last()
+                    } else {
+                        focusable_ids.first()
+                    };
+                    if let Some(id) = target_id {
+                        self.focused_id = Some(id.clone());
+                        self.render();
+                        return;
+                    }
                 }
             }
             Key::Named(NamedKey::Enter) => key_name = "Enter".to_string(),
@@ -17228,5 +17697,348 @@ mod tests {
         };
         assert_eq!(t.message, "Copied!");
         assert_eq!(t.status, "success");
+    }
+
+    #[test]
+    fn test_wcag_relative_luminance_and_contrast_ratio() {
+        let black = 0xFF00_0000;
+        let white = 0xFFFF_FFFF;
+
+        assert!((relative_luminance(black) - 0.0).abs() < 1e-4);
+        assert!((relative_luminance(white) - 1.0).abs() < 1e-4);
+
+        let cr_bw = contrast_ratio(white, black);
+        assert!((cr_bw - 21.0).abs() < 1e-3);
+
+        // Symmetry
+        assert_eq!(contrast_ratio(white, black), contrast_ratio(black, white));
+
+        // Self-contrast is 1.0
+        assert!((contrast_ratio(0xFF3B_82F6, 0xFF3B_82F6) - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_wcag_theme_contrast_compliance() {
+        // Dark theme: Zinc-100 text on Zinc-900 bg
+        let dark_text_cr = contrast_ratio(Theme::DARK.text, Theme::DARK.bg);
+        assert!(
+            dark_text_cr >= 7.0,
+            "Dark theme text contrast ({dark_text_cr}) must satisfy WCAG AAA (>= 7.0:1)"
+        );
+        assert!(wcag_aaa_compliant(Theme::DARK.text, Theme::DARK.bg, false));
+
+        // Light theme: Zinc-900 text on Zinc-50 bg
+        let light_text_cr = contrast_ratio(Theme::LIGHT.text, Theme::LIGHT.bg);
+        assert!(
+            light_text_cr >= 7.0,
+            "Light theme text contrast ({light_text_cr}) must satisfy WCAG AAA (>= 7.0:1)"
+        );
+        assert!(wcag_aaa_compliant(
+            Theme::LIGHT.text,
+            Theme::LIGHT.bg,
+            false
+        ));
+
+        // Button contrast for UI elements (>= 3.0:1)
+        assert!(wcag_aa_compliant(
+            Theme::DARK.button_text,
+            Theme::DARK.button_bg,
+            true
+        ));
+        assert!(wcag_aa_compliant(
+            Theme::LIGHT.button_text,
+            Theme::LIGHT.button_bg,
+            true
+        ));
+    }
+
+    #[test]
+    fn test_focus_ring_rendering() {
+        let stride = 50;
+        let height = 50;
+        let mut buf = vec![0u32; stride * height];
+        let ring_col = 0xFF3B_82F6;
+
+        draw_focus_ring(&mut buf, stride, height, None, 15, 15, 20, 20, 4, ring_col);
+
+        // Outside rectangle middle left edge (at (13, 25) which is offset by 2px from x=15) should have ring color
+        let px = buf[25 * stride + 13];
+        assert_ne!(px, 0, "Focus ring outer boundary should be drawn");
+        assert_eq!(px, ring_col, "Focus ring pixel should match ring color");
+
+        // Deep interior (e.g. at (25, 25)) should not be overwritten
+        let interior = buf[25 * stride + 25];
+        assert_eq!(
+            interior, 0,
+            "Focus ring must not draw over component interior"
+        );
+    }
+
+    #[test]
+    fn test_accessible_tree_generation() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "A11y Test Window".into(),
+                width: 600,
+                height: 400,
+            },
+            dummy,
+        );
+
+        app.layout_boxes = vec![
+            LayoutBox {
+                rect: Rect {
+                    x: 10,
+                    y: 10,
+                    w: 120,
+                    h: 36,
+                },
+                tag: "button".into(),
+                id: Some("send_btn".into()),
+                text: Some("Send".into()),
+                on_click: Some("send_click".into()),
+                on_change: None,
+                on_key: None,
+                pan: (0, 0),
+                clips: None,
+                pad: 0,
+                disabled: false,
+                checked: false,
+                slider: None,
+                options: vec![],
+                tooltip: None,
+                draggable: false,
+            },
+            LayoutBox {
+                rect: Rect {
+                    x: 10,
+                    y: 60,
+                    w: 200,
+                    h: 36,
+                },
+                tag: "input".into(),
+                id: Some("msg_input".into()),
+                text: Some("hello world".into()),
+                on_click: None,
+                on_change: None,
+                on_key: None,
+                pan: (0, 0),
+                clips: None,
+                pad: 0,
+                disabled: false,
+                checked: false,
+                slider: None,
+                options: vec![],
+                tooltip: None,
+                draggable: false,
+            },
+            LayoutBox {
+                rect: Rect {
+                    x: 10,
+                    y: 110,
+                    w: 100,
+                    h: 24,
+                },
+                tag: "checkbox".into(),
+                id: Some("agree_chk".into()),
+                text: Some("Agree".into()),
+                on_click: None,
+                on_change: None,
+                on_key: None,
+                pan: (0, 0),
+                clips: None,
+                pad: 0,
+                disabled: false,
+                checked: true,
+                slider: None,
+                options: vec![],
+                tooltip: None,
+                draggable: false,
+            },
+        ];
+
+        let tree = app.build_accessible_tree();
+        assert_eq!(tree.role, AccessibleRole::Window);
+        assert_eq!(tree.name, "A11y Test Window");
+        assert_eq!(tree.children.len(), 3);
+
+        let btn = &tree.children[0];
+        assert_eq!(btn.role, AccessibleRole::Button);
+        assert_eq!(btn.name, "Send");
+        assert_eq!(btn.id.as_deref(), Some("send_btn"));
+        assert!(!btn.disabled);
+
+        let input = &tree.children[1];
+        assert_eq!(input.role, AccessibleRole::TextInput);
+        assert_eq!(input.value.as_deref(), Some("hello world"));
+
+        let chk = &tree.children[2];
+        assert_eq!(chk.role, AccessibleRole::Checkbox);
+        assert_eq!(chk.checked, Some(true));
+    }
+
+    #[test]
+    fn test_keyboard_accessibility_focus_and_controls() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "Focus Test Window".into(),
+                width: 600,
+                height: 400,
+            },
+            dummy,
+        );
+
+        app.layout_boxes = vec![
+            LayoutBox {
+                rect: Rect {
+                    x: 10,
+                    y: 10,
+                    w: 120,
+                    h: 36,
+                },
+                tag: "button".into(),
+                id: Some("btn1".into()),
+                text: Some("Button 1".into()),
+                on_click: Some("btn1_click".into()),
+                on_change: None,
+                on_key: None,
+                pan: (0, 0),
+                clips: None,
+                pad: 0,
+                disabled: false,
+                checked: false,
+                slider: None,
+                options: vec![],
+                tooltip: None,
+                draggable: false,
+            },
+            LayoutBox {
+                rect: Rect {
+                    x: 10,
+                    y: 60,
+                    w: 200,
+                    h: 36,
+                },
+                tag: "input".into(),
+                id: Some("input1".into()),
+                text: Some("Input text".into()),
+                on_click: None,
+                on_change: None,
+                on_key: None,
+                pan: (0, 0),
+                clips: None,
+                pad: 0,
+                disabled: false,
+                checked: false,
+                slider: None,
+                options: vec![],
+                tooltip: None,
+                draggable: false,
+            },
+            LayoutBox {
+                rect: Rect {
+                    x: 10,
+                    y: 110,
+                    w: 100,
+                    h: 24,
+                },
+                tag: "checkbox".into(),
+                id: Some("chk1".into()),
+                text: Some("Checkbox 1".into()),
+                on_click: None,
+                on_change: None,
+                on_key: None,
+                pan: (0, 0),
+                clips: None,
+                pad: 0,
+                disabled: false,
+                checked: false,
+                slider: None,
+                options: vec![],
+                tooltip: None,
+                draggable: false,
+            },
+            LayoutBox {
+                rect: Rect {
+                    x: 10,
+                    y: 150,
+                    w: 160,
+                    h: 24,
+                },
+                tag: "slider".into(),
+                id: Some("slider1".into()),
+                text: Some("Slider 1".into()),
+                on_click: None,
+                on_change: None,
+                on_key: None,
+                pan: (0, 0),
+                clips: None,
+                pad: 0,
+                disabled: false,
+                checked: false,
+                slider: Some(SliderSpec {
+                    value: 50.0,
+                    min: 0.0,
+                    max: 100.0,
+                    step: 5.0,
+                }),
+                options: vec![],
+                tooltip: None,
+                draggable: false,
+            },
+        ];
+
+        // 1. Initial state: unfocused
+        assert_eq!(app.focused_id, None);
+
+        // 2. Tab -> focuses first element ("btn1")
+        app.handle_key_input(&Key::Named(NamedKey::Tab), None);
+        assert_eq!(app.focused_id.as_deref(), Some("btn1"));
+
+        // 3. Tab -> focuses second element ("input1")
+        app.handle_key_input(&Key::Named(NamedKey::Tab), None);
+        assert_eq!(app.focused_id.as_deref(), Some("input1"));
+
+        // 4. Tab -> focuses third element ("chk1")
+        app.handle_key_input(&Key::Named(NamedKey::Tab), None);
+        assert_eq!(app.focused_id.as_deref(), Some("chk1"));
+
+        // 5. Space on checkbox -> toggles and dispatches change "true"
+        app.handle_key_input(&Key::Named(NamedKey::Space), None);
+        assert_eq!(*app.dispatcher.notes, "true");
+
+        // 6. Tab -> focuses fourth element ("slider1")
+        app.handle_key_input(&Key::Named(NamedKey::Tab), None);
+        assert_eq!(app.focused_id.as_deref(), Some("slider1"));
+
+        // 7. ArrowRight on slider -> increases by step (50 -> 55) and dispatches change "55"
+        app.handle_key_input(&Key::Named(NamedKey::ArrowRight), None);
+        assert_eq!(*app.dispatcher.notes, "55");
+
+        // 8. Shift+Tab -> moves backward to "chk1"
+        app.shift_pressed = true;
+        app.handle_key_input(&Key::Named(NamedKey::Tab), None);
+        assert_eq!(app.focused_id.as_deref(), Some("chk1"));
+        app.shift_pressed = false;
+
+        // 9. Escape -> clears focus
+        app.handle_key_input(&Key::Named(NamedKey::Escape), None);
+        assert_eq!(app.focused_id, None);
     }
 }

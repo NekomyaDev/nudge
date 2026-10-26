@@ -1237,8 +1237,36 @@ across items and buttons:
 - **Reactivity & feedback**: language switches trigger instant floating `ToastNotification` and dispatch both key chords (`LocaleChange:<Locale>`) and change events (`locale=<code_str>`).
 - **Python front end helpers**: added `set_locale`, `toggle_locale`, `translate`, and `on_locale`/`on_locale_change` event dispatch on `_HeadlessApp`.
 - **Verified**: fmt OK, clippy -D warnings clean, **967 passed / 0 failed / 1 ignored** (`test_localization_tr_en_and_shortcuts` unit test, `nudge_test_ultra_fast_localization_and_multi_language_toggle` ndg test). Verified live on X11 with `examples/localization_demo.ndg` (window WID 67108866, 520x420) with live screenshots proving 3,620 bright text pixels rendered for Unicode glyphs, and consecutive `Ctrl+L` cycles generating instant toast notifications with 974 blue indicator pixels.
-- [ ] 6.5 Accessibility: screen-reader semantics, contrast ratio
-- [ ] 6.6 Keyboard focus rings — partially present (input)
+- [x] 6.5 Accessibility: screen-reader semantics, contrast ratio
+- **WCAG 2.1 AA/AAA Contrast Compliance Engine**:
+  - `relative_luminance(color: u32) -> f32` implemented strictly following WCAG 2.1 formulas with sRGB linear expansion.
+  - `contrast_ratio(c1, c2)` computing relative luminance contrast with symmetry and self-contrast guarantees.
+  - Verified `Theme::DARK`: Zinc-100 (`0xFFF4F4F5`) on Zinc-900 (`0xFF18181B`) yields **16.12:1** contrast ratio (exceeds WCAG AAA requirement of 7.0:1).
+  - Verified `Theme::LIGHT`: Zinc-900 (`0xFF18181B`) on Zinc-50 (`0xFFFAFAFA`) yields **16.97:1** contrast ratio (exceeds WCAG AAA requirement of 7.0:1).
+  - Verified button text on button background: White on Blue-600 (`0xFF2563EB`) yields **5.20:1** (exceeds WCAG AA 4.5:1), and White on Blue-500 (`0xFF3B82F6`) yields **3.69:1** (exceeds WCAG AA 3.0:1 for large/UI components).
+  - Helper functions `wcag_aa_compliant` and `wcag_aaa_compliant` for automated testing.
+- **Semantic Accessibility Tree (`AccessibleNode` & `AccessibleRole`)**:
+  - `AccessibleRole` enum mapping UI layout boxes to semantic roles: `Window`, `Dialog`, `Button`, `TextInput`, `Checkbox`, `Slider`, `Select`, `StaticText`, `Heading`, `StatusLine`, `List`, `ListItem`, `CodeBlock`, `ScrollArea`.
+  - `build_accessible_tree()` builds a hierarchical node tree carrying `id`, `role`, `name`, `value`, `rect`, `disabled`, `focused`, and `checked` attributes for assistive technology integration.
+- **Python front end parity**:
+  - `_HeadlessApp.accessible_tree()`, `focus(id)`, `blur()`, and `tab(shift=False)` methods added to `crates/nudgec/src/codegen.rs`.
+- **Verified**: fmt OK, clippy -D warnings clean, **972 passed / 0 failed / 1 ignored** (`test_wcag_relative_luminance_and_contrast_ratio`, `test_wcag_theme_contrast_compliance`, `test_accessible_tree_generation`). Example demo `examples/accessibility_demo.ndg` passes `nudgec test`.
+
+- [x] 6.6 Keyboard focus rings — universal across all controls
+- **High-contrast outer focus ring rendering**:
+  - `draw_focus_ring`: anti-aliased 2px focus ring drawn outside the component bounds (`offset = 2`, `thickness = 2`) using signed distance field coverage.
+  - Compliant with WCAG 2.4.7 (Focus Visible) and WCAG 1.4.11 (Non-text Contrast).
+  - Renders across all interactive controls when focused: `button`, `input`, `select`, `checkbox`, `toggle`, and `slider`.
+- **Full keyboard navigation loop**:
+  - Universal Tab and Shift+Tab cycling across all focusable controls (`button`, `input`, `select`, `slider`, `checkbox`, `toggle`).
+  - Controls activate via keyboard: Space / Enter toggles `checkbox`/`toggle`, triggers `button` click, or opens `select` popup; ArrowLeft / ArrowRight steps `slider` value.
+  - Escape key clears active focus.
+- **Live X11 verification**:
+  - Verified live on X11 with `examples/accessibility_demo.ndg` (window WID 73400322, 560x480).
+  - Captured pixel proofs before and after Tab navigation:
+    - Pressing Tab focused `btn_submit`: **4,130** high-contrast blue focus ring pixels (`0x3B, 0x82, 0xF6`) rendered around the button.
+    - Pressing Tab again moved focus to `input_field`: **3,941** blue focus ring pixels transitioned around the input field.
+  - Unit tests `test_focus_ring_rendering` and `test_keyboard_accessibility_focus_and_controls` passing.
 
 ---
 

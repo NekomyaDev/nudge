@@ -1,0 +1,101 @@
+// examples/accessibility_demo.ndg
+// Demonstrates WCAG 2.1 AA/AAA compliance, screen-reader semantics,
+// high-contrast focus rings, and full keyboard navigation (Tab/Shift+Tab).
+
+view AccessibilityDemo(status_msg: string, is_dark: bool) -> View {
+    column(padding = 24, gap = 16) [
+        text("Nudge Studio — Accessibility & Screen Reader Semantics"),
+        status_line("Status: " + status_msg, status = "info"),
+        divider(),
+        text("Accessible Controls & Focus Rings (WCAG 2.1 AA / AAA):"),
+        button("Action 1 (Submit)", id = "btn_submit"),
+        input("Type message here...", id = "input_field"),
+        checkbox(label = "Enable High Contrast Mode", checked = false, id = "chk_contrast"),
+        slider(label = "Font Scale (%)", value = 100, min = 80, max = 150, step = 10, id = "slider_font"),
+        select(options = ["Standard Contrast", "High Contrast AAA", "Inverted"], value = "Standard Contrast", id = "select_contrast"),
+        spacer(8),
+        bubble("Screen readers receive explicit semantic roles (window, button, textbox, checkbox, slider, combobox).", role = "assistant", id = "info_bubble")
+    ]
+}
+
+agent AccessibilityApp {
+    state {
+        status: string = "Ready"
+        dark_mode: bool = true
+    }
+
+    fn on_click(btn_id: string) uses UI {
+        if btn_id == "btn_submit" {
+            state.status = "Action 1 submitted"
+        }
+    }
+
+    fn on_change(target_id: string, value: string) uses UI {
+        if target_id == "input_field" {
+            state.status = "Input changed: " + value
+        } else if target_id == "chk_contrast" {
+            state.status = "Contrast mode toggled: " + value
+        } else if target_id == "slider_font" {
+            state.status = "Font scale set to: " + value + "%"
+        } else if target_id == "select_contrast" {
+            state.status = "Contrast profile: " + value
+        }
+    }
+
+    window MainWindow {
+        title: "Accessibility Demo",
+        width: 560,
+        height: 480,
+        content: AccessibilityDemo(state.status, state.dark_mode)
+    }
+}
+
+fn main() uses UI {
+    AccessibilityApp.MainWindow.open()
+}
+
+test "accessible elements exist and keyboard tab navigation traverses controls" {
+    let app = AccessibilityApp.MainWindow.mount_headless()
+    assert AccessibilityApp.state.status == "Ready"
+
+    // 1. Semantic Elements Exist
+    assert app.find("btn_submit").exists()
+    assert app.find("input_field").exists()
+    assert app.find("chk_contrast").exists()
+    assert app.find("slider_font").exists()
+    assert app.find("select_contrast").exists()
+    assert app.find("info_bubble").exists()
+
+    // 2. Keyboard Tab Traversal (btn_submit -> input_field -> chk_contrast -> slider_font -> select_contrast)
+    let f1 = app.tab()
+    assert f1 == "btn_submit"
+    assert app.focused_id == "btn_submit"
+
+    let f2 = app.tab()
+    assert f2 == "input_field"
+    assert app.focused_id == "input_field"
+
+    let f3 = app.tab()
+    assert f3 == "chk_contrast"
+    assert app.focused_id == "chk_contrast"
+
+    let f4 = app.tab()
+    assert f4 == "slider_font"
+    assert app.focused_id == "slider_font"
+
+    let f5 = app.tab()
+    assert f5 == "select_contrast"
+    assert app.focused_id == "select_contrast"
+
+    // 3. Tab wraps back to first element
+    let f_wrap = app.tab()
+    assert f_wrap == "btn_submit"
+
+    // 4. Shift+Tab reverses direction
+    let f_prev = app.tab(shift = true)
+    assert f_prev == "select_contrast"
+
+    // 5. Blur clears focus
+    app.blur()
+    assert app.focused_id == ""
+}

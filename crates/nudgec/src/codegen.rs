@@ -1754,6 +1754,64 @@ class _HeadlessApp:
             self.dispatch_change(target_id, clean_text)
         return clean_text
 
+    def focus(self, target_id):
+        """Simulate focusing an element by id."""
+        self.focused_id = target_id
+        self.dispatch_key(f"Focus:{target_id}")
+
+    def blur(self):
+        """Simulate clearing element focus."""
+        self.focused_id = ""
+        self.dispatch_key("Blur")
+
+    def tab(self, shift=False):
+        """Simulate Tab or Shift+Tab navigation."""
+        focusable = [el.id for el in self.root.children if getattr(el, "id", None) and getattr(el, "tag", "") in ("button", "input", "select", "slider", "checkbox", "toggle") and not el.props.get("disabled")]
+        if not focusable:
+            return None
+        if not getattr(self, "focused_id", None) or self.focused_id not in focusable:
+            next_id = focusable[-1] if shift else focusable[0]
+        else:
+            curr_idx = focusable.index(self.focused_id)
+            if shift:
+                next_id = focusable[(curr_idx - 1) % len(focusable)]
+            else:
+                next_id = focusable[(curr_idx + 1) % len(focusable)]
+        self.focus(next_id)
+        return next_id
+
+    def accessible_tree(self):
+        """Generate semantic accessibility tree dictionary."""
+        def _node(el):
+            tag = getattr(el, "tag", "")
+            roles = {
+                "button": "button",
+                "input": "textbox",
+                "checkbox": "checkbox",
+                "toggle": "checkbox",
+                "slider": "slider",
+                "select": "combobox",
+                "text": "text",
+                "status_line": "status",
+                "code_block": "code",
+            }
+            role = roles.get(tag, "generic")
+            name = getattr(el, "text", "") or el.props.get("label", "") or getattr(el, "id", "")
+            return {
+                "id": getattr(el, "id", None),
+                "role": role,
+                "name": name,
+                "disabled": el.props.get("disabled") == "true",
+                "focused": getattr(self, "focused_id", None) == getattr(el, "id", None),
+                "checked": el.props.get("checked") == "true" if tag in ("checkbox", "toggle") else None,
+            }
+        nodes = [_node(child) for child in self.root.children]
+        return {
+            "role": "window",
+            "name": self.title,
+            "children": nodes,
+        }
+
 
 class _Window:
     def __init__(self, title="", width=None, height=None, render_fn=None, agent=None):
