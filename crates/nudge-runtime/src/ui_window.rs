@@ -1829,6 +1829,20 @@ pub struct ToastNotification {
     pub status: String,
 }
 
+/// Chat message structure for export.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ChatMessageExport {
+    pub role: String,
+    pub content: String,
+}
+
+/// Structured chat export data (JSON).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ChatExportData {
+    pub title: String,
+    pub messages: Vec<ChatMessageExport>,
+}
+
 /// Normalizes rich text or HTML pasted into inputs/composers, preserving
 /// markdown syntax (**bold**, `code`, [link](url)) and stripping HTML tags/control characters.
 pub fn normalize_rich_text_paste(raw: &str) -> String {
@@ -2008,6 +2022,18 @@ impl ContextMenuState {
                         label: "Clear Conversation".into(),
                     },
                     ContextMenuItem {
+                        id: "export_md".into(),
+                        label: "Export Markdown".into(),
+                    },
+                    ContextMenuItem {
+                        id: "export_json".into(),
+                        label: "Export JSON".into(),
+                    },
+                    ContextMenuItem {
+                        id: "export_png".into(),
+                        label: "Export PNG".into(),
+                    },
+                    ContextMenuItem {
                         id: "settings".into(),
                         label: "Open Settings".into(),
                     },
@@ -2149,6 +2175,9 @@ impl Default for CommandPaletteState {
                 "Toggle Dark Theme".into(),
                 "Clear Conversation".into(),
                 "Export History".into(),
+                "Export Chat as Markdown".into(),
+                "Export Chat as JSON".into(),
+                "Export Chat as PNG".into(),
             ],
         }
     }
@@ -4685,6 +4714,10 @@ pub struct NativeApp<D: UiDispatcher> {
     pub context_menu: Option<ContextMenuState>,
     /// Floating toast notification.
     pub toast: Option<ToastNotification>,
+    /// Last rendered framebuffer (for PNG export and inspection).
+    pub last_frame: Vec<u32>,
+    /// Path of the most recently exported chat file.
+    pub last_exported_file: Option<String>,
 }
 
 impl<D: UiDispatcher> NativeApp<D> {
@@ -4739,6 +4772,8 @@ impl<D: UiDispatcher> NativeApp<D> {
             hovered_file: None,
             context_menu: None,
             toast: None,
+            last_frame: Vec::new(),
+            last_exported_file: None,
         }
     }
 
@@ -4902,6 +4937,177 @@ impl<D: UiDispatcher> NativeApp<D> {
             self.dispatcher.dispatch_change(&focused_id, &new_val);
             self.render();
         }
+    }
+
+    /// Collects all message bubbles and code blocks from the current layout.
+    pub fn collect_chat_messages(&self) -> Vec<ChatMessageExport> {
+        let mut messages = Vec::new();
+        for b in &self.layout_boxes {
+            if b.tag.starts_with("bubble") {
+                let role = if b.tag.contains("user") {
+                    "user"
+                } else if b.tag.contains("assistant")
+                    || b.tag.contains("ai")
+                    || b.tag.contains("nudge")
+                {
+                    "assistant"
+                } else {
+                    "system"
+                };
+                let content = b.text.clone().unwrap_or_default();
+                messages.push(ChatMessageExport {
+                    role: role.into(),
+                    content,
+                });
+            } else if b.tag == "code_block" {
+                if let Some(ref text) = b.text {
+                    messages.push(ChatMessageExport {
+                        role: "code".into(),
+                        content: format!("```\n{}\n```", text),
+                    });
+                }
+            }
+        }
+        messages
+    }
+
+    /// Exports the current chat as a Markdown formatted string.
+    pub fn export_chat_markdown(&self) -> String {
+        let msgs = self.collect_chat_messages();
+        let mut md = format!("# {}\n\n", self.config.title);
+        for m in msgs {
+            let role_label = match m.role.as_str() {
+                "user" => "### User",
+                "assistant" => "### Assistant",
+                "code" => "### Code Block",
+                _ => "### System",
+            };
+            md.push_str(&format!("{role_label}\n\n{}\n\n", m.content));
+        }
+        md
+    }
+
+    /// Exports the current chat as a formatted JSON string.
+    pub fn export_chat_json(&self) -> Result<String, String> {
+        let export = ChatExportData {
+            title: self.config.title.clone(),
+            messages: self.collect_chat_messages(),
+        };
+        serde_json::to_string_pretty(&export).map_err(|e| e.to_string())
+    }
+
+    /// Exports the window's current pixel buffer snapshot directly as a PNG file.
+    pub fn export_chat_png(&mut self, path: &str) -> Result<(), String> {
+        let w = self.width.max(1);
+        let h = self.height.max(1);
+        let stride = w as usize;
+        let h_usize = h as usize;
+        let total = stride * h_usize;
+
+        let frame = if !self.last_frame.is_empty() && self.last_frame.len() >= total {
+            self.last_frame.clone()
+        } else {
+            let mut buf = vec![self.theme.bg; total];
+            for lbox in &self.layout_boxes {
+                let rx = lbox.rect.x - self.scroll_x - lbox.pan.0;
+                let ry = lbox.rect.y - self.scroll_y - lbox.pan.1;
+                draw_rounded_rect_box(
+                    &mut buf,
+                    stride,
+                    h_usize,
+                    rx,
+                    ry,
+                    lbox.rect.w,
+                    lbox.rect.h,
+                    6,
+                    self.theme.bubble_user_bg,
+                    self.theme.border,
+                );
+                if let Some(ref text) = lbox.text {
+                    let fonts = &self.fonts;
+                    draw_text_ttf_clipped(
+                        fonts,
+                        FaceKind::Ui,
+                        rx + 12,
+                        ry + 8,
+                        text,
+                        Rect {
+                            x: rx,
+                            y: ry,
+                            w: lbox.rect.w,
+                            h: lbox.rect.h,
+                        },
+                        |px, py, w, h, cov| {
+                            draw_rect_alpha(
+                                &mut buf,
+                                stride,
+                                h_usize,
+                                px,
+                                py,
+                                w,
+                                h,
+                                self.theme.text,
+                                cov,
+                            );
+                        },
+                    );
+                }
+            }
+            buf
+        };
+
+        let mut rgba = Vec::with_capacity(total * 4);
+        for &px in &frame[..total] {
+            let r = ((px >> 16) & 0xFF) as u8;
+            let g = ((px >> 8) & 0xFF) as u8;
+            let b = (px & 0xFF) as u8;
+            rgba.extend_from_slice(&[r, g, b, 255]);
+        }
+
+        let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+        let mut w_buf = std::io::BufWriter::new(file);
+        let mut encoder = png::Encoder::new(&mut w_buf, w, h);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+        writer.write_image_data(&rgba).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Exports the chat to the given file path in Markdown, JSON, or PNG format.
+    pub fn export_chat_to_file(&mut self, format: &str, path: &str) -> Result<String, String> {
+        self.last_exported_file = Some(path.to_string());
+        let res = match format.to_lowercase().as_str() {
+            "md" | "markdown" => {
+                let md = self.export_chat_markdown();
+                std::fs::write(path, &md).map_err(|e| e.to_string())?;
+                self.show_toast(&format!("Exported Markdown to {path}"), "success");
+                self.dispatcher
+                    .dispatch_key(&format!("ChatExport:md:{path}"), None);
+                self.dispatcher.dispatch_change("chat_export", path);
+                Ok(md)
+            }
+            "json" => {
+                let js = self.export_chat_json()?;
+                std::fs::write(path, &js).map_err(|e| e.to_string())?;
+                self.show_toast(&format!("Exported JSON to {path}"), "success");
+                self.dispatcher
+                    .dispatch_key(&format!("ChatExport:json:{path}"), None);
+                self.dispatcher.dispatch_change("chat_export", path);
+                Ok(js)
+            }
+            "png" => {
+                self.export_chat_png(path)?;
+                self.show_toast(&format!("Exported PNG snapshot to {path}"), "success");
+                self.dispatcher
+                    .dispatch_key(&format!("ChatExport:png:{path}"), None);
+                self.dispatcher.dispatch_change("chat_export", path);
+                Ok(path.to_string())
+            }
+            _ => Err(format!("Unsupported export format: {format}")),
+        };
+        self.render();
+        res
     }
 
     /// Clamp every measured region's offset to its current content height.
@@ -7525,6 +7731,7 @@ impl<D: UiDispatcher> NativeApp<D> {
             );
         }
 
+        self.last_frame = buffer.to_vec();
         self.render_count += 1;
         let _ = buffer.present();
     }
@@ -7543,6 +7750,12 @@ impl<D: UiDispatcher> NativeApp<D> {
                             self.clipboard = text.clone();
                             self.show_toast("Message copied to clipboard!", "info");
                         }
+                    } else if item.id == "export_md" {
+                        let _ = self.export_chat_to_file("md", "/tmp/opencode/chat_export.md");
+                    } else if item.id == "export_json" {
+                        let _ = self.export_chat_to_file("json", "/tmp/opencode/chat_export.json");
+                    } else if item.id == "export_png" {
+                        let _ = self.export_chat_to_file("png", "/tmp/opencode/chat_export.png");
                     }
                     let target_str = menu.target_id.as_deref().unwrap_or("window");
                     self.dispatcher
@@ -7571,6 +7784,15 @@ impl<D: UiDispatcher> NativeApp<D> {
                 if my >= list_y {
                     let clicked_row = ((my - list_y) / row_h) as usize;
                     if let Some(&cmd) = filtered.get(clicked_row) {
+                        if cmd == "Export Chat as Markdown" {
+                            let _ = self.export_chat_to_file("md", "/tmp/opencode/chat_export.md");
+                        } else if cmd == "Export Chat as JSON" {
+                            let _ =
+                                self.export_chat_to_file("json", "/tmp/opencode/chat_export.json");
+                        } else if cmd == "Export Chat as PNG" {
+                            let _ =
+                                self.export_chat_to_file("png", "/tmp/opencode/chat_export.png");
+                        }
                         self.dispatcher
                             .dispatch_key(&format!("Command:{cmd}"), None);
                     }
@@ -7802,6 +8024,15 @@ impl<D: UiDispatcher> NativeApp<D> {
                                     self.clipboard = text.clone();
                                     self.show_toast("Message copied to clipboard!", "info");
                                 }
+                            } else if item.id == "export_md" {
+                                let _ =
+                                    self.export_chat_to_file("md", "/tmp/opencode/chat_export.md");
+                            } else if item.id == "export_json" {
+                                let _ = self
+                                    .export_chat_to_file("json", "/tmp/opencode/chat_export.json");
+                            } else if item.id == "export_png" {
+                                let _ = self
+                                    .export_chat_to_file("png", "/tmp/opencode/chat_export.png");
                             }
                             let target_str = menu.target_id.as_deref().unwrap_or("window");
                             self.dispatcher
@@ -7851,6 +8082,16 @@ impl<D: UiDispatcher> NativeApp<D> {
                     if let Some(pal) = self.command_palette.take() {
                         let filtered = pal.filtered_commands();
                         if let Some(&cmd) = filtered.get(pal.highlight) {
+                            if cmd == "Export Chat as Markdown" {
+                                let _ =
+                                    self.export_chat_to_file("md", "/tmp/opencode/chat_export.md");
+                            } else if cmd == "Export Chat as JSON" {
+                                let _ = self
+                                    .export_chat_to_file("json", "/tmp/opencode/chat_export.json");
+                            } else if cmd == "Export Chat as PNG" {
+                                let _ = self
+                                    .export_chat_to_file("png", "/tmp/opencode/chat_export.png");
+                            }
                             self.dispatcher
                                 .dispatch_key(&format!("Command:{cmd}"), None);
                         }
@@ -10172,6 +10413,72 @@ mod tests {
         assert_eq!(app.toast.as_ref().unwrap().status, "success");
         assert_eq!(*app.dispatcher.last_key, "CopyCode:snippet_1");
         assert_eq!(*app.dispatcher.notes, "copied");
+    }
+
+    #[test]
+    fn test_chat_export_markdown_json_and_png() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "ChatSession".into(),
+                width: 400,
+                height: 400,
+            },
+            dummy,
+        );
+
+        let mut b1 = test_box("bubble:user", "u1", 40, false);
+        b1.text = Some("How does Nudge native rendering work?".into());
+        let mut b2 = test_box("bubble:assistant", "a1", 100, false);
+        b2.text = Some("It draws directly to Linux framebuffers using softbuffer.".into());
+        let mut code = test_box("code_block", "c1", 160, false);
+        code.text = Some("let buf = vec![0u32; 100];".into());
+        app.layout_boxes = vec![b1, b2, code];
+
+        // 1. Markdown export
+        let md = app.export_chat_markdown();
+        assert!(md.contains("# ChatSession"));
+        assert!(md.contains("### User\n\nHow does Nudge native rendering work?"));
+        assert!(md.contains(
+            "### Assistant\n\nIt draws directly to Linux framebuffers using softbuffer."
+        ));
+        assert!(md.contains("```\nlet buf = vec![0u32; 100];\n```"));
+
+        // 2. JSON export
+        let js = app.export_chat_json().unwrap();
+        assert!(js.contains("\"title\": \"ChatSession\""));
+        assert!(js.contains("\"role\": \"user\""));
+        assert!(js.contains("\"role\": \"assistant\""));
+
+        // 3. Export to files with toast feedback
+        let out_md = "/tmp/opencode/test_export.md";
+        let out_json = "/tmp/opencode/test_export.json";
+        let out_png = "/tmp/opencode/test_export.png";
+
+        let _ = app.export_chat_to_file("md", out_md).unwrap();
+        assert_eq!(*app.dispatcher.last_key, format!("ChatExport:md:{out_md}"));
+        assert_eq!(*app.dispatcher.notes, out_md);
+        assert_eq!(app.toast.as_ref().unwrap().status, "success");
+
+        let _ = app.export_chat_to_file("json", out_json).unwrap();
+        assert_eq!(
+            *app.dispatcher.last_key,
+            format!("ChatExport:json:{out_json}")
+        );
+
+        let _ = app.export_chat_to_file("png", out_png).unwrap();
+        assert_eq!(
+            *app.dispatcher.last_key,
+            format!("ChatExport:png:{out_png}")
+        );
+        assert!(std::path::Path::new(out_png).exists());
     }
 
     #[test]

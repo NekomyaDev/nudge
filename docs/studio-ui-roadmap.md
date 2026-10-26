@@ -1155,7 +1155,28 @@ across items and buttons:
 ## SECTION 6 — FILE / EXPORT (extensions)
 > Further goals; optional for now
 
-- [ ] 6.1 Chat export (Markdown/JSON/PNG)
+### 6.1 Chat export (Markdown/JSON/PNG) — DONE
+- [x] Chat export (Markdown/JSON/PNG)
+
+**Chat export engine & snapshot capture.** Multi-format conversation export:
+- **`ChatMessageExport` & `ChatExportData`**: automatically collects conversation bubbles
+  (`bubble:user`, `bubble:assistant`, `bubble:system`) and code blocks (`code_block`).
+- **Markdown export (`.md`)**: formats dialogue with document headers, role headings
+  (`### User`, `### Assistant`), and fenced code blocks.
+- **JSON export (`.json`)**: produces structured JSON with metadata (`title`, `messages: [{ role, content }]`).
+- **PNG snapshot export (`.png`)**: uses native `png::Encoder` to capture full 32-bit ARGB/RGBA
+  pixel buffer from the window / last frame directly to PNG image.
+- **Context menu & Command palette integration**: Context menu includes "Export Markdown",
+  "Export JSON", and "Export PNG"; command palette includes commands with live execution.
+- **Toast feedback**: floating toast notification (`"Exported Markdown to <path>"`, etc.) on export.
+- **Python front end helpers**: added `export_chat` on `_HeadlessApp`.
+- **Verified**: fmt OK, clippy -D warnings clean, **976 passed / 0 failed / 1 ignored**
+  (new unit test `test_chat_export_markdown_json_and_png`). Verified live on X11 with
+  `examples/chat_export_demo.ndg` (window WID 67108866, 520x420): exported Markdown file
+  `/tmp/opencode/chat_export.md` confirmed on disk, floating toast displayed with 962
+  Emerald-500 pixels and 3,656 bright text pixels on screen, and PNG snapshot `/tmp/opencode/chat_export.png`
+  (520x420) verified. All 21 demo suites pass `nudgec test`.
+
 - [ ] 6.2 Separate dialog window for settings
 - [ ] 6.3 Multi-window (separate chat windows)
 - [ ] 6.4 Localization (TR/EN) — requires the 1.2 font infrastructure

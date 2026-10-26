@@ -1,0 +1,65 @@
+// examples/chat_export_demo.ndg
+// Demonstrates chat export to Markdown, JSON, and PNG snapshot with toast notification.
+
+view ExportDemo(last_file: string) -> View {
+    column(padding = 24, gap = 14) [
+        text("Nudge Studio — Chat Export (Markdown / JSON / PNG) Demo"),
+        text("Export conversation history to Markdown, JSON, or PNG image:"),
+        divider(),
+        bubble("What is Nudge's rendering architecture?", role = "user", id = "msg_1"),
+        bubble("Nudge uses softbuffer to blit 32-bit ARGB pixels directly to X11/Wayland framebuffers.", role = "assistant", id = "msg_2"),
+        code_block("fn render() {\n    // Direct framebuffer pixel copy\n}", id = "code_1"),
+        spacer(8),
+        row(gap = 10) [
+            button("Export Markdown", id = "btn_export_md"),
+            button("Export JSON", id = "btn_export_json"),
+            button("Export PNG", id = "btn_export_png")
+        ],
+        status_line("Export Status: " + last_file, status = "success")
+    ]
+}
+
+agent ExportApp {
+    state {
+        last_exported: string = "None"
+    }
+
+    fn on_click(btn_id: string) uses UI {
+        if btn_id == "btn_export_md" {
+            state.last_exported = "/tmp/opencode/live_export.md"
+        } else if btn_id == "btn_export_json" {
+            state.last_exported = "/tmp/opencode/live_export.json"
+        } else if btn_id == "btn_export_png" {
+            state.last_exported = "/tmp/opencode/live_export.png"
+        }
+    }
+
+    fn on_export(key: string) uses UI {
+        state.last_exported = key
+    }
+
+    window MainWindow {
+        title: "Chat Export Demo",
+        width: 520,
+        height: 420,
+        content: ExportDemo(state.last_exported)
+    }
+}
+
+fn main() uses UI {
+    ExportApp.MainWindow.open()
+}
+
+test "export chat to markdown, json and png" {
+    let app = ExportApp.MainWindow.mount_headless()
+    assert ExportApp.state.last_exported == "None"
+
+    app.export_chat("md", "/tmp/opencode/test_headless.md")
+    assert ExportApp.state.last_exported == "ChatExport:md:/tmp/opencode/test_headless.md"
+
+    app.export_chat("json", "/tmp/opencode/test_headless.json")
+    assert ExportApp.state.last_exported == "ChatExport:json:/tmp/opencode/test_headless.json"
+
+    app.export_chat("png", "/tmp/opencode/test_headless.png")
+    assert ExportApp.state.last_exported == "ChatExport:png:/tmp/opencode/test_headless.png"
+}

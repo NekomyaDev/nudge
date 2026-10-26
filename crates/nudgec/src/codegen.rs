@@ -1391,6 +1391,8 @@ class _HeadlessApp:
                 "on_context",
                 "on_copy_code",
                 "on_copy",
+                "on_export",
+                "on_chat_export",
             ):
                 fn = getattr(self.agent, fn_name, None)
                 if callable(fn):
@@ -1422,6 +1424,11 @@ class _HeadlessApp:
         """Simulate clicking copy on a code block."""
         self.dispatch_key(f"CopyCode:{code_id}")
         self.dispatch_change(code_id, "copied")
+
+    def export_chat(self, format_type, file_path):
+        """Simulate exporting the chat history to file (markdown, json, png)."""
+        self.dispatch_key(f"ChatExport:{format_type}:{file_path}")
+        self.dispatch_change("chat_export", file_path)
 
     def paste(self, text, target_id=None):
         """Simulate pasting text, normalizing rich text and HTML into markdown."""
