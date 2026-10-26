@@ -172,8 +172,48 @@ test "multi language localization toggles across all target locales" {
     assert FileManagerApp.state.current_lang == "es"
     assert i18n("home", FileManagerApp.state.current_lang) == "Carpeta personal"
 
-    // ES -> EN
+    // ES -> RU
+    app.dispatch_click("btn_lang_toggle")
+    assert FileManagerApp.state.current_lang == "ru"
+    assert i18n("home", FileManagerApp.state.current_lang) == "Домашняя папка"
+
+    // RU -> ZH
+    app.dispatch_click("btn_lang_toggle")
+    assert FileManagerApp.state.current_lang == "zh"
+    assert i18n("home", FileManagerApp.state.current_lang) == "主文件夹"
+
+    // ZH -> JA
+    app.dispatch_click("btn_lang_toggle")
+    assert FileManagerApp.state.current_lang == "ja"
+    assert i18n("home", FileManagerApp.state.current_lang) == "ホーム"
+
+    // JA -> KO
+    app.dispatch_click("btn_lang_toggle")
+    assert FileManagerApp.state.current_lang == "ko"
+    assert i18n("home", FileManagerApp.state.current_lang) == "홈"
+
+    // KO -> EN
     app.dispatch_click("btn_lang_toggle")
     assert FileManagerApp.state.current_lang == "en"
     assert i18n("home", FileManagerApp.state.current_lang) == "Home"
+}
+
+test "vfs bridge indexes directory and hits cache with zero latency" {
+    VfsBridge.reset()
+    let initial = VfsBridge.list_directory(".")
+    assert VfsBridge.state.cache_misses == 1
+    assert VfsBridge.state.cache_hits == 0
+
+    // Second call without filesystem modification hits cache directly
+    let cached = VfsBridge.list_directory(".")
+    assert VfsBridge.state.cache_hits == 1
+    assert len(cached) == len(initial)
+}
+
+test "normalize vfs path decodes percent encoded characters" {
+    let p1 = normalize_vfs_path("/home/user/Belgeler%20ve%20Dosyalar")
+    assert p1 == "/home/user/Belgeler ve Dosyalar"
+
+    let p2 = normalize_vfs_path("/media/M%C3%BCzik%20Ar%C5%9Fivi/T%C3%BCrk%C3%A7e")
+    assert p2 == "/media/Müzik Arşivi/Türkçe"
 }

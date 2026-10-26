@@ -163,6 +163,7 @@ agent FileManagerApp {
     }
 
     fn reload_current() uses UI, Workspace {
+        VfsBridge.invalidate(state.current_path)
         FileManagerApp.refresh()
     }
 
@@ -358,6 +359,14 @@ agent FileManagerApp {
             state.current_lang = "fr"
         } else if state.current_lang == "fr" {
             state.current_lang = "es"
+        } else if state.current_lang == "es" {
+            state.current_lang = "ru"
+        } else if state.current_lang == "ru" {
+            state.current_lang = "zh"
+        } else if state.current_lang == "zh" {
+            state.current_lang = "ja"
+        } else if state.current_lang == "ja" {
+            state.current_lang = "ko"
         } else {
             state.current_lang = "en"
         }
@@ -432,6 +441,7 @@ agent FileManagerApp {
                 state.current_path + "/" + dest_name
             }
             workspace.write(dest_path, state.clipboard_content)
+            VfsBridge.invalidate(state.current_path)
             FileManagerApp.refresh()
         }
     }
@@ -453,6 +463,7 @@ agent FileManagerApp {
             state.current_path + "/New_Folder"
         }
         state.last_created_path = folder_only
+        VfsBridge.invalidate(state.current_path)
         FileManagerApp.refresh()
     }
 
@@ -460,6 +471,7 @@ agent FileManagerApp {
         if state.last_created_path != "" {
             workspace.delete(state.last_created_path, recursive = true)
             state.last_created_path = ""
+            VfsBridge.invalidate(state.current_path)
             FileManagerApp.refresh()
         }
     }
@@ -483,7 +495,11 @@ agent FileManagerApp {
             workspace.delete(state.selected_path, recursive = true)
             state.selected_name = ""
             state.selected_path = ""
+            state.selected_size = ""
+            state.selected_perms = ""
+            state.selected_cas = ""
             state.preview_content = ""
+            VfsBridge.invalidate(state.current_path)
             FileManagerApp.refresh()
         }
     }

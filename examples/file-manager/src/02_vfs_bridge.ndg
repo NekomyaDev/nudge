@@ -4,6 +4,8 @@
 agent VfsBridge {
     state {
         cached_dirs: [string] = []
+        cached_entries: Map[string, [FileEntry]] = {}
+        cached_mtimes: Map[string, int] = {}
         cache_hits: int = 0
         cache_misses: int = 0
         total_inodes: int = 0
@@ -11,9 +13,16 @@ agent VfsBridge {
 
     fn reset() {
         state.cached_dirs = []
+        state.cached_entries = {}
+        state.cached_mtimes = {}
         state.cache_hits = 0
         state.cache_misses = 0
         state.total_inodes = 0
+    }
+
+    fn invalidate(dir_path: string) {
+        let norm = normalize_vfs_path(dir_path)
+        state.cached_mtimes[norm] = 0
     }
 
     fn list_directory(dir_path: string) -> [FileEntry] uses Workspace {
@@ -25,51 +34,75 @@ agent VfsBridge {
             }
         }
 
-        if already_cached {
-            state.cache_hits = state.cache_hits + 1
-        } else {
-            state.cache_misses = state.cache_misses + 1
-            state.cached_dirs = state.cached_dirs + [norm]
-        }
-
-        let mut entries: [FileEntry] = []
+        let mut res_entries: [FileEntry] = []
 
         if workspace.exists(norm) {
-            let raw_names = workspace.list(norm)
-
-            for name in raw_names {
-                let full_p = if norm == "." {
-                    name
-                } else if norm == "/" {
-                    "/" + name
-                } else {
-                    norm + "/" + name
+            let cur_mtime = workspace.stat(norm).mtime_ms
+            let mut is_hit = false
+            if already_cached {
+                let saved_mtime = state.cached_mtimes[norm]
+                if saved_mtime == cur_mtime {
+                    is_hit = true
                 }
-                let st = workspace.stat(full_p)
-                let is_d = st.is_dir
-                let sz = st.size
-                let ext = get_extension(name)
-                let glyph = resolve_glyph(name, is_d)
-                let sz_str = if is_d { "" } else { format_bytes(sz) }
-                let perms = if is_d { "drwxr-xr-x" } else { "-rw-r--r--" }
-                let cas = ""
+            }
 
-                entries = entries + [{
-                    name: name,
-                    path: full_p,
-                    is_dir: is_d,
-                    size_bytes: sz,
-                    size_str: sz_str,
-                    mtime_ms: st.mtime_ms,
-                    permissions: perms,
-                    extension: ext,
-                    glyph: glyph,
-                    cas_hash: cas
-                }]
-                state.total_inodes = state.total_inodes + 1
+            if is_hit {
+                state.cache_hits = state.cache_hits + 1
+                res_entries = state.cached_entries[norm]
+            } else {
+                state.cache_misses = state.cache_misses + 1
+                if !already_cached {
+                    state.cached_dirs = state.cached_dirs + [norm]
+                }
+
+                let raw_names = workspace.list(norm)
+                let mut entries: [FileEntry] = []
+                let max_to_index = 250
+                let mut indexed_count = 0
+
+                for name in raw_names {
+                    if indexed_count < max_to_index {
+                        let full_p = if norm == "." {
+                            name
+                        } else if norm == "/" {
+                            "/" + name
+                        } else {
+                            norm + "/" + name
+                        }
+                        let st = workspace.stat(full_p)
+                        let is_d = st.is_dir
+                        let sz = st.size
+                        let ext = get_extension(name)
+                        let glyph = resolve_glyph(name, is_d)
+                        let sz_str = if is_d { "" } else { format_bytes(sz) }
+                        let perms = if is_d { "drwxr-xr-x" } else { "-rw-r--r--" }
+                        let cas = compute_cas_hash(full_p)
+                        let clean_name = decode_name(name)
+
+                        entries = entries + [{
+                            name: clean_name,
+                            path: full_p,
+                            is_dir: is_d,
+                            size_bytes: sz,
+                            size_str: sz_str,
+                            mtime_ms: st.mtime_ms,
+                            permissions: perms,
+                            extension: ext,
+                            glyph: glyph,
+                            cas_hash: cas
+                        }]
+                        indexed_count = indexed_count + 1
+                    }
+                }
+
+                let sorted = partition_entries(entries)
+                state.total_inodes = state.total_inodes + len(entries)
+                state.cached_entries[norm] = sorted
+                state.cached_mtimes[norm] = cur_mtime
+                res_entries = sorted
             }
         }
 
-        partition_entries(entries)
+        res_entries
     }
 }

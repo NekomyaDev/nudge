@@ -27,7 +27,9 @@ view BottomStatusBar(
         text(summary),
         spacer(1),
         divider(orientation = "vertical", size = 1, h = 18),
+        button("−", id = "btn_zoom_out", variant = "flat", w = 18, h = 20),
         text(zoom_text),
+        button("+", id = "btn_zoom_in", variant = "flat", w = 18, h = 20),
         divider(orientation = "vertical", size = 1, h = 18),
         text(free_text)
     ]
