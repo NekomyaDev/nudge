@@ -1284,6 +1284,12 @@ class _UiElement:
         return _TextStr(" ".join(parts))
 
 
+class _WindowsList(list):
+    @property
+    def length(self):
+        return len(self)
+
+
 class _HeadlessApp:
     def __init__(self, render_fn, title="", width=None, height=None, agent=None):
         self._render_fn = render_fn
@@ -1292,6 +1298,7 @@ class _HeadlessApp:
         self.height = height
         self.agent = agent
         self.root = render_fn() if callable(render_fn) else None
+        self.windows = _WindowsList([self])
 
     def find(self, target_id):
         if self.root:
@@ -1395,6 +1402,8 @@ class _HeadlessApp:
                 "on_chat_export",
                 "on_settings",
                 "on_settings_change",
+                "on_window",
+                "on_window_spawn",
             ):
                 fn = getattr(self.agent, fn_name, None)
                 if callable(fn):
@@ -1444,6 +1453,20 @@ class _HeadlessApp:
         """Simulate changing a setting in the dialog."""
         self.dispatch_key(f"SettingsChange:{key}:{value}")
         self.dispatch_change(key, value)
+
+    def spawn_window(self, title, width=500, height=400):
+        """Simulate spawning a separate chat window."""
+        self.dispatch_key(f"SpawnWindow:{title}")
+        self.dispatch_change("window_spawned", title)
+        sub_app = _HeadlessApp(self._render_fn, title=title, width=width, height=height, agent=self.agent)
+        self.windows.append(sub_app)
+        return sub_app
+
+    def close_window(self, title):
+        """Simulate closing a secondary window."""
+        self.dispatch_key(f"CloseWindow:{title}")
+        self.dispatch_change("window_closed", title)
+        self.windows = _WindowsList([w for w in self.windows if w.title != title])
 
     def paste(self, text, target_id=None):
         """Simulate pasting text, normalizing rich text and HTML into markdown."""

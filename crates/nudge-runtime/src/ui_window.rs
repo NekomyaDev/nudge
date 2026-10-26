@@ -1987,6 +1987,10 @@ impl ContextMenuState {
                         id: "duplicate".into(),
                         label: "Duplicate Chat".into(),
                     },
+                    ContextMenuItem {
+                        id: "popout".into(),
+                        label: "Open in New Window".into(),
+                    },
                 ],
             ),
             Some(b) => (
@@ -2016,6 +2020,10 @@ impl ContextMenuState {
                     ContextMenuItem {
                         id: "new_chat".into(),
                         label: "New Chat".into(),
+                    },
+                    ContextMenuItem {
+                        id: "new_window".into(),
+                        label: "New Chat Window".into(),
                     },
                     ContextMenuItem {
                         id: "clear".into(),
@@ -2170,6 +2178,7 @@ impl Default for CommandPaletteState {
             highlight: 0,
             commands: vec![
                 "New Chat".into(),
+                "New Chat Window".into(),
                 "Open Settings".into(),
                 "Change Model".into(),
                 "Toggle Dark Theme".into(),
@@ -2660,6 +2669,124 @@ pub fn draw_settings_dialog(
             draw_rect_alpha(buf, stride, height, px, py, w, h, theme.button_text, cov);
         },
     );
+}
+
+/// A secondary OS window spawned by the application (e.g. popout chat or separate session).
+pub struct SecondaryWindow {
+    pub id: WindowId,
+    pub title: String,
+    pub width: u32,
+    pub height: u32,
+    pub window: Arc<Window>,
+    pub surface: softbuffer::Surface<Arc<Window>, Arc<Window>>,
+    pub chat_session_id: Option<String>,
+    pub layout_boxes: Vec<LayoutBox>,
+    pub last_frame: Vec<u32>,
+}
+
+impl SecondaryWindow {
+    pub fn render(&mut self, fonts: &FontEngine, theme: &Theme) {
+        let w_nz = match NonZeroU32::new(self.width) {
+            Some(w) => w,
+            None => return,
+        };
+        let h_nz = match NonZeroU32::new(self.height) {
+            Some(h) => h,
+            None => return,
+        };
+        if self.surface.resize(w_nz, h_nz).is_err() {
+            return;
+        }
+        let mut buffer = match self.surface.buffer_mut() {
+            Ok(b) => b,
+            Err(_) => return,
+        };
+        let stride = self.width as usize;
+        let h_usize = self.height as usize;
+        draw_rect(
+            &mut buffer,
+            stride,
+            h_usize,
+            0,
+            0,
+            self.width as i32,
+            self.height as i32,
+            theme.bg,
+        );
+        draw_rect(
+            &mut buffer,
+            stride,
+            h_usize,
+            0,
+            0,
+            self.width as i32,
+            36,
+            theme.input_bg,
+        );
+        let ty = (36 - fonts.cell_h) / 2;
+        draw_text_ttf_clipped(
+            fonts,
+            FaceKind::Ui,
+            16,
+            ty,
+            &self.title,
+            Rect {
+                x: 12,
+                y: 0,
+                w: self.width as i32 - 24,
+                h: 36,
+            },
+            |px, py, w, h, cov| {
+                draw_rect_alpha(&mut buffer, stride, h_usize, px, py, w, h, theme.text, cov);
+            },
+        );
+        for lbox in &self.layout_boxes {
+            let rx = lbox.rect.x;
+            let ry = lbox.rect.y;
+            draw_rounded_rect_box(
+                &mut buffer,
+                stride,
+                h_usize,
+                rx,
+                ry,
+                lbox.rect.w,
+                lbox.rect.h,
+                6,
+                theme.bubble_user_bg,
+                theme.border,
+            );
+            if let Some(ref text) = lbox.text {
+                draw_text_ttf_clipped(
+                    fonts,
+                    FaceKind::Ui,
+                    rx + 12,
+                    ry + 8,
+                    text,
+                    Rect {
+                        x: rx,
+                        y: ry,
+                        w: lbox.rect.w,
+                        h: lbox.rect.h,
+                    },
+                    |px, py, w, h, cov| {
+                        draw_rect_alpha(
+                            &mut buffer,
+                            stride,
+                            h_usize,
+                            px,
+                            py,
+                            w,
+                            h,
+                            theme.text,
+                            cov,
+                        );
+                    },
+                );
+            }
+        }
+        self.last_frame = buffer.to_vec();
+        let _ = buffer.present();
+    }
 }
 
 /// Draws a floating pill / ghost card representing the dragged item near the cursor.
@@ -5189,6 +5316,10 @@ pub struct NativeApp<D: UiDispatcher> {
     pub last_frame: Vec<u32>,
     /// Path of the most recently exported chat file.
     pub last_exported_file: Option<String>,
+    /// Active secondary OS windows (e.g. popout chat or multi-window sessions).
+    pub secondary_windows: HashMap<WindowId, SecondaryWindow>,
+    /// Pending window spawn requests.
+    pub spawned_window_requests: Vec<WindowConfig>,
 }
 
 impl<D: UiDispatcher> NativeApp<D> {
@@ -5246,6 +5377,8 @@ impl<D: UiDispatcher> NativeApp<D> {
             toast: None,
             last_frame: Vec::new(),
             last_exported_file: None,
+            secondary_windows: HashMap::new(),
+            spawned_window_requests: Vec::new(),
         }
     }
 
@@ -5377,6 +5510,101 @@ impl<D: UiDispatcher> NativeApp<D> {
         self.settings_dialog.open = false;
         self.dispatcher.dispatch_key("CloseSettings", None);
         self.render();
+    }
+
+    /// Requests spawning a separate chat window.
+    pub fn request_spawn_window(
+        &mut self,
+        title: &str,
+        width: u32,
+        height: u32,
+        _chat_id: Option<String>,
+    ) {
+        self.spawned_window_requests.push(WindowConfig {
+            title: title.to_string(),
+            width,
+            height,
+        });
+        self.dispatcher
+            .dispatch_key(&format!("SpawnWindow:{title}"), None);
+        self.dispatcher.dispatch_change("window_spawned", title);
+        self.show_toast(&format!("Opened \"{title}\" in new window"), "success");
+        self.render();
+    }
+
+    /// Spawns a secondary OS window using the active event loop.
+    pub fn spawn_secondary_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        config: WindowConfig,
+        chat_id: Option<String>,
+    ) -> Result<WindowId, String> {
+        let win_attrs = WindowAttributes::default()
+            .with_title(&config.title)
+            .with_inner_size(LogicalSize::new(config.width, config.height));
+
+        let window = event_loop
+            .create_window(win_attrs)
+            .map_err(|e| format!("failed to spawn window: {e}"))?;
+        let window = Arc::new(window);
+        let id = window.id();
+
+        let context = match &self.context {
+            Some(c) => c,
+            None => return Err("graphics context uninitialized".into()),
+        };
+
+        let surface = softbuffer::Surface::new(context, window.clone())
+            .map_err(|e| format!("failed to create surface: {e}"))?;
+
+        let mut boxes = Vec::new();
+        let msg = format!("Separate Chat: {}", config.title);
+        boxes.push(LayoutBox {
+            rect: Rect {
+                x: 20,
+                y: 50,
+                w: (config.width as i32 - 40).max(100),
+                h: 48,
+            },
+            tag: "bubble:assistant".into(),
+            id: Some("sec_msg".into()),
+            text: Some(msg),
+            on_click: None,
+            on_change: None,
+            on_key: None,
+            pan: (0, 0),
+            clips: None,
+            pad: 12,
+            checked: false,
+            slider: None,
+            disabled: false,
+            tooltip: None,
+            options: Vec::new(),
+            draggable: false,
+        });
+
+        let mut sec = SecondaryWindow {
+            id,
+            title: config.title.clone(),
+            width: config.width,
+            height: config.height,
+            window,
+            surface,
+            chat_session_id: chat_id,
+            layout_boxes: boxes,
+            last_frame: Vec::new(),
+        };
+        sec.render(&self.fonts, &self.theme);
+        self.secondary_windows.insert(id, sec);
+        self.dispatcher
+            .dispatch_key(&format!("SpawnWindow:{}", config.title), None);
+        self.dispatcher
+            .dispatch_change("window_spawned", &config.title);
+        self.show_toast(
+            &format!("Opened \"{}\" in new window", config.title),
+            "success",
+        );
+        Ok(id)
     }
 
     /// Displays a floating toast notification.
@@ -8258,6 +8486,14 @@ impl<D: UiDispatcher> NativeApp<D> {
                         let _ = self.export_chat_to_file("png", "/tmp/opencode/chat_export.png");
                     } else if item.id == "settings" {
                         self.open_settings_dialog();
+                    } else if item.id == "popout" {
+                        let title = menu
+                            .target_text
+                            .clone()
+                            .unwrap_or_else(|| "Separate Chat Window".into());
+                        self.request_spawn_window(&title, 480, 360, menu.target_id.clone());
+                    } else if item.id == "new_window" {
+                        self.request_spawn_window("Nudge Studio — Chat", 500, 400, None);
                     }
                     let target_str = menu.target_id.as_deref().unwrap_or("window");
                     self.dispatcher
@@ -8286,7 +8522,9 @@ impl<D: UiDispatcher> NativeApp<D> {
                 if my >= list_y {
                     let clicked_row = ((my - list_y) / row_h) as usize;
                     if let Some(&cmd) = filtered.get(clicked_row) {
-                        if cmd == "Open Settings" {
+                        if cmd == "New Chat Window" {
+                            self.request_spawn_window("Nudge Studio — Chat", 500, 400, None);
+                        } else if cmd == "Open Settings" {
                             self.open_settings_dialog();
                         } else if cmd == "Export Chat as Markdown" {
                             let _ = self.export_chat_to_file("md", "/tmp/opencode/chat_export.md");
@@ -8734,7 +8972,9 @@ impl<D: UiDispatcher> NativeApp<D> {
                     if let Some(pal) = self.command_palette.take() {
                         let filtered = pal.filtered_commands();
                         if let Some(&cmd) = filtered.get(pal.highlight) {
-                            if cmd == "Open Settings" {
+                            if cmd == "New Chat Window" {
+                                self.request_spawn_window("Nudge Studio — Chat", 500, 400, None);
+                            } else if cmd == "Open Settings" {
                                 self.open_settings_dialog();
                             } else if cmd == "Export Chat as Markdown" {
                                 let _ =
@@ -9417,9 +9657,39 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
+        window_id: WindowId,
         event: WindowEvent,
     ) {
+        // Drain any pending window spawn requests
+        while let Some(cfg) = self.spawned_window_requests.pop() {
+            let _ = self.spawn_secondary_window(event_loop, cfg, None);
+        }
+
+        // Handle events for secondary windows
+        if let Some(sec) = self.secondary_windows.get_mut(&window_id) {
+            match event {
+                WindowEvent::CloseRequested => {
+                    let title = sec.title.clone();
+                    self.secondary_windows.remove(&window_id);
+                    self.dispatcher
+                        .dispatch_key(&format!("CloseWindow:{title}"), None);
+                    self.dispatcher.dispatch_change("window_closed", &title);
+                    return;
+                }
+                WindowEvent::Resized(size) => {
+                    sec.width = size.width.max(1);
+                    sec.height = size.height.max(1);
+                    sec.render(&self.fonts, &self.theme);
+                    return;
+                }
+                WindowEvent::RedrawRequested => {
+                    sec.render(&self.fonts, &self.theme);
+                    return;
+                }
+                _ => return,
+            }
+        }
+
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
@@ -11187,6 +11457,47 @@ mod tests {
         app.handle_key_input(&Key::Named(NamedKey::Enter), None);
         assert!(!app.settings_dialog.open);
         assert_eq!(app.toast.as_ref().unwrap().message, "Settings saved!");
+    }
+
+    #[test]
+    fn test_multi_window_spawning_and_routing() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "PrimaryChat".into(),
+                width: 500,
+                height: 400,
+            },
+            dummy,
+        );
+
+        let chat_btn = test_box("button", "chat_sess_2", 40, false);
+        app.layout_boxes = vec![chat_btn];
+
+        // 1. Context menu on chat element provides "popout" (Open in New Window)
+        app.cursor_pos = (60, 50);
+        let target = app.layout_boxes.first();
+        let menu = ContextMenuState::for_target(target, app.cursor_pos, 500, 400);
+        assert!(menu.items.iter().any(|i| i.id == "popout"));
+
+        // 2. Request secondary window spawn
+        app.request_spawn_window("SecondaryChat", 450, 350, Some("chat_sess_2".into()));
+        assert_eq!(app.spawned_window_requests.len(), 1);
+        assert_eq!(app.spawned_window_requests[0].title, "SecondaryChat");
+        assert_eq!(app.spawned_window_requests[0].width, 450);
+        assert_eq!(*app.dispatcher.last_key, "SpawnWindow:SecondaryChat");
+        assert_eq!(*app.dispatcher.notes, "SecondaryChat");
+        assert_eq!(
+            app.toast.as_ref().unwrap().message,
+            "Opened \"SecondaryChat\" in new window"
+        );
     }
 
     #[test]

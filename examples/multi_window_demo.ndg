@@ -1,0 +1,67 @@
+// examples/multi_window_demo.ndg
+// Demonstrates multi-window support and popping out separate chat windows.
+
+view MultiWindowDemo(last_window: string, window_count: string) -> View {
+    column(padding = 24, gap = 14) [
+        text("Nudge Studio — Multi-Window Chat Demo"),
+        text("Manage separate chat windows and popout conversations:"),
+        divider(),
+        status_line("Active Windows: " + window_count, status = "info"),
+        status_line("Last Spawned Window: " + last_window, status = "success"),
+        spacer(12),
+        text("Chat Sessions:"),
+        button("Chat Session 1: Rust Compiler Architecture", id = "chat_sess_1"),
+        button("Chat Session 2: Framebuffer Rendering Pipeline", id = "chat_sess_2"),
+        spacer(8),
+        button("Spawn New Chat Window", id = "btn_spawn_window")
+    ]
+}
+
+agent MultiWindowApp {
+    state {
+        last_win: string = "Main Window"
+        count: string = "1"
+    }
+
+    fn on_click(btn_id: string) uses UI {
+        if btn_id == "btn_spawn_window" {
+            state.last_win = "Nudge Studio — Popout Chat"
+            state.count = "2"
+        }
+    }
+
+    fn on_window(key: string) uses UI {
+        if key == "SpawnWindow:Secondary Chat" {
+            state.last_win = "Secondary Chat"
+            state.count = "2"
+        } else if key == "CloseWindow:Secondary Chat" {
+            state.count = "1"
+        }
+    }
+
+    window MainWindow {
+        title: "Multi Window Demo",
+        width: 520,
+        height: 420,
+        content: MultiWindowDemo(state.last_win, state.count)
+    }
+}
+
+fn main() uses UI {
+    MultiWindowApp.MainWindow.open()
+}
+
+test "multi-window spawning and management" {
+    let app = MultiWindowApp.MainWindow.mount_headless()
+    assert MultiWindowApp.state.count == "1"
+    assert MultiWindowApp.state.last_win == "Main Window"
+
+    let sec = app.spawn_window("Secondary Chat", 450, 350)
+    assert MultiWindowApp.state.count == "2"
+    assert MultiWindowApp.state.last_win == "Secondary Chat"
+    assert app.windows.length == 2
+
+    app.close_window("Secondary Chat")
+    assert MultiWindowApp.state.count == "1"
+    assert app.windows.length == 1
+}

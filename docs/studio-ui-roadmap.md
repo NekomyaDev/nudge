@@ -1197,7 +1197,25 @@ across items and buttons:
   accent pixels (`0x1D, 0x4E, 0xD8`), Tab key navigated tabs, and closing triggered Toast notification
   with 496 Emerald-500 pixels and 2,669 bright text pixels. All 22 demo suites pass `nudgec test`.
 
-- [ ] 6.3 Multi-window (separate chat windows)
+### 6.3 Multi-window (separate chat windows) — DONE
+- [x] Multi-window (separate chat windows)
+
+**Multi-window support & chat popout.** Multiple independent native OS windows under one event loop:
+- **`SecondaryWindow` & window lifecycle**: spawned child windows have their own `WindowId`, title bar,
+  dimensions, softbuffer surface, and chat layout boxes.
+- **Independent routing**: `window_event` dispatches resize, redraw, and close events per `WindowId`;
+  closing a secondary window frees its surface without terminating the application.
+- **Context menu & Command palette integration**: chat buttons feature "Open in New Window",
+  and the background context menu / command palette offer "New Chat Window".
+- **Python front end helpers**: added `spawn_window`, `close_window`, and `windows` tracking
+  on `_HeadlessApp`.
+- **Verified**: fmt OK, clippy -D warnings clean, **979 passed / 0 failed / 1 ignored**
+  (new unit test `test_multi_window_spawning_and_routing`). Verified live on X11 with
+  `examples/multi_window_demo.ndg` (window WID 67108866, 520x420): right-clicking chat button
+  opened context menu with 3,845 blue accent pixels (`0x1D, 0x4E, 0xD8`), and selecting
+  "Open in New Window" dispatched popout with 1,026 Emerald-500 pixels and 3,761 bright text pixels.
+  All 23 demo suites pass `nudgec test`.
+
 - [ ] 6.4 Localization (TR/EN) — requires the 1.2 font infrastructure
 - [ ] 6.5 Accessibility: screen-reader semantics, contrast ratio
 - [ ] 6.6 Keyboard focus rings — partially present (input)
