@@ -78,6 +78,88 @@ fn test_fn(s: string) -> string uses LLM {
 }
 
 #[test]
+fn test_cli_stats_json_and_flag_positions() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "nudge_test_cli_stats_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let ndg_path = temp_dir.join("stats_test.ndg");
+    fs::write(
+        &ndg_path,
+        r#"
+// Example module
+fn compute(x: int) -> int {
+    if x > 10 {
+        x * 2
+    } else {
+        x
+    }
+}
+"#,
+    )
+    .expect("write ndg");
+
+    // Standard text mode
+    let out_text = Command::new(nudgec_bin())
+        .arg("stats")
+        .arg(&ndg_path)
+        .output()
+        .expect("run stats");
+    assert!(out_text.status.success());
+    let stdout_text = String::from_utf8_lossy(&out_text.stdout);
+    assert!(stdout_text.contains("Statistics for"));
+    assert!(stdout_text.contains("Functions:         1"));
+    assert!(stdout_text.contains("Cyclomatic Complexity: 2"));
+
+    // Flag after file: nudgec stats file.ndg --json
+    let out1 = Command::new(nudgec_bin())
+        .arg("stats")
+        .arg(&ndg_path)
+        .arg("--json")
+        .output()
+        .expect("run stats");
+    assert!(out1.status.success());
+    let parsed1: serde_json::Value =
+        serde_json::from_slice(&out1.stdout).expect("valid json output");
+    assert_eq!(parsed1["declarations"]["functions"], 1);
+    assert_eq!(parsed1["ast"]["cyclomatic_complexity"], 2);
+
+    // Flag before file: nudgec stats --json file.ndg
+    let out2 = Command::new(nudgec_bin())
+        .arg("stats")
+        .arg("--json")
+        .arg(&ndg_path)
+        .output()
+        .expect("run stats");
+    assert!(out2.status.success());
+    let parsed2: serde_json::Value =
+        serde_json::from_slice(&out2.stdout).expect("valid json output");
+    assert_eq!(parsed2["declarations"]["functions"], 1);
+
+    // Missing file: nudgec stats
+    let out3 = Command::new(nudgec_bin())
+        .arg("stats")
+        .output()
+        .expect("run stats");
+    assert_eq!(out3.status.code(), Some(64));
+
+    // Unknown flag fail-closed: nudgec stats file.ndg --badflag
+    let out4 = Command::new(nudgec_bin())
+        .arg("stats")
+        .arg(&ndg_path)
+        .arg("--badflag")
+        .output()
+        .expect("run stats");
+    assert_eq!(out4.status.code(), Some(64));
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
 fn test_cli_explain_json_and_flag_positions() {
     let temp_dir = std::env::temp_dir().join(format!(
         "nudge_test_cli_explain_{}",

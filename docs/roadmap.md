@@ -95,6 +95,13 @@ The language thesis ships: **the language where agents are safe to deploy.**
 
 ## v1.6 — Doors 4+5: *provable & improving* (enterprise + compounding)
 
+- 🌐 **Browser use** — the web as a typed, replayable effect (flagship,
+  IN DESIGN): `browser.*` surface over a real in-house `.ndg` engine —
+  HTML/DOM/JS-snapshot parse tree (no screenshots as the read path),
+  domain allowlists, NTF records, replay-for-free, drift-check,
+  compound ops (one call = one round trip), neutral default locale.
+  Single kernel extension `browser.fetch` (raw bytes/TLS; no provider).
+  Full design: [docs/browser-use.md](browser-use.md) — phases F1–F9.
 - **Compliance** — `nudgec audit` reports over NTF traces; EU AI Act
   positioning: traces as audit evidence out of the box
 - **`optimize` block** — budget-bounded, type-safe search over prompts/models,

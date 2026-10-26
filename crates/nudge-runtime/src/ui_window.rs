@@ -8,6 +8,7 @@ use crate::ui::{
     SLIDER_KNOB, SLIDER_TRACK_H, SLIDER_TRACK_W, SPINNER_ARC_DEG, SPINNER_PERIOD_SECS,
     SPINNER_SIZE, SPINNER_STROKE,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -1931,6 +1932,319 @@ pub fn draw_toast_notification(
             y: toast_y,
             w: toast_w - 20,
             h: toast_h,
+        },
+        |px, py, w, h, cov| {
+            draw_rect_alpha(buf, stride, height, px, py, w, h, theme.text, cov);
+        },
+    );
+}
+
+/// UI Error state representing failures during LLM/tool/network execution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UiErrorState {
+    pub message: String,
+    pub error_type: String, // "timeout", "network", "schema", "general"
+    pub retryable: bool,
+    pub action_id: Option<String>,
+}
+
+/// Crash recovery draft record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DraftRecoveryRecord {
+    pub draft: String,
+    pub input_id: String,
+    pub timestamp_secs: u64,
+}
+
+/// Async LLM/Tool execution state with live progress and cancellation.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct AsyncExecutionState {
+    pub in_flight: bool,
+    pub status_text: String,
+    pub task_id: Option<String>,
+    pub progress_percent: Option<f32>,
+    pub chunks_received: usize,
+}
+
+/// Persisted window configuration, theme, locale, and sidebar state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PersistedWindowState {
+    pub width: u32,
+    pub height: u32,
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    pub dark_theme: bool,
+    pub locale: String,
+    pub sidebar_open: bool,
+}
+
+impl Default for PersistedWindowState {
+    fn default() -> Self {
+        Self {
+            width: 500,
+            height: 400,
+            x: None,
+            y: None,
+            dark_theme: true,
+            locale: "en".into(),
+            sidebar_open: true,
+        }
+    }
+}
+
+/// Draws the persistent or dismissible error banner at the top of the window.
+pub fn draw_error_banner(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    fonts: &FontEngine,
+    win_w: i32,
+    error: &UiErrorState,
+) {
+    let banner_h = 38;
+    let banner_w = (win_w - 40).max(200);
+    let banner_x = 20;
+    let banner_y = 10;
+
+    let bg_color = 0xFF7F_1D1D; // Red-900
+    let border_color = 0xFFEF_4444; // Red-500
+    let text_color = 0xFFFE_F2F2; // Red-50
+
+    draw_rounded_rect_box(
+        buf,
+        stride,
+        height,
+        banner_x,
+        banner_y,
+        banner_w,
+        banner_h,
+        6,
+        bg_color,
+        border_color,
+    );
+
+    // Error icon: [!]
+    draw_rect(
+        buf,
+        stride,
+        height,
+        banner_x + 10,
+        banner_y + 8,
+        3,
+        14,
+        text_color,
+    );
+    draw_rect(
+        buf,
+        stride,
+        height,
+        banner_x + 10,
+        banner_y + 25,
+        3,
+        3,
+        text_color,
+    );
+
+    let cell_h = fonts.cell_h;
+    let ty = banner_y + (banner_h - cell_h) / 2;
+
+    // Retry button at the right end if retryable
+    let content_max_w = if error.retryable {
+        let retry_w = 80;
+        let retry_h = 24;
+        let retry_x = banner_x + banner_w - retry_w - 32;
+        let retry_y = banner_y + (banner_h - retry_h) / 2;
+
+        draw_rounded_rect_box(
+            buf,
+            stride,
+            height,
+            retry_x,
+            retry_y,
+            retry_w,
+            retry_h,
+            4,
+            0xFFDC_2626, // Red-600
+            0xFFF8_7171, // Red-400
+        );
+
+        let retry_txt = "Retry";
+        let rw = fonts.measure_width(FaceKind::Ui, retry_txt);
+        let rx = retry_x + (retry_w - rw) / 2;
+        let rty = retry_y + (retry_h - cell_h) / 2;
+        draw_text_ttf_clipped(
+            fonts,
+            FaceKind::Ui,
+            rx,
+            rty,
+            retry_txt,
+            Rect {
+                x: retry_x,
+                y: retry_y,
+                w: retry_w,
+                h: retry_h,
+            },
+            |px, py, w, h, cov| {
+                draw_rect_alpha(buf, stride, height, px, py, w, h, 0xFFFF_FFFF, cov);
+            },
+        );
+
+        banner_w - retry_w - 60
+    } else {
+        banner_w - 50
+    };
+
+    // Close '✕' on far right
+    let close_x = banner_x + banner_w - 22;
+    draw_text_ttf_clipped(
+        fonts,
+        FaceKind::Ui,
+        close_x,
+        ty,
+        "✕",
+        Rect {
+            x: close_x - 4,
+            y: banner_y,
+            w: 24,
+            h: banner_h,
+        },
+        |px, py, w, h, cov| {
+            draw_rect_alpha(buf, stride, height, px, py, w, h, text_color, cov);
+        },
+    );
+
+    // Error text
+    let text_x = banner_x + 22;
+    draw_text_ttf_clipped(
+        fonts,
+        FaceKind::Ui,
+        text_x,
+        ty,
+        &error.message,
+        Rect {
+            x: text_x,
+            y: banner_y,
+            w: content_max_w.max(10),
+            h: banner_h,
+        },
+        |px, py, w, h, cov| {
+            draw_rect_alpha(buf, stride, height, px, py, w, h, text_color, cov);
+        },
+    );
+}
+
+/// Draws the async execution / streaming status bar with spinner and Cancel button.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_async_status_bar(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    fonts: &FontEngine,
+    theme: &Theme,
+    win_w: i32,
+    win_h: i32,
+    async_state: &AsyncExecutionState,
+    phase: f32,
+) {
+    if !async_state.in_flight {
+        return;
+    }
+    let bar_h = 34;
+    let bar_w = (win_w - 40).max(200);
+    let bar_x = 20;
+    let bar_y = win_h - bar_h - 14;
+
+    let bg_color = theme.input_bg;
+    let border_color = theme.input_border_focused;
+
+    draw_rounded_rect_box(
+        buf,
+        stride,
+        height,
+        bar_x,
+        bar_y,
+        bar_w,
+        bar_h,
+        6,
+        bg_color,
+        border_color,
+    );
+
+    // Rotating spinner on the left
+    let spin_r = Rect {
+        x: bar_x + 10,
+        y: bar_y + (bar_h - SPINNER_SIZE) / 2,
+        w: SPINNER_SIZE,
+        h: SPINNER_SIZE,
+    };
+    draw_spinner_control(buf, stride, height, None, theme, spin_r, false, phase);
+
+    let cell_h = fonts.cell_h;
+    let ty = bar_y + (bar_h - cell_h) / 2;
+
+    // Cancel button on the right
+    let cancel_w = 70;
+    let cancel_h = 24;
+    let cancel_x = bar_x + bar_w - cancel_w - 8;
+    let cancel_y = bar_y + (bar_h - cancel_h) / 2;
+
+    draw_rounded_rect_box(
+        buf,
+        stride,
+        height,
+        cancel_x,
+        cancel_y,
+        cancel_w,
+        cancel_h,
+        4,
+        0xFFDC_2626, // Red-600
+        0xFFEF_4444, // Red-500
+    );
+
+    let cancel_txt = "Cancel";
+    let cw = fonts.measure_width(FaceKind::Ui, cancel_txt);
+    let cx = cancel_x + (cancel_w - cw) / 2;
+    let cty = cancel_y + (cancel_h - cell_h) / 2;
+    draw_text_ttf_clipped(
+        fonts,
+        FaceKind::Ui,
+        cx,
+        cty,
+        cancel_txt,
+        Rect {
+            x: cancel_x,
+            y: cancel_y,
+            w: cancel_w,
+            h: cancel_h,
+        },
+        |px, py, w, h, cov| {
+            draw_rect_alpha(buf, stride, height, px, py, w, h, 0xFFFF_FFFF, cov);
+        },
+    );
+
+    // Status text (and chunks received if any)
+    let display_msg = if async_state.chunks_received > 0 {
+        format!(
+            "{} ({} chunks)",
+            async_state.status_text, async_state.chunks_received
+        )
+    } else {
+        async_state.status_text.clone()
+    };
+
+    let text_x = spin_r.x + spin_r.w + 10;
+    let max_text_w = (cancel_x - text_x - 10).max(10);
+    draw_text_ttf_clipped(
+        fonts,
+        FaceKind::Ui,
+        text_x,
+        ty,
+        &display_msg,
+        Rect {
+            x: text_x,
+            y: bar_y,
+            w: max_text_w,
+            h: bar_h,
         },
         |px, py, w, h, cov| {
             draw_rect_alpha(buf, stride, height, px, py, w, h, theme.text, cov);
@@ -6049,6 +6363,14 @@ pub struct NativeApp<D: UiDispatcher> {
     pub secondary_windows: HashMap<WindowId, SecondaryWindow>,
     /// Pending window spawn requests.
     pub spawned_window_requests: Vec<WindowConfig>,
+    /// Active error banner state (Section 5.1).
+    pub current_error: Option<UiErrorState>,
+    /// Background / async LLM execution and cancellation state (Section 5.2).
+    pub async_state: AsyncExecutionState,
+    /// Partial redraw dirty rectangle tracker (Section 5.5).
+    pub dirty_rect: Option<Rect>,
+    /// Sidebar visibility state (Section 5.4).
+    pub sidebar_open: bool,
 }
 
 impl<D: UiDispatcher> NativeApp<D> {
@@ -6109,6 +6431,10 @@ impl<D: UiDispatcher> NativeApp<D> {
             last_exported_file: None,
             secondary_windows: HashMap::new(),
             spawned_window_requests: Vec::new(),
+            current_error: None,
+            async_state: AsyncExecutionState::default(),
+            dirty_rect: None,
+            sidebar_open: true,
         }
     }
 
