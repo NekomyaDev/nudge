@@ -341,7 +341,10 @@ fn emit_body_inner(
                     None => format!("for {var} in {}:", py(coll, aliases)),
                 };
                 let mut s = header;
-                for l in emit_body_inner(body, aliases, agent, false).trim_end().lines() {
+                for l in emit_body_inner(body, aliases, agent, false)
+                    .trim_end()
+                    .lines()
+                {
                     s.push_str("\n    ");
                     s.push_str(l);
                 }
@@ -353,13 +356,19 @@ fn emit_body_inner(
                 else_body,
             } => {
                 let mut s = format!("if {}:", py(cond, aliases));
-                for l in emit_body_inner(then_body, aliases, agent, is_last).trim_end().lines() {
+                for l in emit_body_inner(then_body, aliases, agent, is_last)
+                    .trim_end()
+                    .lines()
+                {
                     s.push_str("\n    ");
                     s.push_str(l);
                 }
                 if let Some(eb) = else_body {
                     s.push_str("\n    else:");
-                    for l in emit_body_inner(eb, aliases, agent, is_last).trim_end().lines() {
+                    for l in emit_body_inner(eb, aliases, agent, is_last)
+                        .trim_end()
+                        .lines()
+                    {
                         s.push_str("\n    ");
                         s.push_str(l);
                     }

@@ -300,4 +300,3 @@ All five acceptance gates specified in Section 9 have been formally verified and
 | **GATE-03** | **Performance Acceleration** | $\ge 20\times$ speedup over disk I/O | **$113.7\times$ speedup** ($3.7\times 10^6$ ops/sec) | **PASSED** |
 | **GATE-04** | **Semantic Diff Fidelity** | 100% precision on signature vs body diff | **$100\%$ precision** (4-tier diff) | **PASSED** |
 | **GATE-05** | **Memory Consumption Ceiling** | $\le 25\,\text{MB}$ peak resident memory | **$< 12\,\text{MB}$** (CAS deduplication) | **PASSED** |
-

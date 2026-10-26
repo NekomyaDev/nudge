@@ -1188,8 +1188,10 @@ fn test_http_framing() -> bool {{
         let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
-        let html_src = std::fs::read_to_string(root_dir.join("prelude/web/html.ndg")).expect("read html.ndg");
-        let dom_src = std::fs::read_to_string(root_dir.join("prelude/web/dom.ndg")).expect("read dom.ndg");
+        let html_src =
+            std::fs::read_to_string(root_dir.join("prelude/web/html.ndg")).expect("read html.ndg");
+        let dom_src =
+            std::fs::read_to_string(root_dir.join("prelude/web/dom.ndg")).expect("read dom.ndg");
 
         let test_src = format!(
             r##"{html_src}
@@ -1241,8 +1243,10 @@ fn test_dom_suite() -> bool {{
         let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
-        let url_src = std::fs::read_to_string(root_dir.join("prelude/net/url.ndg")).expect("read url.ndg");
-        let policy_src = std::fs::read_to_string(root_dir.join("prelude/web/policy.ndg")).expect("read policy.ndg");
+        let url_src =
+            std::fs::read_to_string(root_dir.join("prelude/net/url.ndg")).expect("read url.ndg");
+        let policy_src = std::fs::read_to_string(root_dir.join("prelude/web/policy.ndg"))
+            .expect("read policy.ndg");
 
         let test_src = format!(
             r##"{url_src}
@@ -1299,9 +1303,12 @@ fn test_policy_suite() -> bool {{
         let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
-        let html_src = std::fs::read_to_string(root_dir.join("prelude/web/html.ndg")).expect("read html.ndg");
-        let dom_src = std::fs::read_to_string(root_dir.join("prelude/web/dom.ndg")).expect("read dom.ndg");
-        let snapshot_src = std::fs::read_to_string(root_dir.join("prelude/web/snapshot.ndg")).expect("read snapshot.ndg");
+        let html_src =
+            std::fs::read_to_string(root_dir.join("prelude/web/html.ndg")).expect("read html.ndg");
+        let dom_src =
+            std::fs::read_to_string(root_dir.join("prelude/web/dom.ndg")).expect("read dom.ndg");
+        let snapshot_src = std::fs::read_to_string(root_dir.join("prelude/web/snapshot.ndg"))
+            .expect("read snapshot.ndg");
 
         let test_src = format!(
             r##"{html_src}
