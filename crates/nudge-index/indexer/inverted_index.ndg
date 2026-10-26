@@ -1,4 +1,4 @@
-/// Pure-Nudge In-Memory Inverted Index & Posting Lists
+/// Pure-Nudge In-Memory Inverted Index & Posting Lists with Native Map
 /// Part of Phase 5 (v2.5) - Query Engine & Benchmarking
 /// Zero foreign dependencies - 100% Pure Nudge
 
@@ -9,19 +9,26 @@ type PostingMatch = {
     snippet: string
 }
 
-type PostingEntry = {
-    term: string,
-    matches: [PostingMatch]
+fn list_has_string(xs: [string], target: string) -> bool {
+    let mut found = false
+    for x in xs {
+        if x == target {
+            found = true
+        }
+    }
+    found
 }
 
 agent InvertedIndex {
     state {
-        postings: [PostingEntry] = []
+        terms: Map[string, [PostingMatch]] = {}
+        all_terms: [string] = []
         term_count: int = 0
     }
 
     fn reset_inverted_index() {
-        state.postings = []
+        state.terms = {}
+        state.all_terms = []
         state.term_count = 0
     }
 
@@ -34,36 +41,24 @@ agent InvertedIndex {
                 line: line,
                 snippet: snippet
             }
-            let mut updated: [PostingEntry] = []
-            let mut found = false
-            for p in state.postings {
-                if p.term == clean_term {
-                    updated = updated + [{
-                        term: p.term,
-                        matches: p.matches + [m]
-                    }]
-                    found = true
-                } else {
-                    updated = updated + [p]
-                }
-            }
-            if !found {
-                updated = updated + [{
-                    term: clean_term,
-                    matches: [m]
-                }]
+            if list_has_string(state.all_terms, clean_term) {
+                state.terms[clean_term] = state.terms[clean_term] + [m]
+            } else {
+                state.terms[clean_term] = [m]
+                state.all_terms = state.all_terms + [clean_term]
                 state.term_count = state.term_count + 1
             }
-            state.postings = updated
         }
     }
 
     fn search(query: string) -> [PostingMatch] {
         let q = str.trim(str.lower(query))
         let mut results: [PostingMatch] = []
-        for p in state.postings {
-            if p.term == q or str.contains(p.term, q) {
-                results = results + p.matches
+        if q != "" {
+            for t in state.all_terms {
+                if t == q or str.contains(t, q) {
+                    results = results + state.terms[t]
+                }
             }
         }
         results
