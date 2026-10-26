@@ -1,3 +1,5 @@
+/// # 6/60 - Traces, replay and regressions
+///
 /// Set NUDGE_TRACE=<file> and every LLM call, tool call and decision
 /// lands in an NTF trace (an open, frozen-v1 JSONL format — no vendor
 /// lock-in). Then:

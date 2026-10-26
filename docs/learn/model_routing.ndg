@@ -1,3 +1,5 @@
+/// # 27/60 - Selecting and routing models
+///
 /// The `model` option names a provider and model with `provider:model`. This
 /// makes routing explicit and keeps provider decisions close to the task:
 /// `anthropic:sonnet-4.6`, `openai:gpt-4o`, and `fake:default` are typical

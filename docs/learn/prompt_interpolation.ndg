@@ -1,3 +1,5 @@
+/// # 24/60 - Prompt interpolation and formatting
+///
 /// Every `{name}` or dotted `{record.field}` reference in a prompt is checked
 /// against the function's local variables. This catches misspellings before a
 /// model sees the request. Put values next to clear labels so their role is

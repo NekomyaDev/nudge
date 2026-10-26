@@ -1,3 +1,5 @@
+/// # 23/60 - Prompt syntax and multi-line blocks
+///
 /// `llm"""..."""` is a multi-line prompt literal. Its indentation and
 /// newlines are preserved, so use blank lines and labelled sections to make the
 /// request easy for a model to follow. A prompt ends only at the next `"""`.

@@ -1,3 +1,5 @@
+/// # 45/60 - gen.injection() and prompt-injection defenses
+///
 /// Treat decision state as untrusted input. Keep system policy in the question
 /// prompt, keep the user-controlled text only in `on state`, and test that hostile
 /// strings do not bypass deterministic safeguards.

@@ -1,3 +1,5 @@
+/// # 30/60 - Few-shot prompting and context conditioning
+///
 /// Few-shot prompts teach a format by showing representative input/output pairs
 /// inside the prompt. Choose small, diverse examples that demonstrate the rule,
 /// then clearly mark the new input. This is context conditioning, not training:

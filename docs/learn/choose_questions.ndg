@@ -1,3 +1,5 @@
+/// # 37/60 - choose [a, b, c]: classifying with a winner
+///
 /// A `choose` question classifies the state into one of the listed labels. Its
 /// answer includes `winner`, the selected label, plus `p`, `distribution`, and
 /// `confidence`. Read `winner` to route work, but retain the distribution for

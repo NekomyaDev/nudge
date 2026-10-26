@@ -1,3 +1,5 @@
+/// # 41/60 - filter with p and confidence thresholds
+///
 /// Decision results distinguish probability from confidence. For a `choose`
 /// answer, `p` is the selected winner's probability and `confidence` measures
 /// how decisively the model separated that answer from alternatives. A safe policy

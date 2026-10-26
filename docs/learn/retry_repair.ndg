@@ -1,3 +1,5 @@
+/// # 28/60 - Retry and automatic JSON repair
+///
 /// Structured responses can fail validation because a provider returns malformed
 /// JSON or omits a required field. `retry: 3 with repair` gives the runtime up to
 /// three attempts and asks it to repair invalid structured output before giving

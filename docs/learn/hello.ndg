@@ -1,3 +1,5 @@
+/// # 1/60 - Your first LLM call
+///
 /// Nudge compiles typed LLM calls into plain Python/TypeScript.
 ///
 /// An `llm"""..."""` block is a prompt with {interpolation} holes; `with {}`

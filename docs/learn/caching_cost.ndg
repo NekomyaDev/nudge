@@ -1,3 +1,5 @@
+/// # 35/60 - Prompt caching and cost optimization
+///
 /// Large stable instructions can be cached by providers that support prompt
 /// caching. For Anthropic-compatible calls, `cache_control: "ephemeral"` marks
 /// reusable prompt context. Pair it with a stable system prompt and keep changing

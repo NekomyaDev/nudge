@@ -1,3 +1,5 @@
+/// # 44/60 - calibrate thresholds offline with policy-sweep
+///
 /// Thresholds are product policy, not magic constants. First record decision
 /// traces, then use `nudgec policy-sweep` to compare candidate thresholds offline.
 /// This replays existing distributions and makes zero new model calls.

@@ -1,3 +1,5 @@
+/// # 7/60 - Interactive UI & Agents
+///
 /// Agents often require human oversight, review stations, and interactive
 /// interfaces. Nudge provides typed UI primitives (`view`, `column`, `row`,
 /// `text`, `button`, `input`) declared in code and managed by stateful agents.

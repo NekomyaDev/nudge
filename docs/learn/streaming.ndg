@@ -1,3 +1,5 @@
+/// # 33/60 - Streaming responses and token chunks
+///
 /// Prefix an LLM binding with `stream let` when downstream code should consume
 /// the response incrementally. The compiler records that the call is streamed;
 /// the runtime can lower it to token-chunk processing rather than waiting for a

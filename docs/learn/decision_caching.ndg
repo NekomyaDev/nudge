@@ -1,3 +1,5 @@
+/// # 46/60 - cache repeated decisions with NUDGE_DECISION_CACHE
+///
 /// A decision cache prevents paying twice for the same decision input and model
 /// configuration. Set `NUDGE_DECISION_CACHE` to a cache path before running the
 /// compiled program. Repeated calls with the same state and options reuse the

@@ -1,3 +1,5 @@
+/// # 43/60 - escalate low-confidence decisions to a human
+///
 /// A human-in-the-loop policy makes uncertainty explicit. Let high-confidence
 /// cases proceed automatically, but return an escalation state for the remainder.
 /// The escalation can become a queue entry, UI task, or an external review tool.

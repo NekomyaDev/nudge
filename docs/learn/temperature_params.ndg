@@ -1,3 +1,5 @@
+/// # 32/60 - Temperature, top_p, and seed parameters
+///
 /// Sampling parameters control output variability. Lower `temperature` favors
 /// repeatable, conservative wording. `top_p` limits sampling to the most likely
 /// probability mass. A `seed` requests reproducibility from providers that

@@ -1,3 +1,5 @@
+/// # 2/60 - Typed outputs (schemas)
+///
 /// Free-text LLM output is a bug factory. In Nudge you declare a
 /// record type and pin it with `schema:` — the runtime validates every
 /// response against the type and repairs or rejects mismatches.
