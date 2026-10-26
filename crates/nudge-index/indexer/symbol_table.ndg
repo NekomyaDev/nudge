@@ -1,4 +1,4 @@
-/// Pure-Nudge High-Performance In-Memory Symbol Table with O(1) Map Lookups
+/// Pure-Nudge High-Performance In-Memory Symbol Table with Native Map Lookups
 /// Part of Phase 5 (v2.5) - Query Engine & Benchmarking
 /// Zero foreign dependencies - 100% Pure Nudge
 
@@ -23,13 +23,15 @@ fn list_has_string(xs: [string], target: string) -> bool {
 
 agent SymbolTable {
     state {
-        symbols: Map[string, SymbolEntry?] = {}
+        symbols: Map[string, SymbolEntry] = {}
+        symbol_names: [string] = []
         all_symbols: [SymbolEntry] = []
         total_count: int = 0
     }
 
     fn reset_symbol_table() {
         state.symbols = {}
+        state.symbol_names = []
         state.all_symbols = []
         state.total_count = 0
     }
@@ -52,29 +54,36 @@ agent SymbolTable {
         }
         if !replaced {
             updated = updated + [entry]
+            state.symbol_names = state.symbol_names + [entry.name]
             state.total_count = state.total_count + 1
         }
         state.all_symbols = updated
     }
 
     fn lookup(name: string) -> SymbolEntry? {
-        state.symbols[name]
+        let mut found: SymbolEntry? = none
+        if list_has_string(state.symbol_names, name) {
+            found = state.symbols[name]
+        }
+        found
     }
 
     fn remove(name: string) -> bool {
-        let existing = state.symbols[name]
         let mut did_remove = false
-        if existing != none {
-            let mut updated: [SymbolEntry] = []
-            let mut new_map: Map[string, SymbolEntry?] = {}
+        if list_has_string(state.symbol_names, name) {
+            let mut updated_syms: [SymbolEntry] = []
+            let mut updated_names: [string] = []
+            let mut new_map: Map[string, SymbolEntry] = {}
             for e in state.all_symbols {
                 if e.name != name {
-                    updated = updated + [e]
+                    updated_syms = updated_syms + [e]
+                    updated_names = updated_names + [e.name]
                     new_map[e.name] = e
                 }
             }
             state.symbols = new_map
-            state.all_symbols = updated
+            state.symbol_names = updated_names
+            state.all_symbols = updated_syms
             state.total_count = state.total_count - 1
             did_remove = true
         }
@@ -131,7 +140,7 @@ fn main() -> int {
     }
 }
 
-test "symbol table map O(1) insertion, lookup and remove" {
+test "symbol table map insertion, lookup and remove" {
     SymbolTable.reset_symbol_table()
     let s1: SymbolEntry = {
         name: "compute",

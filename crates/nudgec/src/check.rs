@@ -5818,6 +5818,10 @@ fn f(c: bool) -> string uses IO {
         );
         paths.sort();
         for path in paths {
+            if path.to_string_lossy().contains("file-manager/src") {
+                // Sub-modules of file_manager.ndg; full application is verified via file_manager.ndg
+                continue;
+            }
             let mut src = std::fs::read_to_string(&path)
                 .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
             if path.to_string_lossy().contains("browser-agent") {
