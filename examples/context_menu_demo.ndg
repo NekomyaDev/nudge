@@ -1,0 +1,53 @@
+// examples/context_menu_demo.ndg
+// Demonstrates right-click context menu (copy/regenerate message, delete/rename chat).
+
+view ContextMenuDemo(last_action: string, prompt_text: string) -> View {
+    column(padding = 24, gap = 14) [
+        text("Nudge Studio — Right-Click Context Menu Demo"),
+        text("Right-click anywhere or on chat elements to open the context menu:"),
+        divider(),
+        status_line("Last Context Action: " + last_action, status = "info"),
+        spacer(12),
+        text("Interactive Chat Elements:"),
+        button("Chat Session: Rust Compiler Architecture", id = "chat_sess_1"),
+        bubble(prompt_text, role = "user", id = "bubble_msg_1")
+    ]
+}
+
+agent ContextApp {
+    state {
+        last: string = "None"
+        prompt: string = "Explain how softbuffer renders pixels directly to Linux framebuffers."
+    }
+
+    fn on_context(key: string) uses UI {
+        state.last = key
+        if key == "ContextMenu:regenerate:bubble_msg_1" {
+            state.prompt = "[REGENERATED] Direct softbuffer pixel presentation complete."
+        } else if key == "ContextMenu:delete:chat_sess_1" {
+            state.last = "Chat Deleted"
+        }
+    }
+
+    window MainWindow {
+        title: "Context Menu Demo",
+        width: 480,
+        height: 380,
+        content: ContextMenuDemo(state.last, state.prompt)
+    }
+}
+
+fn main() uses UI {
+    ContextApp.MainWindow.open()
+}
+
+test "context menu executes actions on right click targets" {
+    let app = ContextApp.MainWindow.mount_headless()
+    assert ContextApp.state.last == "None"
+
+    app.dispatch_context_menu("regenerate", "bubble_msg_1")
+    assert ContextApp.state.prompt == "[REGENERATED] Direct softbuffer pixel presentation complete."
+
+    app.dispatch_context_menu("delete", "chat_sess_1")
+    assert ContextApp.state.last == "Chat Deleted"
+}

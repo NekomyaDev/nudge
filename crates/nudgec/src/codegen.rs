@@ -1380,8 +1380,16 @@ class _HeadlessApp:
                 return None
             handler = _find_key(self.root)
         if not handler and self.agent:
-            # Fall back to an on_cmd / on_shortcut / on_key / on_drop / on_reorder handler on the agent if present
-            for fn_name in ("on_cmd", "on_shortcut", "on_key", "on_drop", "on_reorder"):
+            # Fall back to an on_cmd / on_shortcut / on_key / on_drop / on_reorder / on_context handler on the agent if present
+            for fn_name in (
+                "on_cmd",
+                "on_shortcut",
+                "on_key",
+                "on_drop",
+                "on_reorder",
+                "on_context_menu",
+                "on_context",
+            ):
                 fn = getattr(self.agent, fn_name, None)
                 if callable(fn):
                     handler = fn
@@ -1403,6 +1411,10 @@ class _HeadlessApp:
     def dispatch_reorder(self, source_id, target_id):
         """Simulate dragging source_id onto target_id to reorder."""
         self.dispatch_key(f"Reorder:{source_id}->{target_id}")
+
+    def dispatch_context_menu(self, action_id, target_id):
+        """Simulate selecting an action from the right-click context menu."""
+        self.dispatch_key(f"ContextMenu:{action_id}:{target_id}")
 
 
 class _Window:

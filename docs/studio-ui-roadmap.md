@@ -1085,8 +1085,25 @@ across items and buttons:
   All 18 demo suites pass `nudgec test`.
 
 
-### 4.5 Context menu (right-click)  (0.5 day)
-- [ ] Copy/regenerate message, delete/rename chat
+### 4.5 Context menu (right-click)  (0.5 day) — DONE
+- [x] Copy/regenerate message, delete/rename chat
+
+**Native right-click context menu.** Floating context menu for messages, chats, and views:
+- **`ContextMenuState` & targeted actions**: right-clicking on messages (`bubble`) provides
+  "Copy Message", "Regenerate", and "Delete Message"; on chats (`button`), provides
+  "Rename Chat", "Delete Chat", and "Duplicate Chat"; on window background, provides
+  "New Chat", "Clear Conversation", and "Open Settings".
+- **Keyboard & mouse navigation**: ArrowUp / ArrowDown updates active highlight; Enter or
+  direct row click executes `ContextMenu:<action>:<target>` and closes menu; Escape dismisses.
+- **Clipboard integration**: "Copy Message" copies target message text to the window clipboard.
+- **Python front end parity**: `dispatch_context_menu` on `_HeadlessApp`.
+- **Verified**: fmt OK, clippy -D warnings clean, **972 passed / 0 failed / 1 ignored**
+  (new unit test `test_context_menu_interaction_and_actions`). Verified live on X11 with
+  `examples/context_menu_demo.ndg` (window WID 67108866, 480x380): right click opened
+  context menu with 3,649 blue selection pixels (`0x1D, 0x4E, 0xD8`), and selecting
+  "Regenerate" executed the action with 2,984 bright text pixels rendered on screen.
+  All 19 demo suites pass `nudgec test`.
+
 
 ### 4.6 Copy / paste enhancement  (0.5 day)
 - [ ] Rich text paste, copy-code notification

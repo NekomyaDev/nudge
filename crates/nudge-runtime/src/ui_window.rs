@@ -1815,6 +1815,206 @@ pub fn fuzzy_match(pattern: &str, text: &str) -> bool {
     false
 }
 
+/// State for native right-click Context Menu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextMenuItem {
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextMenuState {
+    pub target_id: Option<String>,
+    pub target_tag: String,
+    pub target_text: Option<String>,
+    pub pos: (i32, i32),
+    pub highlight: usize,
+    pub items: Vec<ContextMenuItem>,
+}
+
+impl ContextMenuState {
+    pub fn for_target(target: Option<&LayoutBox>, pos: (i32, i32), win_w: i32, win_h: i32) -> Self {
+        let (id, tag, text, items) = match target {
+            Some(b) if b.tag.starts_with("bubble") => (
+                b.id.clone(),
+                b.tag.clone(),
+                b.text.clone(),
+                vec![
+                    ContextMenuItem {
+                        id: "copy".into(),
+                        label: "Copy Message".into(),
+                    },
+                    ContextMenuItem {
+                        id: "regenerate".into(),
+                        label: "Regenerate".into(),
+                    },
+                    ContextMenuItem {
+                        id: "delete".into(),
+                        label: "Delete Message".into(),
+                    },
+                ],
+            ),
+            Some(b) if b.tag == "button" || b.id.as_deref().unwrap_or("").starts_with("chat") => (
+                b.id.clone(),
+                b.tag.clone(),
+                b.text.clone(),
+                vec![
+                    ContextMenuItem {
+                        id: "rename".into(),
+                        label: "Rename Chat".into(),
+                    },
+                    ContextMenuItem {
+                        id: "delete".into(),
+                        label: "Delete Chat".into(),
+                    },
+                    ContextMenuItem {
+                        id: "duplicate".into(),
+                        label: "Duplicate Chat".into(),
+                    },
+                ],
+            ),
+            Some(b) => (
+                b.id.clone(),
+                b.tag.clone(),
+                b.text.clone(),
+                vec![
+                    ContextMenuItem {
+                        id: "copy".into(),
+                        label: "Copy".into(),
+                    },
+                    ContextMenuItem {
+                        id: "paste".into(),
+                        label: "Paste".into(),
+                    },
+                    ContextMenuItem {
+                        id: "select_all".into(),
+                        label: "Select All".into(),
+                    },
+                ],
+            ),
+            None => (
+                None,
+                "window".into(),
+                None,
+                vec![
+                    ContextMenuItem {
+                        id: "new_chat".into(),
+                        label: "New Chat".into(),
+                    },
+                    ContextMenuItem {
+                        id: "clear".into(),
+                        label: "Clear Conversation".into(),
+                    },
+                    ContextMenuItem {
+                        id: "settings".into(),
+                        label: "Open Settings".into(),
+                    },
+                ],
+            ),
+        };
+
+        let menu_w = 160;
+        let menu_h = (items.len() as i32 * 28) + 12;
+        let clamped_x = pos.0.min(win_w - menu_w - 8).max(8);
+        let clamped_y = pos.1.min(win_h - menu_h - 8).max(8);
+
+        Self {
+            target_id: id,
+            target_tag: tag,
+            target_text: text,
+            pos: (clamped_x, clamped_y),
+            highlight: 0,
+            items,
+        }
+    }
+
+    pub fn menu_rect(&self) -> Rect {
+        let menu_w = 160;
+        let menu_h = (self.items.len() as i32 * 28) + 12;
+        Rect {
+            x: self.pos.0,
+            y: self.pos.1,
+            w: menu_w,
+            h: menu_h,
+        }
+    }
+}
+
+/// Draws the floating Context Menu overlay.
+pub fn draw_context_menu(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    fonts: &FontEngine,
+    theme: &Theme,
+    menu: &ContextMenuState,
+) {
+    let r = menu.menu_rect();
+    if r.w <= 0 || r.h <= 0 {
+        return;
+    }
+
+    // Card background with border outline
+    draw_rounded_rect_box(
+        buf,
+        stride,
+        height,
+        r.x,
+        r.y,
+        r.w,
+        r.h,
+        6,
+        theme.input_bg,
+        theme.border,
+    );
+
+    let row_h = 28;
+    let cell_h = fonts.cell_h;
+
+    for (i, item) in menu.items.iter().enumerate() {
+        let row_y = r.y + 6 + (i as i32 * row_h);
+        let is_selected = i == menu.highlight;
+
+        if is_selected {
+            draw_rounded_rect_box(
+                buf,
+                stride,
+                height,
+                r.x + 4,
+                row_y,
+                r.w - 8,
+                row_h,
+                4,
+                theme.selection_bg,
+                theme.selection_bg,
+            );
+        }
+
+        let text_color = if is_selected {
+            theme.button_text
+        } else {
+            theme.text
+        };
+        let ty = row_y + (row_h - cell_h) / 2;
+        draw_text_ttf_clipped(
+            fonts,
+            FaceKind::Ui,
+            r.x + 12,
+            ty,
+            &item.label,
+            Rect {
+                x: r.x + 8,
+                y: row_y,
+                w: r.w - 16,
+                h: row_h,
+            },
+            |px, py, w, h, cov| {
+                draw_rect_alpha(buf, stride, height, px, py, w, h, text_color, cov);
+            },
+        );
+    }
+}
+
 /// State for interactive drag-and-drop (message reordering, chat sorting).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DragState {
@@ -4379,6 +4579,8 @@ pub struct NativeApp<D: UiDispatcher> {
     pub last_dropped_file: Option<String>,
     /// Path of OS file currently hovered over window.
     pub hovered_file: Option<String>,
+    /// State of the active right-click Context Menu.
+    pub context_menu: Option<ContextMenuState>,
 }
 
 impl<D: UiDispatcher> NativeApp<D> {
@@ -4431,6 +4633,7 @@ impl<D: UiDispatcher> NativeApp<D> {
             drag_state: None,
             last_dropped_file: None,
             hovered_file: None,
+            context_menu: None,
         }
     }
 
@@ -4538,6 +4741,15 @@ impl<D: UiDispatcher> NativeApp<D> {
         self.dispatcher.dispatch_change("file_drop", path_str);
         self.dispatcher
             .dispatch_key(&format!("FileDrop:{path_str}"), None);
+        self.render();
+    }
+
+    /// Programmatically triggers a context menu action.
+    pub fn trigger_context_menu_action(&mut self, action_id: &str, target_id: &str) {
+        self.dispatcher
+            .dispatch_change(target_id, &format!("context:{action_id}"));
+        self.dispatcher
+            .dispatch_key(&format!("ContextMenu:{action_id}:{target_id}"), None);
         self.render();
     }
 
@@ -4678,6 +4890,17 @@ impl<D: UiDispatcher> NativeApp<D> {
                 drag.drop_target = target;
             }
             return true;
+        }
+
+        if let Some(menu) = self.context_menu.as_mut() {
+            let r = menu.menu_rect();
+            if r.contains(pos.0, pos.1) {
+                let row = ((pos.1 - (r.y + 6)).max(0) / 28) as usize;
+                if row < menu.items.len() && row != menu.highlight {
+                    menu.highlight = row;
+                    return true;
+                }
+            }
         }
 
         let g = self.scrollbar_geometry();
@@ -7060,6 +7283,11 @@ impl<D: UiDispatcher> NativeApp<D> {
             );
         }
 
+        // Floating Context Menu overlay
+        if let Some(ref menu) = self.context_menu {
+            draw_context_menu(&mut buffer, stride, h_usize, &self.fonts, &theme, menu);
+        }
+
         // Tooltip overlay, painted last so it layers over every box, including
         // those inside a scroll viewport that would otherwise clip it. Asked
         // for above, while `self` could still be read — and already made to
@@ -7085,6 +7313,28 @@ impl<D: UiDispatcher> NativeApp<D> {
 
     pub fn handle_click(&mut self) {
         let (mx, my) = self.cursor_pos;
+
+        // Context menu owns click before anything else
+        if let Some(menu) = self.context_menu.take() {
+            let r = menu.menu_rect();
+            if r.contains(mx, my) {
+                let row = ((my - (r.y + 6)).max(0) / 28) as usize;
+                if let Some(item) = menu.items.get(row) {
+                    if item.id == "copy" {
+                        if let Some(ref text) = menu.target_text {
+                            self.clipboard = text.clone();
+                        }
+                    }
+                    let target_str = menu.target_id.as_deref().unwrap_or("window");
+                    self.dispatcher
+                        .dispatch_change(target_str, &format!("context:{}", item.id));
+                    self.dispatcher
+                        .dispatch_key(&format!("ContextMenu:{}:{target_str}", item.id), None);
+                }
+            }
+            self.render();
+            return;
+        }
 
         // Command palette owns click before anything else
         if let Some(pal) = self.command_palette.take() {
@@ -7286,6 +7536,53 @@ impl<D: UiDispatcher> NativeApp<D> {
         // happens to be mid-blink when the user types would look like the
         // keystroke did nothing.
         self.touch_caret();
+
+        // Context menu owns keystrokes when active
+        if self.context_menu.is_some() {
+            match logical_key {
+                Key::Named(NamedKey::Escape) => {
+                    self.context_menu = None;
+                    self.render();
+                    return;
+                }
+                Key::Named(NamedKey::ArrowUp) => {
+                    if let Some(menu) = self.context_menu.as_mut() {
+                        menu.highlight = menu.highlight.saturating_sub(1);
+                    }
+                    self.render();
+                    return;
+                }
+                Key::Named(NamedKey::ArrowDown) => {
+                    if let Some(menu) = self.context_menu.as_mut() {
+                        let count = menu.items.len();
+                        menu.highlight = (menu.highlight + 1).min(count.saturating_sub(1));
+                    }
+                    self.render();
+                    return;
+                }
+                Key::Named(NamedKey::Enter) => {
+                    if let Some(menu) = self.context_menu.take() {
+                        if let Some(item) = menu.items.get(menu.highlight) {
+                            if item.id == "copy" {
+                                if let Some(ref text) = menu.target_text {
+                                    self.clipboard = text.clone();
+                                }
+                            }
+                            let target_str = menu.target_id.as_deref().unwrap_or("window");
+                            self.dispatcher
+                                .dispatch_change(target_str, &format!("context:{}", item.id));
+                            self.dispatcher.dispatch_key(
+                                &format!("ContextMenu:{}:{target_str}", item.id),
+                                None,
+                            );
+                        }
+                    }
+                    self.render();
+                    return;
+                }
+                _ => {}
+            }
+        }
 
         // Modal Command Palette owns keystrokes when active
         if self.command_palette.is_some() {
@@ -8141,6 +8438,30 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
                     if let Some(win) = &self.window {
                         win.request_redraw();
                     }
+                }
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Right,
+                ..
+            } => {
+                let (mx, my) = self.cursor_pos;
+                let target = self.layout_boxes.iter().rev().find(|b| {
+                    let r = b.screen_rect(self.scroll_x, self.scroll_y);
+                    let clip_ok = b
+                        .screen_clip(self.scroll_x, self.scroll_y)
+                        .is_none_or(|c| c.contains(mx, my));
+                    r.contains(mx, my) && clip_ok && !b.disabled
+                });
+                self.context_menu = Some(ContextMenuState::for_target(
+                    target,
+                    self.cursor_pos,
+                    self.width as i32,
+                    self.height as i32,
+                ));
+                self.render();
+                if let Some(win) = &self.window {
+                    win.request_redraw();
                 }
             }
             WindowEvent::DroppedFile(path) => {
@@ -9499,6 +9820,64 @@ mod tests {
             app.last_dropped_file.as_deref(),
             Some("/home/user/document.pdf")
         );
+    }
+
+    #[test]
+    fn test_context_menu_interaction_and_actions() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "ContextMenu".into(),
+                width: 400,
+                height: 400,
+            },
+            dummy,
+        );
+
+        let msg = test_box("bubble:user", "user_prompt", 40, false);
+        app.layout_boxes = vec![msg];
+
+        // 1. Right click on message to open context menu
+        app.cursor_pos = (60, 50);
+        let target = app.layout_boxes.first();
+        app.context_menu = Some(ContextMenuState::for_target(
+            target,
+            app.cursor_pos,
+            400,
+            400,
+        ));
+        assert!(app.context_menu.is_some());
+        let menu = app.context_menu.as_ref().unwrap();
+        assert_eq!(menu.items.len(), 3);
+        assert_eq!(menu.items[0].label, "Copy Message");
+        assert_eq!(menu.items[1].label, "Regenerate");
+
+        // 2. Keyboard navigate down to "Regenerate" and press Enter
+        app.handle_key_input(&Key::Named(NamedKey::ArrowDown), None);
+        assert_eq!(app.context_menu.as_ref().unwrap().highlight, 1);
+
+        app.handle_key_input(&Key::Named(NamedKey::Enter), None);
+        assert_eq!(*app.dispatcher.notes, "context:regenerate");
+        assert_eq!(
+            *app.dispatcher.last_key,
+            "ContextMenu:regenerate:user_prompt"
+        );
+        assert!(
+            app.context_menu.is_none(),
+            "Enter executes and closes context menu"
+        );
+
+        // 3. Programmatic context action trigger helper
+        app.trigger_context_menu_action("delete", "user_prompt");
+        assert_eq!(*app.dispatcher.notes, "context:delete");
+        assert_eq!(*app.dispatcher.last_key, "ContextMenu:delete:user_prompt");
     }
 
     #[test]
