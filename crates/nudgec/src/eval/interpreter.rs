@@ -370,13 +370,26 @@ impl Interpreter {
                 self.active_agent = agent.clone();
             }
             if let Some((fn_item, fn_agent)) = self.fns.get(&hname).cloned() {
-                self.call_user_fn(
-                    &fn_item,
-                    fn_agent.as_deref().or(agent.as_deref()),
-                    &[],
-                    &[],
-                    env,
-                )?;
+                let param_count = match &fn_item {
+                    Item::Fn { params, .. } => params.len(),
+                    _ => 0,
+                };
+                if param_count == 1 {
+                    self.call_user_fn_with_vals(
+                        &fn_item,
+                        fn_agent.as_deref().or(agent.as_deref()),
+                        &[NudgeVal::Str(target_id.to_string())],
+                        env,
+                    )?;
+                } else {
+                    self.call_user_fn(
+                        &fn_item,
+                        fn_agent.as_deref().or(agent.as_deref()),
+                        &[],
+                        &[],
+                        env,
+                    )?;
+                }
             }
             self.active_agent = prev_agent;
 

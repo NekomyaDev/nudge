@@ -4884,6 +4884,8 @@ pub struct LayoutCtx<'a> {
     pub scroll: &'a mut HashMap<String, i32>,
     pub regions: &'a mut Vec<ScrollRegion>,
     pub counter: &'a mut usize,
+    pub max_w: i32,
+    pub max_h: i32,
 }
 
 #[inline]
@@ -4913,6 +4915,8 @@ pub fn layout_element(
         scroll: &mut scroll,
         regions: &mut regions,
         counter: &mut counter,
+        max_w,
+        max_h: 1200,
     };
     layout_element_ctx(elem, x, y, max_w, boxes, &mut ctx, (0, 0), &[])
 }
@@ -4983,7 +4987,15 @@ pub fn layout_element_ctx(
             } else {
                 max_child_w + 2 * padding
             };
-            let final_h = explicit_h.unwrap_or(total_h);
+            let expand_h = elem.props.get("expand_h").is_some_and(|v| v == "true")
+                || elem.props.get("height").map(|s| s == "auto" || s == "100%").unwrap_or(false);
+            let final_h = if let Some(eh) = explicit_h {
+                eh
+            } else if expand_h {
+                (ctx.max_h - y - padding).max(total_h)
+            } else {
+                total_h
+            };
 
             // Post-pass: apply cross-axis alignment (`align` = "center" | "end")
             if align == "center" || align == "end" {
@@ -5052,10 +5064,21 @@ pub fn layout_element_ctx(
             let mut max_child_h = 0;
             let mut child_box_ranges = Vec::new();
 
-            for child in &elem.children {
+            for (child_idx, child) in elem.children.iter().enumerate() {
                 let idx_before = boxes.len();
+                let child_expand = child.props.get("expand").is_some_and(|v| v == "true");
+                let child_max_w = if child_expand {
+                    let subsequent_w: i32 = elem.children.iter().skip(child_idx + 1).map(|c| {
+                        let ew = c.props.get("width").or_else(|| c.props.get("w")).and_then(|s| s.parse::<i32>().ok()).unwrap_or(0);
+                        let pad = c.props.get("padding").and_then(|s| s.parse::<i32>().ok()).unwrap_or(0);
+                        ew + pad * 2 + gap
+                    }).sum();
+                    (max_w - (child_x - x) - padding - subsequent_w).max(60)
+                } else {
+                    max_w
+                };
                 let (cw, ch) =
-                    layout_element_ctx(child, child_x, y + padding, max_w, boxes, ctx, pan, clips);
+                    layout_element_ctx(child, child_x, y + padding, child_max_w, boxes, ctx, pan, clips);
                 let idx_after = boxes.len();
                 child_box_ranges.push((idx_before..idx_after, cw));
                 max_child_h = max_child_h.max(ch);
@@ -5076,7 +5099,15 @@ pub fn layout_element_ctx(
             } else {
                 content_w + 2 * padding
             };
-            let total_h = explicit_h.unwrap_or(max_child_h + 2 * padding);
+            let expand_h = elem.props.get("expand_h").is_some_and(|v| v == "true")
+                || elem.props.get("height").map(|s| s == "auto" || s == "100%").unwrap_or(false);
+            let total_h = if let Some(eh) = explicit_h {
+                eh
+            } else if expand_h {
+                (ctx.max_h - y - padding).max(max_child_h + 2 * padding)
+            } else {
+                max_child_h + 2 * padding
+            };
 
             // Post-pass: apply main-axis distribution (`justify`) and cross-axis alignment (`align`)
             let avail_w = total_w - 2 * padding;
@@ -5155,18 +5186,19 @@ pub fn layout_element_ctx(
                 .unwrap_or(10);
             // The viewport is a *fixed* box: content taller than it scrolls
             // inside instead of growing the container.
-            let viewport_h = elem
-                .props
-                .get("height")
-                .and_then(|s| s.parse::<i32>().ok())
-                .unwrap_or(240)
-                .max(1);
-            let viewport_w = elem
-                .props
-                .get("width")
-                .and_then(|s| s.parse::<i32>().ok())
-                .unwrap_or(max_w)
-                .clamp(1, max_w.max(1));
+            let expand_h = elem.props.get("expand").is_some_and(|v| v == "true")
+                || elem.props.get("expand_h").is_some_and(|v| v == "true")
+                || elem.props.get("height").map(|s| s == "auto" || s == "100%").unwrap_or(false);
+            let explicit_h = elem.props.get("height").or_else(|| elem.props.get("h")).and_then(|s| s.parse::<i32>().ok());
+            let viewport_h = if let Some(eh) = explicit_h {
+                eh
+            } else if expand_h {
+                (ctx.max_h - y - padding - 24).max(120)
+            } else {
+                240
+            };
+            let explicit_w = elem.props.get("width").or_else(|| elem.props.get("w")).and_then(|s| s.parse::<i32>().ok());
+            let viewport_w = explicit_w.unwrap_or(max_w).clamp(1, max_w.max(1));
 
             let viewport = Rect {
                 x,
@@ -5380,8 +5412,11 @@ pub fn layout_element_ctx(
             let explicit_w = elem.props.get("width").or_else(|| elem.props.get("w")).and_then(|s| s.parse::<i32>().ok());
             let explicit_h = elem.props.get("height").or_else(|| elem.props.get("h")).and_then(|s| s.parse::<i32>().ok());
             let variant = elem.props.get("variant").map(|s| s.as_str()).unwrap_or("default");
+            let expand = elem.props.get("expand").is_some_and(|v| v == "true");
             let w = if let Some(ew) = explicit_w {
                 ew
+            } else if expand {
+                max_w
             } else if variant == "toolbar" || variant == "icon" {
                 (text_w + 16).max(28)
             } else if variant == "flat" || variant == "ghost" {
@@ -7421,6 +7456,8 @@ impl<D: UiDispatcher> NativeApp<D> {
                 scroll: scroll_offsets,
                 regions: scroll_regions,
                 counter: scroll_counter,
+                max_w: self.width as i32 - 20,
+                max_h: self.height as i32 - 20,
             };
             let (total_w, total_h) = layout_element_ctx(
                 root,
@@ -8396,16 +8433,7 @@ impl<D: UiDispatcher> NativeApp<D> {
         let cell_h = self.fonts.cell_h;
 
         // Background from theme
-        draw_rect(
-            &mut buffer,
-            stride,
-            h_usize,
-            0,
-            0,
-            self.width as i32,
-            self.height as i32,
-            theme.bg,
-        );
+        buffer.fill(theme.bg);
 
         let (mx, my) = self.cursor_pos;
 
@@ -8582,7 +8610,7 @@ impl<D: UiDispatcher> NativeApp<D> {
                     // than on box identity, so the box that lit up when the
                     // button went down is exactly the box that fires on release.
                     let key = button_key(lbox, box_index);
-                    let is_focused = self.focused_id.as_deref() == lbox.id.as_deref();
+                    let is_focused = lbox.id.is_some() && self.focused_id.as_deref() == lbox.id.as_deref();
                     let pressed = hovered && self.pressed_id.as_deref() == Some(key.as_str());
                     // How far this button has travelled toward its hovered
                     // tone. Read by the same key, so an unlabelled button
@@ -8986,7 +9014,7 @@ impl<D: UiDispatcher> NativeApp<D> {
                         bg,
                         border_color,
                     );
-                    let is_focused = self.focused_id.as_deref() == lbox.id.as_deref();
+                    let is_focused = lbox.id.is_some() && self.focused_id.as_deref() == lbox.id.as_deref();
                     if is_focused {
                         draw_focus_ring(
                             &mut buffer,
@@ -9099,7 +9127,7 @@ impl<D: UiDispatcher> NativeApp<D> {
                         lbox.disabled,
                     );
                     draw_flag_control(&mut buffer, stride, h_usize, clip, &theme, &flag);
-                    let is_focused = self.focused_id.as_deref() == lbox.id.as_deref();
+                    let is_focused = lbox.id.is_some() && self.focused_id.as_deref() == lbox.id.as_deref();
                     if is_focused {
                         draw_focus_ring(
                             &mut buffer,
@@ -9192,7 +9220,7 @@ impl<D: UiDispatcher> NativeApp<D> {
                         spec,
                     );
                     draw_slider_control(&mut buffer, stride, h_usize, clip, &theme, &view);
-                    let is_focused = self.focused_id.as_deref() == lbox.id.as_deref();
+                    let is_focused = lbox.id.is_some() && self.focused_id.as_deref() == lbox.id.as_deref();
                     if is_focused {
                         draw_focus_ring(
                             &mut buffer,
@@ -11644,6 +11672,8 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
             WindowEvent::Resized(size) => {
                 self.width = size.width.max(1);
                 self.height = size.height.max(1);
+                self.layout_boxes.clear();
+                self.scroll_regions.clear();
                 if let (Some(surface), Some(w), Some(h)) = (
                     &mut self.surface,
                     NonZeroU32::new(self.width),

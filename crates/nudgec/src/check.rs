@@ -2044,7 +2044,7 @@ fn check_expr_pos(
                                                 msg: format!("event handler '{hname}' signature mismatch: expected at most 1 parameter"),
                                             });
                                         } else if params.len() == 1
-                                            && (k == "on_change" || k == "on_key")
+                                            && (k == "on_change" || k == "on_key" || k == "on_click")
                                         {
                                             let param_ty =
                                                 resolve(&params[0].1, g, &mut Vec::new(), errs);
