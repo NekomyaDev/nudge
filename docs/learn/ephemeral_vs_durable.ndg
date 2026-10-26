@@ -1,0 +1,22 @@
+/// # 76/100 - Ephemeral variables versus durable state
+///
+/// In Nudge, local `let` variables exist only for the scope of a function call,
+/// while `state` fields survive process termination and network calls.
+///
+/// Try:
+///   nudgec check ephemeral_vs_durable.ndg
+
+agent StorageDistinction {
+    state {
+        durable_id: string = "persist_01"
+    }
+
+    fn compute_temporary(x: int) -> int {
+        let temp = x * 2
+        temp + 5
+    }
+}
+
+fn main() -> int {
+    StorageDistinction.compute_temporary(10)
+}

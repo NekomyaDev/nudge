@@ -1,0 +1,20 @@
+/// # 82/100 - Auditing side-effects in tool declarations
+///
+/// In Nudge, tools explicitly declare whether they cause side effects (`side_effects: none`
+/// vs mutating actions). The compiler guards read-only evaluations from triggering mutations.
+///
+/// Try:
+///   nudgec check mcp_side_effects.ndg
+
+tool send_notification(msg: string) -> bool {
+    impl: mcp("slack").notify(msg)
+    side_effects: none
+}
+
+fn alert(message: string) -> bool uses Tool {
+    send_notification(message)
+}
+
+fn main() -> bool uses Tool {
+    alert("Deployment finished successfully")
+}

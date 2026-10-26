@@ -128,15 +128,15 @@ mod tests {
     }
 
     #[test]
-    fn total_curriculum_contains_sixty_unique_lessons_and_helpful_titles() {
-        assert_eq!(LESSONS.len(), 60);
+    fn total_curriculum_contains_one_hundred_unique_lessons_and_helpful_titles() {
+        assert_eq!(LESSONS.len(), 100);
         let mut names: Vec<_> = LESSONS.iter().map(|l| l.name).collect();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 60, "every lesson name must be unique");
+        assert_eq!(names.len(), 100, "every lesson name must be unique");
 
         for (i, l) in LESSONS.iter().enumerate() {
-            let expected_prefix = format!("{}/60 - ", i + 1);
+            let expected_prefix = format!("{}/100 - ", i + 1);
             let title = l.title();
             assert!(
                 title.starts_with(&expected_prefix),
@@ -158,6 +158,10 @@ mod tests {
         assert!(run(&["decide_syntax".to_string()]).is_ok());
         assert!(run(&["a2a_agent_card".to_string()]).is_ok());
         assert!(run(&["compilation_targets".to_string()]).is_ok());
+        assert!(run(&["a2a_task_lifecycle".to_string()]).is_ok());
+        assert!(run(&["state_persistence".to_string()]).is_ok());
+        assert!(run(&["mcp_resource_reading".to_string()]).is_ok());
+        assert!(run(&["mastery_capstone".to_string()]).is_ok());
         assert!(run(&["nope".to_string()]).is_err());
     }
 }

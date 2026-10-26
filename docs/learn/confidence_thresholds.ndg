@@ -1,4 +1,4 @@
-/// # 41/60 - filter with p and confidence thresholds
+/// # 41/100 - filter with p and confidence thresholds
 ///
 /// Decision results distinguish probability from confidence. For a `choose`
 /// answer, `p` is the selected winner's probability and `confidence` measures

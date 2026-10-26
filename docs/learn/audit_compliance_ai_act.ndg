@@ -1,0 +1,22 @@
+/// # 92/100 - Compliance auditing for EU AI Act & regulatory requirements
+///
+/// High-risk AI applications require deterministic records of every automated decision.
+/// `nudgec audit <trace.jsonl>` verifies confidence records, probabilities, and model provenance.
+///
+/// Try:
+///   nudgec check audit_compliance_ai_act.ndg
+///   nudgec audit trace.jsonl
+
+type ComplianceScore = {
+    compliant: bool,
+    risk_level: string
+}
+
+fn assess_risk(text: string) -> ComplianceScore uses LLM {
+    llm"""Assess compliance risk: {text}"""
+    with { schema: ComplianceScore, model: "fake:default", budget: 0.02 USD }
+}
+
+fn main() -> ComplianceScore uses LLM {
+    assess_risk("automated loan approval algorithm")
+}

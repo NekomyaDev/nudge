@@ -1,4 +1,4 @@
-/// # 29/60 - Fallback models for failures and timeouts
+/// # 29/100 - Fallback models for failures and timeouts
 ///
 /// A fallback model keeps a bounded task available when the primary provider
 /// fails or times out. Declare the primary in `model` and the secondary in

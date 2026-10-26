@@ -1,0 +1,20 @@
+/// # 89/100 - Interrupting hanging tool calls
+///
+/// Long-running tool operations must yield execution if they exceed safe time limits.
+/// Nudge ensures tool execution threads are interruptible without memory leaks.
+///
+/// Try:
+///   nudgec check tool_timeout_interruption.ndg
+
+tool bounded_search(q: string) -> string {
+    impl: mcp("search").query(q)
+    side_effects: none
+}
+
+fn search_safe(query: string) -> string uses Tool {
+    bounded_search(query)
+}
+
+fn main() -> string uses Tool {
+    search_safe("rust language update")
+}

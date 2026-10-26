@@ -1,0 +1,22 @@
+/// # 70/100 - Distributed trace context propagation
+///
+/// When requests jump across multiple agents, passing the trace ID ensures
+/// the entire execution tree can be inspected in a single audit trail.
+///
+/// Try:
+///   nudgec check a2a_trace_context.ndg
+///   nudgec run a2a_trace_context.ndg
+
+type TraceContext = {
+    trace_id: string,
+    span_id: string
+}
+
+fn execute_with_trace(ctx: TraceContext, op: string) -> string {
+    "[" + ctx.trace_id + "] " + op + " completed"
+}
+
+fn main() -> string {
+    let ctx: TraceContext = { trace_id: "tr_99182", span_id: "sp_01" }
+    execute_with_trace(ctx, "data_sync")
+}

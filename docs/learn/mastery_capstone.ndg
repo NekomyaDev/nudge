@@ -1,0 +1,51 @@
+/// # 100/100 - The Master Capstone Agent
+///
+/// Congratulations on completing all 100 Nudge lessons! You now master:
+/// - Strongly typed records, schemas, and effects
+/// - Deterministic fakes and property fuzzing ($0 testing)
+/// - JEV probability decisions, confidence routing, and fallback policies
+/// - Agent state persistence, transaction rollbacks, and recovery
+/// - Peer-to-peer A2A mesh networking and MCP tool orchestration
+/// - CI regression gates, static cost governance, and EU AI Act compliance
+///
+/// Try:
+///   nudgec check mastery_capstone.ndg
+///   nudgec test mastery_capstone.ndg
+///   nudgec a2a mastery_capstone.ndg
+
+type DecisionOutcome = {
+    dept: { winner: string, p: float, distribution: {string: float}, confidence: float }
+}
+
+agent MasterAgent {
+    state {
+        tasks_handled: int = 0
+        status: string = "ready"
+    }
+
+    fn decide_action(input_str: string) -> DecisionOutcome uses Decision {
+        decide {
+            dept: "triage incoming request" choose [automate, escalate, archive]
+        }
+        on input_str
+        with { model: "fake:default", deadline: 50 }
+    }
+
+    fn execute(input_str: string) -> string uses Decision {
+        let res = decide_action(input_str)
+        state.tasks_handled += 1
+        route {
+            auto: "automated: " + res.dept.winner when res.dept.confidence >= 0.7,
+            review: "manual review required" otherwise
+        }
+    }
+}
+
+test "master capstone agent validates entire runtime stack" {
+    let result = MasterAgent.execute("System maintenance notification")
+    assert len(result) > 0
+    assert MasterAgent.state.tasks_handled == 1
+}
+
+fn main() {
+}

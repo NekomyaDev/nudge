@@ -1,0 +1,16 @@
+/// # 95/100 - CI gating on latency and token regressions
+///
+/// Prevent bloated prompts and sluggish responses from reaching production.
+/// `nudgec trace-diff` compares CI traces against the production baseline, failing if latency rises.
+///
+/// Try:
+///   nudgec check trace_diff_regressions.ndg
+
+fn fast_responder(query: string) -> string uses LLM {
+    llm"""Answer concisely: {query}"""
+    with { model: "fake:default", budget: 0.01 USD }
+}
+
+fn main() -> string uses LLM {
+    fast_responder("Status check")
+}

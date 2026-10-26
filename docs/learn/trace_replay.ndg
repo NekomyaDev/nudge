@@ -1,4 +1,4 @@
-/// # 58/60 - Byte-identical trace replay
+/// # 58/100 - Byte-identical trace replay
 ///
 /// A captured NTF trace can replace live provider calls. Set
 /// `NUDGE_REPLAY=<trace-path>` when executing the same compiled program and the

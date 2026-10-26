@@ -1,0 +1,26 @@
+/// # 71/100 - Durable agent state snapshots
+///
+/// Nudge agents automatically serialize their state block upon every mutation.
+/// Crashed processes resume from their exact state without recalculating expensive steps.
+///
+/// Try:
+///   nudgec check state_persistence.ndg
+///   nudgec test state_persistence.ndg
+
+agent DurableWallet {
+    state {
+        balance: int = 100
+        transactions: int = 0
+    }
+
+    fn deposit(amount: int) {
+        state.balance += amount
+        state.transactions += 1
+    }
+}
+
+test "wallet persists state updates" {
+    DurableWallet.deposit(50)
+    assert DurableWallet.state.balance == 150
+    assert DurableWallet.state.transactions == 1
+}

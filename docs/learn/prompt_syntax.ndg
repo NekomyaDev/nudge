@@ -1,4 +1,4 @@
-/// # 23/60 - Prompt syntax and multi-line blocks
+/// # 23/100 - Prompt syntax and multi-line blocks
 ///
 /// `llm"""..."""` is a multi-line prompt literal. Its indentation and
 /// newlines are preserved, so use blank lines and labelled sections to make the

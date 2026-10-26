@@ -1,0 +1,29 @@
+/// # 77/100 - Idempotent operations for safe retries
+///
+/// Network drops often cause duplicate delivery of requests. Idempotent action
+/// handlers check existing state before re-applying changes.
+///
+/// Try:
+///   nudgec check idempotent_actions.ndg
+///   nudgec test idempotent_actions.ndg
+
+agent PaymentGateway {
+    state {
+        processed_tx: string = ""
+        total: int = 0
+    }
+
+    fn pay(tx_id: string, amount: int) -> bool {
+        if state.processed_tx != tx_id {
+            state.processed_tx = tx_id
+            state.total += amount
+        }
+        true
+    }
+}
+
+test "payments are idempotent" {
+    assert PaymentGateway.pay("tx_99", 50) == true
+    assert PaymentGateway.pay("tx_99", 50) == true
+    assert PaymentGateway.state.total == 50
+}

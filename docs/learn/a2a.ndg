@@ -1,4 +1,4 @@
-/// # 8/60 - Agent-to-Agent (A2A) Peer Serving
+/// # 8/100 - Agent-to-Agent (A2A) Peer Serving
 ///
 /// Agents cannot live in isolation. Nudge compiles agent definitions directly into
 /// network-addressable Agent-to-Agent (A2A v2.0) protocol peers.

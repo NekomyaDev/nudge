@@ -1,0 +1,27 @@
+/// # 66/100 - Work delegation and sub-agent handoffs
+///
+/// Complex objectives are solved by decomposing tasks into specialized agents.
+/// A primary coordinator passes scoped sub-problems to child agents, aggregating
+/// their responses into a single outcome.
+///
+/// Try:
+///   nudgec check a2a_delegation.ndg
+///   nudgec run a2a_delegation.ndg
+
+agent ResearchWorker {
+    fn find_facts(topic: string) -> string uses LLM {
+        llm"""Find key facts about: {topic}"""
+        with { model: "fake:default" }
+    }
+}
+
+agent ReportCoordinator {
+    fn compile(topic: string) -> string uses LLM {
+        let facts = ResearchWorker.find_facts(topic)
+        "Compiled Report: " + facts
+    }
+}
+
+fn main() -> string uses LLM {
+    ReportCoordinator.compile("Quantum Computing")
+}

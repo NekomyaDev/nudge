@@ -1,0 +1,24 @@
+/// # 87/100 - Conditional tool exposure per execution path
+///
+/// Exposing too many tools at once confuses LLM tool-calling routers.
+/// Restrict tool accessibility based on the verified decision state.
+///
+/// Try:
+///   nudgec check dynamic_tool_registration.ndg
+
+tool delete_record(id: string) -> bool {
+    impl: mcp("db").delete(id)
+    side_effects: none
+}
+
+fn privileged_remove(role: string, id: string) -> bool uses Tool {
+    if role == "admin" {
+        delete_record(id)
+    } else {
+        false
+    }
+}
+
+fn main() -> bool uses Tool {
+    privileged_remove("admin", "rec_100")
+}

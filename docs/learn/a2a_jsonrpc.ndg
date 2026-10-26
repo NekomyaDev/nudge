@@ -1,0 +1,29 @@
+/// # 62/100 - Native JSON-RPC 2.0 communication
+///
+/// Nudge A2A peers expose standard JSON-RPC 2.0 endpoints for language-agnostic
+/// inter-agent communication. Methods map directly to agent functions with
+/// automated serialization and parameter type checking.
+///
+/// Try:
+///   nudgec check a2a_jsonrpc.ndg
+///   nudgec a2a-serve a2a_jsonrpc.ndg --port 8080
+
+agent CalculatorService {
+    state {
+        queries: int = 0
+    }
+
+    fn add(a: int, b: int) -> int {
+        state.queries += 1
+        a + b
+    }
+
+    fn multiply(a: int, b: int) -> int {
+        state.queries += 1
+        a * b
+    }
+}
+
+fn main() -> int {
+    CalculatorService.add(10, 20) + CalculatorService.multiply(3, 4)
+}

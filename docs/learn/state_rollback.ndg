@@ -1,0 +1,34 @@
+/// # 72/100 - Transactional state rollback on failure
+///
+/// If an agent action crashes midway through execution, state changes must not corrupt.
+/// Snapshot checkpoints preserve previous verified values.
+///
+/// Try:
+///   nudgec check state_rollback.ndg
+///   nudgec test state_rollback.ndg
+
+agent OrderProcessor {
+    state {
+        status: string = "pending"
+        inventory: int = 10
+    }
+
+    fn try_fulfill(order_size: int) -> bool {
+        let old_inventory = state.inventory
+        let enough = order_size <= state.inventory
+        if enough {
+            state.inventory -= order_size
+            state.status = "fulfilled"
+        } else {
+            state.inventory = old_inventory
+            state.status = "failed_out_of_stock"
+        }
+        enough
+    }
+}
+
+test "order processor rolls back upon stock shortage" {
+    assert OrderProcessor.try_fulfill(15) == false
+    assert OrderProcessor.state.status == "failed_out_of_stock"
+    assert OrderProcessor.state.inventory == 10
+}

@@ -1,0 +1,23 @@
+/// # 80/100 - State migration across compiler versions
+///
+/// When deploying a new agent revision with altered state types, migration functions
+/// transform old record structures into updated schemas cleanly.
+///
+/// Try:
+///   nudgec check state_migration.ndg
+
+type OldState = { user: string, points: int }
+type NewState = { user: string, score: float, tier: string }
+
+fn migrate_state(old: OldState) -> NewState {
+    {
+        user: old.user,
+        score: old.points * 1.0,
+        tier: if old.points > 50 { "gold" } else { "silver" }
+    }
+}
+
+fn main() -> NewState {
+    let old: OldState = { user: "Alice", points: 120 }
+    migrate_state(old)
+}

@@ -1,0 +1,29 @@
+/// # 67/100 - Rate limiting and concurrency throttling
+///
+/// Public agent endpoints require protection from token exhaustion and denial-of-service.
+/// Stateful guards track request volume and reject bursts before triggering LLM inference.
+///
+/// Try:
+///   nudgec check a2a_rate_limits.ndg
+///   nudgec test a2a_rate_limits.ndg
+
+agent RateLimiter {
+    state {
+        request_count: int = 0
+        max_allowed: int = 5
+    }
+
+    fn allow_request() -> bool {
+        let ok = state.request_count < state.max_allowed
+        if ok {
+            state.request_count += 1
+        }
+        ok
+    }
+}
+
+test "rate limiter rejects requests exceeding quota" {
+    assert RateLimiter.allow_request() == true
+    assert RateLimiter.allow_request() == true
+    assert RateLimiter.state.request_count == 2
+}

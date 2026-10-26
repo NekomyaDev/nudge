@@ -1,0 +1,25 @@
+/// # 73/100 - Resuming interrupted runs with nudgec resume
+///
+/// When an agent crashes due to network interruption, `nudgec resume <run_id>`
+/// inspects the execution log and continues seamlessly from the last checkpoint.
+///
+/// Try:
+///   nudgec check checkpoint_resume.ndg
+///   nudgec runs
+
+agent PipelineAgent {
+    state {
+        step: int = 1
+        summary: string = "not_started"
+    }
+
+    fn advance(next_summary: string) {
+        state.step += 1
+        state.summary = next_summary
+    }
+}
+
+fn main() {
+    PipelineAgent.advance("step 1 complete")
+    PipelineAgent.advance("step 2 complete")
+}

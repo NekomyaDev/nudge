@@ -1,0 +1,23 @@
+/// # 65/100 - Token-by-token streaming between agents
+///
+/// When an agent generates long output, waiting for the entire string introduces
+/// latency. Streamed responses let downstream agents begin processing partial
+/// responses in real time.
+///
+/// Try:
+///   nudgec check a2a_streaming_chunks.ndg
+///   nudgec build a2a_streaming_chunks.ndg
+
+type SummaryResult = {
+    summary: string,
+    is_partial: bool
+}
+
+fn generate_stream_chunk(text: string) -> SummaryResult uses LLM {
+    llm"""Generate a brief summary chunk: {text}"""
+    with { schema: SummaryResult, model: "fake:default", budget: 0.01 USD }
+}
+
+fn main() -> SummaryResult uses LLM {
+    generate_stream_chunk("streaming data sample")
+}

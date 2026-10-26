@@ -1,0 +1,34 @@
+/// # 69/100 - Circuit breakers for failing dependencies
+///
+/// When an external peer or upstream provider suffers outages, repeated retries
+/// cause cascading latency. A circuit breaker fails fast until health is restored.
+///
+/// Try:
+///   nudgec check a2a_circuit_breaker.ndg
+///   nudgec test a2a_circuit_breaker.ndg
+
+agent CircuitBreaker {
+    state {
+        failures: int = 0
+        tripped: bool = false
+    }
+
+    fn record_failure() {
+        state.failures += 1
+        if state.failures >= 3 {
+            state.tripped = true
+        }
+    }
+
+    fn can_execute() -> bool {
+        !state.tripped
+    }
+}
+
+test "circuit breaker trips on consecutive errors" {
+    CircuitBreaker.record_failure()
+    CircuitBreaker.record_failure()
+    assert CircuitBreaker.can_execute() == true
+    CircuitBreaker.record_failure()
+    assert CircuitBreaker.can_execute() == false
+}

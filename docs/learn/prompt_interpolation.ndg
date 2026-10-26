@@ -1,4 +1,4 @@
-/// # 24/60 - Prompt interpolation and formatting
+/// # 24/100 - Prompt interpolation and formatting
 ///
 /// Every `{name}` or dotted `{record.field}` reference in a prompt is checked
 /// against the function's local variables. This catches misspellings before a

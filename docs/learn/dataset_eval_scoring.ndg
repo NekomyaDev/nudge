@@ -1,0 +1,16 @@
+/// # 94/100 - Offline accuracy evaluation with nudgec eval
+///
+/// `nudgec eval` evaluates your compiled program against thousands of ground-truth
+/// examples in a JSONL dataset, calculating precision, recall, and pass rates without code changes.
+///
+/// Try:
+///   nudgec check dataset_eval_scoring.ndg
+
+fn classify_intent(msg: string) -> string uses LLM {
+    llm"""Classify intent: {msg}"""
+    with { model: "fake:default" }
+}
+
+fn main() -> string uses LLM {
+    classify_intent("I want to upgrade my tier")
+}

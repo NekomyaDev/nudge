@@ -1,0 +1,23 @@
+/// # 78/100 - Timeouts and deadline policies
+///
+/// Model inferences and tool executions must not hang indefinitely.
+/// The `deadline` parameter pins hard millisecond timeouts on decisions.
+///
+/// Try:
+///   nudgec check time_expiration.ndg
+
+type UrgentDecision = {
+    status: { winner: string, p: float, distribution: {string: float}, confidence: float }
+}
+
+fn fast_decide(context: string) -> UrgentDecision uses Decision {
+    decide {
+        status: "is this event critical?" choose [normal, critical]
+    }
+    on context
+    with { model: "fake:default", deadline: 30 }
+}
+
+fn main() -> UrgentDecision uses Decision {
+    fast_decide("database load at 99%")
+}

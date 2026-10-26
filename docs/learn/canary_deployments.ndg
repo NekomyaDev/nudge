@@ -1,0 +1,21 @@
+/// # 93/100 - Canary deployments and model A/B testing
+///
+/// When upgrading prompts or switching to a new foundation model, traffic splitting
+/// routes a percentage of calls to the candidate model to measure quality before full rollout.
+///
+/// Try:
+///   nudgec check canary_deployments.ndg
+
+fn run_canary(text: string, use_candidate: bool) -> string uses LLM {
+    if use_candidate {
+        llm"""[Candidate] Process request: {text}"""
+        with { model: "fake:default", budget: 0.01 USD }
+    } else {
+        llm"""[Baseline] Process request: {text}"""
+        with { model: "fake:default", budget: 0.01 USD }
+    }
+}
+
+fn main() -> string uses LLM {
+    run_canary("Analyze server metrics", true)
+}

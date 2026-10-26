@@ -1,0 +1,32 @@
+/// # 61/100 - A2A asynchronous task lifecycle
+///
+/// Multi-step agent workflows cannot block network threads. In Nudge,
+/// tasks declare stateful progress with submitted, active, and completed states.
+/// Query execution progress asynchronously through the standard `/tasks/<id>` endpoint.
+///
+/// Try:
+///   nudgec check a2a_task_lifecycle.ndg
+///   nudgec a2a-serve a2a_task_lifecycle.ndg --port 8080
+
+agent TaskManager {
+    state {
+        active_count: int = 0
+        last_status: string = "idle"
+    }
+
+    fn submit_task(name: string) -> string {
+        state.active_count += 1
+        state.last_status = "running: " + name
+        "task_id_001"
+    }
+
+    fn complete_task(id: string) {
+        state.active_count = 0
+        state.last_status = "completed: " + id
+    }
+}
+
+fn main() {
+    let id = TaskManager.submit_task("batch_process")
+    TaskManager.complete_task(id)
+}

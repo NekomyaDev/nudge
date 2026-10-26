@@ -1,0 +1,21 @@
+/// # 86/100 - Audio transcription and speech pipelines
+///
+/// Audio inputs can be pre-processed into structured transcripts and passed
+/// directly to reasoning and classification models.
+///
+/// Try:
+///   nudgec check audio_transcription.ndg
+
+type AudioTranscript = {
+    text: string,
+    language: string
+}
+
+fn transcribe(audio_path: string) -> AudioTranscript uses LLM {
+    llm"""Transcribe audio file at {audio_path}:"""
+    with { schema: AudioTranscript, model: "fake:default", budget: 0.02 USD }
+}
+
+fn main() -> AudioTranscript uses LLM {
+    transcribe("voice_memo.wav")
+}

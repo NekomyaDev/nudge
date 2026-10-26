@@ -1,4 +1,4 @@
-/// # 57/60 - Open NTF traces
+/// # 57/100 - Open NTF traces
 ///
 /// Set `NUDGE_TRACE=<path>` before running generated code to record calls and
 /// outcomes as NTF JSONL. NTF is an open, versioned trace schema: inspect it with

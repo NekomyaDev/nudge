@@ -1,4 +1,4 @@
-/// # 37/60 - choose [a, b, c]: classifying with a winner
+/// # 37/100 - choose [a, b, c]: classifying with a winner
 ///
 /// A `choose` question classifies the state into one of the listed labels. Its
 /// answer includes `winner`, the selected label, plus `p`, `distribution`, and

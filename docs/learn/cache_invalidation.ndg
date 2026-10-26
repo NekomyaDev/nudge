@@ -1,0 +1,26 @@
+/// # 79/100 - Cache key invalidation strategies
+///
+/// Caching saves significant model spend, but stale decisions must be invalidated
+/// when underlying environment states change.
+///
+/// Try:
+///   nudgec check cache_invalidation.ndg
+
+agent CacheManager {
+    state {
+        cache_version: int = 1
+    }
+
+    fn invalidate() {
+        state.cache_version += 1
+    }
+
+    fn get_key(resource: string) -> string {
+        resource + "_v" + state.cache_version
+    }
+}
+
+fn main() -> string {
+    CacheManager.invalidate()
+    CacheManager.get_key("agent_profile")
+}

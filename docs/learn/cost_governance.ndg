@@ -1,0 +1,17 @@
+/// # 91/100 - Static and dynamic cost governance
+///
+/// Enterprise deployments require hard caps on model spend. `nudgec cost` statically
+/// audits maximum theoretical expenses across call trees to prevent surprise billing.
+///
+/// Try:
+///   nudgec cost cost_governance.ndg
+///   nudgec check cost_governance.ndg
+
+fn budget_guarded() -> string uses LLM {
+    llm"""Generate a brief enterprise compliance status update."""
+    with { model: "fake:default", budget: 0.05 USD }
+}
+
+fn main() -> string uses LLM {
+    budget_guarded()
+}

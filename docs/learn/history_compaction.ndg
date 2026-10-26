@@ -1,0 +1,23 @@
+/// # 75/100 - History compaction and memory management
+///
+/// Long-running agents accumulate trace events. Compaction condenses prior
+/// interactions into a unified summary to keep memory footprints minimal.
+///
+/// Try:
+///   nudgec check history_compaction.ndg
+///   nudgec build history_compaction.ndg
+
+type MemorySummary = {
+    consolidated_summary: string,
+    dropped_turns: int
+}
+
+fn compact_history(raw_logs: string) -> MemorySummary uses LLM {
+    llm"""Summarize conversation history into a concise long-term memory:
+    {raw_logs}"""
+    with { schema: MemorySummary, model: "fake:default", budget: 0.02 USD }
+}
+
+fn main() -> MemorySummary uses LLM {
+    compact_history("Turn 1: hello. Turn 2: do research. Turn 3: completed.")
+}

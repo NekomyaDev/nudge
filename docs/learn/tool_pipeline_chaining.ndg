@@ -1,0 +1,26 @@
+/// # 83/100 - Chaining outputs across tool pipelines
+///
+/// Complex queries often require piping output from one tool directly as the
+/// input schema of another without intermediate LLM translation.
+///
+/// Try:
+///   nudgec check tool_pipeline_chaining.ndg
+
+tool parse_json(raw: string) -> string {
+    impl: mcp("util").parse(raw)
+    side_effects: none
+}
+
+tool filter_records(json_data: string) -> string {
+    impl: mcp("util").filter(json_data)
+    side_effects: none
+}
+
+fn process_pipeline(input_str: string) -> string uses Tool {
+    let parsed = parse_json(input_str)
+    filter_records(parsed)
+}
+
+fn main() -> string uses Tool {
+    process_pipeline("raw_status_record")
+}

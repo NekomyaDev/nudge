@@ -1,0 +1,15 @@
+/// # 98/100 - Zero-trust compiler checks and invariant guards
+///
+/// The Nudge typechecker enforces compile-time invariants before bytecode generation.
+/// Code that calls undeclared tools or conceals model effects is rejected with clear E-codes.
+///
+/// Try:
+///   nudgec check zero_trust_compiler_gates.ndg
+
+fn verified_pure_logic(val: int) -> int {
+    val * 10
+}
+
+fn main() -> int {
+    verified_pure_logic(42)
+}

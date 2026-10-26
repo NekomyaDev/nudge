@@ -1,4 +1,4 @@
-/// # 39/60 - score [low, medium, high] and weighted scores
+/// # 39/100 - score [low, medium, high] and weighted scores
 ///
 /// `score [low, medium, high]` asks the decision model to grade a state against
 /// an ordered rubric. The response exposes a numeric `score` and a probability

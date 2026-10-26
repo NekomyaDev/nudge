@@ -1,0 +1,28 @@
+/// # 97/100 - Multi-tenant agent boundaries
+///
+/// SaaS applications require absolute isolation between customer workspaces.
+/// State blocks partition memory so tenant A cannot read state belonging to tenant B.
+///
+/// Try:
+///   nudgec check multi_tenant_isolation.ndg
+///   nudgec test multi_tenant_isolation.ndg
+
+agent TenantStore {
+    state {
+        tenant_id: string = "org_alpha"
+        data_count: int = 0
+    }
+
+    fn record_entry(t_id: string) -> bool {
+        let matches = state.tenant_id == t_id
+        if matches {
+            state.data_count += 1
+        }
+        matches
+    }
+}
+
+test "tenant boundary prevents cross-tenant writes" {
+    assert TenantStore.record_entry("org_alpha") == true
+    assert TenantStore.record_entry("org_beta") == false
+}

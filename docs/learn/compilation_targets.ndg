@@ -1,4 +1,4 @@
-/// # 60/60 - Python, TypeScript, and standalone Rust targets
+/// # 60/100 - Python, TypeScript, and standalone Rust targets
 ///
 /// The same checked Nudge source can target several deployment shapes:
 /// `nudgec build program.ndg` emits Python, `nudgec build-ts program.ndg` emits

@@ -1,0 +1,30 @@
+/// # 74/100 - Stateful agent concurrency and atomic locks
+///
+/// When multiple requests arrive at the same agent, state writes are serialized
+/// deterministically to prevent data races and inconsistent memory states.
+///
+/// Try:
+///   nudgec check concurrency_locks.ndg
+///   nudgec test concurrency_locks.ndg
+
+agent MutexCounter {
+    state {
+        locked: bool = false
+        val: int = 0
+    }
+
+    fn increment() -> bool {
+        let can_lock = !state.locked
+        if can_lock {
+            state.locked = true
+            state.val += 1
+            state.locked = false
+        }
+        can_lock
+    }
+}
+
+test "mutex counter increments safely" {
+    assert MutexCounter.increment() == true
+    assert MutexCounter.state.val == 1
+}

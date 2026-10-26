@@ -1,4 +1,4 @@
-/// # 46/60 - cache repeated decisions with NUDGE_DECISION_CACHE
+/// # 46/100 - cache repeated decisions with NUDGE_DECISION_CACHE
 ///
 /// A decision cache prevents paying twice for the same decision input and model
 /// configuration. Set `NUDGE_DECISION_CACHE` to a cache path before running the

@@ -1,0 +1,22 @@
+/// # 81/100 - Reading external resources via MCP
+///
+/// Model Context Protocol allows agents to query live system resources, files,
+/// and external databases through strongly typed interfaces.
+///
+/// Try:
+///   nudgec check mcp_resource_reading.ndg
+///   nudgec mcp mcp_resource_reading.ndg
+
+tool fetch_system_logs(filter: string) -> string {
+    impl: mcp("system_monitor").read_logs(filter)
+    side_effects: none
+}
+
+fn analyze_logs(filter: string) -> string uses Tool {
+    let logs = fetch_system_logs(filter)
+    "Analyzed: " + logs
+}
+
+fn main() -> string uses Tool {
+    analyze_logs("ERROR")
+}

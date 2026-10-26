@@ -1,4 +1,4 @@
-/// # 50/60 - Typed views with columns, rows, and controls
+/// # 50/100 - Typed views with columns, rows, and controls
 ///
 /// A `view` returns `View` and is composed from typed primitives. `column` and
 /// `row` organize a tree; `text`, `button`, and `input` carry visible content,

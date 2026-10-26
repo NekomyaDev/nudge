@@ -1,4 +1,4 @@
-/// # 36/60 - decide { ... } on state with { ... }
+/// # 36/100 - decide { ... } on state with { ... }
 ///
 /// `decide { ... } on state with { ... }` sends structured questions to a
 /// JEV decision model. The `on` expression is the state or evidence the model

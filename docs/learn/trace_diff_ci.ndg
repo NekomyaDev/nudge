@@ -1,4 +1,4 @@
-/// # 59/60 - Trace diffs as CI regression gates
+/// # 59/100 - Trace diffs as CI regression gates
 ///
 /// Compare a trusted baseline trace to a candidate trace with
 /// `nudgec trace-diff baseline.ntf.jsonl candidate.ntf.jsonl --fail-on-regression`.

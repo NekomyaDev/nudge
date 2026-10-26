@@ -1,0 +1,25 @@
+/// # 84/100 - Resilient fallback when tools fail
+///
+/// External API integrations fail. Nudge allows inspecting tool responses and
+/// falling back to alternative algorithms or secondary tools.
+///
+/// Try:
+///   nudgec check tool_fallback_handling.ndg
+
+tool primary_lookup(key: string) -> string {
+    impl: mcp("primary_db").get(key)
+    side_effects: none
+}
+
+fn robust_lookup(key: string) -> string uses Tool {
+    let res = primary_lookup(key)
+    if len(res) > 0 {
+        res
+    } else {
+        "cached_default"
+    }
+}
+
+fn main() -> string uses Tool {
+    robust_lookup("config_key")
+}

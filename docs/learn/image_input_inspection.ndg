@@ -1,0 +1,21 @@
+/// # 85/100 - Multi-modal prompt inputs and vision models
+///
+/// Vision-capable models accept image artifacts and visual inspection buffers
+/// directly within typed prompts for OCR, visual QA, and UI verification.
+///
+/// Try:
+///   nudgec check image_input_inspection.ndg
+
+type VisionInspection = {
+    detected_objects: string,
+    has_defects: bool
+}
+
+fn inspect_image(image_url: string) -> VisionInspection uses LLM {
+    llm"""Inspect image at {image_url} and identify defects:"""
+    with { schema: VisionInspection, model: "fake:default", budget: 0.03 USD }
+}
+
+fn main() -> VisionInspection uses LLM {
+    inspect_image("https://example.com/item.png")
+}

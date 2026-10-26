@@ -1,0 +1,15 @@
+/// # 99/100 - Packaging standalone single-binary distributions
+///
+/// Deploy Nudge agents to bare-metal servers or minimal scratch containers without
+/// installing Python, Node.js, or external runtimes with `nudgec build --standalone`.
+///
+/// Try:
+///   nudgec build standalone_native_packaging.ndg --standalone
+
+fn run_native_daemon() -> int {
+    42
+}
+
+fn main() -> int {
+    run_native_daemon()
+}

@@ -1,4 +1,4 @@
-/// # 17/60 - Branching before match expressions
+/// # 17/100 - Branching before match expressions
 ///
 /// Nudge's current checked control-flow form is `if ... else ...`.
 /// `match`, exhaustiveness checking, pattern destructuring, and guards are future

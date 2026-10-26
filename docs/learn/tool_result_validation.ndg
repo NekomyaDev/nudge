@@ -1,0 +1,23 @@
+/// # 88/100 - Strong runtime schema validation on tool results
+///
+/// Tools that return unstructured JSON or strings can corrupt downstream types.
+/// Explicit record casting ensures all tool output strictly adheres to Nudge contracts.
+///
+/// Try:
+///   nudgec check tool_result_validation.ndg
+
+type UserProfile = {
+    name: string,
+    active: bool
+}
+
+fn sanitize_profile(name_in: string, active_in: bool) -> UserProfile {
+    {
+        name: name_in,
+        active: active_in
+    }
+}
+
+fn main() -> UserProfile {
+    sanitize_profile("Alice", true)
+}

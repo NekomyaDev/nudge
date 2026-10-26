@@ -1,0 +1,26 @@
+/// # 64/100 - Agent discovery via .well-known/agent.json
+///
+/// Autonomous agents find peer capabilities using standardized discovery.
+/// When compiled, Nudge automatically publishes the agent manifest containing
+/// input/output contracts, supported effects, and provider metadata.
+///
+/// Try:
+///   nudgec a2a a2a_discovery.ndg
+///   cat out/a2a_discovery.agent.json
+
+agent RegistryPeer {
+    state {
+        registered_peers: int = 0
+    }
+
+    fn ping() -> string {
+        "pong"
+    }
+
+    fn get_version() -> string {
+        "v2.0"
+    }
+}
+
+fn main() {
+}

@@ -1,0 +1,31 @@
+/// # 68/100 - Schema versioning and contract compatibility
+///
+/// Autonomous agents evolve independently. Schema versioning allows agents
+/// with different software versions to negotiate common data shapes without crashing.
+///
+/// Try:
+///   nudgec check a2a_schema_negotiation.ndg
+
+type PayloadV1 = {
+    action: string,
+    query: string
+}
+
+type PayloadV2 = {
+    action: string,
+    query: string,
+    priority: int
+}
+
+fn handle_v1(p: PayloadV1) -> string {
+    "v1: " + p.action
+}
+
+fn handle_v2(p: PayloadV2) -> string {
+    "v2: " + p.action + " (priority: " + p.priority + ")"
+}
+
+fn main() -> string {
+    let p = { action: "search", query: "nudge" }
+    handle_v1(p)
+}

@@ -1,0 +1,16 @@
+/// # 90/100 - Security sandbox isolation and effect boundaries
+///
+/// Pure Nudge code cannot access file systems or network interfaces. Functions
+/// must explicitly declare `uses IO` or `uses Tool` before the compiler permits external I/O.
+///
+/// Try:
+///   nudgec check sandbox_isolation.ndg
+///   nudgec test sandbox_isolation.ndg
+
+fn pure_computation(a: int, b: int) -> int {
+    a * b + 10
+}
+
+test "pure computation has zero side-effects" {
+    assert pure_computation(5, 4) == 30
+}
