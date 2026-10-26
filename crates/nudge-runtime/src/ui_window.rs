@@ -2193,6 +2193,475 @@ impl CommandPaletteState {
     }
 }
 
+/// State for the modal Settings Dialog window.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SettingsDialogState {
+    pub open: bool,
+    pub model: String,
+    pub dark_theme: bool,
+    pub stream_response: bool,
+    pub temperature: f32,
+    pub active_tab: usize,
+    pub system_prompt: String,
+}
+
+impl Default for SettingsDialogState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            model: "gemini-3.8-flash".into(),
+            dark_theme: true,
+            stream_response: true,
+            temperature: 0.7,
+            active_tab: 0,
+            system_prompt: "You are Nudge, an expert programming agent.".into(),
+        }
+    }
+}
+
+/// Draws the modal Settings Dialog window overlay.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_settings_dialog(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    fonts: &FontEngine,
+    theme: &Theme,
+    win_w: i32,
+    win_h: i32,
+    dialog: &SettingsDialogState,
+) {
+    if !dialog.open {
+        return;
+    }
+
+    // 1. Semi-transparent backdrop dimming
+    draw_rect_alpha(buf, stride, height, 0, 0, win_w, win_h, 0x0000_0000, 0.65);
+
+    // 2. Centered dialog card
+    let card_w = 420.min(win_w - 40).max(280);
+    let card_h = 300.min(win_h - 40).max(200);
+    let card_x = (win_w - card_w) / 2;
+    let card_y = (win_h - card_h) / 2;
+
+    draw_rounded_rect_box(
+        buf,
+        stride,
+        height,
+        card_x,
+        card_y,
+        card_w,
+        card_h,
+        8,
+        theme.bg,
+        theme.border,
+    );
+
+    // 3. Title bar (40px high)
+    draw_rect(
+        buf,
+        stride,
+        height,
+        card_x + 1,
+        card_y + 1,
+        card_w - 2,
+        38,
+        theme.input_bg,
+    );
+    let title = "Settings & Preferences";
+    let ty = card_y + (40 - fonts.cell_h) / 2;
+    draw_text_ttf_clipped(
+        fonts,
+        FaceKind::Ui,
+        card_x + 16,
+        ty,
+        title,
+        Rect {
+            x: card_x + 12,
+            y: card_y,
+            w: card_w - 60,
+            h: 40,
+        },
+        |px, py, w, h, cov| {
+            draw_rect_alpha(buf, stride, height, px, py, w, h, theme.text, cov);
+        },
+    );
+
+    // Close "✕" button in top-right
+    let close_x = card_x + card_w - 28;
+    let close_y = card_y + 8;
+    draw_text_ttf_clipped(
+        fonts,
+        FaceKind::Ui,
+        close_x,
+        ty,
+        "x",
+        Rect {
+            x: close_x - 4,
+            y: close_y,
+            w: 24,
+            h: 24,
+        },
+        |px, py, w, h, cov| {
+            draw_rect_alpha(buf, stride, height, px, py, w, h, theme.text_dim, cov);
+        },
+    );
+
+    // 4. Tabs: "General", "Model", "About"
+    let tabs = ["General", "Model", "About"];
+    let tab_y = card_y + 44;
+    let tab_w = 90;
+    for (i, &t_name) in tabs.iter().enumerate() {
+        let tx = card_x + 16 + (i as i32 * (tab_w + 8));
+        let is_active = i == dialog.active_tab;
+        let tab_bg = if is_active {
+            theme.selection_bg
+        } else {
+            theme.input_bg
+        };
+        let tab_border = if is_active {
+            theme.input_border_focused
+        } else {
+            theme.border
+        };
+        draw_rounded_rect_box(
+            buf, stride, height, tx, tab_y, tab_w, 26, 4, tab_bg, tab_border,
+        );
+        let tw = fonts.measure_width(FaceKind::Ui, t_name);
+        let t_text_x = tx + (tab_w - tw) / 2;
+        let t_text_y = tab_y + (26 - fonts.cell_h) / 2;
+        let col = if is_active {
+            theme.button_text
+        } else {
+            theme.text
+        };
+        draw_text_ttf_clipped(
+            fonts,
+            FaceKind::Ui,
+            t_text_x,
+            t_text_y,
+            t_name,
+            Rect {
+                x: tx,
+                y: tab_y,
+                w: tab_w,
+                h: 26,
+            },
+            |px, py, w, h, cov| {
+                draw_rect_alpha(buf, stride, height, px, py, w, h, col, cov);
+            },
+        );
+    }
+
+    // 5. Content area based on active_tab
+    let content_y = tab_y + 36;
+    match dialog.active_tab {
+        0 => {
+            // General: Dark Theme, Stream Output
+            let row1_y = content_y + 8;
+            draw_text_ttf_clipped(
+                fonts,
+                FaceKind::Ui,
+                card_x + 20,
+                row1_y + 2,
+                "Dark Theme Mode",
+                Rect {
+                    x: card_x + 20,
+                    y: row1_y,
+                    w: 200,
+                    h: 24,
+                },
+                |px, py, w, h, cov| {
+                    draw_rect_alpha(buf, stride, height, px, py, w, h, theme.text, cov);
+                },
+            );
+            let chk_label = if dialog.dark_theme {
+                "[X] Enabled"
+            } else {
+                "[ ] Disabled"
+            };
+            draw_rounded_rect_box(
+                buf,
+                stride,
+                height,
+                card_x + card_w - 120,
+                row1_y,
+                100,
+                24,
+                4,
+                theme.input_bg,
+                theme.border,
+            );
+            draw_text_ttf_clipped(
+                fonts,
+                FaceKind::Ui,
+                card_x + card_w - 110,
+                row1_y + 4,
+                chk_label,
+                Rect {
+                    x: card_x + card_w - 120,
+                    y: row1_y,
+                    w: 100,
+                    h: 24,
+                },
+                |px, py, w, h, cov| {
+                    draw_rect_alpha(
+                        buf,
+                        stride,
+                        height,
+                        px,
+                        py,
+                        w,
+                        h,
+                        theme.input_border_focused,
+                        cov,
+                    );
+                },
+            );
+
+            let row2_y = content_y + 42;
+            draw_text_ttf_clipped(
+                fonts,
+                FaceKind::Ui,
+                card_x + 20,
+                row2_y + 2,
+                "Stream Responses",
+                Rect {
+                    x: card_x + 20,
+                    y: row2_y,
+                    w: 200,
+                    h: 24,
+                },
+                |px, py, w, h, cov| {
+                    draw_rect_alpha(buf, stride, height, px, py, w, h, theme.text, cov);
+                },
+            );
+            let stream_label = if dialog.stream_response {
+                "[X] Active"
+            } else {
+                "[ ] Off"
+            };
+            draw_rounded_rect_box(
+                buf,
+                stride,
+                height,
+                card_x + card_w - 120,
+                row2_y,
+                100,
+                24,
+                4,
+                theme.input_bg,
+                theme.border,
+            );
+            draw_text_ttf_clipped(
+                fonts,
+                FaceKind::Ui,
+                card_x + card_w - 110,
+                row2_y + 4,
+                stream_label,
+                Rect {
+                    x: card_x + card_w - 120,
+                    y: row2_y,
+                    w: 100,
+                    h: 24,
+                },
+                |px, py, w, h, cov| {
+                    draw_rect_alpha(
+                        buf,
+                        stride,
+                        height,
+                        px,
+                        py,
+                        w,
+                        h,
+                        theme.input_border_focused,
+                        cov,
+                    );
+                },
+            );
+        }
+        1 => {
+            // Model: Model ID, Temperature
+            let row1_y = content_y + 8;
+            draw_text_ttf_clipped(
+                fonts,
+                FaceKind::Ui,
+                card_x + 20,
+                row1_y + 2,
+                "Active AI Model:",
+                Rect {
+                    x: card_x + 20,
+                    y: row1_y,
+                    w: 150,
+                    h: 24,
+                },
+                |px, py, w, h, cov| {
+                    draw_rect_alpha(buf, stride, height, px, py, w, h, theme.text, cov);
+                },
+            );
+            draw_rounded_rect_box(
+                buf,
+                stride,
+                height,
+                card_x + 160,
+                row1_y,
+                card_w - 180,
+                24,
+                4,
+                theme.input_bg,
+                theme.border,
+            );
+            draw_text_ttf_clipped(
+                fonts,
+                FaceKind::Ui,
+                card_x + 168,
+                row1_y + 4,
+                &dialog.model,
+                Rect {
+                    x: card_x + 160,
+                    y: row1_y,
+                    w: card_w - 180,
+                    h: 24,
+                },
+                |px, py, w, h, cov| {
+                    draw_rect_alpha(
+                        buf,
+                        stride,
+                        height,
+                        px,
+                        py,
+                        w,
+                        h,
+                        theme.input_border_focused,
+                        cov,
+                    );
+                },
+            );
+
+            let row2_y = content_y + 42;
+            let temp_str = format!("Temperature: {:.1}", dialog.temperature);
+            draw_text_ttf_clipped(
+                fonts,
+                FaceKind::Ui,
+                card_x + 20,
+                row2_y + 2,
+                &temp_str,
+                Rect {
+                    x: card_x + 20,
+                    y: row2_y,
+                    w: 200,
+                    h: 24,
+                },
+                |px, py, w, h, cov| {
+                    draw_rect_alpha(buf, stride, height, px, py, w, h, theme.text, cov);
+                },
+            );
+            let slider_x = card_x + 160;
+            let slider_w = card_w - 180;
+            draw_rounded_rect_box(
+                buf,
+                stride,
+                height,
+                slider_x,
+                row2_y + 8,
+                slider_w,
+                6,
+                3,
+                theme.border,
+                theme.border,
+            );
+            let handle_x =
+                slider_x + ((slider_w as f32 * dialog.temperature) as i32).min(slider_w - 14);
+            draw_rounded_rect_box(
+                buf,
+                stride,
+                height,
+                handle_x,
+                row2_y + 4,
+                14,
+                14,
+                4,
+                theme.input_border_focused,
+                theme.input_border_focused,
+            );
+        }
+        _ => {
+            // About
+            let row1_y = content_y + 8;
+            draw_text_ttf_clipped(
+                fonts,
+                FaceKind::Ui,
+                card_x + 20,
+                row1_y + 2,
+                "Nudge Studio Native GUI v1.2",
+                Rect {
+                    x: card_x + 20,
+                    y: row1_y,
+                    w: 300,
+                    h: 24,
+                },
+                |px, py, w, h, cov| {
+                    draw_rect_alpha(buf, stride, height, px, py, w, h, theme.text, cov);
+                },
+            );
+            let row2_y = content_y + 36;
+            draw_text_ttf_clipped(
+                fonts,
+                FaceKind::Ui,
+                card_x + 20,
+                row2_y + 2,
+                "Direct Linux Framebuffer Native Renderer",
+                Rect {
+                    x: card_x + 20,
+                    y: row2_y,
+                    w: 360,
+                    h: 24,
+                },
+                |px, py, w, h, cov| {
+                    draw_rect_alpha(buf, stride, height, px, py, w, h, theme.text_dim, cov);
+                },
+            );
+        }
+    }
+
+    // 6. Footer (Save / Close button)
+    let footer_y = card_y + card_h - 44;
+    let btn_w = 100;
+    let btn_h = 28;
+    let btn_x = card_x + card_w - btn_w - 16;
+    draw_rounded_rect_box(
+        buf,
+        stride,
+        height,
+        btn_x,
+        footer_y,
+        btn_w,
+        btn_h,
+        4,
+        theme.selection_bg,
+        theme.input_border_focused,
+    );
+    let save_tw = fonts.measure_width(FaceKind::Ui, "Save & Close");
+    let save_tx = btn_x + (btn_w - save_tw) / 2;
+    let save_ty = footer_y + (btn_h - fonts.cell_h) / 2;
+    draw_text_ttf_clipped(
+        fonts,
+        FaceKind::Ui,
+        save_tx,
+        save_ty,
+        "Save & Close",
+        Rect {
+            x: btn_x,
+            y: footer_y,
+            w: btn_w,
+            h: btn_h,
+        },
+        |px, py, w, h, cov| {
+            draw_rect_alpha(buf, stride, height, px, py, w, h, theme.button_text, cov);
+        },
+    );
+}
+
 /// Draws a floating pill / ghost card representing the dragged item near the cursor.
 pub fn draw_drag_ghost(
     buf: &mut [u32],
@@ -4712,6 +5181,8 @@ pub struct NativeApp<D: UiDispatcher> {
     pub hovered_file: Option<String>,
     /// State of the active right-click Context Menu.
     pub context_menu: Option<ContextMenuState>,
+    /// State of the modal Settings Dialog window.
+    pub settings_dialog: SettingsDialogState,
     /// Floating toast notification.
     pub toast: Option<ToastNotification>,
     /// Last rendered framebuffer (for PNG export and inspection).
@@ -4771,6 +5242,7 @@ impl<D: UiDispatcher> NativeApp<D> {
             last_dropped_file: None,
             hovered_file: None,
             context_menu: None,
+            settings_dialog: SettingsDialogState::default(),
             toast: None,
             last_frame: Vec::new(),
             last_exported_file: None,
@@ -4890,6 +5362,20 @@ impl<D: UiDispatcher> NativeApp<D> {
             .dispatch_change(target_id, &format!("context:{action_id}"));
         self.dispatcher
             .dispatch_key(&format!("ContextMenu:{action_id}:{target_id}"), None);
+        self.render();
+    }
+
+    /// Opens the modal Settings Dialog window.
+    pub fn open_settings_dialog(&mut self) {
+        self.settings_dialog.open = true;
+        self.dispatcher.dispatch_key("OpenSettings", None);
+        self.render();
+    }
+
+    /// Closes the modal Settings Dialog window.
+    pub fn close_settings_dialog(&mut self) {
+        self.settings_dialog.open = false;
+        self.dispatcher.dispatch_key("CloseSettings", None);
         self.render();
     }
 
@@ -7699,6 +8185,20 @@ impl<D: UiDispatcher> NativeApp<D> {
             draw_context_menu(&mut buffer, stride, h_usize, &self.fonts, &theme, menu);
         }
 
+        // Modal Settings Dialog window overlay
+        if self.settings_dialog.open {
+            draw_settings_dialog(
+                &mut buffer,
+                stride,
+                h_usize,
+                &self.fonts,
+                &theme,
+                self.width as i32,
+                self.height as i32,
+                &self.settings_dialog,
+            );
+        }
+
         // Floating Toast Notification overlay
         if let Some(ref toast) = self.toast {
             draw_toast_notification(
@@ -7756,6 +8256,8 @@ impl<D: UiDispatcher> NativeApp<D> {
                         let _ = self.export_chat_to_file("json", "/tmp/opencode/chat_export.json");
                     } else if item.id == "export_png" {
                         let _ = self.export_chat_to_file("png", "/tmp/opencode/chat_export.png");
+                    } else if item.id == "settings" {
+                        self.open_settings_dialog();
                     }
                     let target_str = menu.target_id.as_deref().unwrap_or("window");
                     self.dispatcher
@@ -7784,7 +8286,9 @@ impl<D: UiDispatcher> NativeApp<D> {
                 if my >= list_y {
                     let clicked_row = ((my - list_y) / row_h) as usize;
                     if let Some(&cmd) = filtered.get(clicked_row) {
-                        if cmd == "Export Chat as Markdown" {
+                        if cmd == "Open Settings" {
+                            self.open_settings_dialog();
+                        } else if cmd == "Export Chat as Markdown" {
                             let _ = self.export_chat_to_file("md", "/tmp/opencode/chat_export.md");
                         } else if cmd == "Export Chat as JSON" {
                             let _ =
@@ -7799,6 +8303,127 @@ impl<D: UiDispatcher> NativeApp<D> {
                 }
             }
             // A click anywhere dismisses the palette
+            self.render();
+            return;
+        }
+
+        // Modal Settings Dialog owns clicks when active
+        if self.settings_dialog.open {
+            let win_w = self.width as i32;
+            let win_h = self.height as i32;
+            let card_w = 420.min(win_w - 40).max(280);
+            let card_h = 300.min(win_h - 40).max(200);
+            let card_x = (win_w - card_w) / 2;
+            let card_y = (win_h - card_h) / 2;
+
+            // Click outside card closes dialog
+            if mx < card_x || mx >= card_x + card_w || my < card_y || my >= card_y + card_h {
+                self.close_settings_dialog();
+                return;
+            }
+
+            // Close 'x' button (top-right of card)
+            if mx >= card_x + card_w - 36
+                && mx < card_x + card_w - 8
+                && my >= card_y + 4
+                && my < card_y + 36
+            {
+                self.close_settings_dialog();
+                return;
+            }
+
+            // Tabs bar: tab_y = card_y + 44..card_y + 70
+            let tab_y = card_y + 44;
+            if my >= tab_y && my < tab_y + 28 {
+                let tab_w = 90;
+                for i in 0..3 {
+                    let tx = card_x + 16 + (i as i32 * (tab_w + 8));
+                    if mx >= tx && mx < tx + tab_w {
+                        self.settings_dialog.active_tab = i;
+                        self.dispatcher
+                            .dispatch_key(&format!("SettingsTab:{i}"), None);
+                        self.render();
+                        return;
+                    }
+                }
+            }
+
+            // Content area
+            let content_y = tab_y + 36;
+            match self.settings_dialog.active_tab {
+                0 => {
+                    // Dark theme toggle
+                    let row1_y = content_y + 8;
+                    if my >= row1_y && my < row1_y + 26 {
+                        self.settings_dialog.dark_theme = !self.settings_dialog.dark_theme;
+                        let val = self.settings_dialog.dark_theme;
+                        self.dispatcher
+                            .dispatch_change("dark_theme", if val { "true" } else { "false" });
+                        self.dispatcher
+                            .dispatch_key(&format!("SettingsChange:dark_theme:{val}"), None);
+                        self.render();
+                        return;
+                    }
+                    // Stream output toggle
+                    let row2_y = content_y + 42;
+                    if my >= row2_y && my < row2_y + 26 {
+                        self.settings_dialog.stream_response =
+                            !self.settings_dialog.stream_response;
+                        let val = self.settings_dialog.stream_response;
+                        self.dispatcher
+                            .dispatch_change("stream_response", if val { "true" } else { "false" });
+                        self.dispatcher
+                            .dispatch_key(&format!("SettingsChange:stream:{val}"), None);
+                        self.render();
+                        return;
+                    }
+                }
+                1 => {
+                    // Model cycling
+                    let row1_y = content_y + 8;
+                    if my >= row1_y && my < row1_y + 26 {
+                        let next_model = match self.settings_dialog.model.as_str() {
+                            "gemini-3.8-flash" => "claude-3-5-sonnet",
+                            "claude-3-5-sonnet" => "gpt-4o",
+                            _ => "gemini-3.8-flash",
+                        };
+                        self.settings_dialog.model = next_model.to_string();
+                        self.dispatcher.dispatch_change("model", next_model);
+                        self.dispatcher
+                            .dispatch_key(&format!("SettingsChange:model:{next_model}"), None);
+                        self.render();
+                        return;
+                    }
+                    // Temperature toggle / step
+                    let row2_y = content_y + 42;
+                    if my >= row2_y && my < row2_y + 26 {
+                        let next_temp = if self.settings_dialog.temperature >= 0.9 {
+                            0.2
+                        } else {
+                            self.settings_dialog.temperature + 0.2
+                        };
+                        self.settings_dialog.temperature = next_temp;
+                        let s = format!("{next_temp:.1}");
+                        self.dispatcher.dispatch_change("temperature", &s);
+                        self.dispatcher
+                            .dispatch_key(&format!("SettingsChange:temp:{s}"), None);
+                        self.render();
+                        return;
+                    }
+                }
+                _ => {}
+            }
+
+            // Save & Close button (footer)
+            let footer_y = card_y + card_h - 44;
+            let btn_w = 100;
+            let btn_x = card_x + card_w - btn_w - 16;
+            if mx >= btn_x && mx < btn_x + btn_w && my >= footer_y && my < footer_y + 32 {
+                self.close_settings_dialog();
+                self.show_toast("Settings saved!", "success");
+                return;
+            }
+
             self.render();
             return;
         }
@@ -8050,6 +8675,33 @@ impl<D: UiDispatcher> NativeApp<D> {
             }
         }
 
+        // Modal Settings Dialog owns keystrokes when active
+        if self.settings_dialog.open {
+            match logical_key {
+                Key::Named(NamedKey::Escape) => {
+                    self.close_settings_dialog();
+                    return;
+                }
+                Key::Named(NamedKey::Enter) => {
+                    self.close_settings_dialog();
+                    self.show_toast("Settings saved!", "success");
+                    return;
+                }
+                Key::Named(NamedKey::Tab) => {
+                    self.settings_dialog.active_tab = (self.settings_dialog.active_tab + 1) % 3;
+                    self.dispatcher.dispatch_key(
+                        &format!("SettingsTab:{}", self.settings_dialog.active_tab),
+                        None,
+                    );
+                    self.render();
+                    return;
+                }
+                _ => {
+                    return;
+                }
+            }
+        }
+
         // Modal Command Palette owns keystrokes when active
         if self.command_palette.is_some() {
             match logical_key {
@@ -8082,7 +8734,9 @@ impl<D: UiDispatcher> NativeApp<D> {
                     if let Some(pal) = self.command_palette.take() {
                         let filtered = pal.filtered_commands();
                         if let Some(&cmd) = filtered.get(pal.highlight) {
-                            if cmd == "Export Chat as Markdown" {
+                            if cmd == "Open Settings" {
+                                self.open_settings_dialog();
+                            } else if cmd == "Export Chat as Markdown" {
                                 let _ =
                                     self.export_chat_to_file("md", "/tmp/opencode/chat_export.md");
                             } else if cmd == "Export Chat as JSON" {
@@ -10479,6 +11133,60 @@ mod tests {
             format!("ChatExport:png:{out_png}")
         );
         assert!(std::path::Path::new(out_png).exists());
+    }
+
+    #[test]
+    fn test_settings_dialog_modal_interaction_and_shortcuts() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "SettingsDemo".into(),
+                width: 500,
+                height: 400,
+            },
+            dummy,
+        );
+
+        // 1. Initially dialog is closed
+        assert!(!app.settings_dialog.open);
+
+        // 2. Open settings dialog
+        app.open_settings_dialog();
+        assert!(app.settings_dialog.open);
+        assert_eq!(*app.dispatcher.last_key, "OpenSettings");
+
+        // 3. Tab cycling with Tab key
+        app.handle_key_input(&Key::Named(NamedKey::Tab), None);
+        assert_eq!(app.settings_dialog.active_tab, 1);
+        assert_eq!(*app.dispatcher.last_key, "SettingsTab:1");
+
+        app.handle_key_input(&Key::Named(NamedKey::Tab), None);
+        assert_eq!(app.settings_dialog.active_tab, 2);
+
+        app.handle_key_input(&Key::Named(NamedKey::Tab), None);
+        assert_eq!(app.settings_dialog.active_tab, 0);
+
+        // 4. Click to toggle dark theme in Tab 0
+        // Window 500x400 -> Card x: (500-420)/2 = 40, y: (400-300)/2 = 50
+        // tab_y = 50 + 44 = 94, content_y = 94 + 36 = 130
+        // row1_y = 130 + 8 = 138 (Dark Theme row)
+        app.cursor_pos = (150, 142);
+        app.handle_click();
+        assert!(!app.settings_dialog.dark_theme);
+        assert_eq!(*app.dispatcher.notes, "false");
+        assert_eq!(*app.dispatcher.last_key, "SettingsChange:dark_theme:false");
+
+        // 5. Enter commits and closes dialog
+        app.handle_key_input(&Key::Named(NamedKey::Enter), None);
+        assert!(!app.settings_dialog.open);
+        assert_eq!(app.toast.as_ref().unwrap().message, "Settings saved!");
     }
 
     #[test]

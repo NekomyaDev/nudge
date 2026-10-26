@@ -1,0 +1,68 @@
+// examples/settings_dialog_demo.ndg
+// Demonstrates separate modal settings dialog window with tabs, controls, and feedback.
+
+view SettingsAppView(dark: bool, model: string, status: string) -> View {
+    column(padding = 24, gap = 14) [
+        text("Nudge Studio — Settings Dialog Window Demo"),
+        text("Configure agent model, appearance, and runtime settings:"),
+        divider(),
+        status_line("Current Model: " + model, status = "info"),
+        status_line("Dark Theme: " + if dark { "Enabled" } else { "Disabled" }, status = "info"),
+        spacer(12),
+        button("Open Settings Dialog", id = "btn_open_settings"),
+        status_line("Dialog Status: " + status, status = "success")
+    ]
+}
+
+agent SettingsApp {
+    state {
+        dark: bool = true
+        model: string = "gemini-3.8-flash"
+        status: string = "Closed"
+    }
+
+    fn on_click(btn_id: string) uses UI {
+        if btn_id == "btn_open_settings" {
+            state.status = "Opened"
+        }
+    }
+
+    fn on_settings(key: string) uses UI {
+        if key == "OpenSettings" {
+            state.status = "Opened"
+        } else if key == "CloseSettings" {
+            state.status = "Closed"
+        } else if key == "SettingsChange:dark_theme:false" {
+            state.dark = false
+            state.status = "Dark Theme Disabled"
+        } else if key == "SettingsChange:dark_theme:true" {
+            state.dark = true
+            state.status = "Dark Theme Enabled"
+        }
+    }
+
+    window MainWindow {
+        title: "Settings Dialog Demo",
+        width: 500,
+        height: 400,
+        content: SettingsAppView(state.dark, state.model, state.status)
+    }
+}
+
+fn main() uses UI {
+    SettingsApp.MainWindow.open()
+}
+
+test "open and configure settings dialog" {
+    let app = SettingsApp.MainWindow.mount_headless()
+    assert SettingsApp.state.status == "Closed"
+
+    app.open_settings()
+    assert SettingsApp.state.status == "Opened"
+
+    app.dispatch_settings("dark_theme", "false")
+    assert SettingsApp.state.dark == false
+
+    app.close_settings()
+    assert SettingsApp.state.status == "Closed"
+}

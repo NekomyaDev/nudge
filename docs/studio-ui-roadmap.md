@@ -1177,7 +1177,26 @@ across items and buttons:
   Emerald-500 pixels and 3,656 bright text pixels on screen, and PNG snapshot `/tmp/opencode/chat_export.png`
   (520x420) verified. All 21 demo suites pass `nudgec test`.
 
-- [ ] 6.2 Separate dialog window for settings
+### 6.2 Separate dialog window for settings — DONE
+- [x] Separate dialog window for settings
+
+**Modal Settings Dialog window.** Dedicated floating dialog window for app preferences:
+- **`SettingsDialogState` & backdrop dimming**: full-screen semi-transparent backdrop (65% alpha)
+  dims the parent chat window; centered rounded card with title bar ("Settings & Preferences") and
+  close button ("✕").
+- **Preferences tabs**: "General" (Dark theme, stream responses), "Model" (Active AI model cycling,
+  temperature slider), and "About" (engine version & runtime details).
+- **Hit testing & event isolation**: modal card absorbs clicks and keystrokes while active;
+  clicking backdrop or "✕" dismisses; Escape key cancels; Tab cycles tabs; Enter / "Save & Close"
+  commits settings and triggers floating toast notification ("Settings saved!").
+- **Integration**: Command palette and context menu ("Open Settings") route directly to dialog.
+- **Python front end helpers**: added `open_settings`, `close_settings`, `dispatch_settings` on `_HeadlessApp`.
+- **Verified**: fmt OK, clippy -D warnings clean, **977 passed / 0 failed / 1 ignored**
+  (new unit test `test_settings_dialog_modal_interaction_and_shortcuts`). Verified live on X11 with
+  `examples/settings_dialog_demo.ndg` (window WID 67108866, 500x400): opening dialog rendered 3,804 blue
+  accent pixels (`0x1D, 0x4E, 0xD8`), Tab key navigated tabs, and closing triggered Toast notification
+  with 496 Emerald-500 pixels and 2,669 bright text pixels. All 22 demo suites pass `nudgec test`.
+
 - [ ] 6.3 Multi-window (separate chat windows)
 - [ ] 6.4 Localization (TR/EN) — requires the 1.2 font infrastructure
 - [ ] 6.5 Accessibility: screen-reader semantics, contrast ratio

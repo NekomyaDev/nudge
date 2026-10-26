@@ -1393,6 +1393,8 @@ class _HeadlessApp:
                 "on_copy",
                 "on_export",
                 "on_chat_export",
+                "on_settings",
+                "on_settings_change",
             ):
                 fn = getattr(self.agent, fn_name, None)
                 if callable(fn):
@@ -1429,6 +1431,19 @@ class _HeadlessApp:
         """Simulate exporting the chat history to file (markdown, json, png)."""
         self.dispatch_key(f"ChatExport:{format_type}:{file_path}")
         self.dispatch_change("chat_export", file_path)
+
+    def open_settings(self):
+        """Simulate opening the settings dialog window."""
+        self.dispatch_key("OpenSettings")
+
+    def close_settings(self):
+        """Simulate closing the settings dialog window."""
+        self.dispatch_key("CloseSettings")
+
+    def dispatch_settings(self, key, value):
+        """Simulate changing a setting in the dialog."""
+        self.dispatch_key(f"SettingsChange:{key}:{value}")
+        self.dispatch_change(key, value)
 
     def paste(self, text, target_id=None):
         """Simulate pasting text, normalizing rich text and HTML into markdown."""
