@@ -994,6 +994,8 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
                             format!("rt.browser_{name}")
                         } else if prefix == "mem" {
                             format!("rt.mem_{name}")
+                        } else if prefix == "store" {
+                            format!("rt.store_{name}")
                         } else if prefix == "workspace" {
                             match name.as_str() {
                                 "stat" => "rt.workspace_stat".to_string(),

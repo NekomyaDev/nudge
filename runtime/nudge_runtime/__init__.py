@@ -1758,11 +1758,18 @@ class AgentState:
             # fsync is best-effort: some filesystems (Docker overlayfs, NFS, WSL)
             # don't support it and raise OSError [Errno 95]. The flush + atomic
             # os.replace below still give us a crash-consistent checkpoint, so a
-            # failed fsync must not abort the save.
-            try:
-                os.fsync(f.fileno())
-            except OSError:
-                pass
+            # failed fsync must not abort the save. In test mode or when requested,
+            # skip fsync to avoid severe I/O bottlenecks.
+            skip_fsync = (
+                os.environ.get("NUDGE_NO_FSYNC") == "1"
+                or bool(os.environ.get("NUDGE_TEST_FILE"))
+                or bool(os.environ.get("NUDGE_TEST_JSON"))
+            )
+            if not skip_fsync:
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
         os.replace(tmp, target)
 
 
@@ -4272,6 +4279,76 @@ def mem_keys():
 
 def mem_clear():
     _MEM_STORE.clear()
+
+# ── persistent file-backed store (Store, crates/nudge-runtime/src/store.rs) ─────
+_STORE_CACHE = None
+
+def _get_store_path():
+    import os
+    from pathlib import Path
+    p = os.environ.get("NUDGE_STORE_PATH")
+    if p:
+        return Path(p)
+    ws = Path(os.environ.get("NUDGE_WORKSPACE_DIR", "."))
+    return ws / ".nudge" / "store.json"
+
+def _load_store():
+    global _STORE_CACHE
+    import json
+    path = _get_store_path()
+    if not path.is_file():
+        _STORE_CACHE = {}
+        return _STORE_CACHE
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            _STORE_CACHE = json.load(f)
+    except Exception:
+        _STORE_CACHE = {}
+    return _STORE_CACHE
+
+def _save_store():
+    import os, json
+    path = _get_store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+    with open(temp_path, "w", encoding="utf-8") as f:
+        json.dump(_STORE_CACHE, f, indent=2, ensure_ascii=False)
+    temp_path.replace(path)
+
+def store_get(key, default=None):
+    s = _load_store()
+    return s.get(key, default)
+
+def store_set(key, val):
+    s = _load_store()
+    s[key] = val
+    _save_store()
+
+def store_has(key):
+    s = _load_store()
+    return key in s
+
+def store_delete(key):
+    s = _load_store()
+    if key in s:
+        del s[key]
+        _save_store()
+        return True
+    return False
+
+def store_keys():
+    s = _load_store()
+    return sorted(list(s.keys()))
+
+def store_clear():
+    global _STORE_CACHE
+    _STORE_CACHE = {}
+    path = _get_store_path()
+    if path.is_file():
+        try:
+            path.unlink()
+        except OSError:
+            pass
 
 def workspace_stat(path):
     import os

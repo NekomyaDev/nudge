@@ -926,7 +926,7 @@ fn main() {
                 // points agent-state registration at the emitted module,
                 // not this driver (resume correctness, design §7).
                 let mut cmd = process::Command::new("python3");
-                cmd.arg(&driver).env("NUDGE_PROGRAM", &abs);
+                cmd.arg("-s").arg(&driver).env("NUDGE_PROGRAM", &abs);
                 if json_mode {
                     cmd.arg("--json");
                     cmd.env("NUDGE_TEST_JSON", "1");
@@ -939,12 +939,29 @@ fn main() {
                     .map(|s| s.is_empty())
                     .unwrap_or(true)
                 {
+                    let mut found_rt = false;
                     for candidate in &["runtime", "../runtime", "../../runtime"] {
                         let p = std::path::Path::new(candidate);
                         if p.join("nudge_runtime").is_dir() {
                             if let Ok(abs_rt) = p.canonicalize() {
                                 cmd.env("PYTHONPATH", abs_rt);
+                                found_rt = true;
                                 break;
+                            }
+                        }
+                    }
+                    if !found_rt {
+                        if let Ok(exe) = std::env::current_exe() {
+                            if let Some(exe_dir) = exe.parent() {
+                                for rel in &["runtime", "../runtime", "../../runtime", "../../../runtime"] {
+                                    let cand = exe_dir.join(rel);
+                                    if cand.join("nudge_runtime").is_dir() {
+                                        if let Ok(abs_rt) = cand.canonicalize() {
+                                            cmd.env("PYTHONPATH", abs_rt);
+                                            break;
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
