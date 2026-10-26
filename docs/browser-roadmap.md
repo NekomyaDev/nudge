@@ -168,7 +168,7 @@
 ## Phase F5: Trace Journaling, $0 Replay & Scheduled Automation
 **Goal:** Complete the compounding loop: live execution recording, offline zero-cost replay, and drift detection.
 
-- [ ] **Task F5.1 — NTF Trace Emission & Sidecar Asset Management**
+- [x] **Task F5.1 — NTF Trace Emission & Sidecar Asset Management**
   - **Owner / Agent:** `agent:trace-journal`
   - **Files:** `prelude/web/journal.ndg`, `crates/nudgec/src/eval/interpreter.rs`
   - **Contract:**
@@ -176,7 +176,7 @@
     - Store screenshots in `<trace>.assets/<hash>.png`, referencing via `screenshot_asset` (never inline in JSONL).
   - **Acceptance Gate:** `nudgec trace-check` validates browser trace conformance.
 
-- [ ] **Task F5.2 — Offline Deterministic $0 Replay Engine**
+- [x] **Task F5.2 — Offline Deterministic $0 Replay Engine**
   - **Owner / Agent:** `agent:replay-engine`
   - **Files:** `prelude/web/journal.ndg`, `crates/nudge-runtime/src/provider/http.rs`
   - **Contract:**
@@ -185,7 +185,7 @@
     - Strict exhaustion: raise `ReplayMismatch` if program deviates from recording.
   - **Acceptance Gate:** Complete browser flow replays with network interfaces disabled in CI.
 
-- [ ] **Task F5.3 — Drift Detection & Scheduled Watcher Pipeline**
+- [x] **Task F5.3 — Drift Detection & Scheduled Watcher Pipeline**
   - **Owner / Agent:** `agent:drift-pipeline`
   - **Files:** `prelude/web/drift.ndg`, `examples/browser-agent/`
   - **Contract:**

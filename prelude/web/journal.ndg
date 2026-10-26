@@ -1,0 +1,165 @@
+// Pure .ndg NTF Trace Journaling and Offline $0 Replay Engine
+// Part of Phase F5.1 and F5.2 (docs/browser-roadmap.md)
+
+type NtfRecord = {
+    v: int,
+    seq: int,
+    kind: string,
+    url: string,
+    state_id: string,
+    element_count: int,
+    outcome: string,
+    latency_ms: int,
+    action: string,
+    page: string,
+    target: int,
+    action_sent: bool,
+    dry_run: bool,
+    request_hash: string,
+    screenshot_asset: string
+}
+
+fn emit_snapshot_ntf(seq: int, snap: Snapshot, latency_ms: int, req_hash: string, screenshot_asset: string) -> string {
+    let mut line = "{\"v\": 1, \"seq\": " + str.to_string(seq) + ", \"kind\": \"browser.snapshot\""
+    line = line + ", \"url\": \"" + snap.url + "\""
+    line = line + ", \"state_id\": \"" + snap.state_id + "\""
+    line = line + ", \"element_count\": " + str.to_string(snap.count)
+    line = line + ", \"outcome\": \"ok\""
+    line = line + ", \"latency_ms\": " + str.to_string(latency_ms)
+    if req_hash != "" {
+        line = line + ", \"request_hash\": \"" + req_hash + "\""
+    }
+    if screenshot_asset != "" {
+        line = line + ", \"screenshot_asset\": \"" + screenshot_asset + "\""
+    }
+    line = line + "}"
+    line
+}
+
+fn emit_act_ntf(seq: int, page: string, action: string, target: int, outcome: string, latency_ms: int, action_sent: bool, dry_run: bool, req_hash: string) -> string {
+    let mut line = "{\"v\": 1, \"seq\": " + str.to_string(seq) + ", \"kind\": \"browser.act\""
+    line = line + ", \"page\": \"" + page + "\""
+    line = line + ", \"action\": \"" + action + "\""
+    line = line + ", \"target\": " + str.to_string(target)
+    line = line + ", \"outcome\": \"" + outcome + "\""
+    line = line + ", \"latency_ms\": " + str.to_string(latency_ms)
+    line = line + ", \"action_sent\": " + (if action_sent { "true" } else { "false" })
+    line = line + ", \"dry_run\": " + (if dry_run { "true" } else { "false" })
+    if req_hash != "" {
+        line = line + ", \"request_hash\": \"" + req_hash + "\""
+    }
+    line = line + "}"
+    line
+}
+
+type ReplayJournal = {
+    records: [NtfRecord],
+    cursor: int,
+    is_exhausted: bool
+}
+
+fn new_replay_journal(records: [NtfRecord]) -> ReplayJournal {
+    {
+        records: records,
+        cursor: 0,
+        is_exhausted: (len(records) == 0)
+    }
+}
+
+fn replay_next_snapshot(journal: ReplayJournal, expected_url: string) -> { result: Snapshot?, journal: ReplayJournal, error: string } {
+    let mut i = journal.cursor
+    let n = len(journal.records)
+    let mut found_rec: NtfRecord? = none
+    let mut next_cursor = i
+
+    for _ in journal.records {
+        if i < n and found_rec == none {
+            let r = journal.records[i]
+            if r.kind == "browser.snapshot" {
+                found_rec = r
+                next_cursor = i + 1
+            } else {
+                i = i + 1
+            }
+        }
+    }
+
+    let mut result_snap: Snapshot? = none
+    let mut out_err = "ReplayMismatch: trace exhausted, no matching browser.snapshot found"
+    let mut out_journal = { records: journal.records, cursor: next_cursor, is_exhausted: true }
+
+    if found_rec != none {
+        let rec = found_rec
+        if rec.url != expected_url and expected_url != "" {
+            out_err = "ReplayMismatch: recorded URL '" + rec.url + "' does not match expected '" + expected_url + "'"
+            out_journal = { records: journal.records, cursor: next_cursor, is_exhausted: (next_cursor >= n) }
+        } else {
+            let mock_snap: Snapshot = {
+                page: rec.page,
+                url: rec.url,
+                title: "Replay Snapshot",
+                state_id: rec.state_id,
+                elements: [],
+                tree: "[Replay Snapshot]",
+                count: rec.element_count,
+                screenshot: "",
+                drift: empty_drift()
+            }
+            result_snap = mock_snap
+            out_err = ""
+            out_journal = { records: journal.records, cursor: next_cursor, is_exhausted: (next_cursor >= n) }
+        }
+    }
+
+    {
+        result: result_snap,
+        journal: out_journal,
+        error: out_err
+    }
+}
+
+fn replay_act_dry_run(journal: ReplayJournal, page: string, action: string, target: int, snap: Snapshot) -> { result: ActResult, journal: ReplayJournal, error: string } {
+    let mut i = journal.cursor
+    let n = len(journal.records)
+    let mut found_rec: NtfRecord? = none
+    let mut next_cursor = i
+
+    for _ in journal.records {
+        if i < n and found_rec == none {
+            let r = journal.records[i]
+            if r.kind == "browser.act" {
+                found_rec = r
+                next_cursor = i + 1
+            } else {
+                i = i + 1
+            }
+        }
+    }
+
+    let mut out = {
+        result: make_act_result(false, "ReplayMismatch", 0, "ReplayMismatch: trace exhausted, no recorded browser.act found", false, snap),
+        journal: { records: journal.records, cursor: next_cursor, is_exhausted: true },
+        error: "ReplayMismatch: trace exhausted"
+    }
+
+    if found_rec != none {
+        let rec = found_rec
+        if rec.action != action or rec.target != target {
+            let err_res = make_act_result(false, "ReplayMismatch", 0, "ReplayMismatch: recorded action " + rec.action + "[" + str.to_string(rec.target) + "] does not match " + action + "[" + str.to_string(target) + "]", false, snap)
+            out = {
+                result: err_res,
+                journal: { records: journal.records, cursor: next_cursor, is_exhausted: (next_cursor >= n) },
+                error: "ReplayMismatch: action mismatch"
+            }
+        } else {
+            let act_res = make_act_result(true, "Replay dry-run " + action + " on target " + str.to_string(target), 0, "", true, snap)
+            out = {
+                result: act_res,
+                journal: { records: journal.records, cursor: next_cursor, is_exhausted: (next_cursor >= n) },
+                error: ""
+            }
+        }
+    }
+
+    out
+}

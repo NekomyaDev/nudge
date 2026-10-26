@@ -1,0 +1,66 @@
+// Pure .ndg Structural Drift Detection Engine
+// Part of Phase F5.3 (docs/browser-roadmap.md)
+
+fn make_element_signature(el: Element) -> string {
+    el.role + ":" + el.name
+}
+
+fn contains_sig(sigs: [string], target: string) -> bool {
+    let mut found = false
+    for s in sigs {
+        if s == target {
+            found = true
+        }
+    }
+    found
+}
+
+fn compute_drift(live_snap: Snapshot, baseline_snap: Snapshot) -> Drift {
+    let mut live_sigs: [string] = []
+    for el in live_snap.elements {
+        live_sigs = live_sigs + [make_element_signature(el)]
+    }
+
+    let mut base_sigs: [string] = []
+    for el in baseline_snap.elements {
+        base_sigs = base_sigs + [make_element_signature(el)]
+    }
+
+    let mut added: [string] = []
+    for s in live_sigs {
+        if !contains_sig(base_sigs, s) and !contains_sig(added, s) {
+            added = added + [s]
+        }
+    }
+
+    let mut removed: [string] = []
+    for s in base_sigs {
+        if !contains_sig(live_sigs, s) and !contains_sig(removed, s) {
+            removed = removed + [s]
+        }
+    }
+
+    let tree_changed = (live_snap.tree != baseline_snap.tree)
+    let shot_changed = (live_snap.screenshot != "" and baseline_snap.screenshot != "" and live_snap.screenshot != baseline_snap.screenshot)
+    let changed = (len(added) > 0 or len(removed) > 0 or tree_changed or shot_changed)
+
+    let mut summary = ""
+    if len(removed) > 0 {
+        summary = str.to_string(len(removed)) + " element(s) gone"
+    }
+    if len(added) > 0 {
+        let added_str = str.to_string(len(added)) + " new element(s)"
+        summary = if summary == "" { added_str } else { summary + "; " + added_str }
+    }
+    if tree_changed and len(added) == 0 and len(removed) == 0 {
+        summary = if summary == "" { "content changed" } else { summary + "; content changed" }
+    }
+
+    {
+        changed: changed,
+        screenshot_changed: shot_changed,
+        added: added,
+        removed: removed,
+        summary: summary
+    }
+}

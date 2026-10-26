@@ -1,0 +1,30 @@
+// Scheduled Browser Watcher Example with Drift Detection
+// Part of Phase F5.3 (docs/browser-roadmap.md)
+
+type WatchResult = {
+    url: string,
+    drift_detected: bool,
+    summary: string,
+    action_fired: bool
+}
+
+fn check_page_and_alert_on_drift(live_html: string, baseline_snap: Snapshot) -> WatchResult {
+    let tokens = tokenize_html(live_html)
+    let tree = build_dom_tree(tokens)
+    let live_snap = make_snapshot("p-watch", baseline_snap.url, "Live Page", 2, tree)
+
+    let d = compute_drift(live_snap, baseline_snap)
+
+    let mut action_fired = false
+    if d.changed {
+        // Safe watcher: report drift, NEVER fire destructive actions
+        action_fired = false
+    }
+
+    {
+        url: baseline_snap.url,
+        drift_detected: d.changed,
+        summary: d.summary,
+        action_fired: action_fired
+    }
+}

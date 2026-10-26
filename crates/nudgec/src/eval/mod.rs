@@ -1443,6 +1443,107 @@ fn test_f4_suite() -> bool {{
     }
 
     #[test]
+    fn test_prelude_web_journal_replay_drift() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let url_src = std::fs::read_to_string(root_dir.join("prelude/net/url.ndg")).expect("read url.ndg");
+        let html_src = std::fs::read_to_string(root_dir.join("prelude/web/html.ndg")).expect("read html.ndg");
+        let dom_src = std::fs::read_to_string(root_dir.join("prelude/web/dom.ndg")).expect("read dom.ndg");
+        let snapshot_src = std::fs::read_to_string(root_dir.join("prelude/web/snapshot.ndg")).expect("read snapshot.ndg");
+        let form_src = std::fs::read_to_string(root_dir.join("prelude/web/form.ndg")).expect("read form.ndg");
+        let action_src = std::fs::read_to_string(root_dir.join("prelude/web/action.ndg")).expect("read action.ndg");
+        let journal_src = std::fs::read_to_string(root_dir.join("prelude/web/journal.ndg")).expect("read journal.ndg");
+        let drift_src = std::fs::read_to_string(root_dir.join("prelude/web/drift.ndg")).expect("read drift.ndg");
+        let watcher_src = std::fs::read_to_string(root_dir.join("examples/browser-agent/watcher.ndg")).expect("read watcher.ndg");
+
+        let test_src = format!(
+            r##"{url_src}
+{html_src}
+{dom_src}
+{snapshot_src}
+{form_src}
+{action_src}
+{journal_src}
+{drift_src}
+{watcher_src}
+fn test_f5_suite() -> bool {{
+    // 1. NTF Trace Emission
+    let doc_base = "<div id=\"page\"><button id=\"b1\">Login</button></div>"
+    let t_base = build_dom_tree(tokenize_html(doc_base))
+    let snap_base = make_snapshot("p-1", "https://example.com", "Title", 1, t_base)
+
+    let snap_ntf = emit_snapshot_ntf(1, snap_base, 25, "sha256:abc", "shot1.png")
+    let ok_snap_ntf = str.contains(snap_ntf, "\"kind\": \"browser.snapshot\"") and str.contains(snap_ntf, "\"element_count\": 2")
+
+    let act_ntf = emit_act_ntf(2, "p-1", "click", 2, "ok", 10, true, false, "sha256:def")
+    let ok_act_ntf = str.contains(act_ntf, "\"kind\": \"browser.act\"") and str.contains(act_ntf, "\"action\": \"click\"")
+
+    // 2. Offline $0 Replay
+    let rec1: NtfRecord = {{
+        v: 1,
+        seq: 1,
+        kind: "browser.snapshot",
+        url: "https://example.com",
+        state_id: "s-1",
+        element_count: 2,
+        outcome: "ok",
+        latency_ms: 25,
+        action: "",
+        page: "p-1",
+        target: 0,
+        action_sent: false,
+        dry_run: false,
+        request_hash: "sha256:abc",
+        screenshot_asset: "shot1.png"
+    }}
+    let rec2: NtfRecord = {{
+        v: 1,
+        seq: 2,
+        kind: "browser.act",
+        url: "",
+        state_id: "",
+        element_count: 0,
+        outcome: "ok",
+        latency_ms: 10,
+        action: "click",
+        page: "p-1",
+        target: 2,
+        action_sent: true,
+        dry_run: true,
+        request_hash: "sha256:def",
+        screenshot_asset: ""
+    }}
+
+    let j = new_replay_journal([rec1, rec2])
+
+    // Replay snapshot
+    let rep_snap_res = replay_next_snapshot(j, "https://example.com")
+    let ok_rep_snap = rep_snap_res.result != none and rep_snap_res.error == ""
+
+    // Replay dry-run action
+    let rep_act_res = replay_act_dry_run(rep_snap_res.journal, "p-1", "click", 2, snap_base)
+    let ok_rep_act = rep_act_res.result.ok and rep_act_res.result.action_sent
+
+    // Replay exhaustion
+    let rep_exhaust = replay_next_snapshot(rep_act_res.journal, "https://example.com")
+    let ok_exhaust = rep_exhaust.result == none and str.contains(rep_exhaust.error, "ReplayMismatch: trace exhausted")
+
+    // 3. Drift Detection & Watcher
+    let doc_mutated = "<div id=\"page\"><h1>Alert Banner</h1><button id=\"b1\">Login</button></div>"
+    let watch_res = check_page_and_alert_on_drift(doc_mutated, snap_base)
+    let ok_drift = watch_res.drift_detected and !watch_res.action_fired and str.contains(watch_res.summary, "new element(s)")
+
+    ok_snap_ntf and ok_act_ntf and ok_rep_snap and ok_rep_act and ok_exhaust and ok_drift
+}}
+"##
+        );
+        let items = parse_src(&test_src);
+        let ok = run_program(&items, "test_f5_suite", &[]).expect("f5 suite succeeds");
+        assert_eq!(ok, NudgeVal::Bool(true));
+    }
+
+    #[test]
     fn test_eval_index_assign_list_and_map() {
         let src = r#"
             fn test_list_assign() -> [int] {
@@ -1635,6 +1736,42 @@ fn test_f4_suite() -> bool {{
         let res = interp
             .invoke_fn("main", &[])
             .expect("engine main execution succeeds");
+        assert_eq!(res, NudgeVal::Int(0));
+    }
+
+    #[test]
+    fn test_symbol_table_acceptance_suite() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let sym_test_path = root_dir.join("crates/nudge-index/indexer/symbol_table.ndg");
+
+        let sym_src = std::fs::read_to_string(&sym_test_path).expect("read symbol_table.ndg");
+        let items = parse_src(&sym_src);
+        let mut interp = crate::eval::interpreter::Interpreter::new();
+        interp.load_items(&items).expect("load items succeeds");
+        interp.run_all_tests().expect("all symbol table test blocks pass");
+        let res = interp
+            .invoke_fn("main", &[])
+            .expect("symbol table main execution succeeds");
+        assert_eq!(res, NudgeVal::Int(0));
+    }
+
+    #[test]
+    fn test_inverted_index_acceptance_suite() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let idx_test_path = root_dir.join("crates/nudge-index/indexer/inverted_index.ndg");
+
+        let idx_src = std::fs::read_to_string(&idx_test_path).expect("read inverted_index.ndg");
+        let items = parse_src(&idx_src);
+        let mut interp = crate::eval::interpreter::Interpreter::new();
+        interp.load_items(&items).expect("load items succeeds");
+        interp.run_all_tests().expect("all inverted index test blocks pass");
+        let res = interp
+            .invoke_fn("main", &[])
+            .expect("inverted index main execution succeeds");
         assert_eq!(res, NudgeVal::Int(0));
     }
 }
