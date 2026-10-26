@@ -32,8 +32,11 @@ fn execute_dom_script(tree: DomTree, script_src: string, policy: PolicyConfig) -
                     let elem = query_selector(updated_tree, sel)
                     if elem != none {
                         let el = elem
-                        // Check if value is assigned
+                        // Check if value, textContent, or innerText is assigned
                         let val_assign = str.index_of(s, ".value = ")
+                        let text_assign = str.index_of(s, ".textContent = ")
+                        let inner_text_assign = str.index_of(s, ".innerText = ")
+
                         if val_assign >= 0 {
                             let val_part = str.trim(str.substring(s, val_assign + 9))
                             let mut new_val = val_part
@@ -44,6 +47,26 @@ fn execute_dom_script(tree: DomTree, script_src: string, policy: PolicyConfig) -
                                 new_val = str.substring(new_val, 0, str.length(new_val) - 1)
                             }
                             updated_tree = update_element_value(updated_tree, el.ref, new_val)
+                        } else if text_assign >= 0 {
+                            let val_part = str.trim(str.substring(s, text_assign + 15))
+                            let mut new_val = val_part
+                            if str.starts_with(new_val, "\"") or str.starts_with(new_val, "'") {
+                                new_val = str.substring(new_val, 1, str.length(new_val) - 1)
+                            }
+                            if str.ends_with(new_val, ";") {
+                                new_val = str.substring(new_val, 0, str.length(new_val) - 1)
+                            }
+                            updated_tree = update_element_text(updated_tree, el.ref, new_val)
+                        } else if inner_text_assign >= 0 {
+                            let val_part = str.trim(str.substring(s, inner_text_assign + 13))
+                            let mut new_val = val_part
+                            if str.starts_with(new_val, "\"") or str.starts_with(new_val, "'") {
+                                new_val = str.substring(new_val, 1, str.length(new_val) - 1)
+                            }
+                            if str.ends_with(new_val, ";") {
+                                new_val = str.substring(new_val, 0, str.length(new_val) - 1)
+                            }
+                            updated_tree = update_element_text(updated_tree, el.ref, new_val)
                         }
                     }
                 }

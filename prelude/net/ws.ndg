@@ -69,15 +69,25 @@ fn make_ws_text_frame(text: string, mask_key: string) -> string {
     let b0 = 129
     let n = str.length(text)
 
-    // Mask bit = 1 (128) + payload length (up to 125 bytes simple payload)
-    let b1 = 128 + (n % 126)
-
     let m0 = if str.length(mask_key) > 0 { str.char_code(mask_key, 0) } else { 1 }
     let m1 = if str.length(mask_key) > 1 { str.char_code(mask_key, 1) } else { 2 }
     let m2 = if str.length(mask_key) > 2 { str.char_code(mask_key, 2) } else { 3 }
     let m3 = if str.length(mask_key) > 3 { str.char_code(mask_key, 3) } else { 4 }
 
-    let mut out = str.from_char_code(b0) + str.from_char_code(b1)
+    let mut out = str.from_char_code(b0)
+
+    if n <= 125 {
+        // Mask bit = 1 (128) + payload length
+        let b1 = 128 + n
+        out = out + str.from_char_code(b1)
+    } else {
+        // 16-bit extended length (126 + 2 bytes length)
+        let b1 = 128 + 126
+        let len_hi = math.shift_right(n, 8)
+        let len_lo = math.bitwise_and(n, 255)
+        out = out + str.from_char_code(b1) + str.from_char_code(len_hi) + str.from_char_code(len_lo)
+    }
+
     out = out + str.from_char_code(m0) + str.from_char_code(m1) + str.from_char_code(m2) + str.from_char_code(m3)
 
     let mask_bytes = [m0, m1, m2, m3]
@@ -109,15 +119,27 @@ fn parse_ws_frame(raw: string) -> WsFrame {
         opcode = b0 % 16
 
         let is_masked = (b1 >= 128)
-        let payload_len = b1 % 128
+        let raw_len = b1 % 128
 
-        let payload_start = if is_masked { 6 } else { 2 }
+        let mut payload_len = raw_len
+        let mut header_size = 2
+
+        if raw_len == 126 and str.length(raw) >= 4 {
+            let l0 = str.char_code(raw, 2)
+            let l1 = str.char_code(raw, 3)
+            payload_len = math.shift_left(l0, 8) + l1
+            header_size = 4
+        }
+
+        let payload_start = if is_masked { header_size + 4 } else { header_size }
+
         if str.length(raw) >= payload_start + payload_len {
             if is_masked {
-                let m0 = str.char_code(raw, 2)
-                let m1 = str.char_code(raw, 3)
-                let m2 = str.char_code(raw, 4)
-                let m3 = str.char_code(raw, 5)
+                let mask_offset = header_size
+                let m0 = str.char_code(raw, mask_offset)
+                let m1 = str.char_code(raw, mask_offset + 1)
+                let m2 = str.char_code(raw, mask_offset + 2)
+                let m3 = str.char_code(raw, mask_offset + 3)
                 let mask_keys = [m0, m1, m2, m3]
                 let mut decoded = ""
                 let mut idx = 0
@@ -143,9 +165,61 @@ fn parse_ws_frame(raw: string) -> WsFrame {
     }
 }
 
+fn make_ws_ping_frame(payload: string, mask_key: string) -> string {
+    // Opcode 0x9 (Ping), FIN=1 -> 0x89 (137)
+    let b0 = 137
+    let n = str.length(payload)
+    let b1 = 128 + (n % 126)
+    let m0 = if str.length(mask_key) > 0 { str.char_code(mask_key, 0) } else { 1 }
+    let m1 = if str.length(mask_key) > 1 { str.char_code(mask_key, 1) } else { 2 }
+    let m2 = if str.length(mask_key) > 2 { str.char_code(mask_key, 2) } else { 3 }
+    let m3 = if str.length(mask_key) > 3 { str.char_code(mask_key, 3) } else { 4 }
+
+    let mut out = str.from_char_code(b0) + str.from_char_code(b1)
+    out = out + str.from_char_code(m0) + str.from_char_code(m1) + str.from_char_code(m2) + str.from_char_code(m3)
+    let mask_bytes = [m0, m1, m2, m3]
+    let mut i = 0
+    for _ in str.split(payload, "") {
+        if i < n {
+            let ch_code = str.char_code(payload, i)
+            let masked = math.bitwise_xor(ch_code, mask_bytes[i % 4])
+            out = out + str.from_char_code(masked)
+            i = i + 1
+        }
+    }
+    out
+}
+
+fn make_ws_pong_frame(payload: string, mask_key: string) -> string {
+    // Opcode 0xA (Pong), FIN=1 -> 0x8A (138)
+    let b0 = 138
+    let n = str.length(payload)
+    let b1 = 128 + (n % 126)
+    let m0 = if str.length(mask_key) > 0 { str.char_code(mask_key, 0) } else { 1 }
+    let m1 = if str.length(mask_key) > 1 { str.char_code(mask_key, 1) } else { 2 }
+    let m2 = if str.length(mask_key) > 2 { str.char_code(mask_key, 2) } else { 3 }
+    let m3 = if str.length(mask_key) > 3 { str.char_code(mask_key, 3) } else { 4 }
+
+    let mut out = str.from_char_code(b0) + str.from_char_code(b1)
+    out = out + str.from_char_code(m0) + str.from_char_code(m1) + str.from_char_code(m2) + str.from_char_code(m3)
+    let mask_bytes = [m0, m1, m2, m3]
+    let mut i = 0
+    for _ in str.split(payload, "") {
+        if i < n {
+            let ch_code = str.char_code(payload, i)
+            let masked = math.bitwise_xor(ch_code, mask_bytes[i % 4])
+            out = out + str.from_char_code(masked)
+            i = i + 1
+        }
+    }
+    out
+}
+
 fn make_ws_close_frame() -> string {
+    // RFC 6455 §5.1: Client close frames MUST be masked
     // Opcode 0x8 (Close), FIN=1 -> 0x88 (136)
     let b0 = 136
-    let b1 = 0 // unmasked, 0 payload
-    str.from_char_code(b0) + str.from_char_code(b1)
+    let b1 = 128 // Masked, 0 payload length
+    // 4-byte zero mask key
+    str.from_char_code(b0) + str.from_char_code(b1) + str.from_char_code(0) + str.from_char_code(0) + str.from_char_code(0) + str.from_char_code(0)
 }

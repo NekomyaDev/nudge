@@ -20,17 +20,17 @@ fn h2_connection_preface() -> string {
 
 fn make_h2_frame_header(length: int, frame_type: int, flags: int, stream_id: int) -> string {
     // 9-byte header: Length(3) + Type(1) + Flags(1) + StreamID(4)
-    let b0 = str.to_int(length / 65536) % 256
-    let b1 = str.to_int(length / 256) % 256
-    let b2 = length % 256
+    let b0 = math.bitwise_and(math.shift_right(length, 16), 255)
+    let b1 = math.bitwise_and(math.shift_right(length, 8), 255)
+    let b2 = math.bitwise_and(length, 255)
 
-    let b_type = frame_type % 256
-    let b_flags = flags % 256
+    let b_type = math.bitwise_and(frame_type, 255)
+    let b_flags = math.bitwise_and(flags, 255)
 
-    let s0 = str.to_int(stream_id / 16777216) % 128
-    let s1 = str.to_int(stream_id / 65536) % 256
-    let s2 = str.to_int(stream_id / 256) % 256
-    let s3 = stream_id % 256
+    let s0 = math.bitwise_and(math.shift_right(stream_id, 24), 127) // R reserved bit = 0
+    let s1 = math.bitwise_and(math.shift_right(stream_id, 16), 255)
+    let s2 = math.bitwise_and(math.shift_right(stream_id, 8), 255)
+    let s3 = math.bitwise_and(stream_id, 255)
 
     let codes = [b0, b1, b2, b_type, b_flags, s0, s1, s2, s3]
     let mut out = ""
@@ -46,16 +46,16 @@ fn parse_h2_frame_header(raw: string) -> H2FrameHeader {
         let b0 = str.char_code(raw, 0)
         let b1 = str.char_code(raw, 1)
         let b2 = str.char_code(raw, 2)
-        let len_val = (b0 * 65536) + (b1 * 256) + b2
+        let len_val = math.shift_left(b0, 16) + math.shift_left(b1, 8) + b2
 
         let f_type = str.char_code(raw, 3)
         let flags = str.char_code(raw, 4)
 
-        let s0 = str.char_code(raw, 5) % 128
+        let s0 = math.bitwise_and(str.char_code(raw, 5), 127)
         let s1 = str.char_code(raw, 6)
         let s2 = str.char_code(raw, 7)
         let s3 = str.char_code(raw, 8)
-        let sid = (s0 * 16777216) + (s1 * 65536) + (s2 * 256) + s3
+        let sid = math.shift_left(s0, 24) + math.shift_left(s1, 16) + math.shift_left(s2, 8) + s3
 
         out = {
             length: len_val,
@@ -71,6 +71,43 @@ fn make_h2_settings_frame(is_ack: bool) -> string {
     let flags = if is_ack { 1 } else { 0 }
     let header = make_h2_frame_header(0, 4, flags, 0)
     header
+}
+
+fn make_h2_ping_frame(opaque_data: string, is_ack: bool) -> string {
+    // Type 6 (PING), Stream 0, 8-byte payload
+    let flags = if is_ack { 1 } else { 0 }
+    let mut payload = opaque_data
+    for _ in [1, 2, 3, 4, 5, 6, 7, 8] {
+        if str.length(payload) < 8 {
+            payload = payload + str.from_char_code(0)
+        }
+    }
+    if str.length(payload) > 8 {
+        payload = str.substring(payload, 0, 8)
+    }
+    let header = make_h2_frame_header(8, 6, flags, 0)
+    header + payload
+}
+
+fn make_h2_rst_stream_frame(stream_id: int, error_code: int) -> string {
+    // Type 3 (RST_STREAM), Length 4
+    let header = make_h2_frame_header(4, 3, 0, stream_id)
+    let e0 = math.bitwise_and(math.shift_right(error_code, 24), 255)
+    let e1 = math.bitwise_and(math.shift_right(error_code, 16), 255)
+    let e2 = math.bitwise_and(math.shift_right(error_code, 8), 255)
+    let e3 = math.bitwise_and(error_code, 255)
+    header + str.from_char_code(e0) + str.from_char_code(e1) + str.from_char_code(e2) + str.from_char_code(e3)
+}
+
+fn make_h2_window_update_frame(stream_id: int, increment: int) -> string {
+    // Type 8 (WINDOW_UPDATE), Length 4
+    let header = make_h2_frame_header(4, 8, 0, stream_id)
+    let inc = math.bitwise_and(increment, 2147483647) // 31-bit increment
+    let i0 = math.bitwise_and(math.shift_right(inc, 24), 127)
+    let i1 = math.bitwise_and(math.shift_right(inc, 16), 255)
+    let i2 = math.bitwise_and(math.shift_right(inc, 8), 255)
+    let i3 = math.bitwise_and(inc, 255)
+    header + str.from_char_code(i0) + str.from_char_code(i1) + str.from_char_code(i2) + str.from_char_code(i3)
 }
 
 fn make_h2_headers_frame(stream_id: int, headers: [{ name: string, value: string }], end_stream: bool) -> string {

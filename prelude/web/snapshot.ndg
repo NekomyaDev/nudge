@@ -52,6 +52,12 @@ fn format_node_line(node: DomNode, depth: int) -> string {
     if !node.enabled {
         flags = flags + ["disabled"]
     }
+    if has_attr(node.attrs, "required") {
+        flags = flags + ["required"]
+    }
+    if has_attr(node.attrs, "aria-expanded") {
+        flags = flags + ["expanded=" + get_attr_value(node.attrs, "aria-expanded", "")]
+    }
 
     if len(flags) > 0 {
         let mut flag_str = ""

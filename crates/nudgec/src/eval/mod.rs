@@ -1651,7 +1651,15 @@ fn test_f6_suite() -> bool {{
     let snap = make_snapshot("p-1", "https://example.com", "SPA", 1, bridge_res.tree)
     let ok_snap = str.contains(snap.tree, "updated_by_js")
 
-    ok_ast and ok_exec and ok_shield and ok_mutation and ok_snap
+    // textContent DOM Bridge mutation
+    let text_mutation = "document.querySelector(\"#msg\").textContent = \"Hello from JS\";"
+    let doc2 = "<div id=\"app\"><p id=\"msg\">Old Text</p></div>"
+    let tree2 = build_dom_tree(tokenize_html(doc2))
+    let bridge_res2 = execute_dom_script(tree2, text_mutation, pol)
+    let snap2 = make_snapshot("p-2", "https://example.com", "SPA", 2, bridge_res2.tree)
+    let ok_text_mut = str.contains(snap2.tree, "Hello from JS")
+
+    ok_ast and ok_exec and ok_shield and ok_mutation and ok_snap and ok_text_mut
 }}
 "##
         );
@@ -1797,13 +1805,40 @@ fn test_f8_suite() -> bool uses Browser {{
 
     let text_frame = make_ws_text_frame("hello", "abcd")
     let parsed_frame = parse_ws_frame(text_frame)
-    let ok_ws_frame = parsed_frame.opcode == 1 and parsed_frame.is_fin
+    let ok_ws_frame = parsed_frame.opcode == 1 and parsed_frame.is_fin and parsed_frame.text == "hello"
+
+    // 16-bit extended payload test (200 characters)
+    let mut long_msg = ""
+    for _ in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20] {{
+        long_msg = long_msg + "0123456789"
+    }}
+    let ext_frame = make_ws_text_frame(long_msg, "mask")
+    let parsed_ext = parse_ws_frame(ext_frame)
+    let ok_ext_frame = parsed_ext.opcode == 1 and parsed_ext.text == long_msg
+
+    // Ping / Pong test
+    let ping_frame = make_ws_ping_frame("heartbeat", "p123")
+    let parsed_ping = parse_ws_frame(ping_frame)
+    let ok_ping = parsed_ping.opcode == 9 and parsed_ping.text == "heartbeat"
 
     let close_frame = make_ws_close_frame()
     let parsed_close = parse_ws_frame(close_frame)
     let ok_ws_close = parsed_close.opcode == 8 and parsed_close.is_fin
 
-    ok_conn and ok_write and ok_read and ok_close and ok_pref and ok_h2_settings and ok_h2_headers and ok_ws_req and ok_ws_resp and ok_ws_frame and ok_ws_close
+    // HTTP/2 RST_STREAM & PING tests
+    let rst_frame = make_h2_rst_stream_frame(3, 8) // CANCEL
+    let rst_hdr = parse_h2_frame_header(rst_frame)
+    let ok_h2_rst = rst_hdr.frame_type == 3 and rst_hdr.stream_id == 3 and rst_hdr.length == 4
+
+    let ping_h2 = make_h2_ping_frame("ping1234", false)
+    let ping_h2_hdr = parse_h2_frame_header(ping_h2)
+    let ok_h2_ping = ping_h2_hdr.frame_type == 6 and ping_h2_hdr.stream_id == 0 and ping_h2_hdr.length == 8
+
+    let win_frame = make_h2_window_update_frame(1, 65535)
+    let win_hdr = parse_h2_frame_header(win_frame)
+    let ok_h2_win = win_hdr.frame_type == 8 and win_hdr.stream_id == 1 and win_hdr.length == 4
+
+    ok_conn and ok_write and ok_read and ok_close and ok_pref and ok_h2_settings and ok_h2_headers and ok_ws_req and ok_ws_resp and ok_ws_frame and ok_ext_frame and ok_ping and ok_ws_close and ok_h2_rst and ok_h2_ping and ok_h2_win
 }}
 "##
         );
