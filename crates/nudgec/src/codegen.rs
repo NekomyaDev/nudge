@@ -977,7 +977,19 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
                             format!("rt.mem_{name}")
                         } else if prefix == "workspace" && name == "stat" {
                             "rt.workspace_stat".to_string()
-                        } else if prefix == "str" && matches!(name.as_str(), "hash" | "char_code" | "to_string" | "to_int" | "length" | "trim" | "substring" | "index_of") {
+                        } else if prefix == "str"
+                            && matches!(
+                                name.as_str(),
+                                "hash"
+                                    | "char_code"
+                                    | "to_string"
+                                    | "to_int"
+                                    | "length"
+                                    | "trim"
+                                    | "substring"
+                                    | "index_of"
+                            )
+                        {
                             format!("rt.str_{name}")
                         } else {
                             format!("{prefix}.{name}")

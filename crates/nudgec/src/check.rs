@@ -6221,7 +6221,8 @@ fn f() -> int | string {
         );
 
         // mem with uses MemStore is clean
-        let clean = check_src("fn f() -> int uses MemStore {\nmem.set(\"k\", 42)\nmem.get(\"k\", 0)\n}");
+        let clean =
+            check_src("fn f() -> int uses MemStore {\nmem.set(\"k\", 42)\nmem.get(\"k\", 0)\n}");
         assert_eq!(clean, vec![], "unexpected errors: {clean:?}");
 
         // MemStore is a known effect (not E0101)
@@ -6250,7 +6251,8 @@ fn f() -> int | string {
         "#;
         let errs = check_src(src_bad_key);
         assert!(
-            errs.iter().any(|e| e.code == "E0201" && e.msg.contains("map index must be of type string")),
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("map index must be of type string")),
             "got {errs:?}"
         );
     }
@@ -6276,7 +6278,8 @@ fn f() -> int | string {
         "#;
         let errs = check_src(src_immut);
         assert!(
-            errs.iter().any(|e| e.code == "E0706" && e.msg.contains("cannot mutate immutable local 'xs'")),
+            errs.iter()
+                .any(|e| e.code == "E0706" && e.msg.contains("cannot mutate immutable local 'xs'")),
             "got {errs:?}"
         );
 
@@ -6290,7 +6293,8 @@ fn f() -> int | string {
         "#;
         let errs = check_src(src_bad_idx);
         assert!(
-            errs.iter().any(|e| e.code == "E0201" && e.msg.contains("list index must be an integer")),
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("list index must be an integer")),
             "got {errs:?}"
         );
 
@@ -6304,7 +6308,8 @@ fn f() -> int | string {
         "#;
         let errs = check_src(src_bad_val);
         assert!(
-            errs.iter().any(|e| e.code == "E0201" && e.msg.contains("cannot assign value of type string to list")),
+            errs.iter().any(|e| e.code == "E0201"
+                && e.msg.contains("cannot assign value of type string to list")),
             "got {errs:?}"
         );
     }

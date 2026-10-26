@@ -1870,8 +1870,7 @@ impl Interpreter {
                         })?;
                         Ok(())
                     }
-                    ExprKind::Field { obj, name: field }
-                        if matches!(&obj.kind, ExprKind::Ident(s) if s == "state") =>
+                    ExprKind::Field { obj, name: field } if matches!(&obj.kind, ExprKind::Ident(s) if s == "state") =>
                     {
                         let agent_name = self.active_agent.clone().ok_or_else(|| {
                             "error[E0701]: state write outside an agent block".to_string()
@@ -1912,7 +1911,9 @@ impl Interpreter {
                         self.agent_store.set_field(&agent_name, field, cur)?;
                         Ok(())
                     }
-                    _ => Err("index assignment target must be a variable or state field".to_string()),
+                    _ => {
+                        Err("index assignment target must be a variable or state field".to_string())
+                    }
                 }
             }
             StmtKind::StateWrite { field, op, value } => {

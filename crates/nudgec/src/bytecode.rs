@@ -310,7 +310,8 @@ impl<'a> Compiler<'a> {
                     ExprKind::Ident(n) => n,
                     _ => {
                         return Err(
-                            "not in bytecode subset: index assign on non-ident collection".to_string(),
+                            "not in bytecode subset: index assign on non-ident collection"
+                                .to_string(),
                         );
                     }
                 };

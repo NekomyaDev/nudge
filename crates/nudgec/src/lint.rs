@@ -404,7 +404,8 @@ fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut V
                                 ),
                             ));
                         } else if kwargs.iter().any(|(k, v)| {
-                            k == "allow" && matches!(&v.kind, ExprKind::ListLit(xs) if xs.is_empty())
+                            k == "allow"
+                                && matches!(&v.kind, ExprKind::ListLit(xs) if xs.is_empty())
                         }) {
                             out.push(lint(
                                 "W0008",
@@ -801,7 +802,12 @@ mod tests {
         assert!(bare.iter().any(|l| l.code == "W0008"), "{bare:?}");
 
         let empty = lints("fn f() -> int uses Browser { let r = browser.fetch(\"https://example.com\", allow = [])\n    r.status }");
-        assert!(empty.iter().any(|l| l.code == "W0008" && l.msg.contains("allows NOTHING")), "{empty:?}");
+        assert!(
+            empty
+                .iter()
+                .any(|l| l.code == "W0008" && l.msg.contains("allows NOTHING")),
+            "{empty:?}"
+        );
 
         let scoped = lints("fn f() -> int uses Browser { let r = browser.fetch(\"https://example.com\", allow = [\"example.com\"])\n    r.status }");
         assert!(scoped.is_empty(), "{scoped:?}");
@@ -813,6 +819,10 @@ mod tests {
     par race [browser.fetch("https://a.com", allow = ["a.com"]).status, 0]
 }"#;
         let ls = lints(src);
-        assert!(ls.iter().any(|l| l.code == "W0007" && l.msg.contains("browser.*")), "{ls:?}");
+        assert!(
+            ls.iter()
+                .any(|l| l.code == "W0007" && l.msg.contains("browser.*")),
+            "{ls:?}"
+        );
     }
 }

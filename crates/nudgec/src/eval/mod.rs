@@ -1044,7 +1044,9 @@ mod tests {
             .expect("browser.fetch body succeeds");
         assert_eq!(
             body,
-            NudgeVal::Str("<html><head><title>Test Page</title></head><body>OK</body></html>".into())
+            NudgeVal::Str(
+                "<html><head><title>Test Page</title></head><body>OK</body></html>".into()
+            )
         );
 
         let _ = std::fs::remove_file(fixture_path);
@@ -1076,11 +1078,7 @@ mod tests {
         let b64_items = parse_src(&b64_src);
 
         // RFC 4648 test vectors
-        let vectors = [
-            ("f", "Zg=="),
-            ("fooba", "Zm9vYmE="),
-            ("foobar", "Zm9vYmFy"),
-        ];
+        let vectors = [("f", "Zg=="), ("fooba", "Zm9vYmE="), ("foobar", "Zm9vYmFy")];
 
         for (plain, encoded) in vectors {
             let enc_res = run_program(&b64_items, "b64_encode", &[NudgeVal::Str(plain.into())])
@@ -1205,7 +1203,11 @@ fn test_http_framing() -> bool {{
         let list_res = run_program(&items, "test_list_assign", &[]).unwrap();
         assert_eq!(
             list_res,
-            NudgeVal::List(vec![NudgeVal::Int(10), NudgeVal::Int(99), NudgeVal::Int(30)])
+            NudgeVal::List(vec![
+                NudgeVal::Int(10),
+                NudgeVal::Int(99),
+                NudgeVal::Int(30)
+            ])
         );
 
         let map_res = run_program(&items, "test_map_assign", &[]).unwrap();

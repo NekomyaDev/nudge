@@ -395,7 +395,9 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
 
         "str.char_code" => {
             if args.is_empty() {
-                return Err("str.char_code requires at least 1 argument (string, [index])".to_string());
+                return Err(
+                    "str.char_code requires at least 1 argument (string, [index])".to_string(),
+                );
             }
             let s = match &args[0] {
                 Value::String(s) => s,
@@ -404,7 +406,9 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             let idx = if args.len() > 1 {
                 match args[1] {
                     Value::Int(i) => i,
-                    _ => return Err("str.char_code: second argument must be an integer".to_string()),
+                    _ => {
+                        return Err("str.char_code: second argument must be an integer".to_string())
+                    }
                 }
             } else {
                 0
