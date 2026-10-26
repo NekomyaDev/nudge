@@ -1,0 +1,112 @@
+// examples/file-manager/src/04_view_modes.ndg
+// Three Desktop View Modes: Details Table, Icons Grid, Compact Grid
+
+// ── View Mode 1: Details Table ──────────────────────────────────────
+
+view FileDetailsTable(panel_title: string, entries: [FileEntry], selected_name: string, current_lang: string) -> View {
+    let is_en = (current_lang == "en")
+    let mut rows = []
+    for item in entries {
+        let is_sel = (item.name == selected_name)
+        rows = rows + [
+            row(padding = 1, gap = 2, expand = true) [
+                button(
+                    item.glyph + "  " + item.name,
+                    id = "entry_" + item.name,
+                    variant = "item",
+                    align = "start",
+                    expand = true,
+                    h = 24,
+                    selected = is_sel,
+                    on_click = on_item_click
+                ),
+                button(item.size_str, id = "sz_" + item.name, variant = "flat", align = "end", w = 80, h = 24, on_click = on_item_click),
+                button(item.permissions, id = "perm_" + item.name, variant = "flat", align = "start", w = 100, h = 24, on_click = on_item_click)
+            ]
+        ]
+    }
+
+    column(padding = 2, gap = 2, expand = true, expand_h = true) [
+        row(padding = 2, gap = 2, bg = "toolbar", expand = true) [
+            button(if is_en { "  Name" } else { "  İsim" }, id = "sort_name", variant = "flat", align = "start", expand = true, h = 22, on_click = toggle_sort),
+            button(if is_en { "Size" } else { "Boyut" }, id = "sort_size", variant = "flat", align = "end", w = 80, h = 22, on_click = toggle_sort),
+            button(if is_en { "Permissions" } else { "İzinler" }, id = "sort_perms", variant = "flat", align = "start", w = 100, h = 22)
+        ],
+        divider(size = 1),
+        scroll(rows, id = "file_table_scroll", expand = true, padding = 1, gap = 2)
+    ]
+}
+
+// ── View Mode 2: Icons View (Grid of Cards) ─────────────────────────
+
+view FileIconsGrid(entries: [FileEntry], selected_name: string, current_lang: string) -> View {
+    let mut grid_rows = []
+    let mut current_row = []
+    for item in entries {
+        let is_sel = (item.name == selected_name)
+        let sub_text = if item.is_dir { "<DIR>" } else { item.size_str }
+        let card_label = item.name + "\n" + sub_text
+        let card = button(
+            card_label,
+            id = "entry_" + item.name,
+            variant = if item.is_dir { "folder_card" } else { "file_card" },
+            w = 150,
+            h = 96,
+            selected = is_sel,
+            on_click = on_item_click
+        )
+        current_row = current_row + [card]
+        if len(current_row) == 4 {
+            grid_rows = grid_rows + [
+                row(current_row, padding = 4, gap = 8, expand = true)
+            ]
+            current_row = []
+        }
+    }
+    if len(current_row) > 0 {
+        grid_rows = grid_rows + [
+            row(current_row, padding = 4, gap = 8, expand = true)
+        ]
+    }
+
+    column(padding = 2, gap = 2, expand = true, expand_h = true) [
+        scroll(grid_rows, id = "file_icons_scroll", expand = true, padding = 4, gap = 6)
+    ]
+}
+
+// ── View Mode 3: Compact View (Multi-column list) ────────────────────
+
+view FileCompactGrid(entries: [FileEntry], selected_name: string, current_lang: string) -> View {
+    let mut compact_rows = []
+    let mut current_row = []
+    for item in entries {
+        let is_sel = (item.name == selected_name)
+        let icon_glyph = if item.is_dir { "▸" } else { item.glyph }
+        let item_btn = button(
+            icon_glyph + "  " + item.name,
+            id = "entry_" + item.name,
+            variant = "item",
+            align = "start",
+            w = 200,
+            h = 24,
+            selected = is_sel,
+            on_click = on_item_click
+        )
+        current_row = current_row + [item_btn]
+        if len(current_row) == 3 {
+            compact_rows = compact_rows + [
+                row(current_row, padding = 1, gap = 4, expand = true)
+            ]
+            current_row = []
+        }
+    }
+    if len(current_row) > 0 {
+        compact_rows = compact_rows + [
+            row(current_row, padding = 1, gap = 4, expand = true)
+        ]
+    }
+
+    column(padding = 2, gap = 2, expand = true, expand_h = true) [
+        scroll(compact_rows, id = "file_compact_scroll", expand = true, padding = 2, gap = 2)
+    ]
+}

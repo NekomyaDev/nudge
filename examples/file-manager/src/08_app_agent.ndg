@@ -1,0 +1,500 @@
+// examples/file-manager/src/08_app_agent.ndg
+// Master Desktop Application Agent & Window Orchestrator
+
+agent FileManagerApp {
+    state {
+        current_path: string = "/home/neko"
+        history_back: [string] = []
+        history_forward: [string] = []
+
+        tabs: [string] = ["/home/neko"]
+        active_tab_idx: int = 0
+
+        all_entries: [FileEntry] = []
+        filtered_entries: [FileEntry] = []
+
+        // Split view (F3) secondary panel state
+        split_path: string = "/home/neko/Belgeler"
+        split_entries: [FileEntry] = []
+        is_split: bool = false
+
+        // Inspector (F11) state (compact, toggleable)
+        show_inspector: bool = false
+        selected_name: string = ""
+        selected_path: string = ""
+        selected_size: string = ""
+        selected_perms: string = ""
+        selected_cas: string = ""
+        preview_content: string = ""
+
+        // View mode: "icons" (default) | "compact" | "details"
+        view_mode: string = "icons"
+
+        // Filter & Language
+        filter_query: string = ""
+        sort_asc: bool = true
+        current_lang: string = "en"
+
+        // Breadcrumb vs raw input mode
+        edit_path_mode: bool = false
+
+        // Clipboard & Undo
+        clipboard_path: string = ""
+        clipboard_name: string = ""
+        clipboard_content: string = ""
+        last_created_path: string = ""
+
+        // Theme: "breeze-light" | "breeze-dark"
+        current_theme: string = "breeze-light"
+    }
+
+    fn init_default_path() uses Workspace {
+        if !workspace.exists(state.current_path) {
+            state.current_path = "."
+            state.tabs = ["."]
+            state.split_path = "."
+        }
+    }
+
+    fn reset_state() uses UI, Workspace {
+        state.current_path = "."
+        state.tabs = ["."]
+        state.active_tab_idx = 0
+        state.filter_query = ""
+        state.selected_name = ""
+        state.selected_path = ""
+        state.preview_content = ""
+        state.sort_asc = true
+        state.is_split = false
+        state.show_inspector = true
+        state.edit_path_mode = false
+        state.last_created_path = ""
+        state.current_lang = "en"
+        state.view_mode = "icons"
+        FileManagerApp.refresh()
+    }
+
+    fn refresh() uses Workspace {
+        let loaded = VfsBridge.list_directory(state.current_path)
+        state.all_entries = loaded
+        state.filtered_entries = filter_entries(loaded, state.filter_query)
+
+        if state.is_split {
+            let target_split = if workspace.exists(state.split_path) { state.split_path } else { state.current_path }
+            let split_loaded = VfsBridge.list_directory(target_split)
+            state.split_entries = split_loaded
+        }
+    }
+
+    fn navigate_to(p: string) uses Workspace {
+        let norm = normalize_vfs_path(p)
+        if norm != state.current_path {
+            state.history_back = state.history_back + [state.current_path]
+            state.history_forward = []
+            state.current_path = norm
+
+            // Update current tab path
+            let mut updated_tabs: [string] = []
+            for (t, idx) in state.tabs {
+                if idx == state.active_tab_idx {
+                    updated_tabs = updated_tabs + [norm]
+                } else {
+                    updated_tabs = updated_tabs + [t]
+                }
+            }
+            state.tabs = updated_tabs
+
+            state.selected_name = ""
+            state.selected_path = ""
+            state.preview_content = ""
+            FileManagerApp.refresh()
+        }
+    }
+
+    fn nav_back() uses UI, Workspace {
+        let count = len(state.history_back)
+        if count > 0 {
+            let prev = state.history_back[count - 1]
+            let mut new_back: [string] = []
+            for (item, idx) in state.history_back {
+                if idx < count - 1 {
+                    new_back = new_back + [item]
+                }
+            }
+            state.history_forward = state.history_forward + [state.current_path]
+            state.history_back = new_back
+            state.current_path = prev
+            FileManagerApp.refresh()
+        }
+    }
+
+    fn nav_forward() uses UI, Workspace {
+        let count = len(state.history_forward)
+        if count > 0 {
+            let next_p = state.history_forward[count - 1]
+            let mut new_fwd: [string] = []
+            for (item, idx) in state.history_forward {
+                if idx < count - 1 {
+                    new_fwd = new_fwd + [item]
+                }
+            }
+            state.history_back = state.history_back + [state.current_path]
+            state.history_forward = new_fwd
+            state.current_path = next_p
+            FileManagerApp.refresh()
+        }
+    }
+
+    fn nav_up() uses UI, Workspace {
+        let parent_p = parent_vfs_path(state.current_path)
+        FileManagerApp.navigate_to(parent_p)
+    }
+
+    fn reload_current() uses UI, Workspace {
+        FileManagerApp.refresh()
+    }
+
+    fn nav_home() uses UI, Workspace {
+        let target = if workspace.exists("/home/neko") { "/home/neko" } else { "." }
+        FileManagerApp.navigate_to(target)
+    }
+
+    fn nav_root() uses UI, Workspace {
+        let target = if workspace.exists("/") { "/" } else { "." }
+        FileManagerApp.navigate_to(target)
+    }
+
+    fn nav_desktop() uses UI, Workspace {
+        let target = if workspace.exists("/home/neko/Masaüstü") { "/home/neko/Masaüstü" } else { "." }
+        FileManagerApp.navigate_to(target)
+    }
+
+    fn nav_docs() uses UI, Workspace {
+        let target = if workspace.exists("/home/neko/Belgeler") { "/home/neko/Belgeler" } else { "docs" }
+        FileManagerApp.navigate_to(target)
+    }
+
+    fn nav_downloads() uses UI, Workspace {
+        let target = if workspace.exists("/home/neko/İndirilenler") { "/home/neko/İndirilenler" } else { "." }
+        FileManagerApp.navigate_to(target)
+    }
+
+    fn nav_music() uses UI, Workspace {
+        let target = if workspace.exists("/home/neko/Müzik") { "/home/neko/Müzik" } else { "." }
+        FileManagerApp.navigate_to(target)
+    }
+
+    fn nav_pictures() uses UI, Workspace {
+        let target = if workspace.exists("/home/neko/Resimler") { "/home/neko/Resimler" } else { "." }
+        FileManagerApp.navigate_to(target)
+    }
+
+    fn nav_videos() uses UI, Workspace {
+        let target = if workspace.exists("/home/neko/Videolar") { "/home/neko/Videolar" } else { "." }
+        FileManagerApp.navigate_to(target)
+    }
+
+    fn nav_trash() uses UI, Workspace {
+        let target = if workspace.exists("/home/neko/.local/share/Trash") { "/home/neko/.local/share/Trash" } else { "." }
+        FileManagerApp.navigate_to(target)
+    }
+
+    fn nav_nvfs() uses UI, Workspace {
+        let target = if workspace.exists("/tmp") { "/tmp" } else { "." }
+        FileManagerApp.navigate_to(target)
+    }
+
+    fn on_tab_click(clicked_id: string) uses UI, Workspace {
+        let idx_str = str.replace(clicked_id, "tab_sel_", "")
+        let target_idx = if idx_str == "0" {
+            0
+        } else if idx_str == "1" {
+            1
+        } else if idx_str == "2" {
+            2
+        } else if idx_str == "3" {
+            3
+        } else {
+            0
+        }
+        let total = len(state.tabs)
+        if target_idx < total {
+            state.active_tab_idx = target_idx
+            state.current_path = state.tabs[target_idx]
+            FileManagerApp.refresh()
+        }
+    }
+
+    fn on_tab_close(clicked_id: string) uses UI, Workspace {
+        let idx_str = str.replace(clicked_id, "tab_close_", "")
+        let target_idx = if idx_str == "0" {
+            0
+        } else if idx_str == "1" {
+            1
+        } else if idx_str == "2" {
+            2
+        } else if idx_str == "3" {
+            3
+        } else {
+            0
+        }
+        let total = len(state.tabs)
+        if total > 1 {
+            let mut new_tabs: [string] = []
+            for (t, idx) in state.tabs {
+                if idx != target_idx {
+                    new_tabs = new_tabs + [t]
+                }
+            }
+            state.tabs = new_tabs
+            let new_total = len(new_tabs)
+            state.active_tab_idx = if state.active_tab_idx >= new_total { new_total - 1 } else { state.active_tab_idx }
+            state.current_path = state.tabs[state.active_tab_idx]
+            FileManagerApp.refresh()
+        }
+    }
+
+    fn on_new_tab() uses UI, Workspace {
+        state.tabs = state.tabs + [state.current_path]
+        state.active_tab_idx = len(state.tabs) - 1
+        FileManagerApp.refresh()
+    }
+
+    fn on_crumb_click(clicked_id: string) uses UI, Workspace {
+        let target_p = str.replace(clicked_id, "crumb_", "")
+        if workspace.exists(target_p) {
+            FileManagerApp.navigate_to(target_p)
+        }
+    }
+
+    fn on_item_click(clicked_id: string) uses UI, Workspace {
+        let mut clean_name = str.replace(clicked_id, "entry_", "")
+        clean_name = str.replace(clean_name, "sz_", "")
+        clean_name = str.replace(clean_name, "perm_", "")
+
+        let mut matched_entry: FileEntry = {
+            name: "", path: "", is_dir: false, size_bytes: 0, size_str: "",
+            mtime_ms: 0, permissions: "", extension: "", glyph: "", cas_hash: ""
+        }
+        let mut found = false
+        for e in state.filtered_entries {
+            if e.name == clean_name {
+                matched_entry = e
+                found = true
+            }
+        }
+
+        if found {
+            if matched_entry.is_dir {
+                // Instantly navigate into folder on click
+                FileManagerApp.navigate_to(matched_entry.path)
+            } else {
+                state.selected_name = matched_entry.name
+                state.selected_path = matched_entry.path
+                state.selected_size = matched_entry.size_str
+                state.selected_perms = matched_entry.permissions
+                state.selected_cas = matched_entry.cas_hash
+                state.preview_content = workspace.read(matched_entry.path)
+            }
+        }
+    }
+
+    fn set_view_icons() uses UI {
+        state.view_mode = "icons"
+    }
+
+    fn set_view_compact() uses UI {
+        state.view_mode = "compact"
+    }
+
+    fn set_view_details() uses UI {
+        state.view_mode = "details"
+    }
+
+    fn toggle_split() uses UI, Workspace {
+        state.is_split = !state.is_split
+        if state.is_split {
+            let target_split = if workspace.exists(state.split_path) { state.split_path } else { state.current_path }
+            let split_loaded = VfsBridge.list_directory(target_split)
+            state.split_entries = split_loaded
+        }
+    }
+
+    fn toggle_inspector() uses UI {
+        state.show_inspector = !state.show_inspector
+    }
+
+    fn toggle_theme() uses UI {
+        if state.current_theme == "breeze-light" {
+            state.current_theme = "breeze-dark"
+        } else {
+            state.current_theme = "breeze-light"
+        }
+    }
+
+    fn toggle_lang() uses UI {
+        if state.current_lang == "en" {
+            state.current_lang = "tr"
+        } else {
+            state.current_lang = "en"
+        }
+    }
+
+    fn toggle_path_edit() uses UI {
+        state.edit_path_mode = !state.edit_path_mode
+    }
+
+    fn on_path_input_change(new_val: string) uses UI, Workspace {
+        state.current_path = new_val
+        FileManagerApp.refresh()
+    }
+
+    fn toggle_sort() uses UI {
+        state.sort_asc = !state.sort_asc
+    }
+
+    fn on_filter_change(query: string) uses UI {
+        state.filter_query = query
+        state.filtered_entries = filter_entries(state.all_entries, query)
+    }
+
+    fn clear_filter() uses UI {
+        state.filter_query = ""
+        state.filtered_entries = state.all_entries
+    }
+
+    fn select_or_open_entry() uses UI, Workspace {
+        if len(state.filtered_entries) > 0 {
+            let first = state.filtered_entries[0]
+            state.selected_name = first.name
+            state.selected_path = first.path
+            state.selected_size = first.size_str
+            state.selected_perms = first.permissions
+            state.selected_cas = first.cas_hash
+            if !first.is_dir {
+                state.preview_content = workspace.read(first.path)
+            } else {
+                state.preview_content = ""
+            }
+        }
+    }
+
+    fn copy_selected() uses UI, Workspace {
+        if state.selected_path != "" {
+            state.clipboard_path = state.selected_path
+            state.clipboard_name = state.selected_name
+            let entries = state.filtered_entries
+            let mut is_d = false
+            for e in entries {
+                if e.name == state.selected_name {
+                    is_d = e.is_dir
+                }
+            }
+            if !is_d {
+                state.clipboard_content = workspace.read(state.selected_path)
+            } else {
+                state.clipboard_content = ""
+            }
+        }
+    }
+
+    fn paste_clipboard() uses UI, Workspace {
+        if state.clipboard_path != "" {
+            let dest_name = "copy_of_" + state.clipboard_name
+            let dest_path = if state.current_path == "." {
+                dest_name
+            } else if state.current_path == "/" {
+                "/" + dest_name
+            } else {
+                state.current_path + "/" + dest_name
+            }
+            workspace.write(dest_path, state.clipboard_content)
+            FileManagerApp.refresh()
+        }
+    }
+
+    fn create_new_folder() uses UI, Workspace {
+        let keep_file = if state.current_path == "." {
+            "New_Folder/.keep"
+        } else if state.current_path == "/" {
+            "/New_Folder/.keep"
+        } else {
+            state.current_path + "/New_Folder/.keep"
+        }
+        workspace.write(keep_file, "")
+        let folder_only = if state.current_path == "." {
+            "New_Folder"
+        } else if state.current_path == "/" {
+            "/New_Folder"
+        } else {
+            state.current_path + "/New_Folder"
+        }
+        state.last_created_path = folder_only
+        FileManagerApp.refresh()
+    }
+
+    fn undo_last_action() uses UI, Workspace, WorkspaceDelete {
+        if state.last_created_path != "" {
+            workspace.delete(state.last_created_path, recursive = true)
+            state.last_created_path = ""
+            FileManagerApp.refresh()
+        }
+    }
+
+    fn open_selected_directory() uses UI, Workspace {
+        if state.selected_path != "" {
+            let mut is_d = false
+            for e in state.filtered_entries {
+                if e.path == state.selected_path {
+                    is_d = e.is_dir
+                }
+            }
+            if is_d {
+                FileManagerApp.navigate_to(state.selected_path)
+            }
+        }
+    }
+
+    fn delete_selected() uses UI, Workspace, WorkspaceDelete {
+        if state.selected_path != "" {
+            workspace.delete(state.selected_path, recursive = true)
+            state.selected_name = ""
+            state.selected_path = ""
+            state.preview_content = ""
+            FileManagerApp.refresh()
+        }
+    }
+
+    window MainWindow {
+        title: "Nudge Files",
+        width: 1240,
+        height: 720,
+        theme: state.current_theme,
+        content: FileManagerLayout(
+            state.current_path,
+            state.filtered_entries,
+            state.split_entries,
+            state.selected_name,
+            state.selected_path,
+            state.selected_size,
+            state.selected_perms,
+            state.selected_cas,
+            state.preview_content,
+            state.filter_query,
+            state.is_split,
+            state.show_inspector,
+            state.edit_path_mode,
+            state.current_theme,
+            state.current_lang,
+            state.view_mode,
+            state.tabs,
+            state.active_tab_idx
+        )
+    }
+}
+
+fn main() uses UI, Workspace {
+    FileManagerApp.init_default_path()
+    FileManagerApp.refresh()
+    FileManagerApp.MainWindow.open()
+}

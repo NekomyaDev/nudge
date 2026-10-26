@@ -1,0 +1,42 @@
+// examples/file-manager/src/03_places_panel.ndg
+// Places Sidebar Panel — Multi-Group Navigation (Places, Remote, Recent, Devices)
+
+view PlacesSidebar(current_path: string, current_lang: string) -> View {
+    let is_en = (current_lang == "en")
+    let sidebar_items = [
+        // Group 1: Places (Konumlar)
+        text(if is_en { "Places" } else { "Konumlar" }, bold = true),
+        button(if is_en { "  ⌂  Home" } else { "  ⌂  Ev Dizini" }, id = "place_home", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/home/neko" or current_path == "." or current_path == ""), on_click = nav_home),
+        button(if is_en { "  ⌨  Desktop" } else { "  ⌨  Masaüstü" }, id = "place_desktop", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Masaüstü"), on_click = nav_desktop),
+        button(if is_en { "  ▪  Documents" } else { "  ▪  Belgeler" }, id = "place_docs", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Belgeler"), on_click = nav_docs),
+        button(if is_en { "  ⬇  Downloads" } else { "  ⬇  İndirilenler" }, id = "place_downloads", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "İndirilenler"), on_click = nav_downloads),
+        button(if is_en { "  ♪  Music" } else { "  ♪  Müzik" }, id = "place_music", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Müzik"), on_click = nav_music),
+        button(if is_en { "  ◇  Pictures" } else { "  ◇  Resimler" }, id = "place_pictures", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Resimler"), on_click = nav_pictures),
+        button(if is_en { "  ▶  Videos" } else { "  ▶  Videolar" }, id = "place_videos", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Videolar"), on_click = nav_videos),
+        button(if is_en { "  ✕  Trash" } else { "  ✕  Çöp" }, id = "place_trash", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Trash"), on_click = nav_trash),
+
+        divider(size = 1),
+
+        // Group 2: Remote (Uzak)
+        text(if is_en { "Remote" } else { "Uzak" }, bold = true),
+        button(if is_en { "  🌐  Network" } else { "  🌐  Ağ" }, id = "place_network", variant = "item", align = "start", w = 158, h = 24, on_click = nav_root),
+
+        divider(size = 1),
+
+        // Group 3: Recent (Son)
+        text(if is_en { "Recent" } else { "Son" }, bold = true),
+        button(if is_en { "  ⏱  Recent Files" } else { "  ⏱  Son Dosyalar" }, id = "place_recent_files", variant = "item", align = "start", w = 158, h = 24, on_click = nav_home),
+        button(if is_en { "  📍  Recent Locations" } else { "  📍  Son Konumlar" }, id = "place_recent_loc", variant = "item", align = "start", w = 158, h = 24, on_click = nav_docs),
+
+        divider(size = 1),
+
+        // Group 4: Devices (Aygıtlar)
+        text(if is_en { "Devices" } else { "Aygıtlar" }, bold = true),
+        button(if is_en { "  💾  Root (/)" } else { "  💾  Kök Dizin (/)" }, id = "place_root", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/"), on_click = nav_root),
+        button(if is_en { "  ⚡  Temp (/tmp)" } else { "  ⚡  Geçici Bellek (/tmp)" }, id = "place_nvfs", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/tmp"), on_click = nav_nvfs)
+    ]
+
+    column(padding = 4, gap = 1, w = 170, expand_h = true, bg = "sidebar") [
+        scroll(sidebar_items, id = "sidebar_scroll", expand = true, padding = 1, gap = 1)
+    ]
+}

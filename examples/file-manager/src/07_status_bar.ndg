@@ -1,0 +1,144 @@
+// examples/file-manager/src/07_status_bar.ndg
+// Status Bar & Search Filter Bar with Disk Space & Zoom Status
+
+view BottomStatusBar(
+    filter_query: string,
+    total_items: int,
+    dir_count: int,
+    file_count: int,
+    selected_name: string,
+    selected_size: string,
+    current_lang: string
+) -> View {
+    let is_en = (current_lang == "en")
+    let summary = if selected_name != "" {
+        if is_en {
+            "1 selected: " + selected_name + " (" + selected_size + ")"
+        } else {
+            "1 seçildi: " + selected_name + " (" + selected_size + ")"
+        }
+    } else {
+        if is_en {
+            str.to_string(total_items) + " items (" + str.to_string(dir_count) + " folders, " + str.to_string(file_count) + " files)"
+        } else {
+            str.to_string(total_items) + " öğe (" + str.to_string(dir_count) + " klasör, " + str.to_string(file_count) + " dosya)"
+        }
+    }
+
+    let zoom_text = if is_en { "Zoom: 100%" } else { "Yakınlaştırma: 100%" }
+    let free_text = if is_en { "4.0 TiB free" } else { "4,0 TiB boş" }
+
+    row(padding = 2, gap = 4, bg = "toolbar", expand = true) [
+        text(if is_en { "Filter:" } else { "Filtre:" }),
+        input(value = filter_query, placeholder = if is_en { "Filter..." } else { "Filtre..." }, id = "input_filter", w = 120, h = 22, on_change = on_filter_change),
+        button("✕", id = "btn_clear_filter", variant = "flat", w = 20, h = 22, on_click = clear_filter),
+        divider(orientation = "vertical", size = 1, h = 18),
+        text(summary),
+        spacer(1),
+        divider(orientation = "vertical", size = 1, h = 18),
+        text(zoom_text),
+        divider(orientation = "vertical", size = 1, h = 18),
+        text(free_text)
+    ]
+}
+
+view FileManagerLayout(
+    current_path: string,
+    left_entries: [FileEntry],
+    right_entries: [FileEntry],
+    selected_name: string,
+    selected_path: string,
+    selected_size: string,
+    selected_perms: string,
+    selected_cas: string,
+    preview_content: string,
+    filter_query: string,
+    is_split: bool,
+    show_inspector: bool,
+    edit_path_mode: bool,
+    current_theme: string,
+    current_lang: string,
+    view_mode: string,
+    tabs: [string],
+    active_tab_idx: int
+) -> View {
+    let mut dir_c = 0
+    let mut file_c = 0
+    for e in left_entries {
+        if e.is_dir {
+            dir_c = dir_c + 1
+        } else {
+            file_c = file_c + 1
+        }
+    }
+
+    column(padding = 0, gap = 0, expand = true, expand_h = true) [
+        // 1. Top Navigation Toolbar (Edge to edge)
+        TopToolbar(current_path, is_split, show_inspector, edit_path_mode, current_theme, current_lang, view_mode),
+
+        // 2. Tab Bar (Edge to edge)
+        TabBar(tabs, active_tab_idx),
+
+        // 3. Middle Main Area: Places Sidebar + Active View Mode + Inspector
+        row(padding = 0, gap = 0, expand = true, expand_h = true) [
+            PlacesSidebar(current_path, current_lang),
+            divider(orientation = "vertical", size = 1, expand_h = true),
+
+            if is_split {
+                row(padding = 0, gap = 2, expand = true, expand_h = true) [
+                    if view_mode == "icons" {
+                        FileIconsGrid(left_entries, selected_name, current_lang)
+                    } else if view_mode == "compact" {
+                        FileCompactGrid(left_entries, selected_name, current_lang)
+                    } else {
+                        FileDetailsTable("Left", left_entries, selected_name, current_lang)
+                    },
+                    divider(orientation = "vertical", size = 1, expand_h = true),
+                    if view_mode == "icons" {
+                        FileIconsGrid(right_entries, "", current_lang)
+                    } else if view_mode == "compact" {
+                        FileCompactGrid(right_entries, "", current_lang)
+                    } else {
+                        FileDetailsTable("Right", right_entries, "", current_lang)
+                    }
+                ]
+            } else {
+                if view_mode == "icons" {
+                    FileIconsGrid(left_entries, selected_name, current_lang)
+                } else if view_mode == "compact" {
+                    FileCompactGrid(left_entries, selected_name, current_lang)
+                } else {
+                    FileDetailsTable("Main", left_entries, selected_name, current_lang)
+                }
+            },
+
+            if show_inspector {
+                row(padding = 0, gap = 0, w = 212, expand_h = true) [
+                    divider(orientation = "vertical", size = 1, expand_h = true),
+                    InspectorPanel(
+                        selected_name,
+                        selected_path,
+                        selected_size,
+                        selected_perms,
+                        selected_cas,
+                        preview_content,
+                        current_lang
+                    )
+                ]
+            } else {
+                spacer(1)
+            }
+        ],
+
+        // 4. Bottom Status Bar with Integrated Filter & Space Info
+        BottomStatusBar(
+            filter_query,
+            dir_c + file_c,
+            dir_c,
+            file_c,
+            selected_name,
+            selected_size,
+            current_lang
+        )
+    ]
+}

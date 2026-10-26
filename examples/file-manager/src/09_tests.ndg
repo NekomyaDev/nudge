@@ -1,0 +1,136 @@
+// examples/file-manager/src/09_tests.ndg
+// Deterministic Headless Certification Tests
+
+test "file manager app mounts with dual pane desktop layout" {
+    VfsBridge.reset()
+    FileManagerApp.reset_state()
+    let app = FileManagerApp.MainWindow.mount_headless()
+
+    // Assert top toolbar controls
+    assert app.find("btn_back").exists()
+    assert app.find("btn_up").exists()
+    assert app.find("btn_reload").exists()
+    assert app.find("btn_split_toggle").exists()
+    assert app.find("btn_info_toggle").exists()
+    assert app.find("btn_theme_toggle").exists()
+
+    // Assert places sidebar
+    assert app.find("place_home").exists()
+    assert app.find("place_nvfs").exists()
+
+    // Assert live filter bar
+    assert app.find("input_filter").exists()
+    assert app.find("btn_clear_filter").exists()
+}
+
+test "split view f3 toggles dual panels and synchronizes entries" {
+    FileManagerApp.reset_state()
+    let app = FileManagerApp.MainWindow.mount_headless()
+
+    assert !FileManagerApp.state.is_split
+    app.dispatch_click("btn_split_toggle")
+    assert FileManagerApp.state.is_split
+    assert len(FileManagerApp.state.split_entries) > 0
+
+    // Toggle back to single view
+    app.dispatch_click("btn_split_toggle")
+    assert !FileManagerApp.state.is_split
+}
+
+test "live filter bar updates visible entries via substring search" {
+    FileManagerApp.reset_state()
+    let app = FileManagerApp.MainWindow.mount_headless()
+    let total_before = len(FileManagerApp.state.filtered_entries)
+    assert total_before > 0
+
+    // Filter by 'crates'
+    app.dispatch_change("input_filter", "crates")
+    assert FileManagerApp.state.filter_query == "crates"
+    assert len(FileManagerApp.state.filtered_entries) >= 1
+    assert FileManagerApp.state.filtered_entries[0].name == "crates"
+
+    // Clear filter restores all entries
+    app.dispatch_click("btn_clear_filter")
+    assert FileManagerApp.state.filter_query == ""
+    assert len(FileManagerApp.state.filtered_entries) == total_before
+}
+
+test "inspector f11 toggles display and updates metadata" {
+    FileManagerApp.reset_state()
+    let app = FileManagerApp.MainWindow.mount_headless()
+
+    assert FileManagerApp.state.show_inspector
+    app.dispatch_click("btn_info_toggle")
+    assert !FileManagerApp.state.show_inspector
+
+    app.dispatch_click("btn_info_toggle")
+    assert FileManagerApp.state.show_inspector
+}
+
+test "sorting groups directories first and updates order" {
+    FileManagerApp.reset_state()
+    let app = FileManagerApp.MainWindow.mount_headless()
+
+    // First entry must be a directory if directories exist
+    let entries = FileManagerApp.state.filtered_entries
+    if len(entries) > 0 {
+        assert entries[0].is_dir
+    }
+
+    // Toggle sort order
+    FileManagerApp.toggle_sort()
+    assert !FileManagerApp.state.sort_asc
+}
+
+test "clipboard copy stores selected file in buffer" {
+    FileManagerApp.reset_state()
+    let app = FileManagerApp.MainWindow.mount_headless()
+
+    // Select entry
+    FileManagerApp.select_or_open_entry()
+    assert FileManagerApp.state.selected_name != ""
+
+    // Click copy
+    app.dispatch_click("btn_copy")
+    assert FileManagerApp.state.clipboard_path == FileManagerApp.state.selected_path
+    assert FileManagerApp.state.clipboard_name == FileManagerApp.state.selected_name
+}
+
+test "undo action rolls back newly created folder transaction" {
+    FileManagerApp.reset_state()
+    let app = FileManagerApp.MainWindow.mount_headless()
+
+    // Create a new folder
+    app.dispatch_click("btn_new_folder")
+    assert FileManagerApp.state.last_created_path != ""
+
+    // Trigger Undo
+    app.dispatch_click("btn_undo")
+    assert FileManagerApp.state.last_created_path == ""
+}
+
+test "view mode switching changes active layout" {
+    FileManagerApp.reset_state()
+    let app = FileManagerApp.MainWindow.mount_headless()
+    assert FileManagerApp.state.view_mode == "icons"
+    app.dispatch_click("view_details")
+    assert FileManagerApp.state.view_mode == "details"
+    app.dispatch_click("view_compact")
+    assert FileManagerApp.state.view_mode == "compact"
+    app.dispatch_click("view_icons")
+    assert FileManagerApp.state.view_mode == "icons"
+}
+
+test "open selected directory navigates into child hierarchy" {
+    FileManagerApp.reset_state()
+    let app = FileManagerApp.MainWindow.mount_headless()
+
+    // Select first entry if it is a directory
+    let entries = FileManagerApp.state.filtered_entries
+    if len(entries) > 0 and entries[0].is_dir {
+        FileManagerApp.select_or_open_entry()
+        let target_p = FileManagerApp.state.selected_path
+        app.dispatch_click("btn_open_selected_dir")
+        assert FileManagerApp.state.current_path == target_p
+    }
+}

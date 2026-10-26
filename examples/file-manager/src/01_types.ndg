@@ -1,0 +1,197 @@
+// examples/file-manager/src/01_types.ndg
+// Core Data Types & Utility Functions
+
+type FileEntry = {
+    name: string,
+    path: string,
+    is_dir: bool,
+    size_bytes: int,
+    size_str: string,
+    mtime_ms: int,
+    permissions: string,
+    extension: string,
+    glyph: string,
+    cas_hash: string
+}
+
+fn clean_int_str(s: string) -> string {
+    let parts = str.split(s, ".")
+    parts[0]
+}
+
+fn format_bytes(bytes: int) -> string {
+    let mut res = "0 B"
+    if bytes < 0 {
+        res = "0 B"
+    } else if bytes < 1024 {
+        res = clean_int_str(str.to_string(bytes)) + " B"
+    } else if bytes < 1048576 {
+        let kb = bytes / 1024
+        res = clean_int_str(str.to_string(kb)) + " KiB"
+    } else if bytes < 1073741824 {
+        let mb = bytes / 1048576
+        res = clean_int_str(str.to_string(mb)) + " MiB"
+    } else {
+        let gb = bytes / 1073741824
+        res = clean_int_str(str.to_string(gb)) + " GiB"
+    }
+    res
+}
+
+fn get_extension(name: string) -> string {
+    let parts = str.split(name, ".")
+    let count = len(parts)
+    let mut ext = ""
+    if count > 1 {
+        ext = parts[count - 1]
+    }
+    ext
+}
+
+fn resolve_glyph(name: string, is_dir: bool) -> string {
+    let mut glyph = "▫"
+    if is_dir {
+        glyph = "▸"
+    } else {
+        let ext = str.lower(get_extension(name))
+        if ext == "ndg" {
+            glyph = "⚡"
+        } else if ext == "rs" or ext == "c" or ext == "cpp" or ext == "go" or ext == "py" {
+            glyph = "⚙"
+        } else if ext == "md" or ext == "txt" or ext == "doc" or ext == "json" or ext == "toml" {
+            glyph = "▪"
+        } else if ext == "png" or ext == "jpg" or ext == "svg" or ext == "gif" or ext == "jpeg" {
+            glyph = "◇"
+        } else if ext == "sh" or ext == "bash" {
+            glyph = "⌨"
+        } else if ext == "mp3" or ext == "wav" or ext == "flac" {
+            glyph = "♪"
+        } else if ext == "mp4" or ext == "mkv" or ext == "avi" {
+            glyph = "▶"
+        } else {
+            glyph = "▫"
+        }
+    }
+    glyph
+}
+
+fn normalize_vfs_path(raw: string) -> string {
+    let is_abs = str.starts_with(raw, "/")
+    let raw_parts = str.split(raw, "/")
+    let mut stack: [string] = []
+    for p in raw_parts {
+        if p == "" or p == "." {
+            // skip
+        } else if p == ".." {
+            let stack_len = len(stack)
+            if stack_len > 0 {
+                let mut new_stack: [string] = []
+                for (item, idx) in stack {
+                    if idx < stack_len - 1 {
+                        new_stack = new_stack + [item]
+                    }
+                }
+                stack = new_stack
+            }
+        } else {
+            stack = stack + [p]
+        }
+    }
+    let total = len(stack)
+    let mut res = if is_abs { "/" } else { "." }
+    if total > 0 {
+        let mut built = ""
+        for (item, idx) in stack {
+            if idx == 0 {
+                built = if is_abs { "/" + item } else { item }
+            } else {
+                built = built + "/" + item
+            }
+        }
+        res = built
+    }
+    res
+}
+
+fn parent_vfs_path(p: string) -> string {
+    let norm = normalize_vfs_path(p)
+    let mut res = ".."
+    if norm == "." or norm == "" {
+        res = ".."
+    } else if norm == "/" {
+        res = "/"
+    } else {
+        let parts = str.split(norm, "/")
+        let count = len(parts)
+        if count <= 1 {
+            res = if str.starts_with(norm, "/") { "/" } else { "." }
+        } else {
+            let mut built = ""
+            for (seg, idx) in parts {
+                if idx < count - 1 {
+                    if idx == 0 {
+                        built = seg
+                    } else {
+                        built = built + "/" + seg
+                    }
+                }
+            }
+            if built == "" {
+                res = if str.starts_with(norm, "/") { "/" } else { "." }
+            } else {
+                res = built
+            }
+        }
+    }
+    res
+}
+
+fn compute_cas_hash(text: string) -> string {
+    let raw = str.hash(text)
+    let pos = if raw < 0 { -raw } else { raw }
+    "blk_" + str.to_string(pos)
+}
+
+fn partition_entries(entries: [FileEntry]) -> [FileEntry] {
+    let mut dirs: [FileEntry] = []
+    let mut files: [FileEntry] = []
+    for e in entries {
+        if e.is_dir {
+            dirs = dirs + [e]
+        } else {
+            files = files + [e]
+        }
+    }
+    dirs + files
+}
+
+fn filter_entries(entries: [FileEntry], query: string) -> [FileEntry] {
+    let q = str.trim(str.lower(query))
+    let mut matched: [FileEntry] = []
+    if q == "" {
+        matched = entries
+    } else {
+        for e in entries {
+            let n = str.lower(e.name)
+            let ext = str.lower(e.extension)
+            if str.contains(n, q) or str.contains(ext, q) {
+                matched = matched + [e]
+            }
+        }
+    }
+    matched
+}
+
+fn extract_tab_name(t: string) -> string {
+    let mut name = t
+    if t == "/" {
+        name = "/"
+    } else {
+        let parts = str.split(t, "/")
+        let count = len(parts)
+        if count > 0 {
+            name = parts[count - 1]
+        }
+    }
+    name
+}

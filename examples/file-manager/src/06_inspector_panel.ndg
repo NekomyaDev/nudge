@@ -1,0 +1,43 @@
+// examples/file-manager/src/06_inspector_panel.ndg
+// Information & Metadata Inspector Dock Panel (F11)
+
+view InspectorPanel(
+    selected_name: string,
+    selected_path: string,
+    selected_size: string,
+    selected_perms: string,
+    selected_cas: string,
+    preview_content: string,
+    current_lang: string
+) -> View {
+    let is_en = (current_lang == "en")
+    column(padding = 4, gap = 2, w = 210, expand_h = true, bg = "sidebar") [
+        text(if is_en { "ℹ Information (F11)" } else { "ℹ Bilgi Paneli (F11)" }, bold = true),
+        divider(size = 1),
+        if selected_name != "" {
+            column(padding = 2, gap = 2) [
+                text("▪ " + selected_name, bold = true),
+                text((if is_en { "Path: " } else { "Konum: " }) + selected_path),
+                text((if is_en { "Size: " } else { "Boyut: " }) + selected_size),
+                text((if is_en { "Perms: " } else { "İzin: " }) + selected_perms),
+                row(padding = 0, gap = 2) [
+                    text("CAS:"),
+                    badge(selected_cas, status = "info")
+                ],
+                button(if is_en { "▸ Open Directory" } else { "▸ Klasörü Aç" }, id = "btn_open_selected_dir", variant = "toolbar", h = 24, on_click = open_selected_directory),
+                divider(size = 1),
+                text(if is_en { "Preview:" } else { "Önizleme:" }, bold = true),
+                if preview_content != "" {
+                    code_block(preview_content, id = "inspector_preview")
+                } else {
+                    text(if is_en { "(Folder or binary)" } else { "(Klasör veya ikili dosya)" })
+                }
+            ]
+        } else {
+            column(padding = 2, gap = 2) [
+                text(if is_en { "Select an item to inspect." } else { "İncelemek için bir öğe seçin." }),
+                button(if is_en { "▸ Open Directory" } else { "▸ Klasörü Aç" }, id = "btn_open_selected_dir", variant = "toolbar", h = 24, on_click = open_selected_directory)
+            ]
+        }
+    ]
+}

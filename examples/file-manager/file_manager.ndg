@@ -1,7 +1,5 @@
-// examples/file-manager/file_manager.ndg
-// Nudge Files — 100% Pure Nudge Native Desktop File Manager
-// Fully Self-Hosted Native Application | 0 Foreign Dependencies (GATE-01 Compliant)
-// Professional Breeze Desktop Architecture | Full Dual Language Support (EN/TR)
+// examples/file-manager/src/01_types.ndg
+// Core Data Types & Utility Functions
 
 type FileEntry = {
     name: string,
@@ -197,8 +195,8 @@ fn extract_tab_name(t: string) -> string {
     }
     name
 }
-
-// ── In-Memory VFS Bridge & Directory Model ───────────────────────────
+// examples/file-manager/src/02_vfs_bridge.ndg
+// In-Memory Virtual File System Bridge & Directory Inode Model
 
 agent VfsBridge {
     state {
@@ -272,8 +270,162 @@ agent VfsBridge {
         partition_entries(entries)
     }
 }
+// examples/file-manager/src/03_places_panel.ndg
+// Places Sidebar Panel — Multi-Group Navigation (Places, Remote, Recent, Devices)
 
-// ── Native Desktop Layout Views ─────────────────────────────────────
+view PlacesSidebar(current_path: string, current_lang: string) -> View {
+    let is_en = (current_lang == "en")
+    let sidebar_items = [
+        // Group 1: Places (Konumlar)
+        text(if is_en { "Places" } else { "Konumlar" }, bold = true),
+        button(if is_en { "  ⌂  Home" } else { "  ⌂  Ev Dizini" }, id = "place_home", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/home/neko" or current_path == "." or current_path == ""), on_click = nav_home),
+        button(if is_en { "  ⌨  Desktop" } else { "  ⌨  Masaüstü" }, id = "place_desktop", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Masaüstü"), on_click = nav_desktop),
+        button(if is_en { "  ▪  Documents" } else { "  ▪  Belgeler" }, id = "place_docs", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Belgeler"), on_click = nav_docs),
+        button(if is_en { "  ⬇  Downloads" } else { "  ⬇  İndirilenler" }, id = "place_downloads", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "İndirilenler"), on_click = nav_downloads),
+        button(if is_en { "  ♪  Music" } else { "  ♪  Müzik" }, id = "place_music", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Müzik"), on_click = nav_music),
+        button(if is_en { "  ◇  Pictures" } else { "  ◇  Resimler" }, id = "place_pictures", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Resimler"), on_click = nav_pictures),
+        button(if is_en { "  ▶  Videos" } else { "  ▶  Videolar" }, id = "place_videos", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Videolar"), on_click = nav_videos),
+        button(if is_en { "  ✕  Trash" } else { "  ✕  Çöp" }, id = "place_trash", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Trash"), on_click = nav_trash),
+
+        divider(size = 1),
+
+        // Group 2: Remote (Uzak)
+        text(if is_en { "Remote" } else { "Uzak" }, bold = true),
+        button(if is_en { "  🌐  Network" } else { "  🌐  Ağ" }, id = "place_network", variant = "item", align = "start", w = 158, h = 24, on_click = nav_root),
+
+        divider(size = 1),
+
+        // Group 3: Recent (Son)
+        text(if is_en { "Recent" } else { "Son" }, bold = true),
+        button(if is_en { "  ⏱  Recent Files" } else { "  ⏱  Son Dosyalar" }, id = "place_recent_files", variant = "item", align = "start", w = 158, h = 24, on_click = nav_home),
+        button(if is_en { "  📍  Recent Locations" } else { "  📍  Son Konumlar" }, id = "place_recent_loc", variant = "item", align = "start", w = 158, h = 24, on_click = nav_docs),
+
+        divider(size = 1),
+
+        // Group 4: Devices (Aygıtlar)
+        text(if is_en { "Devices" } else { "Aygıtlar" }, bold = true),
+        button(if is_en { "  💾  Root (/)" } else { "  💾  Kök Dizin (/)" }, id = "place_root", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/"), on_click = nav_root),
+        button(if is_en { "  ⚡  Temp (/tmp)" } else { "  ⚡  Geçici Bellek (/tmp)" }, id = "place_nvfs", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/tmp"), on_click = nav_nvfs)
+    ]
+
+    column(padding = 4, gap = 1, w = 170, expand_h = true, bg = "sidebar") [
+        scroll(sidebar_items, id = "sidebar_scroll", expand = true, padding = 1, gap = 1)
+    ]
+}
+// examples/file-manager/src/04_view_modes.ndg
+// Three Desktop View Modes: Details Table, Icons Grid, Compact Grid
+
+// ── View Mode 1: Details Table ──────────────────────────────────────
+
+view FileDetailsTable(panel_title: string, entries: [FileEntry], selected_name: string, current_lang: string) -> View {
+    let is_en = (current_lang == "en")
+    let mut rows = []
+    for item in entries {
+        let is_sel = (item.name == selected_name)
+        rows = rows + [
+            row(padding = 1, gap = 2, expand = true) [
+                button(
+                    item.glyph + "  " + item.name,
+                    id = "entry_" + item.name,
+                    variant = "item",
+                    align = "start",
+                    expand = true,
+                    h = 24,
+                    selected = is_sel,
+                    on_click = on_item_click
+                ),
+                button(item.size_str, id = "sz_" + item.name, variant = "flat", align = "end", w = 80, h = 24, on_click = on_item_click),
+                button(item.permissions, id = "perm_" + item.name, variant = "flat", align = "start", w = 100, h = 24, on_click = on_item_click)
+            ]
+        ]
+    }
+
+    column(padding = 2, gap = 2, expand = true, expand_h = true) [
+        row(padding = 2, gap = 2, bg = "toolbar", expand = true) [
+            button(if is_en { "  Name" } else { "  İsim" }, id = "sort_name", variant = "flat", align = "start", expand = true, h = 22, on_click = toggle_sort),
+            button(if is_en { "Size" } else { "Boyut" }, id = "sort_size", variant = "flat", align = "end", w = 80, h = 22, on_click = toggle_sort),
+            button(if is_en { "Permissions" } else { "İzinler" }, id = "sort_perms", variant = "flat", align = "start", w = 100, h = 22)
+        ],
+        divider(size = 1),
+        scroll(rows, id = "file_table_scroll", expand = true, padding = 1, gap = 2)
+    ]
+}
+
+// ── View Mode 2: Icons View (Grid of Cards) ─────────────────────────
+
+view FileIconsGrid(entries: [FileEntry], selected_name: string, current_lang: string) -> View {
+    let mut grid_rows = []
+    let mut current_row = []
+    for item in entries {
+        let is_sel = (item.name == selected_name)
+        let sub_text = if item.is_dir { "<DIR>" } else { item.size_str }
+        let card_label = item.name + "\n" + sub_text
+        let card = button(
+            card_label,
+            id = "entry_" + item.name,
+            variant = if item.is_dir { "folder_card" } else { "file_card" },
+            w = 150,
+            h = 96,
+            selected = is_sel,
+            on_click = on_item_click
+        )
+        current_row = current_row + [card]
+        if len(current_row) == 4 {
+            grid_rows = grid_rows + [
+                row(current_row, padding = 4, gap = 8, expand = true)
+            ]
+            current_row = []
+        }
+    }
+    if len(current_row) > 0 {
+        grid_rows = grid_rows + [
+            row(current_row, padding = 4, gap = 8, expand = true)
+        ]
+    }
+
+    column(padding = 2, gap = 2, expand = true, expand_h = true) [
+        scroll(grid_rows, id = "file_icons_scroll", expand = true, padding = 4, gap = 6)
+    ]
+}
+
+// ── View Mode 3: Compact View (Multi-column list) ────────────────────
+
+view FileCompactGrid(entries: [FileEntry], selected_name: string, current_lang: string) -> View {
+    let mut compact_rows = []
+    let mut current_row = []
+    for item in entries {
+        let is_sel = (item.name == selected_name)
+        let icon_glyph = if item.is_dir { "▸" } else { item.glyph }
+        let item_btn = button(
+            icon_glyph + "  " + item.name,
+            id = "entry_" + item.name,
+            variant = "item",
+            align = "start",
+            w = 200,
+            h = 24,
+            selected = is_sel,
+            on_click = on_item_click
+        )
+        current_row = current_row + [item_btn]
+        if len(current_row) == 3 {
+            compact_rows = compact_rows + [
+                row(current_row, padding = 1, gap = 4, expand = true)
+            ]
+            current_row = []
+        }
+    }
+    if len(current_row) > 0 {
+        compact_rows = compact_rows + [
+            row(current_row, padding = 1, gap = 4, expand = true)
+        ]
+    }
+
+    column(padding = 2, gap = 2, expand = true, expand_h = true) [
+        scroll(compact_rows, id = "file_compact_scroll", expand = true, padding = 2, gap = 2)
+    ]
+}
+// examples/file-manager/src/05_toolbar.ndg
+// Top Navigation Toolbar & Dynamic Tab Bar
 
 view TopToolbar(
     current_path: string,
@@ -290,11 +442,14 @@ view TopToolbar(
     crumbs = crumbs + [
         button(if is_abs { "/" } else { "⌂" }, id = "btn_path_root", variant = "flat", h = 22, on_click = nav_root)
     ]
+    let mut current_accum = ""
     for seg in path_segments {
         if seg != "" and seg != "." {
+            current_accum = if current_accum == "" { "/" + seg } else { current_accum + "/" + seg }
+            let target_path = current_accum
             crumbs = crumbs + [
                 text("›"),
-                button(seg, variant = "flat", h = 22, on_click = toggle_path_edit)
+                button(seg, id = "crumb_" + target_path, variant = "flat", h = 22, on_click = on_crumb_click)
             ]
         }
     }
@@ -376,159 +531,8 @@ view TabBar(tabs: [string], active_idx: int) -> View {
 
     row(all_elements, padding = 2, gap = 4, bg = "toolbar", expand = true)
 }
-
-view PlacesSidebar(current_path: string, current_lang: string) -> View {
-    let is_en = (current_lang == "en")
-    let sidebar_items = [
-        // Group 1: Places (Konumlar)
-        text(if is_en { "Places" } else { "Konumlar" }, bold = true),
-        button(if is_en { "  ⌂  Home" } else { "  ⌂  Ev Dizini" }, id = "place_home", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/home/neko" or current_path == "." or current_path == ""), on_click = nav_home),
-        button(if is_en { "  ⌨  Desktop" } else { "  ⌨  Masaüstü" }, id = "place_desktop", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Masaüstü"), on_click = nav_desktop),
-        button(if is_en { "  ▪  Documents" } else { "  ▪  Belgeler" }, id = "place_docs", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Belgeler"), on_click = nav_docs),
-        button(if is_en { "  ⬇  Downloads" } else { "  ⬇  İndirilenler" }, id = "place_downloads", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "İndirilenler"), on_click = nav_downloads),
-        button(if is_en { "  ♪  Music" } else { "  ♪  Müzik" }, id = "place_music", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Müzik"), on_click = nav_music),
-        button(if is_en { "  ◇  Pictures" } else { "  ◇  Resimler" }, id = "place_pictures", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Resimler"), on_click = nav_pictures),
-        button(if is_en { "  ▶  Videos" } else { "  ▶  Videolar" }, id = "place_videos", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Videolar"), on_click = nav_videos),
-        button(if is_en { "  ✕  Trash" } else { "  ✕  Çöp" }, id = "place_trash", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Trash"), on_click = nav_trash),
-
-        divider(size = 1),
-
-        // Group 2: Remote (Uzak)
-        text(if is_en { "Remote" } else { "Uzak" }, bold = true),
-        button(if is_en { "  🌐  Network" } else { "  🌐  Ağ" }, id = "place_network", variant = "item", align = "start", w = 158, h = 24, on_click = nav_root),
-
-        divider(size = 1),
-
-        // Group 3: Recent (Son)
-        text(if is_en { "Recent" } else { "Son" }, bold = true),
-        button(if is_en { "  ⏱  Recent Files" } else { "  ⏱  Son Dosyalar" }, id = "place_recent_files", variant = "item", align = "start", w = 158, h = 24, on_click = nav_home),
-        button(if is_en { "  📍  Recent Locations" } else { "  📍  Son Konumlar" }, id = "place_recent_loc", variant = "item", align = "start", w = 158, h = 24, on_click = nav_docs),
-
-        divider(size = 1),
-
-        // Group 4: Devices (Aygıtlar)
-        text(if is_en { "Devices" } else { "Aygıtlar" }, bold = true),
-        button(if is_en { "  💾  Root (/)" } else { "  💾  Kök Dizin (/)" }, id = "place_root", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/"), on_click = nav_root),
-        button(if is_en { "  ⚡  Temp (/tmp)" } else { "  ⚡  Geçici Bellek (/tmp)" }, id = "place_nvfs", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/tmp"), on_click = nav_nvfs)
-    ]
-
-    column(padding = 4, gap = 1, w = 170, expand_h = true, bg = "sidebar") [
-        scroll(sidebar_items, id = "sidebar_scroll", expand = true, padding = 1, gap = 1)
-    ]
-}
-
-// ── View Mode 1: Details Table ──────────────────────────────────────
-
-view FileDetailsTable(panel_title: string, entries: [FileEntry], selected_name: string, current_lang: string) -> View {
-    let is_en = (current_lang == "en")
-    let mut rows = []
-    for item in entries {
-        let is_sel = (item.name == selected_name)
-        rows = rows + [
-            row(padding = 1, gap = 2, expand = true) [
-                button(
-                    item.glyph + "  " + item.name,
-                    id = "entry_" + item.name,
-                    variant = "item",
-                    align = "start",
-                    expand = true,
-                    h = 24,
-                    selected = is_sel,
-                    on_click = on_item_click
-                ),
-                button(item.size_str, id = "sz_" + item.name, variant = "flat", align = "end", w = 80, h = 24, on_click = on_item_click),
-                button(item.permissions, id = "perm_" + item.name, variant = "flat", align = "start", w = 100, h = 24, on_click = on_item_click)
-            ]
-        ]
-    }
-
-    column(padding = 2, gap = 2, expand = true, expand_h = true) [
-        row(padding = 2, gap = 2, bg = "toolbar", expand = true) [
-            button(if is_en { "  Name" } else { "  İsim" }, id = "sort_name", variant = "flat", align = "start", expand = true, h = 22, on_click = toggle_sort),
-            button(if is_en { "Size" } else { "Boyut" }, id = "sort_size", variant = "flat", align = "end", w = 80, h = 22, on_click = toggle_sort),
-            button(if is_en { "Permissions" } else { "İzinler" }, id = "sort_perms", variant = "flat", align = "start", w = 100, h = 22)
-        ],
-        divider(size = 1),
-        scroll(rows, id = "file_table_scroll", expand = true, padding = 1, gap = 2)
-    ]
-}
-
-// ── View Mode 2: Icons View (Grid of Cards) ─────────────────────────
-
-view FileIconsGrid(entries: [FileEntry], selected_name: string, current_lang: string) -> View {
-    let mut grid_rows = []
-    let mut current_row = []
-    for item in entries {
-        let is_sel = (item.name == selected_name)
-        let icon_glyph = if item.is_dir { "▸" } else { item.glyph }
-        let card_label = icon_glyph + "\n" + item.name + "\n" + item.size_str
-        let card = button(
-            card_label,
-            id = "entry_" + item.name,
-            variant = "item",
-            align = "center",
-            w = 145,
-            h = 82,
-            selected = is_sel,
-            on_click = on_item_click
-        )
-        current_row = current_row + [card]
-        if len(current_row) == 4 {
-            grid_rows = grid_rows + [
-                row(current_row, padding = 2, gap = 6, expand = true)
-            ]
-            current_row = []
-        }
-    }
-    if len(current_row) > 0 {
-        grid_rows = grid_rows + [
-            row(current_row, padding = 2, gap = 6, expand = true)
-        ]
-    }
-
-    column(padding = 2, gap = 2, expand = true, expand_h = true) [
-        scroll(grid_rows, id = "file_icons_scroll", expand = true, padding = 4, gap = 4)
-    ]
-}
-
-// ── View Mode 3: Compact View (Multi-column list) ────────────────────
-
-view FileCompactGrid(entries: [FileEntry], selected_name: string, current_lang: string) -> View {
-    let mut compact_rows = []
-    let mut current_row = []
-    for item in entries {
-        let is_sel = (item.name == selected_name)
-        let icon_glyph = if item.is_dir { "▸" } else { item.glyph }
-        let item_btn = button(
-            icon_glyph + "  " + item.name,
-            id = "entry_" + item.name,
-            variant = "item",
-            align = "start",
-            w = 200,
-            h = 24,
-            selected = is_sel,
-            on_click = on_item_click
-        )
-        current_row = current_row + [item_btn]
-        if len(current_row) == 3 {
-            compact_rows = compact_rows + [
-                row(current_row, padding = 1, gap = 4, expand = true)
-            ]
-            current_row = []
-        }
-    }
-    if len(current_row) > 0 {
-        compact_rows = compact_rows + [
-            row(current_row, padding = 1, gap = 4, expand = true)
-        ]
-    }
-
-    column(padding = 2, gap = 2, expand = true, expand_h = true) [
-        scroll(compact_rows, id = "file_compact_scroll", expand = true, padding = 2, gap = 2)
-    ]
-}
-
-// ── Inspector Panel ──────────────────────────────────────────────────
+// examples/file-manager/src/06_inspector_panel.ndg
+// Information & Metadata Inspector Dock Panel (F11)
 
 view InspectorPanel(
     selected_name: string,
@@ -570,8 +574,8 @@ view InspectorPanel(
         }
     ]
 }
-
-// ── Status Bar & Filter ──────────────────────────────────────────────
+// examples/file-manager/src/07_status_bar.ndg
+// Status Bar & Search Filter Bar with Disk Space & Zoom Status
 
 view BottomStatusBar(
     filter_query: string,
@@ -714,8 +718,8 @@ view FileManagerLayout(
         )
     ]
 }
-
-// ── Master Native Application Agent ─────────────────────────────────
+// examples/file-manager/src/08_app_agent.ndg
+// Master Desktop Application Agent & Window Orchestrator
 
 agent FileManagerApp {
     state {
@@ -976,6 +980,13 @@ agent FileManagerApp {
         FileManagerApp.refresh()
     }
 
+    fn on_crumb_click(clicked_id: string) uses UI, Workspace {
+        let target_p = str.replace(clicked_id, "crumb_", "")
+        if workspace.exists(target_p) {
+            FileManagerApp.navigate_to(target_p)
+        }
+    }
+
     fn on_item_click(clicked_id: string) uses UI, Workspace {
         let mut clean_name = str.replace(clicked_id, "entry_", "")
         clean_name = str.replace(clean_name, "sz_", "")
@@ -1207,8 +1218,8 @@ fn main() uses UI, Workspace {
     FileManagerApp.refresh()
     FileManagerApp.MainWindow.open()
 }
-
-// ── Acceptance Certification Tests (Deterministic Headless) ─────────
+// examples/file-manager/src/09_tests.ndg
+// Deterministic Headless Certification Tests
 
 test "file manager app mounts with dual pane desktop layout" {
     VfsBridge.reset()
