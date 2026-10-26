@@ -1,0 +1,768 @@
+/// Full-Spectrum Pure-Nudge Recursive-Descent Structural Parser
+/// Part of Phase 3 (v2.3) - Lexer & Full-Spectrum AST Parser
+/// Scope-aware block analyzer covering all 12 native effects
+/// Zero foreign dependencies - 100% Pure Nudge
+
+type Token = {
+    kind: string,
+    text: string,
+    line: int,
+    col: int,
+    offset: int,
+    length: int
+}
+
+type FnParam = {
+    name: string,
+    ty: string
+}
+
+type FunctionDef = {
+    name: string,
+    params: [FnParam],
+    ret_type: string,
+    effects: [string],
+    cost_bound: string,
+    repair_retries: int,
+    is_pure: bool,
+    sig_hash: int,
+    body_hash: int,
+    start_line: int,
+    end_line: int
+}
+
+type StateField = {
+    name: string,
+    ty: string,
+    init_expr: string
+}
+
+type WindowDef = {
+    name: string,
+    title: string,
+    content_view: string
+}
+
+type AgentDef = {
+    name: string,
+    effects: [string],
+    state_fields: [StateField],
+    methods: [FunctionDef],
+    windows: [WindowDef],
+    start_line: int,
+    end_line: int
+}
+
+type ToolDef = {
+    name: string,
+    params: [FnParam],
+    ret_type: string,
+    mcp_server: string,
+    mcp_method: string,
+    side_effects: string
+}
+
+type TypeField = {
+    name: string,
+    ty: string
+}
+
+type TypeDef = {
+    name: string,
+    kind: string,
+    fields: [TypeField],
+    target_type: string,
+    refinement_rule: string
+}
+
+type ViewDef = {
+    name: string,
+    params: [FnParam],
+    ret_type: string,
+    root_element: string
+}
+
+type DecideBlock = {
+    name: string,
+    question_kind: string,
+    on_expr: string,
+    options: [string],
+    confidence_gate: string
+}
+
+type AuthDef = {
+    kind: string,
+    name: string,
+    provider_ref: string,
+    scope: [string],
+    env_var: string
+}
+
+type TestBlock = {
+    name: string,
+    is_for_all: bool,
+    gen_var: string,
+    gen_type: string,
+    start_line: int
+}
+
+type AstModule = {
+    functions: [FunctionDef],
+    agents: [AgentDef],
+    tools: [ToolDef],
+    types: [TypeDef],
+    views: [ViewDef],
+    decides: [DecideBlock],
+    auths: [AuthDef],
+    tests: [TestBlock]
+}
+
+fn get_tok(tokens: [Token], idx: int) -> Token {
+    let n = len(tokens)
+    if idx >= 0 and idx < n {
+        tokens[idx]
+    } else {
+        { kind: "EOF", text: "", line: 0, col: 0, offset: 0, length: 0 }
+    }
+}
+
+fn skip_to_next_top_level(tokens: [Token], start: int) -> int {
+    let n = len(tokens)
+    let mut i = start
+    let mut depth = 0
+    let mut stopped = false
+    for _ in tokens {
+        if i < n and !stopped {
+            let t = tokens[i]
+            if t.kind == "{" {
+                depth = depth + 1
+                i = i + 1
+            } else if t.kind == "}" {
+                if depth > 0 {
+                    depth = depth - 1
+                }
+                i = i + 1
+                if depth == 0 {
+                    stopped = true
+                }
+            } else if depth == 0 and (t.kind == "fn" or t.kind == "agent" or t.kind == "tool" or t.kind == "type" or t.kind == "view" or t.kind == "test" or t.kind == "auth" or t.kind == "account") {
+                stopped = true
+            } else {
+                i = i + 1
+            }
+        }
+    }
+    i
+}
+
+fn parse_fn_params(tokens: [Token], start: int) -> { params: [FnParam], next: int } {
+    let n = len(tokens)
+    let mut i = start
+    let mut params: [FnParam] = []
+    if get_tok(tokens, i).kind == "(" {
+        i = i + 1
+        let mut reading = true
+        for _ in tokens {
+            if i < n and reading {
+                let t = get_tok(tokens, i)
+                if t.kind == ")" {
+                    i = i + 1
+                    reading = false
+                } else if t.kind == "," {
+                    i = i + 1
+                } else if t.kind == "ident" {
+                    let p_name = t.text
+                    let mut p_ty = "any"
+                    i = i + 1
+                    if get_tok(tokens, i).kind == ":" {
+                        i = i + 1
+                        let ty_tok = get_tok(tokens, i)
+                        p_ty = ty_tok.text
+                        i = i + 1
+                        // If it's a list type e.g. [string]
+                        if ty_tok.kind == "[" {
+                            let inner = get_tok(tokens, i).text
+                            p_ty = "[" + inner + "]"
+                            i = i + 2 // inner + ']'
+                        }
+                    }
+                    params = params + [{ name: p_name, ty: p_ty }]
+                } else {
+                    i = i + 1
+                }
+            }
+        }
+    }
+    { params: params, next: i }
+}
+
+fn parse_function(tokens: [Token], start: int) -> { fn_def: FunctionDef, next: int } {
+    let n = len(tokens)
+    let start_line = get_tok(tokens, start).line
+    let mut i = start + 1 // skip 'fn'
+    let fn_name = get_tok(tokens, i).text
+    i = i + 1
+
+    let params_res = parse_fn_params(tokens, i)
+    let params = params_res.params
+    i = params_res.next
+
+    let mut ret_type = "()"
+    if get_tok(tokens, i).kind == "->" {
+        i = i + 1
+        let ret_tok = get_tok(tokens, i)
+        if ret_tok.kind == "[" {
+            ret_type = "[" + get_tok(tokens, i + 1).text + "]"
+            i = i + 3
+        } else {
+            ret_type = ret_tok.text
+            i = i + 1
+        }
+    }
+
+    let mut effects: [string] = []
+    if get_tok(tokens, i).kind == "uses" {
+        i = i + 1
+        let mut in_effects = true
+        for _ in tokens {
+            if i < n and in_effects {
+                let t = get_tok(tokens, i)
+                if t.kind == "{" or t.kind == "costs" or t.kind == "retry" {
+                    in_effects = false
+                } else if t.kind == "," {
+                    i = i + 1
+                } else if t.kind == "ident" or t.kind == "mcp" {
+                    let mut eff = t.text
+                    i = i + 1
+                    // Parameterized effect like Tool(web)
+                    if get_tok(tokens, i).kind == "(" {
+                        let arg = get_tok(tokens, i + 1).text
+                        eff = eff + "(" + arg + ")"
+                        i = i + 3
+                    }
+                    effects = effects + [eff]
+                } else {
+                    in_effects = false
+                }
+            }
+        }
+    }
+
+    let mut cost_bound = ""
+    if get_tok(tokens, i).kind == "costs" {
+        i = i + 1
+        let mut cost_parts = ""
+        let mut in_costs = true
+        for _ in tokens {
+            if i < n and in_costs {
+                let t = get_tok(tokens, i)
+                if t.kind == "{" or t.kind == "retry" {
+                    in_costs = false
+                } else {
+                    cost_parts = cost_parts + " " + t.text
+                    i = i + 1
+                }
+            }
+        }
+        cost_bound = str.trim(cost_parts)
+    }
+
+    let mut repair_retries = 0
+    if get_tok(tokens, i).kind == "retry" {
+        i = i + 1
+        let n_tok = get_tok(tokens, i)
+        repair_retries = str.to_int(n_tok.text)
+        i = i + 1
+        if get_tok(tokens, i).kind == "with" {
+            i = i + 1
+            if get_tok(tokens, i).kind == "repair" {
+                i = i + 1
+            }
+        }
+    }
+
+    // Capture body
+    let mut body_str = ""
+    let mut end_line = start_line
+    if get_tok(tokens, i).kind == "{" {
+        let mut depth = 1
+        i = i + 1
+        let mut in_body = true
+        for _ in tokens {
+            if i < n and in_body {
+                let t = get_tok(tokens, i)
+                if t.kind == "{" {
+                    depth = depth + 1
+                    body_str = body_str + " {"
+                    i = i + 1
+                } else if t.kind == "}" {
+                    depth = depth - 1
+                    i = i + 1
+                    if depth == 0 {
+                        end_line = t.line
+                        in_body = false
+                    } else {
+                        body_str = body_str + " }"
+                    }
+                } else {
+                    body_str = body_str + " " + t.text
+                    end_line = t.line
+                    i = i + 1
+                }
+            }
+        }
+    }
+
+    let mut sig_repr = fn_name + "("
+    for (p, p_idx) in params {
+        if p_idx > 0 { sig_repr = sig_repr + ", " }
+        sig_repr = sig_repr + p.name + ": " + p.ty
+    }
+    sig_repr = sig_repr + ") -> " + ret_type
+    for e in effects {
+        sig_repr = sig_repr + " uses " + e
+    }
+
+    let sig_hash = str.hash(sig_repr)
+    let body_hash = str.hash(body_str)
+    let is_pure = len(effects) == 0
+
+    let f_def: FunctionDef = {
+        name: fn_name,
+        params: params,
+        ret_type: ret_type,
+        effects: effects,
+        cost_bound: cost_bound,
+        repair_retries: repair_retries,
+        is_pure: is_pure,
+        sig_hash: sig_hash,
+        body_hash: body_hash,
+        start_line: start_line,
+        end_line: end_line
+    }
+
+    { fn_def: f_def, next: i }
+}
+
+fn parse_agent(tokens: [Token], start: int) -> { agent_def: AgentDef, next: int } {
+    let n = len(tokens)
+    let start_line = get_tok(tokens, start).line
+    let mut i = start + 1 // skip 'agent'
+    let agent_name = get_tok(tokens, i).text
+    i = i + 1
+
+    let mut effects: [string] = []
+    if get_tok(tokens, i).kind == "uses" {
+        i = i + 1
+        let mut in_effects = true
+        for _ in tokens {
+            if i < n and in_effects {
+                let t = get_tok(tokens, i)
+                if t.kind == "{" {
+                    in_effects = false
+                } else if t.kind == "," {
+                    i = i + 1
+                } else if t.kind == "ident" {
+                    let mut eff = t.text
+                    i = i + 1
+                    if get_tok(tokens, i).kind == "(" {
+                        let arg = get_tok(tokens, i + 1).text
+                        eff = eff + "(" + arg + ")"
+                        i = i + 3
+                    }
+                    effects = effects + [eff]
+                } else {
+                    in_effects = false
+                }
+            }
+        }
+    }
+
+    let mut state_fields: [StateField] = []
+    let mut methods: [FunctionDef] = []
+    let mut windows: [WindowDef] = []
+    let mut end_line = start_line
+
+    if get_tok(tokens, i).kind == "{" {
+        i = i + 1
+        let mut in_agent = true
+        for _ in tokens {
+            if i < n and in_agent {
+                let t = get_tok(tokens, i)
+                if t.kind == "}" {
+                    end_line = t.line
+                    i = i + 1
+                    in_agent = false
+                } else if t.kind == "state" and get_tok(tokens, i + 1).kind == "{" {
+                    i = i + 2
+                    let mut in_state = true
+                    for _ in tokens {
+                        if i < n and in_state {
+                            let st_tok = get_tok(tokens, i)
+                            if st_tok.kind == "}" {
+                                i = i + 1
+                                in_state = false
+                            } else if st_tok.kind == "ident" and get_tok(tokens, i + 1).kind == ":" {
+                                let f_name = st_tok.text
+                                let f_ty = get_tok(tokens, i + 2).text
+                                i = i + 3
+                                let mut init_val = ""
+                                if get_tok(tokens, i).kind == "=" {
+                                    i = i + 1
+                                    let mut in_init = true
+                                    for _ in tokens {
+                                        if i < n and in_init {
+                                            let it = get_tok(tokens, i)
+                                            if it.kind == "," or it.kind == "}" or it.kind == "ident" {
+                                                in_init = false
+                                            } else {
+                                                init_val = init_val + " " + it.text
+                                                i = i + 1
+                                            }
+                                        }
+                                    }
+                                }
+                                state_fields = state_fields + [{
+                                    name: f_name,
+                                    ty: f_ty,
+                                    init_expr: str.trim(init_val)
+                                }]
+                            } else {
+                                i = i + 1
+                            }
+                        }
+                    }
+                } else if t.kind == "fn" {
+                    let fn_res = parse_function(tokens, i)
+                    methods = methods + [fn_res.fn_def]
+                    i = fn_res.next
+                } else if t.kind == "window" {
+                    i = i + 1
+                    let win_name = get_tok(tokens, i).text
+                    i = i + 1
+                    if get_tok(tokens, i).kind == "{" {
+                        i = i + 1
+                        let mut title = ""
+                        let mut content = ""
+                        let mut in_win = true
+                        for _ in tokens {
+                            if i < n and in_win {
+                                let wt = get_tok(tokens, i)
+                                if wt.kind == "}" {
+                                    i = i + 1
+                                    in_win = false
+                                } else if wt.kind == "ident" and wt.text == "title" and get_tok(tokens, i + 1).kind == ":" {
+                                    title = get_tok(tokens, i + 2).text
+                                    i = i + 3
+                                } else if wt.kind == "ident" and wt.text == "content" and get_tok(tokens, i + 1).kind == ":" {
+                                    content = get_tok(tokens, i + 2).text
+                                    i = i + 3
+                                } else {
+                                    i = i + 1
+                                }
+                            }
+                        }
+                        windows = windows + [{
+                            name: win_name,
+                            title: title,
+                            content_view: content
+                        }]
+                    }
+                } else {
+                    i = i + 1
+                }
+            }
+        }
+    }
+
+    let a_def: AgentDef = {
+        name: agent_name,
+        effects: effects,
+        state_fields: state_fields,
+        methods: methods,
+        windows: windows,
+        start_line: start_line,
+        end_line: end_line
+    }
+
+    { agent_def: a_def, next: i }
+}
+
+fn parse_tool(tokens: [Token], start: int) -> { tool_def: ToolDef, next: int } {
+    let n = len(tokens)
+    let mut i = start + 1 // skip 'tool'
+    let tool_name = get_tok(tokens, i).text
+    i = i + 1
+
+    let params_res = parse_fn_params(tokens, i)
+    let params = params_res.params
+    i = params_res.next
+
+    let mut ret_type = "string"
+    if get_tok(tokens, i).kind == "->" {
+        i = i + 1
+        let ret_tok = get_tok(tokens, i)
+        if ret_tok.kind == "[" {
+            ret_type = "[" + get_tok(tokens, i + 1).text + "]"
+            i = i + 3
+        } else {
+            ret_type = ret_tok.text
+            i = i + 1
+        }
+    }
+
+    let mut mcp_srv = ""
+    let mut mcp_mth = ""
+    let mut side_eff = "none"
+
+    if get_tok(tokens, i).kind == "{" {
+        i = i + 1
+        let mut in_tool = true
+        for _ in tokens {
+            if i < n and in_tool {
+                let t = get_tok(tokens, i)
+                if t.kind == "}" {
+                    i = i + 1
+                    in_tool = false
+                } else if t.kind == "impl" and get_tok(tokens, i + 1).kind == ":" {
+                    i = i + 2
+                    if get_tok(tokens, i).kind == "mcp" and get_tok(tokens, i + 1).kind == "(" {
+                        mcp_srv = get_tok(tokens, i + 2).text
+                        i = i + 4 // mcp, (, srv, )
+                        if get_tok(tokens, i).kind == "." {
+                            mcp_mth = get_tok(tokens, i + 1).text
+                            i = i + 2
+                        }
+                    }
+                } else if t.kind == "side_effects" and get_tok(tokens, i + 1).kind == ":" {
+                    side_eff = get_tok(tokens, i + 2).text
+                    i = i + 3
+                } else {
+                    i = i + 1
+                }
+            }
+        }
+    }
+
+    let t_def: ToolDef = {
+        name: tool_name,
+        params: params,
+        ret_type: ret_type,
+        mcp_server: mcp_srv,
+        mcp_method: mcp_mth,
+        side_effects: side_eff
+    }
+
+    { tool_def: t_def, next: i }
+}
+
+fn parse_type(tokens: [Token], start: int) -> { type_def: TypeDef, next: int } {
+    let n = len(tokens)
+    let mut i = start + 1 // skip 'type'
+    let ty_name = get_tok(tokens, i).text
+    i = i + 1
+
+    let mut kind = "alias"
+    let mut fields: [TypeField] = []
+    let mut target_type = ""
+    let mut refinement_rule = ""
+
+    if get_tok(tokens, i).kind == "=" {
+        i = i + 1
+        let next_tok = get_tok(tokens, i)
+        if next_tok.kind == "{" {
+            kind = "record"
+            i = i + 1
+            let mut in_rec = true
+            for _ in tokens {
+                if i < n and in_rec {
+                    let t = get_tok(tokens, i)
+                    if t.kind == "}" {
+                        i = i + 1
+                        in_rec = false
+                    } else if t.kind == "ident" and get_tok(tokens, i + 1).kind == ":" {
+                        let f_name = t.text
+                        let mut f_ty = get_tok(tokens, i + 2).text
+                        i = i + 3
+                        if get_tok(tokens, i - 1).kind == "[" {
+                            f_ty = "[" + get_tok(tokens, i).text + "]"
+                            i = i + 2
+                        }
+                        fields = fields + [{ name: f_name, ty: f_ty }]
+                    } else {
+                        i = i + 1
+                    }
+                }
+            }
+        } else if next_tok.kind == "ident" and next_tok.text == "Map" and get_tok(tokens, i + 1).kind == "[" {
+            kind = "map"
+            let k_ty = get_tok(tokens, i + 2).text
+            let v_ty = get_tok(tokens, i + 4).text
+            target_type = "Map[" + k_ty + ", " + v_ty + "]"
+            i = i + 6
+        } else {
+            target_type = next_tok.text
+            i = i + 1
+            if get_tok(tokens, i).kind == "@" {
+                kind = "refinement"
+                let ref_name = get_tok(tokens, i + 1).text
+                refinement_rule = "@" + ref_name
+                i = i + 2
+            }
+        }
+    }
+
+    let ty_def: TypeDef = {
+        name: ty_name,
+        kind: kind,
+        fields: fields,
+        target_type: target_type,
+        refinement_rule: refinement_rule
+    }
+
+    { type_def: ty_def, next: i }
+}
+
+fn parse_view(tokens: [Token], start: int) -> { view_def: ViewDef, next: int } {
+    let mut i = start + 1 // skip 'view'
+    let view_name = get_tok(tokens, i).text
+    i = i + 1
+
+    let params_res = parse_fn_params(tokens, i)
+    let params = params_res.params
+    i = params_res.next
+
+    let mut ret_type = "View"
+    if get_tok(tokens, i).kind == "->" {
+        ret_type = get_tok(tokens, i + 1).text
+        i = i + 2
+    }
+
+    let mut root_elem = ""
+    if get_tok(tokens, i).kind == "{" {
+        i = i + 1
+        root_elem = get_tok(tokens, i).text
+        i = skip_to_next_top_level(tokens, i)
+    }
+
+    let v_def: ViewDef = {
+        name: view_name,
+        params: params,
+        ret_type: ret_type,
+        root_element: root_elem
+    }
+
+    { view_def: v_def, next: i }
+}
+
+fn parse_test(tokens: [Token], start: int) -> { test_block: TestBlock, next: int } {
+    let start_line = get_tok(tokens, start).line
+    let mut i = start + 1 // skip 'test'
+    let name_tok = get_tok(tokens, i)
+    let test_name = name_tok.text
+    i = i + 1
+
+    i = skip_to_next_top_level(tokens, i)
+
+    let t_block: TestBlock = {
+        name: test_name,
+        is_for_all: false,
+        gen_var: "",
+        gen_type: "",
+        start_line: start_line
+    }
+
+    { test_block: t_block, next: i }
+}
+
+fn parse_auth(tokens: [Token], start: int) -> { auth_def: AuthDef, next: int } {
+    let n = len(tokens)
+    let mut i = start + 1
+    let kind = get_tok(tokens, i).text // 'provider' or 'account'
+    let name = get_tok(tokens, i + 1).text
+    i = i + 2
+
+    let mut prov_ref = ""
+    let mut scope: [string] = []
+    let mut env_var = ""
+
+    if kind == "account" and get_tok(tokens, i).kind == "for" {
+        prov_ref = get_tok(tokens, i + 1).text
+        i = i + 2
+    }
+
+    i = skip_to_next_top_level(tokens, i)
+
+    let a_def: AuthDef = {
+        kind: kind,
+        name: name,
+        provider_ref: prov_ref,
+        scope: scope,
+        env_var: env_var
+    }
+
+    { auth_def: a_def, next: i }
+}
+
+fn parse_source_to_ast(tokens: [Token]) -> AstModule {
+    let n = len(tokens)
+    let mut i = 0
+    let mut fns: [FunctionDef] = []
+    let mut ags: [AgentDef] = []
+    let mut tls: [ToolDef] = []
+    let mut tys: [TypeDef] = []
+    let mut vws: [ViewDef] = []
+    let mut decs: [DecideBlock] = []
+    let mut aths: [AuthDef] = []
+    let mut tsts: [TestBlock] = []
+
+    for _ in tokens {
+        if i < n {
+            let t = get_tok(tokens, i)
+            if t.kind == "EOF" {
+                i = n
+            } else if t.kind == "fn" {
+                let res = parse_function(tokens, i)
+                fns = fns + [res.fn_def]
+                i = res.next
+            } else if t.kind == "agent" {
+                let res = parse_agent(tokens, i)
+                ags = ags + [res.agent_def]
+                i = res.next
+            } else if t.kind == "tool" {
+                let res = parse_tool(tokens, i)
+                tls = tls + [res.tool_def]
+                i = res.next
+            } else if t.kind == "type" {
+                let res = parse_type(tokens, i)
+                tys = tys + [res.type_def]
+                i = res.next
+            } else if t.kind == "view" {
+                let res = parse_view(tokens, i)
+                vws = vws + [res.view_def]
+                i = res.next
+            } else if t.kind == "test" {
+                let res = parse_test(tokens, i)
+                tsts = tsts + [res.test_block]
+                i = res.next
+            } else if t.kind == "auth" or t.kind == "account" {
+                let res = parse_auth(tokens, i)
+                aths = aths + [res.auth_def]
+                i = res.next
+            } else {
+                i = i + 1
+            }
+        }
+    }
+
+    {
+        functions: fns,
+        agents: ags,
+        tools: tls,
+        types: tys,
+        views: vws,
+        decides: decs,
+        auths: aths,
+        tests: tsts
+    }
+}

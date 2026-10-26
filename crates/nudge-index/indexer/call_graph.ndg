@@ -1,0 +1,205 @@
+/// NVFS Bidirectional Dependency Matrix & Blast Radius Graph
+/// Part of Phase 4 (v2.4) - In-Memory Indexing & Reactive Diff Engine
+/// Zero foreign dependencies - 100% Pure Nudge
+
+type GraphEdge = {
+    caller: string,
+    callee: string,
+    edge_kind: string,
+    file_path: string
+}
+
+type BlastRadiusReport = {
+    root_symbol: string,
+    impacted_symbols: [string],
+    total_impacted: int,
+    max_depth_reached: int
+}
+
+fn contains_symbol(xs: [string], target: string) -> bool {
+    let mut found = false
+    for x in xs {
+        if x == target {
+            found = true
+        }
+    }
+    found
+}
+
+agent CallGraph {
+    state {
+        edges: [GraphEdge] = []
+        registered_callers: [string] = []
+    }
+
+    fn reset_graph() {
+        state.edges = []
+        state.registered_callers = []
+    }
+
+    fn edge_count() -> int {
+        len(state.edges)
+    }
+
+    fn has_edge(caller: string, callee: string) -> bool {
+        let mut exists = false
+        for e in state.edges {
+            if e.caller == caller and e.callee == callee {
+                exists = true
+            }
+        }
+        exists
+    }
+
+    fn add_dependency(caller: string, callee: string, edge_kind: string, file_path: string) -> bool {
+        let already = CallGraph.has_edge(caller, callee)
+        let mut added = false
+        if !already {
+            let edge: GraphEdge = {
+                caller: caller,
+                callee: callee,
+                edge_kind: edge_kind,
+                file_path: file_path
+            }
+            state.edges = state.edges + [edge]
+            if !contains_symbol(state.registered_callers, caller) {
+                state.registered_callers = state.registered_callers + [caller]
+            }
+            added = true
+        }
+        added
+    }
+
+    fn remove_caller_edges(caller: string) -> int {
+        let mut remaining: [GraphEdge] = []
+        let mut removed = 0
+        for e in state.edges {
+            if e.caller == caller {
+                removed = removed + 1
+            } else {
+                remaining = remaining + [e]
+            }
+        }
+        state.edges = remaining
+        removed
+    }
+
+    fn get_callees(caller: string) -> [string] {
+        let mut callees: [string] = []
+        for e in state.edges {
+            if e.caller == caller {
+                if !contains_symbol(callees, e.callee) {
+                    callees = callees + [e.callee]
+                }
+            }
+        }
+        callees
+    }
+
+    fn get_callers(callee: string) -> [string] {
+        let mut callers: [string] = []
+        for e in state.edges {
+            if e.callee == callee {
+                if !contains_symbol(callers, e.caller) {
+                    callers = callers + [e.caller]
+                }
+            }
+        }
+        callers
+    }
+
+    fn compute_blast_radius(root_symbol: string, max_depth: int) -> BlastRadiusReport {
+        let mut visited: [string] = []
+        let mut frontier: [string] = [root_symbol]
+        let mut depth_reached = 0
+
+        let max_hops = if max_depth <= 0 { 1 } else if max_depth > 10 { 10 } else { max_depth }
+
+        for _step in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] {
+            if _step <= max_hops and len(frontier) > 0 {
+                let mut next_frontier: [string] = []
+                for node in frontier {
+                    let direct_callers = CallGraph.get_callers(node)
+                    for caller in direct_callers {
+                        if !contains_symbol(visited, caller) and caller != root_symbol {
+                            visited = visited + [caller]
+                            next_frontier = next_frontier + [caller]
+                        }
+                    }
+                }
+                if len(next_frontier) > 0 {
+                    depth_reached = _step
+                }
+                frontier = next_frontier
+            }
+        }
+
+        {
+            root_symbol: root_symbol,
+            impacted_symbols: visited,
+            total_impacted: len(visited),
+            max_depth_reached: depth_reached
+        }
+    }
+}
+
+fn main() -> int {
+    CallGraph.reset_graph()
+    CallGraph.add_dependency("fn_a", "fn_b", "CALL", "/src/a.ndg")
+    CallGraph.add_dependency("fn_b", "fn_c", "CALL", "/src/b.ndg")
+    let report = CallGraph.compute_blast_radius("fn_c", 5)
+    if report.total_impacted == 2 {
+        0
+    } else {
+        1
+    }
+}
+
+test "call graph bidirectional mapping" {
+    CallGraph.reset_graph()
+    assert CallGraph.add_dependency("agent_order", "db_query", "TOOL", "/src/order.ndg")
+    assert CallGraph.add_dependency("agent_order", "calc_tax", "CALL", "/src/order.ndg")
+    assert CallGraph.add_dependency("ui_view", "calc_tax", "CALL", "/src/view.ndg")
+
+    let callees = CallGraph.get_callees("agent_order")
+    assert len(callees) == 2
+    assert contains_symbol(callees, "db_query")
+    assert contains_symbol(callees, "calc_tax")
+
+    let callers = CallGraph.get_callers("calc_tax")
+    assert len(callers) == 2
+    assert contains_symbol(callers, "agent_order")
+    assert contains_symbol(callers, "ui_view")
+}
+
+test "call graph blast radius transitive propagation" {
+    CallGraph.reset_graph()
+    // Service -> Repo -> Query -> DB
+    CallGraph.add_dependency("Query", "DB", "CALL", "db.ndg")
+    CallGraph.add_dependency("Repo", "Query", "CALL", "repo.ndg")
+    CallGraph.add_dependency("Service", "Repo", "CALL", "service.ndg")
+    CallGraph.add_dependency("Controller", "Service", "CALL", "ctrl.ndg")
+
+    let report = CallGraph.compute_blast_radius("DB", 5)
+    assert report.total_impacted == 4
+    assert contains_symbol(report.impacted_symbols, "Query")
+    assert contains_symbol(report.impacted_symbols, "Repo")
+    assert contains_symbol(report.impacted_symbols, "Service")
+    assert contains_symbol(report.impacted_symbols, "Controller")
+    assert report.max_depth_reached == 4
+}
+
+test "call graph cycle immunity and unregister" {
+    CallGraph.reset_graph()
+    // Mutual recursive dependency: A calls B, B calls A
+    CallGraph.add_dependency("fn_a", "fn_b", "CALL", "cycle.ndg")
+    CallGraph.add_dependency("fn_b", "fn_a", "CALL", "cycle.ndg")
+
+    let report = CallGraph.compute_blast_radius("fn_b", 5)
+    assert report.total_impacted == 1
+    assert contains_symbol(report.impacted_symbols, "fn_a")
+
+    let removed = CallGraph.remove_caller_edges("fn_a")
+    assert removed == 1
+    assert !CallGraph.has_edge("fn_a", "fn_b")
+}

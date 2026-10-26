@@ -988,6 +988,11 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
                                     | "trim"
                                     | "substring"
                                     | "index_of"
+                                    | "split"
+                                    | "contains"
+                                    | "starts_with"
+                                    | "ends_with"
+                                    | "replace"
                             )
                         {
                             format!("rt.str_{name}")

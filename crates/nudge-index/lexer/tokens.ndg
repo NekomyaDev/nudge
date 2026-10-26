@@ -1,0 +1,55 @@
+/// Pure-Nudge Token Definitions
+/// Part of Phase 3 (v2.3) - Lexer & Full-Spectrum AST Parser
+/// Zero foreign dependencies - 100% Pure Nudge
+
+type Token = {
+    kind: string,
+    text: string,
+    line: int,
+    col: int,
+    offset: int,
+    length: int
+}
+
+fn make_token(kind: string, text: string, line: int, col: int, offset: int, length: int) -> Token {
+    {
+        kind: kind,
+        text: text,
+        line: line,
+        col: col,
+        offset: offset,
+        length: length
+    }
+}
+
+fn is_keyword(s: string) -> bool {
+    let kw = [
+        "fn", "agent", "tool", "type", "view", "window", "decide", "auth",
+        "provider", "account", "uses", "costs", "retry", "with", "repair",
+        "state", "test", "for_all", "gen", "let", "mut", "if", "else",
+        "for", "in", "return", "assert", "none", "true", "false", "and",
+        "or", "not", "par", "race", "map", "merge", "route", "stream",
+        "impl", "mcp", "side_effects"
+    ]
+    let mut found = false
+    for k in kw {
+        if k == s {
+            found = true
+        }
+    }
+    found
+}
+
+fn is_effect_name(s: string) -> bool {
+    let effs = [
+        "IO", "FsWatch", "Store", "MemStore", "Workspace", "WorkspaceDelete",
+        "Process", "Tool", "UI", "Auth", "Decision", "Computer", "LLM"
+    ]
+    let mut found = false
+    for e in effs {
+        if e == s {
+            found = true
+        }
+    }
+    found
+}

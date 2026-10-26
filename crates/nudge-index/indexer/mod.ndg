@@ -1,0 +1,431 @@
+/// NVFS Unified Indexer & Reactive Semantic Engine
+/// Part of Phase 4 (v2.4) - In-Memory Indexing & Reactive Diff Engine
+/// Zero foreign dependencies - 100% Pure Nudge
+
+type GraphEdge = {
+    caller: string,
+    callee: string,
+    edge_kind: string,
+    file_path: string
+}
+
+type BlastRadiusReport = {
+    root_symbol: string,
+    impacted_symbols: [string],
+    total_impacted: int,
+    max_depth_reached: int
+}
+
+type EntitySnapshot = {
+    symbol: string,
+    entity_kind: string,
+    file_path: string,
+    sig_hash: string,
+    body_hash: string,
+    effects: [string]
+}
+
+type DiffEvent = {
+    symbol: string,
+    diff_kind: string,
+    file_path: string,
+    old_sig_hash: string,
+    new_sig_hash: string,
+    is_breaking: bool,
+    blast_radius: [string]
+}
+
+type IndexStats = {
+    total_entities: int,
+    total_dependencies: int,
+    diff_events_count: int
+}
+
+fn contains_item(xs: [string], target: string) -> bool {
+    let mut found = false
+    for x in xs {
+        if x == target {
+            found = true
+        }
+    }
+    found
+}
+
+fn compute_text_hash(text: string) -> string {
+    let raw_h = str.hash(text)
+    let pos_h = if raw_h < 0 { -raw_h } else { raw_h }
+    "h_" + str.to_string(pos_h)
+}
+
+fn has_new_effect(old_effects: [string], new_effects: [string]) -> bool {
+    let mut escalated = false
+    for eff in new_effects {
+        if !contains_item(old_effects, eff) {
+            escalated = true
+        }
+    }
+    escalated
+}
+
+agent CallGraph {
+    state {
+        edges: [GraphEdge] = []
+        registered_callers: [string] = []
+    }
+
+    fn reset_graph() {
+        state.edges = []
+        state.registered_callers = []
+    }
+
+    fn has_edge(caller: string, callee: string) -> bool {
+        let mut exists = false
+        for e in state.edges {
+            if e.caller == caller and e.callee == callee {
+                exists = true
+            }
+        }
+        exists
+    }
+
+    fn add_dependency(caller: string, callee: string, edge_kind: string, file_path: string) -> bool {
+        let already = CallGraph.has_edge(caller, callee)
+        let mut added = false
+        if !already {
+            let edge: GraphEdge = {
+                caller: caller,
+                callee: callee,
+                edge_kind: edge_kind,
+                file_path: file_path
+            }
+            state.edges = state.edges + [edge]
+            if !contains_item(state.registered_callers, caller) {
+                state.registered_callers = state.registered_callers + [caller]
+            }
+            added = true
+        }
+        added
+    }
+
+    fn remove_caller_edges(caller: string) -> int {
+        let mut remaining: [GraphEdge] = []
+        let mut removed = 0
+        for e in state.edges {
+            if e.caller == caller {
+                removed = removed + 1
+            } else {
+                remaining = remaining + [e]
+            }
+        }
+        state.edges = remaining
+        removed
+    }
+
+    fn get_callees(caller: string) -> [string] {
+        let mut callees: [string] = []
+        for e in state.edges {
+            if e.caller == caller {
+                if !contains_item(callees, e.callee) {
+                    callees = callees + [e.callee]
+                }
+            }
+        }
+        callees
+    }
+
+    fn get_callers(callee: string) -> [string] {
+        let mut callers: [string] = []
+        for e in state.edges {
+            if e.callee == callee {
+                if !contains_item(callers, e.caller) {
+                    callers = callers + [e.caller]
+                }
+            }
+        }
+        callers
+    }
+
+    fn compute_blast_radius(root_symbol: string, max_depth: int) -> BlastRadiusReport {
+        let mut visited: [string] = []
+        let mut frontier: [string] = [root_symbol]
+        let mut depth_reached = 0
+
+        let max_hops = if max_depth <= 0 { 1 } else if max_depth > 10 { 10 } else { max_depth }
+
+        for _step in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] {
+            if _step <= max_hops and len(frontier) > 0 {
+                let mut next_frontier: [string] = []
+                for node in frontier {
+                    let direct_callers = CallGraph.get_callers(node)
+                    for caller in direct_callers {
+                        if !contains_item(visited, caller) and caller != root_symbol {
+                            visited = visited + [caller]
+                            next_frontier = next_frontier + [caller]
+                        }
+                    }
+                }
+                if len(next_frontier) > 0 {
+                    depth_reached = _step
+                }
+                frontier = next_frontier
+            }
+        }
+
+        {
+            root_symbol: root_symbol,
+            impacted_symbols: visited,
+            total_impacted: len(visited),
+            max_depth_reached: depth_reached
+        }
+    }
+}
+
+agent DiffEngine {
+    state {
+        snapshots: [EntitySnapshot] = []
+        recent_events: [DiffEvent] = []
+    }
+
+    fn reset_engine() {
+        state.snapshots = []
+        state.recent_events = []
+    }
+
+    fn get_snapshot(symbol: string) -> EntitySnapshot? {
+        let mut found: EntitySnapshot? = none
+        for s in state.snapshots {
+            if s.symbol == symbol {
+                found = s
+            }
+        }
+        found
+    }
+
+    fn register_or_update(snap: EntitySnapshot) {
+        let mut updated: [EntitySnapshot] = []
+        let mut exists = false
+        for s in state.snapshots {
+            if s.symbol == snap.symbol {
+                updated = updated + [snap]
+                exists = true
+            } else {
+                updated = updated + [s]
+            }
+        }
+        if !exists {
+            updated = updated + [snap]
+        }
+        state.snapshots = updated
+    }
+
+    fn compare(new_snap: EntitySnapshot, blast_callers: [string]) -> DiffEvent {
+        let old_opt = DiffEngine.get_snapshot(new_snap.symbol)
+        let mut event: DiffEvent = {
+            symbol: new_snap.symbol,
+            diff_kind: "DECLARATION_ADDED",
+            file_path: new_snap.file_path,
+            old_sig_hash: "",
+            new_sig_hash: new_snap.sig_hash,
+            is_breaking: false,
+            blast_radius: []
+        }
+
+        if old_opt == none {
+            event = {
+                symbol: new_snap.symbol,
+                diff_kind: "DECLARATION_ADDED",
+                file_path: new_snap.file_path,
+                old_sig_hash: "",
+                new_sig_hash: new_snap.sig_hash,
+                is_breaking: false,
+                blast_radius: []
+            }
+        } else {
+            let old = old_opt
+            if old.sig_hash != new_snap.sig_hash {
+                event = {
+                    symbol: new_snap.symbol,
+                    diff_kind: "SIGNATURE_MUTATED",
+                    file_path: new_snap.file_path,
+                    old_sig_hash: old.sig_hash,
+                    new_sig_hash: new_snap.sig_hash,
+                    is_breaking: true,
+                    blast_radius: blast_callers
+                }
+            } else if has_new_effect(old.effects, new_snap.effects) {
+                event = {
+                    symbol: new_snap.symbol,
+                    diff_kind: "EFFECT_ESCALATED",
+                    file_path: new_snap.file_path,
+                    old_sig_hash: old.sig_hash,
+                    new_sig_hash: new_snap.sig_hash,
+                    is_breaking: true,
+                    blast_radius: blast_callers
+                }
+            } else if old.body_hash != new_snap.body_hash {
+                event = {
+                    symbol: new_snap.symbol,
+                    diff_kind: "BODY_MUTATED",
+                    file_path: new_snap.file_path,
+                    old_sig_hash: old.sig_hash,
+                    new_sig_hash: new_snap.sig_hash,
+                    is_breaking: false,
+                    blast_radius: []
+                }
+            } else {
+                event = {
+                    symbol: new_snap.symbol,
+                    diff_kind: "UNCHANGED",
+                    file_path: new_snap.file_path,
+                    old_sig_hash: old.sig_hash,
+                    new_sig_hash: new_snap.sig_hash,
+                    is_breaking: false,
+                    blast_radius: []
+                }
+            }
+        }
+
+        DiffEngine.register_or_update(new_snap)
+        state.recent_events = state.recent_events + [event]
+        event
+    }
+
+    fn remove(symbol: string, blast_callers: [string]) -> DiffEvent {
+        let mut old_sig = ""
+        let mut file_p = ""
+        let mut remaining: [EntitySnapshot] = []
+
+        for s in state.snapshots {
+            if s.symbol == symbol {
+                old_sig = s.sig_hash
+                file_p = s.file_path
+            } else {
+                remaining = remaining + [s]
+            }
+        }
+        state.snapshots = remaining
+
+        let event: DiffEvent = {
+            symbol: symbol,
+            diff_kind: "DECLARATION_REMOVED",
+            file_path: file_p,
+            old_sig_hash: old_sig,
+            new_sig_hash: "",
+            is_breaking: true,
+            blast_radius: blast_callers
+        }
+        state.recent_events = state.recent_events + [event]
+        event
+    }
+}
+
+// ── Master Indexer Controller ────────────────────────────────────────
+
+fn indexer_init() {
+    CallGraph.reset_graph()
+    DiffEngine.reset_engine()
+}
+
+fn index_declaration(
+    file_path: string,
+    symbol: string,
+    kind: string,
+    signature: string,
+    body: string,
+    effects: [string],
+    callees: [string]
+) -> DiffEvent {
+    let report = CallGraph.compute_blast_radius(symbol, 10)
+    let blast = report.impacted_symbols
+
+    let snap: EntitySnapshot = {
+        symbol: symbol,
+        entity_kind: kind,
+        file_path: file_path,
+        sig_hash: compute_text_hash(signature),
+        body_hash: compute_text_hash(body),
+        effects: effects
+    }
+
+    let diff_ev = DiffEngine.compare(snap, blast)
+
+    let _rm = CallGraph.remove_caller_edges(symbol)
+    for c in callees {
+        let _add = CallGraph.add_dependency(symbol, c, "CALL", file_path)
+    }
+
+    diff_ev
+}
+
+fn remove_declaration(symbol: string) -> DiffEvent {
+    let report = CallGraph.compute_blast_radius(symbol, 5)
+    let blast = report.impacted_symbols
+    let _rm = CallGraph.remove_caller_edges(symbol)
+    DiffEngine.remove(symbol, blast)
+}
+
+fn query_blast_radius(symbol: string, max_depth: int) -> [string] {
+    let rep = CallGraph.compute_blast_radius(symbol, max_depth)
+    rep.impacted_symbols
+}
+
+fn query_callers(symbol: string) -> [string] {
+    CallGraph.get_callers(symbol)
+}
+
+fn query_callees(symbol: string) -> [string] {
+    CallGraph.get_callees(symbol)
+}
+
+fn indexer_stats() -> IndexStats {
+    {
+        total_entities: len(DiffEngine.state.snapshots),
+        total_dependencies: len(CallGraph.state.edges),
+        diff_events_count: len(DiffEngine.state.recent_events)
+    }
+}
+
+fn main() -> int {
+    indexer_init()
+    let ev1 = index_declaration("/math.ndg", "add", "fn", "fn add(a: int, b: int) -> int", "a + b", [], [])
+    let _ev2 = index_declaration("/calc.ndg", "calc", "fn", "fn calc() -> int", "add(1, 2)", [], ["add"])
+    let blast = query_blast_radius("add", 5)
+
+    if ev1.diff_kind == "DECLARATION_ADDED" and len(blast) == 1 and blast[0] == "calc" {
+        0
+    } else {
+        1
+    }
+}
+
+test "unified indexer reactive diff and blast radius" {
+    indexer_init()
+    let ev1 = index_declaration("/core/math.ndg", "compute", "fn", "fn compute(x: int) -> int", "x * 2", [], [])
+    assert ev1.diff_kind == "DECLARATION_ADDED"
+    assert !ev1.is_breaking
+
+    // Caller depends on compute
+    let _ev2 = index_declaration("/app/main.ndg", "run", "fn", "fn run() -> int", "compute(10)", [], ["compute"])
+    let callers = query_callers("compute")
+    assert len(callers) == 1
+    assert callers[0] == "run"
+
+    // Safe body mutation: only body changes
+    let ev_body = index_declaration("/core/math.ndg", "compute", "fn", "fn compute(x: int) -> int", "x + x", [], [])
+    assert ev_body.diff_kind == "BODY_MUTATED"
+    assert !ev_body.is_breaking
+    assert len(ev_body.blast_radius) == 0
+
+    // Breaking signature mutation: parameters change
+    let ev_sig = index_declaration("/core/math.ndg", "compute", "fn", "fn compute(x: string) -> int", "len(x)", [], [])
+    assert ev_sig.diff_kind == "SIGNATURE_MUTATED"
+    assert ev_sig.is_breaking
+    assert len(ev_sig.blast_radius) == 1
+    assert ev_sig.blast_radius[0] == "run"
+
+    // Declaration removed
+    let ev_rem = remove_declaration("compute")
+    assert ev_rem.diff_kind == "DECLARATION_REMOVED"
+    assert ev_rem.is_breaking
+    assert len(ev_rem.blast_radius) == 1
+}

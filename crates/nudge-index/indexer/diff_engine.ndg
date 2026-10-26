@@ -1,0 +1,282 @@
+/// NVFS Reactive Semantic Diff Engine & 4-Tier Change Classifier
+/// Part of Phase 4 (v2.4) - In-Memory Indexing & Reactive Diff Engine
+/// Zero foreign dependencies - 100% Pure Nudge
+
+type EntitySnapshot = {
+    symbol: string,
+    entity_kind: string,
+    file_path: string,
+    sig_hash: string,
+    body_hash: string,
+    effects: [string]
+}
+
+type DiffEvent = {
+    symbol: string,
+    diff_kind: string,
+    file_path: string,
+    old_sig_hash: string,
+    new_sig_hash: string,
+    is_breaking: bool,
+    blast_radius: [string]
+}
+
+fn contains_str(xs: [string], target: string) -> bool {
+    let mut found = false
+    for x in xs {
+        if x == target {
+            found = true
+        }
+    }
+    found
+}
+
+fn compute_hash(text: string) -> string {
+    let raw_h = str.hash(text)
+    let pos_h = if raw_h < 0 { -raw_h } else { raw_h }
+    "h_" + str.to_string(pos_h)
+}
+
+fn has_effect_escalation(old_effects: [string], new_effects: [string]) -> bool {
+    let mut escalated = false
+    for eff in new_effects {
+        if !contains_str(old_effects, eff) {
+            escalated = true
+        }
+    }
+    escalated
+}
+
+fn create_entity_snapshot(
+    symbol: string,
+    entity_kind: string,
+    file_path: string,
+    signature_text: string,
+    body_text: string,
+    effects: [string]
+) -> EntitySnapshot {
+    let s_hash = compute_hash(signature_text)
+    let b_hash = compute_hash(body_text)
+    {
+        symbol: symbol,
+        entity_kind: entity_kind,
+        file_path: file_path,
+        sig_hash: s_hash,
+        body_hash: b_hash,
+        effects: effects
+    }
+}
+
+agent DiffEngine {
+    state {
+        snapshots: [EntitySnapshot] = []
+        recent_events: [DiffEvent] = []
+    }
+
+    fn reset_engine() {
+        state.snapshots = []
+        state.recent_events = []
+    }
+
+    fn snapshot_count() -> int {
+        len(state.snapshots)
+    }
+
+    fn get_snapshot(symbol: string) -> EntitySnapshot? {
+        let mut found: EntitySnapshot? = none
+        for s in state.snapshots {
+            if s.symbol == symbol {
+                found = s
+            }
+        }
+        found
+    }
+
+    fn register_or_update_snapshot(snap: EntitySnapshot) {
+        let mut updated: [EntitySnapshot] = []
+        let mut exists = false
+        for s in state.snapshots {
+            if s.symbol == snap.symbol {
+                updated = updated + [snap]
+                exists = true
+            } else {
+                updated = updated + [s]
+            }
+        }
+        if !exists {
+            updated = updated + [snap]
+        }
+        state.snapshots = updated
+    }
+
+    fn compare_entity(
+        new_snap: EntitySnapshot,
+        blast_callers: [string]
+    ) -> DiffEvent {
+        let old_opt = DiffEngine.get_snapshot(new_snap.symbol)
+        let mut event: DiffEvent = {
+            symbol: new_snap.symbol,
+            diff_kind: "DECLARATION_ADDED",
+            file_path: new_snap.file_path,
+            old_sig_hash: "",
+            new_sig_hash: new_snap.sig_hash,
+            is_breaking: false,
+            blast_radius: []
+        }
+
+        if old_opt == none {
+            // Brand new declaration added
+            event = {
+                symbol: new_snap.symbol,
+                diff_kind: "DECLARATION_ADDED",
+                file_path: new_snap.file_path,
+                old_sig_hash: "",
+                new_sig_hash: new_snap.sig_hash,
+                is_breaking: false,
+                blast_radius: []
+            }
+        } else {
+            let old = old_opt
+            if old.sig_hash != new_snap.sig_hash {
+                // Signature changed -> Breaking interface change!
+                event = {
+                    symbol: new_snap.symbol,
+                    diff_kind: "SIGNATURE_MUTATED",
+                    file_path: new_snap.file_path,
+                    old_sig_hash: old.sig_hash,
+                    new_sig_hash: new_snap.sig_hash,
+                    is_breaking: true,
+                    blast_radius: blast_callers
+                }
+            } else if has_effect_escalation(old.effects, new_snap.effects) {
+                // New effect acquired -> Security escalation!
+                event = {
+                    symbol: new_snap.symbol,
+                    diff_kind: "EFFECT_ESCALATED",
+                    file_path: new_snap.file_path,
+                    old_sig_hash: old.sig_hash,
+                    new_sig_hash: new_snap.sig_hash,
+                    is_breaking: true,
+                    blast_radius: blast_callers
+                }
+            } else if old.body_hash != new_snap.body_hash {
+                // Only implementation body changed -> Safe in-memory update!
+                event = {
+                    symbol: new_snap.symbol,
+                    diff_kind: "BODY_MUTATED",
+                    file_path: new_snap.file_path,
+                    old_sig_hash: old.sig_hash,
+                    new_sig_hash: new_snap.sig_hash,
+                    is_breaking: false,
+                    blast_radius: []
+                }
+            } else {
+                // Completely identical
+                event = {
+                    symbol: new_snap.symbol,
+                    diff_kind: "UNCHANGED",
+                    file_path: new_snap.file_path,
+                    old_sig_hash: old.sig_hash,
+                    new_sig_hash: new_snap.sig_hash,
+                    is_breaking: false,
+                    blast_radius: []
+                }
+            }
+        }
+
+        DiffEngine.register_or_update_snapshot(new_snap)
+        state.recent_events = state.recent_events + [event]
+        event
+    }
+
+    fn mark_removed(symbol: string, blast_callers: [string]) -> DiffEvent {
+        let old_opt = DiffEngine.get_snapshot(symbol)
+        let mut old_sig = ""
+        let mut file_p = ""
+        let mut remaining: [EntitySnapshot] = []
+
+        for s in state.snapshots {
+            if s.symbol == symbol {
+                old_sig = s.sig_hash
+                file_p = s.file_path
+            } else {
+                remaining = remaining + [s]
+            }
+        }
+        state.snapshots = remaining
+
+        let event: DiffEvent = {
+            symbol: symbol,
+            diff_kind: "DECLARATION_REMOVED",
+            file_path: file_p,
+            old_sig_hash: old_sig,
+            new_sig_hash: "",
+            is_breaking: true,
+            blast_radius: blast_callers
+        }
+        state.recent_events = state.recent_events + [event]
+        event
+    }
+}
+
+fn main() -> int {
+    DiffEngine.reset_engine()
+    let s1 = create_entity_snapshot("add", "fn", "/math.ndg", "fn add(a: int, b: int) -> int", "a + b", [])
+    let ev1 = DiffEngine.compare_entity(s1, [])
+    let s2 = create_entity_snapshot("add", "fn", "/math.ndg", "fn add(a: int, b: int) -> int", "let res = a + b\nres", [])
+    let ev2 = DiffEngine.compare_entity(s2, [])
+
+    if ev1.diff_kind == "DECLARATION_ADDED" and ev2.diff_kind == "BODY_MUTATED" and !ev2.is_breaking {
+        0
+    } else {
+        1
+    }
+}
+
+test "diff engine declaration added and body mutated" {
+    DiffEngine.reset_engine()
+    let initial = create_entity_snapshot("calc", "fn", "/calc.ndg", "fn calc(x: int) -> int", "x * 2", [])
+    let ev1 = DiffEngine.compare_entity(initial, [])
+    assert ev1.diff_kind == "DECLARATION_ADDED"
+    assert !ev1.is_breaking
+
+    // Body mutated only (internal logic change, signature identical)
+    let body_changed = create_entity_snapshot("calc", "fn", "/calc.ndg", "fn calc(x: int) -> int", "x + x", [])
+    let ev2 = DiffEngine.compare_entity(body_changed, ["caller_a", "caller_b"])
+    assert ev2.diff_kind == "BODY_MUTATED"
+    assert !ev2.is_breaking
+    assert len(ev2.blast_radius) == 0
+}
+
+test "diff engine signature mutated triggers blast radius" {
+    DiffEngine.reset_engine()
+    let initial = create_entity_snapshot("fetch_data", "fn", "/api.ndg", "fn fetch_data(id: int) -> string", "data", [])
+    let _ev1 = DiffEngine.compare_entity(initial, [])
+
+    // Signature mutated: parameter type changed from int to string
+    let sig_changed = create_entity_snapshot("fetch_data", "fn", "/api.ndg", "fn fetch_data(id: string) -> string", "data", [])
+    let ev2 = DiffEngine.compare_entity(sig_changed, ["Service", "Controller"])
+    assert ev2.diff_kind == "SIGNATURE_MUTATED"
+    assert ev2.is_breaking
+    assert len(ev2.blast_radius) == 2
+    assert contains_str(ev2.blast_radius, "Service")
+    assert contains_str(ev2.blast_radius, "Controller")
+}
+
+test "diff engine effect escalation and removal" {
+    DiffEngine.reset_engine()
+    let initial = create_entity_snapshot("sync_file", "fn", "/sync.ndg", "fn sync_file()", "none", ["Workspace"])
+    let _ev1 = DiffEngine.compare_entity(initial, [])
+
+    // Effect escalation: added dangerous WorkspaceDelete effect
+    let escalated = create_entity_snapshot("sync_file", "fn", "/sync.ndg", "fn sync_file()", "none", ["Workspace", "WorkspaceDelete"])
+    let ev_esc = DiffEngine.compare_entity(escalated, ["SyncAgent"])
+    assert ev_esc.diff_kind == "EFFECT_ESCALATED"
+    assert ev_esc.is_breaking
+
+    // Removal: declaration deleted
+    let ev_rem = DiffEngine.mark_removed("sync_file", ["SyncAgent"])
+    assert ev_rem.diff_kind == "DECLARATION_REMOVED"
+    assert ev_rem.is_breaking
+    assert len(ev_rem.blast_radius) == 1
+}

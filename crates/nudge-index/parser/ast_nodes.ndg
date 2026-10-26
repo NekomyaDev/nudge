@@ -1,0 +1,122 @@
+/// Full-Spectrum Pure-Nudge AST Representation
+/// Part of Phase 3 (v2.3) - Lexer & Full-Spectrum AST Parser
+/// Covering all 12 native effects, contracts, and UI declarations
+/// Zero foreign dependencies - 100% Pure Nudge
+
+type FnParam = {
+    name: string,
+    ty: string
+}
+
+type FunctionDef = {
+    name: string,
+    params: [FnParam],
+    ret_type: string,
+    effects: [string],
+    cost_bound: string,
+    repair_retries: int,
+    is_pure: bool,
+    sig_hash: int,
+    body_hash: int,
+    start_line: int,
+    end_line: int
+}
+
+type StateField = {
+    name: string,
+    ty: string,
+    init_expr: string
+}
+
+type WindowDef = {
+    name: string,
+    title: string,
+    content_view: string
+}
+
+type AgentDef = {
+    name: string,
+    effects: [string],
+    state_fields: [StateField],
+    methods: [FunctionDef],
+    windows: [WindowDef],
+    start_line: int,
+    end_line: int
+}
+
+type ToolDef = {
+    name: string,
+    params: [FnParam],
+    ret_type: string,
+    mcp_server: string,
+    mcp_method: string,
+    side_effects: string
+}
+
+type TypeField = {
+    name: string,
+    ty: string
+}
+
+type TypeDef = {
+    name: string,
+    kind: string,
+    fields: [TypeField],
+    target_type: string,
+    refinement_rule: string
+}
+
+type ViewDef = {
+    name: string,
+    params: [FnParam],
+    ret_type: string,
+    root_element: string
+}
+
+type DecideBlock = {
+    name: string,
+    question_kind: string,
+    on_expr: string,
+    options: [string],
+    confidence_gate: string
+}
+
+type AuthDef = {
+    kind: string,
+    name: string,
+    provider_ref: string,
+    scope: [string],
+    env_var: string
+}
+
+type TestBlock = {
+    name: string,
+    is_for_all: bool,
+    gen_var: string,
+    gen_type: string,
+    start_line: int
+}
+
+type AstModule = {
+    functions: [FunctionDef],
+    agents: [AgentDef],
+    tools: [ToolDef],
+    types: [TypeDef],
+    views: [ViewDef],
+    decides: [DecideBlock],
+    auths: [AuthDef],
+    tests: [TestBlock]
+}
+
+fn empty_module() -> AstModule {
+    {
+        functions: [],
+        agents: [],
+        tools: [],
+        types: [],
+        views: [],
+        decides: [],
+        auths: [],
+        tests: []
+    }
+}

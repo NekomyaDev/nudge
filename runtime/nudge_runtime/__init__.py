@@ -4319,6 +4319,33 @@ def str_index_of(s, sub):
         return -1
     return s.find(sub)
 
+def str_split(s, delim=" "):
+    if not isinstance(s, str):
+        return []
+    if delim == "":
+        return list(s)
+    return s.split(delim)
+
+def str_contains(s, sub):
+    if not isinstance(s, str) or not isinstance(sub, str):
+        return False
+    return sub in s
+
+def str_starts_with(s, prefix):
+    if not isinstance(s, str) or not isinstance(prefix, str):
+        return False
+    return s.startswith(prefix)
+
+def str_ends_with(s, suffix):
+    if not isinstance(s, str) or not isinstance(suffix, str):
+        return False
+    return s.endswith(suffix)
+
+def str_replace(s, old, new):
+    if not isinstance(s, str):
+        return ""
+    return s.replace(old, new)
+
 # ── browser use (v1.6, docs/browser-use.md) ───────────────────────────
 
 def browser_fetch(url, **kwargs):

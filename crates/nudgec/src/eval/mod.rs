@@ -1303,4 +1303,43 @@ fn test_http_framing() -> bool {{
             .expect("nvfs main execution succeeds");
         assert_eq!(res, NudgeVal::Int(0));
     }
+
+    #[test]
+    fn test_parser_acceptance_suite() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let parser_test_path = root_dir.join("crates/nudge-index/parser/test_parser.ndg");
+
+        let parser_src = std::fs::read_to_string(&parser_test_path).expect("read test_parser.ndg");
+        let items = parse_src(&parser_src);
+        let mut interp = crate::eval::interpreter::Interpreter::new();
+        interp.load_items(&items).expect("load items succeeds");
+        interp.run_all_tests().expect("all parser test blocks pass");
+        let res = interp
+            .invoke_fn("main", &[])
+            .expect("parser main execution succeeds");
+        assert_eq!(res, NudgeVal::Int(0));
+    }
+
+    #[test]
+    fn test_indexer_acceptance_suite() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let indexer_test_path = root_dir.join("crates/nudge-index/indexer/test_indexer.ndg");
+
+        let indexer_src =
+            std::fs::read_to_string(&indexer_test_path).expect("read test_indexer.ndg");
+        let items = parse_src(&indexer_src);
+        let mut interp = crate::eval::interpreter::Interpreter::new();
+        interp.load_items(&items).expect("load items succeeds");
+        interp
+            .run_all_tests()
+            .expect("all indexer test blocks pass");
+        let res = interp
+            .invoke_fn("main", &[])
+            .expect("indexer main execution succeeds");
+        assert_eq!(res, NudgeVal::Int(0));
+    }
 }
