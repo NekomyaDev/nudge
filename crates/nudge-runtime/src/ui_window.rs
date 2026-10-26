@@ -2163,18 +2163,21 @@ pub struct DragState {
     pub drop_target: Option<String>,
 }
 
-/// Supported application locales for UI localization (EN, TR, DE, FR, ES, IT, PT, RU, NL).
+/// Supported application locales for UI localization (EN default, TR, ZH, JA, KO, RU, ES, DE, FR, IT, PT, NL).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Locale {
     #[default]
     En,
     Tr,
+    Zh,
+    Ja,
+    Ko,
+    Ru,
+    Es,
     De,
     Fr,
-    Es,
     It,
     Pt,
-    Ru,
     Nl,
 }
 
@@ -2217,6 +2220,111 @@ impl Locale {
             (Locale::Tr, "Settings saved!") => "Ayarlar kaydedildi!",
             (Locale::Tr, "Code copied to clipboard!") => "Kod panoya kopyalandı!",
             (Locale::Tr, "Message copied to clipboard!") => "Mesaj panoya kopyalandı!",
+
+            // Simplified Chinese (中文)
+            (Locale::Zh, "New Chat") => "新建对话",
+            (Locale::Zh, "New Chat Window") => "新建对话窗口",
+            (Locale::Zh, "Open Settings") => "打开设置",
+            (Locale::Zh, "Change Model") => "切换模型",
+            (Locale::Zh, "Toggle Dark Theme") => "切换深色主题",
+            (Locale::Zh, "Clear Conversation") => "清空对话",
+            (Locale::Zh, "Export History") => "导出历史",
+            (Locale::Zh, "Export Chat as Markdown") => "导出对话为 Markdown",
+            (Locale::Zh, "Export Chat as JSON") => "导出对话为 JSON",
+            (Locale::Zh, "Export Chat as PNG") => "导出对话为 PNG",
+            (Locale::Zh, "Switch Language") => "切换语言",
+            (Locale::Zh, "Copy Message") => "复制消息",
+            (Locale::Zh, "Regenerate") => "重新生成",
+            (Locale::Zh, "Delete Message") => "删除消息",
+            (Locale::Zh, "Rename Chat") => "重命名对话",
+            (Locale::Zh, "Delete Chat") => "删除对话",
+            (Locale::Zh, "Duplicate Chat") => "复制对话",
+            (Locale::Zh, "Open in New Window") => "在新窗口中打开",
+            (Locale::Zh, "Export Markdown") => "导出 Markdown",
+            (Locale::Zh, "Export JSON") => "导出 JSON",
+            (Locale::Zh, "Export PNG") => "导出 PNG",
+            (Locale::Zh, "Settings & Preferences") => "设置与偏好",
+            (Locale::Zh, "Save & Close") => "保存并关闭",
+            (Locale::Zh, "Dark Theme Mode") => "深色主题模式",
+            (Locale::Zh, "Stream Responses") => "流式响应",
+            (Locale::Zh, "Active AI Model:") => "当前 AI 模型：",
+            (Locale::Zh, "General") => "常规",
+            (Locale::Zh, "Model") => "模型",
+            (Locale::Zh, "About") => "关于",
+            (Locale::Zh, "Language") => "语言",
+            (Locale::Zh, "Settings saved!") => "设置已保存！",
+            (Locale::Zh, "Code copied to clipboard!") => "代码已复制到剪贴板！",
+            (Locale::Zh, "Message copied to clipboard!") => "消息已复制到剪贴板！",
+
+            // Japanese (日本語)
+            (Locale::Ja, "New Chat") => "新しいチャット",
+            (Locale::Ja, "New Chat Window") => "新しいチャットウィンドウ",
+            (Locale::Ja, "Open Settings") => "設定を開く",
+            (Locale::Ja, "Change Model") => "モデルを変更",
+            (Locale::Ja, "Toggle Dark Theme") => "ダークテーマ切替",
+            (Locale::Ja, "Clear Conversation") => "会話をクリア",
+            (Locale::Ja, "Export History") => "履歴をエクスポート",
+            (Locale::Ja, "Export Chat as Markdown") => "Markdownとしてエクスポート",
+            (Locale::Ja, "Export Chat as JSON") => "JSONとしてエクスポート",
+            (Locale::Ja, "Export Chat as PNG") => "PNGとしてエクスポート",
+            (Locale::Ja, "Switch Language") => "言語を切替",
+            (Locale::Ja, "Copy Message") => "メッセージをコピー",
+            (Locale::Ja, "Regenerate") => "再生成",
+            (Locale::Ja, "Delete Message") => "メッセージを削除",
+            (Locale::Ja, "Rename Chat") => "チャット名を変更",
+            (Locale::Ja, "Delete Chat") => "チャットを削除",
+            (Locale::Ja, "Duplicate Chat") => "チャットを複製",
+            (Locale::Ja, "Open in New Window") => "新しいウィンドウで開く",
+            (Locale::Ja, "Export Markdown") => "Markdownエクスポート",
+            (Locale::Ja, "Export JSON") => "JSONエクスポート",
+            (Locale::Ja, "Export PNG") => "PNGエクスポート",
+            (Locale::Ja, "Settings & Preferences") => "設定と環境設定",
+            (Locale::Ja, "Save & Close") => "保存して閉じる",
+            (Locale::Ja, "Dark Theme Mode") => "ダークテーマモード",
+            (Locale::Ja, "Stream Responses") => "ストリーミング応答",
+            (Locale::Ja, "Active AI Model:") => "アクティブなAIモデル：",
+            (Locale::Ja, "General") => "一般",
+            (Locale::Ja, "Model") => "モデル",
+            (Locale::Ja, "About") => "概要",
+            (Locale::Ja, "Language") => "言語",
+            (Locale::Ja, "Settings saved!") => "設定を保存しました！",
+            (Locale::Ja, "Code copied to clipboard!") => "コードをクリップボードにコピーしました！",
+            (Locale::Ja, "Message copied to clipboard!") => "メッセージをコピーしました！",
+
+            // Korean (한국어)
+            (Locale::Ko, "New Chat") => "새 대화",
+            (Locale::Ko, "New Chat Window") => "새 대화 창",
+            (Locale::Ko, "Open Settings") => "설정 열기",
+            (Locale::Ko, "Change Model") => "모델 변경",
+            (Locale::Ko, "Toggle Dark Theme") => "다크 테마 전환",
+            (Locale::Ko, "Clear Conversation") => "대화 내용 지우기",
+            (Locale::Ko, "Export History") => "기록 내보내기",
+            (Locale::Ko, "Export Chat as Markdown") => "Markdown으로 내보내기",
+            (Locale::Ko, "Export Chat as JSON") => "JSON으로 내보내기",
+            (Locale::Ko, "Export Chat as PNG") => "PNG로 내보내기",
+            (Locale::Ko, "Switch Language") => "언어 전환",
+            (Locale::Ko, "Copy Message") => "메시지 복사",
+            (Locale::Ko, "Regenerate") => "다시 생성",
+            (Locale::Ko, "Delete Message") => "메시지 삭제",
+            (Locale::Ko, "Rename Chat") => "대화 이름 바꾸기",
+            (Locale::Ko, "Delete Chat") => "대화 삭제",
+            (Locale::Ko, "Duplicate Chat") => "대화 복제",
+            (Locale::Ko, "Open in New Window") => "새 창에서 열기",
+            (Locale::Ko, "Export Markdown") => "Markdown 내보내기",
+            (Locale::Ko, "Export JSON") => "JSON 내보내기",
+            (Locale::Ko, "Export PNG") => "PNG 내보내기",
+            (Locale::Ko, "Settings & Preferences") => "설정 및 기본 설정",
+            (Locale::Ko, "Save & Close") => "저장 후 닫기",
+            (Locale::Ko, "Dark Theme Mode") => "다크 테마 모드",
+            (Locale::Ko, "Stream Responses") => "스트리밍 응답",
+            (Locale::Ko, "Active AI Model:") => "활성 AI 모델:",
+            (Locale::Ko, "General") => "일반",
+            (Locale::Ko, "Model") => "모델",
+            (Locale::Ko, "About") => "정보",
+            (Locale::Ko, "Language") => "언어",
+            (Locale::Ko, "Settings saved!") => "설정이 저장되었습니다!",
+            (Locale::Ko, "Code copied to clipboard!") => "코드가 클립보드에 복사되었습니다!",
+            (Locale::Ko, "Message copied to clipboard!") => "메시지가 클립보드에 복사되었습니다!",
 
             // German (Deutsch)
             (Locale::De, "New Chat") => "Neuer Chat",
@@ -2485,12 +2593,15 @@ impl Locale {
         match self {
             Locale::En => "English [EN]",
             Locale::Tr => "Türkçe [TR]",
+            Locale::Zh => "中文 [ZH]",
+            Locale::Ja => "日本語 [JA]",
+            Locale::Ko => "한국어 [KO]",
+            Locale::Ru => "Русский [RU]",
+            Locale::Es => "Español [ES]",
             Locale::De => "Deutsch [DE]",
             Locale::Fr => "Français [FR]",
-            Locale::Es => "Español [ES]",
             Locale::It => "Italiano [IT]",
             Locale::Pt => "Português [PT]",
-            Locale::Ru => "Русский [RU]",
             Locale::Nl => "Nederlands [NL]",
         }
     }
@@ -2500,12 +2611,15 @@ impl Locale {
         match self {
             Locale::En => "en",
             Locale::Tr => "tr",
+            Locale::Zh => "zh",
+            Locale::Ja => "ja",
+            Locale::Ko => "ko",
+            Locale::Ru => "ru",
+            Locale::Es => "es",
             Locale::De => "de",
             Locale::Fr => "fr",
-            Locale::Es => "es",
             Locale::It => "it",
             Locale::Pt => "pt",
-            Locale::Ru => "ru",
             Locale::Nl => "nl",
         }
     }
@@ -2515,13 +2629,16 @@ impl Locale {
         match code.to_lowercase().as_str() {
             "en" => Some(Locale::En),
             "tr" => Some(Locale::Tr),
-            "de" => Some(Locale::De),
-            "fr" => Some(Locale::Fr),
-            "es" => Some(Locale::Es),
-            "it" => Some(Locale::It),
-            "pt" => Some(Locale::Pt),
-            "ru" => Some(Locale::Ru),
-            "nl" => Some(Locale::Nl),
+            "zh" | "zh-cn" => Some(Locale::Zh),
+            "ja" | "ja-jp" => Some(Locale::Ja),
+            "ko" | "ko-kr" => Some(Locale::Ko),
+            "ru" | "ru-ru" => Some(Locale::Ru),
+            "es" | "es-es" => Some(Locale::Es),
+            "de" | "de-de" => Some(Locale::De),
+            "fr" | "fr-fr" => Some(Locale::Fr),
+            "it" | "it-it" => Some(Locale::It),
+            "pt" | "pt-br" | "pt-pt" => Some(Locale::Pt),
+            "nl" | "nl-nl" => Some(Locale::Nl),
             _ => None,
         }
     }
@@ -2530,13 +2647,16 @@ impl Locale {
     pub fn next(self) -> Self {
         match self {
             Locale::En => Locale::Tr,
-            Locale::Tr => Locale::De,
+            Locale::Tr => Locale::Zh,
+            Locale::Zh => Locale::Ja,
+            Locale::Ja => Locale::Ko,
+            Locale::Ko => Locale::Ru,
+            Locale::Ru => Locale::Es,
+            Locale::Es => Locale::De,
             Locale::De => Locale::Fr,
-            Locale::Fr => Locale::Es,
-            Locale::Es => Locale::It,
+            Locale::Fr => Locale::It,
             Locale::It => Locale::Pt,
-            Locale::Pt => Locale::Ru,
-            Locale::Ru => Locale::Nl,
+            Locale::Pt => Locale::Nl,
             Locale::Nl => Locale::En,
         }
     }
@@ -11983,15 +12103,21 @@ mod tests {
     fn test_localization_tr_en_and_shortcuts() {
         // 1. Zero-allocation fast translation lookup across supported languages
         assert_eq!(Locale::Tr.get("New Chat"), "Yeni Sohbet");
+        assert_eq!(Locale::Zh.get("New Chat"), "新建对话");
+        assert_eq!(Locale::Ja.get("New Chat"), "新しいチャット");
+        assert_eq!(Locale::Ko.get("New Chat"), "새 대화");
+        assert_eq!(Locale::Ru.get("New Chat"), "Новый чат");
+        assert_eq!(Locale::Es.get("New Chat"), "Nuevo chat");
         assert_eq!(Locale::De.get("New Chat"), "Neuer Chat");
         assert_eq!(Locale::Fr.get("New Chat"), "Nouvelle discussion");
-        assert_eq!(Locale::Es.get("New Chat"), "Nuevo chat");
         assert_eq!(Locale::It.get("New Chat"), "Nuova chat");
         assert_eq!(Locale::Pt.get("New Chat"), "Nova conversa");
-        assert_eq!(Locale::Ru.get("New Chat"), "Новый чат");
         assert_eq!(Locale::Nl.get("New Chat"), "Nieuwe chat");
         assert_eq!(Locale::En.get("New Chat"), "New Chat");
 
+        assert_eq!(Locale::from_code("zh"), Some(Locale::Zh));
+        assert_eq!(Locale::from_code("ja"), Some(Locale::Ja));
+        assert_eq!(Locale::from_code("ko"), Some(Locale::Ko));
         assert_eq!(Locale::from_code("de"), Some(Locale::De));
         assert_eq!(Locale::from_code("fr"), Some(Locale::Fr));
         assert_eq!(Locale::from_code("es"), Some(Locale::Es));
@@ -12027,18 +12153,18 @@ mod tests {
         assert_eq!(*app.dispatcher.last_key, "LocaleChange:Tr");
         assert_eq!(app.t("New Chat"), "Yeni Sohbet");
 
-        // 4. Toggle cycles to German
+        // 4. Toggle cycles to Chinese (Zh)
         app.toggle_locale();
-        assert_eq!(app.locale, Locale::De);
-        assert_eq!(*app.dispatcher.notes, "de");
-        assert_eq!(*app.dispatcher.last_key, "LocaleChange:De");
-        assert_eq!(app.t("New Chat"), "Neuer Chat");
+        assert_eq!(app.locale, Locale::Zh);
+        assert_eq!(*app.dispatcher.notes, "zh");
+        assert_eq!(*app.dispatcher.last_key, "LocaleChange:Zh");
+        assert_eq!(app.t("New Chat"), "新建对话");
 
-        // 5. Ctrl+L keyboard shortcut cycles locale (De -> Fr)
+        // 5. Ctrl+L keyboard shortcut cycles locale (Zh -> Ja)
         app.ctrl_pressed = true;
         app.handle_key_input(&Key::Character("l".into()), Some("l"));
-        assert_eq!(app.locale, Locale::Fr);
-        assert_eq!(app.t("New Chat"), "Nouvelle discussion");
+        assert_eq!(app.locale, Locale::Ja);
+        assert_eq!(app.t("New Chat"), "新しいチャット");
     }
 
     #[test]

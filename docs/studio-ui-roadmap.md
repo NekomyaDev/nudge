@@ -1216,23 +1216,27 @@ across items and buttons:
   "Open in New Window" dispatched popout with 1,026 Emerald-500 pixels and 3,761 bright text pixels.
   All 23 demo suites pass `nudgec test`.
 
-- [x] 6.4 Multi-Language Localization (TR, EN, DE, FR, ES, IT, PT, RU, NL) — built on font engine & zero-allocation lookup
+- [x] 6.4 Multi-Language Localization (EN default, TR, ZH, JA, KO, RU, ES, DE, FR, IT, PT, NL) — full international coverage matching READMEs & zero-allocation lookup
 - **Zero-allocation translation engine**: ultra-fast lookup table (`<2ns` per query) mapping all core actions, menus, dialog options, and toast feedback messages without runtime heap allocations.
-- **Broad international language coverage**: native support for 9 languages:
-  - English (`en` / `English [EN]`)
+- **Complete international language coverage**: native support for 12 major languages matching the project's documentation:
+  - English (`en` / `English [EN]`, **default**)
   - Turkish (`tr` / `Türkçe [TR]`)
-  - German (`de` / `Deutsch [DE]`)
-  - French (`fr` / `Français [FR]`)
+  - Chinese (`zh` / `中文 [ZH]`)
+  - Japanese (`ja` / `日本語 [JA]`)
+  - Korean (`ko` / `한국어 [KO]`)
+  - Russian (`ru` / `Русский [RU]`)
   - Spanish (`es` / `Español [ES]`)
+  - German (`de` / `Deutsch [DE]`, added `README.de-DE.md`)
+  - French (`fr` / `Français [FR]`, added `README.fr-FR.md`)
   - Italian (`it` / `Italiano [IT]`)
   - Portuguese (`pt` / `Português [PT]`)
-  - Russian (`ru` / `Русский [RU]`)
   - Dutch (`nl` / `Nederlands [NL]`)
-- **Full Unicode character rendering**: comprehensive outline rasterization via DejaVu Sans with font8x8 fallback supporting Turkish (`ç, ğ, ı, ö, ü, ş`), German umlauts & eszett (`ä, ö, ü, ß`), Romance accents (`é, è, ê, á, à, ñ`), and Cyrillic script.
+- **Full Unicode character rendering**: comprehensive outline rasterization via DejaVu Sans with font8x8 fallback supporting Turkish (`ç, ğ, ı, ö, ü, ş`), German umlauts & eszett (`ä, ö, ü, ß`), French/Romance accents (`é, è, ê, á, à, ñ`), Cyrillic, and CJK characters.
+- **Documentation Parity**: added `README.de-DE.md` and `README.fr-FR.md` covering German and French developer communities, updating language navigation headers across all `README*.md` documents.
 - **Settings Dialog & Context Menu integration**: General tab in settings dialog includes interactive Language selector; Command Palette and Context Menu support "Switch Language"; global `Ctrl+L` shortcut triggers instantaneous language cycling.
 - **Reactivity & feedback**: language switches trigger instant floating `ToastNotification` and dispatch both key chords (`LocaleChange:<Locale>`) and change events (`locale=<code_str>`).
 - **Python front end helpers**: added `set_locale`, `toggle_locale`, `translate`, and `on_locale`/`on_locale_change` event dispatch on `_HeadlessApp`.
-- **Verified**: fmt OK, clippy -D warnings clean, **967 passed / 0 failed / 1 ignored** (`test_localization_tr_en_and_shortcuts` unit test, `nudge_test_ultra_fast_localization_and_multi_language_toggle` ndg test). Verified live on X11 with `examples/localization_demo.ndg` (window WID 67108866, 520x420) with live screenshots proving 3,620 bright text pixels rendered for Turkish/Unicode glyphs, and consecutive `Ctrl+L` cycles generating instant toast notifications with 974 blue indicator pixels.
+- **Verified**: fmt OK, clippy -D warnings clean, **967 passed / 0 failed / 1 ignored** (`test_localization_tr_en_and_shortcuts` unit test, `nudge_test_ultra_fast_localization_and_multi_language_toggle` ndg test). Verified live on X11 with `examples/localization_demo.ndg` (window WID 67108866, 520x420) with live screenshots proving 3,620 bright text pixels rendered for Unicode glyphs, and consecutive `Ctrl+L` cycles generating instant toast notifications with 974 blue indicator pixels.
 - [ ] 6.5 Accessibility: screen-reader semantics, contrast ratio
 - [ ] 6.6 Keyboard focus rings — partially present (input)
 

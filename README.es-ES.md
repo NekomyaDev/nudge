@@ -28,7 +28,9 @@
   <a href="README.ko-KR.md">한국어</a> •
   <a href="README.ru-RU.md">Русский</a> •
   <a href="README.es-ES.md">Español</a> •
-  <a href="README.tr-TR.md">Türkçe</a>
+  <a href="README.tr-TR.md">Türkçe</a> •
+  <a href="README.de-DE.md">Deutsch</a> •
+  <a href="README.fr-FR.md">Français</a>
 </p>
 
 ---

@@ -105,6 +105,21 @@ test "ultra-fast localization and multi-language toggle" {
     app.set_locale("ru")
     assert app.translate("New Chat") == "Новый чат"
 
+    // Switch to Chinese
+    app.set_locale("zh")
+    assert app.translate("New Chat") == "新建对话"
+    assert app.translate("Open Settings") == "打开设置"
+
+    // Switch to Japanese
+    app.set_locale("ja")
+    assert app.translate("New Chat") == "新しいチャット"
+    assert app.translate("Open Settings") == "設定を開く"
+
+    // Switch to Korean
+    app.set_locale("ko")
+    assert app.translate("New Chat") == "새 대화"
+    assert app.translate("Open Settings") == "설정 열기"
+
     // Switch back to English
     app.set_locale("en")
     assert LocaleApp.state.lang == "English"
