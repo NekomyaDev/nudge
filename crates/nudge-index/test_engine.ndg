@@ -1,0 +1,559 @@
+/// Master Unified Engine Acceptance Test Suite & MCP Pipeline
+/// Part of Phase 6 (v2.6) - Unified Autonomous Index Engine & Event Debouncer
+/// Zero foreign dependencies - 100% Pure Nudge
+
+type EngineSymbol = {
+    name: string,
+    kind: string,
+    file_path: string,
+    line: int,
+    signature: string,
+    body: string,
+    sig_hash: string,
+    body_hash: string,
+    effects: [string]
+}
+
+type EngineEdge = {
+    caller: string,
+    callee: string,
+    file_path: string
+}
+
+type EnginePosting = {
+    term: string,
+    file_path: string,
+    symbol: string
+}
+
+type EngineDiff = {
+    symbol: string,
+    diff_kind: string,
+    file_path: string,
+    is_breaking: bool,
+    blast_radius: [string]
+}
+
+type CoalescedEvent = {
+    file_path: string,
+    action: string,
+    burst_count: int,
+    first_seen_ms: int,
+    last_seen_ms: int
+}
+
+type McpIndexRequest = {
+    id: int,
+    method: string,
+    target: string
+}
+
+type McpIndexResponse = {
+    id: int,
+    status: string,
+    result_json: string
+}
+
+fn contains_test_str(xs: [string], target: string) -> bool {
+    let mut found = false
+    for x in xs {
+        if x == target {
+            found = true
+        }
+    }
+    found
+}
+
+fn compute_test_hash(text: string) -> string {
+    let raw = str.hash(text)
+    let pos = if raw < 0 { -raw } else { raw }
+    "h_" + str.to_string(pos)
+}
+
+fn is_ephemeral_file(path: string) -> bool {
+    let mut ignored = false
+    if str.ends_with(path, ".tmp") or str.ends_with(path, ".swp") or str.ends_with(path, "~") {
+        ignored = true
+    }
+    if str.contains(path, "/.git/") or str.contains(path, "/.nudge/") or str.contains(path, "/target/") {
+        ignored = true
+    }
+    ignored
+}
+
+agent EngineVfs {
+    state {
+        files: [string] = []
+        file_contents: [string] = []
+    }
+
+    fn vfs_clear() {
+        state.files = []
+        state.file_contents = []
+    }
+
+    fn vfs_write_file(path: string, content: string) {
+        let mut new_files: [string] = []
+        let mut new_contents: [string] = []
+        let mut replaced = false
+
+        for (f, idx) in state.files {
+            if f == path {
+                new_files = new_files + [path]
+                new_contents = new_contents + [content]
+                replaced = true
+            } else {
+                new_files = new_files + [f]
+                new_contents = new_contents + [state.file_contents[idx]]
+            }
+        }
+
+        if !replaced {
+            new_files = new_files + [path]
+            new_contents = new_contents + [content]
+        }
+
+        state.files = new_files
+        state.file_contents = new_contents
+    }
+
+    fn vfs_read_file(path: string) -> string? {
+        let mut found: string? = none
+        for (f, idx) in state.files {
+            if f == path {
+                found = state.file_contents[idx]
+            }
+        }
+        found
+    }
+
+    fn vfs_count() -> int {
+        len(state.files)
+    }
+}
+
+agent EngineSymbolTable {
+    state {
+        symbols: [EngineSymbol] = []
+    }
+
+    fn sym_clear() {
+        state.symbols = []
+    }
+
+    fn sym_insert(s: EngineSymbol) {
+        let mut updated: [EngineSymbol] = []
+        let mut replaced = false
+        for sym in state.symbols {
+            if sym.name == s.name {
+                updated = updated + [s]
+                replaced = true
+            } else {
+                updated = updated + [sym]
+            }
+        }
+        if !replaced {
+            updated = updated + [s]
+        }
+        state.symbols = updated
+    }
+
+    fn sym_lookup(name: string) -> EngineSymbol? {
+        let mut found: EngineSymbol? = none
+        for s in state.symbols {
+            if s.name == name {
+                found = s
+            }
+        }
+        found
+    }
+
+    fn sym_remove(name: string) -> bool {
+        let mut updated: [EngineSymbol] = []
+        let mut removed = false
+        for s in state.symbols {
+            if s.name == name {
+                removed = true
+            } else {
+                updated = updated + [s]
+            }
+        }
+        if removed {
+            state.symbols = updated
+        }
+        removed
+    }
+
+    fn sym_count() -> int {
+        len(state.symbols)
+    }
+}
+
+agent EngineCallGraph {
+    state {
+        edges: [EngineEdge] = []
+    }
+
+    fn cg_clear() {
+        state.edges = []
+    }
+
+    fn cg_add_edge(caller: string, callee: string, path: string) {
+        let mut exists = false
+        for e in state.edges {
+            if e.caller == caller and e.callee == callee {
+                exists = true
+            }
+        }
+        if !exists {
+            let edge: EngineEdge = { caller: caller, callee: callee, file_path: path }
+            state.edges = state.edges + [edge]
+        }
+    }
+
+    fn cg_remove_caller(caller: string) {
+        let mut remaining: [EngineEdge] = []
+        for e in state.edges {
+            if e.caller != caller {
+                remaining = remaining + [e]
+            }
+        }
+        state.edges = remaining
+    }
+
+    fn cg_get_callers(callee: string) -> [string] {
+        let mut callers: [string] = []
+        for e in state.edges {
+            if e.callee == callee {
+                if !contains_test_str(callers, e.caller) {
+                    callers = callers + [e.caller]
+                }
+            }
+        }
+        callers
+    }
+
+    fn cg_blast_radius(root: string, max_depth: int) -> [string] {
+        let mut visited: [string] = []
+        let mut frontier: [string] = [root]
+
+        for _hop in [1, 2, 3, 4, 5] {
+            if _hop <= max_depth and len(frontier) > 0 {
+                let mut next_frontier: [string] = []
+                for node in frontier {
+                    let direct = EngineCallGraph.cg_get_callers(node)
+                    for caller in direct {
+                        if !contains_test_str(visited, caller) and caller != root {
+                            visited = visited + [caller]
+                            next_frontier = next_frontier + [caller]
+                        }
+                    }
+                }
+                frontier = next_frontier
+            }
+        }
+        visited
+    }
+
+    fn cg_count() -> int {
+        len(state.edges)
+    }
+}
+
+agent EngineInvertedIndex {
+    state {
+        postings: [EnginePosting] = []
+    }
+
+    fn idx_clear() {
+        state.postings = []
+    }
+
+    fn idx_add(term: string, path: string, sym: string) {
+        let clean = str.trim(str.lower(term))
+        if clean != "" {
+            let p: EnginePosting = { term: clean, file_path: path, symbol: sym }
+            state.postings = state.postings + [p]
+        }
+    }
+
+    fn idx_search(q: string) -> [string] {
+        let query = str.trim(str.lower(q))
+        let mut matched: [string] = []
+        for p in state.postings {
+            if p.term == query or str.contains(p.term, query) {
+                if !contains_test_str(matched, p.symbol) {
+                    matched = matched + [p.symbol]
+                }
+            }
+        }
+        matched
+    }
+
+    fn idx_count() -> int {
+        len(state.postings)
+    }
+}
+
+agent EventDebouncer {
+    state {
+        pending_events: [CoalescedEvent] = []
+        debounce_window_ms: int = 50
+    }
+
+    fn reset_debouncer() {
+        state.pending_events = []
+    }
+
+    fn push_raw_event(path: string, event_kind: string, timestamp_ms: int) -> bool {
+        let mut accepted = false
+        if !is_ephemeral_file(path) {
+            let mut updated: [CoalescedEvent] = []
+            let mut found = false
+
+            for ev in state.pending_events {
+                if ev.file_path == path {
+                    let mut resolved = ev.action
+                    if ev.action == "DELETE" and event_kind == "WRITE" {
+                        resolved = "FILE_MUTATED"
+                    } else if event_kind == "DELETE" {
+                        resolved = "FILE_DELETED"
+                    } else {
+                        resolved = "FILE_MUTATED"
+                    }
+
+                    let merged: CoalescedEvent = {
+                        file_path: path,
+                        action: resolved,
+                        burst_count: ev.burst_count + 1,
+                        first_seen_ms: ev.first_seen_ms,
+                        last_seen_ms: timestamp_ms
+                    }
+                    updated = updated + [merged]
+                    found = true
+                } else {
+                    updated = updated + [ev]
+                }
+            }
+
+            if !found {
+                let act = if event_kind == "DELETE" { "FILE_DELETED" } else { "FILE_MUTATED" }
+                let new_ev: CoalescedEvent = {
+                    file_path: path,
+                    action: act,
+                    burst_count: 1,
+                    first_seen_ms: timestamp_ms,
+                    last_seen_ms: timestamp_ms
+                }
+                updated = updated + [new_ev]
+            }
+
+            state.pending_events = updated
+            accepted = true
+        }
+        accepted
+    }
+
+    fn drain_events() -> [CoalescedEvent] {
+        let all_events = state.pending_events
+        state.pending_events = []
+        all_events
+    }
+}
+
+// ── Orchestrator Functions ───────────────────────────────────────────
+
+fn engine_init() {
+    EngineVfs.vfs_clear()
+    EngineSymbolTable.sym_clear()
+    EngineCallGraph.cg_clear()
+    EngineInvertedIndex.idx_clear()
+    EventDebouncer.reset_debouncer()
+}
+
+fn engine_mount_file(path: string, content: string) {
+    EngineVfs.vfs_write_file(path, content)
+}
+
+fn engine_register_declaration(
+    path: string,
+    name: string,
+    kind: string,
+    line: int,
+    signature: string,
+    body: string,
+    effects: [string],
+    callees: [string]
+) -> EngineDiff {
+    let old_opt = EngineSymbolTable.sym_lookup(name)
+    let s_hash = compute_test_hash(signature)
+    let b_hash = compute_test_hash(body)
+    let blast = EngineCallGraph.cg_blast_radius(name, 5)
+
+    let mut kind_event = "DECLARATION_ADDED"
+    let mut breaking = false
+
+    if old_opt != none {
+        let old = old_opt
+        if old.sig_hash != s_hash {
+            kind_event = "SIGNATURE_MUTATED"
+            breaking = true
+        } else if old.body_hash != b_hash {
+            kind_event = "BODY_MUTATED"
+            breaking = false
+        } else {
+            kind_event = "UNCHANGED"
+            breaking = false
+        }
+    }
+
+    let sym: EngineSymbol = {
+        name: name,
+        kind: kind,
+        file_path: path,
+        line: line,
+        signature: signature,
+        body: body,
+        sig_hash: s_hash,
+        body_hash: b_hash,
+        effects: effects
+    }
+
+    EngineSymbolTable.sym_insert(sym)
+
+    EngineInvertedIndex.idx_add(name, path, name)
+    let parts = str.split(name, "_")
+    for p in parts {
+        if p != "" {
+            EngineInvertedIndex.idx_add(p, path, name)
+        }
+    }
+
+    EngineCallGraph.cg_remove_caller(name)
+    for c in callees {
+        EngineCallGraph.cg_add_edge(name, c, path)
+    }
+
+    {
+        symbol: name,
+        diff_kind: kind_event,
+        file_path: path,
+        is_breaking: breaking,
+        blast_radius: if breaking { blast } else { [] }
+    }
+}
+
+fn engine_delete_declaration(name: string) -> EngineDiff {
+    let blast = EngineCallGraph.cg_blast_radius(name, 5)
+    let _rem = EngineSymbolTable.sym_remove(name)
+    EngineCallGraph.cg_remove_caller(name)
+
+    {
+        symbol: name,
+        diff_kind: "DECLARATION_REMOVED",
+        file_path: "",
+        is_breaking: true,
+        blast_radius: blast
+    }
+}
+
+fn main() -> int {
+    engine_init()
+    0
+}
+
+// ── Phase 6 Acceptance Tests ─────────────────────────────────────────
+
+test "engine cold start multi file ingestion into nvfs" {
+    engine_init()
+    engine_mount_file("/core/math.ndg", "fn add(a: int, b: int) -> int { a + b }")
+    engine_mount_file("/core/types.ndg", "type User = { id: int, name: string }")
+    engine_mount_file("/services/auth.ndg", "fn authenticate(u: string) -> bool { true }")
+
+    assert EngineVfs.vfs_count() == 3
+    let content = EngineVfs.vfs_read_file("/core/math.ndg")
+    assert content != none
+    assert str.contains(content, "fn add")
+}
+
+test "engine debouncer coalesces file burst writes before parsing" {
+    engine_init()
+    let p = "/src/view.ndg"
+    assert EventDebouncer.push_raw_event(p, "WRITE", 100)
+    assert EventDebouncer.push_raw_event(p, "WRITE", 110)
+    assert EventDebouncer.push_raw_event(p, "WRITE", 120)
+
+    let events = EventDebouncer.drain_events()
+    assert len(events) == 1
+    assert events[0].file_path == p
+    assert events[0].action == "FILE_MUTATED"
+    assert events[0].burst_count == 3
+}
+
+test "engine reactive diff safe body mutation vs breaking signature" {
+    engine_init()
+    // Initial declaration
+    let d1 = engine_register_declaration("/calc.ndg", "calc_tax", "fn", 10, "fn calc_tax(price: int) -> int", "price * 2", [], [])
+    assert d1.diff_kind == "DECLARATION_ADDED"
+    assert !d1.is_breaking
+
+    // Dependent caller
+    let _d2 = engine_register_declaration("/order.ndg", "create_order", "fn", 5, "fn create_order() -> int", "calc_tax(100)", [], ["calc_tax"])
+    let callers = EngineCallGraph.cg_get_callers("calc_tax")
+    assert len(callers) == 1
+    assert callers[0] == "create_order"
+
+    // Safe body mutation: only logic changes, signature untouched
+    let d_body = engine_register_declaration("/calc.ndg", "calc_tax", "fn", 10, "fn calc_tax(price: int) -> int", "let r = price * 2\nr", [], [])
+    assert d_body.diff_kind == "BODY_MUTATED"
+    assert !d_body.is_breaking
+    assert len(d_body.blast_radius) == 0
+
+    // Breaking signature mutation: parameters change
+    let d_sig = engine_register_declaration("/calc.ndg", "calc_tax", "fn", 10, "fn calc_tax(price: float, rate: float) -> float", "price * rate", [], [])
+    assert d_sig.diff_kind == "SIGNATURE_MUTATED"
+    assert d_sig.is_breaking
+    assert len(d_sig.blast_radius) == 1
+    assert d_sig.blast_radius[0] == "create_order"
+}
+
+test "engine transitive blast radius across 4 service tiers" {
+    engine_init()
+    // DB -> Query -> Repo -> Service -> Controller
+    let _e1 = engine_register_declaration("db.ndg", "DB", "fn", 1, "fn DB()", "1", [], [])
+    let _e2 = engine_register_declaration("query.ndg", "Query", "fn", 1, "fn Query()", "DB()", [], ["DB"])
+    let _e3 = engine_register_declaration("repo.ndg", "Repo", "fn", 1, "fn Repo()", "Query()", [], ["Query"])
+    let _e4 = engine_register_declaration("svc.ndg", "Service", "fn", 1, "fn Service()", "Repo()", [], ["Repo"])
+    let _e5 = engine_register_declaration("ctrl.ndg", "Controller", "fn", 1, "fn Controller()", "Service()", [], ["Service"])
+
+    let blast = EngineCallGraph.cg_blast_radius("DB", 5)
+    assert len(blast) == 4
+    assert contains_test_str(blast, "Query")
+    assert contains_test_str(blast, "Repo")
+    assert contains_test_str(blast, "Service")
+    assert contains_test_str(blast, "Controller")
+
+    // Deleting DB triggers blast radius invalidation
+    let d_del = engine_delete_declaration("DB")
+    assert d_del.diff_kind == "DECLARATION_REMOVED"
+    assert len(d_del.blast_radius) == 4
+}
+
+test "engine inverted index full text and token decomposition" {
+    engine_init()
+    let _d = engine_register_declaration("/io/net.ndg", "handle_http_request", "fn", 1, "fn handle_http_request()", "0", [], [])
+
+    // Exact symbol match
+    let match_exact = EngineInvertedIndex.idx_search("handle_http_request")
+    assert len(match_exact) == 1
+    assert match_exact[0] == "handle_http_request"
+
+    // Sub-token match from underscore split
+    let match_http = EngineInvertedIndex.idx_search("http")
+    assert len(match_http) == 1
+    assert match_http[0] == "handle_http_request"
+
+    let match_req = EngineInvertedIndex.idx_search("request")
+    assert len(match_req) == 1
+    assert match_req[0] == "handle_http_request"
+}

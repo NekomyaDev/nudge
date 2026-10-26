@@ -1513,4 +1513,22 @@ fn test_snapshot_suite() -> bool {{
             .expect("query main execution succeeds");
         assert_eq!(res, NudgeVal::Int(0));
     }
+
+    #[test]
+    fn test_engine_acceptance_suite() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let engine_test_path = root_dir.join("crates/nudge-index/test_engine.ndg");
+
+        let engine_src = std::fs::read_to_string(&engine_test_path).expect("read test_engine.ndg");
+        let items = parse_src(&engine_src);
+        let mut interp = crate::eval::interpreter::Interpreter::new();
+        interp.load_items(&items).expect("load items succeeds");
+        interp.run_all_tests().expect("all engine test blocks pass");
+        let res = interp
+            .invoke_fn("main", &[])
+            .expect("engine main execution succeeds");
+        assert_eq!(res, NudgeVal::Int(0));
+    }
 }

@@ -1,0 +1,193 @@
+/// NVFS Sliding-Window Event Debouncer & Atomic Coalescer
+/// Part of Phase 6 (v2.6) - Unified Autonomous Index Engine & Event Debouncer
+/// Zero foreign dependencies - 100% Pure Nudge
+
+type RawFsEvent = {
+    file_path: string,
+    event_kind: string,
+    timestamp_ms: int
+}
+
+type CoalescedEvent = {
+    file_path: string,
+    action: string,
+    burst_count: int,
+    first_seen_ms: int,
+    last_seen_ms: int
+}
+
+fn is_ephemeral_path(path: string) -> bool {
+    let mut ignored = false
+    if str.ends_with(path, ".tmp") or str.ends_with(path, ".swp") or str.ends_with(path, "~") {
+        ignored = true
+    }
+    if str.contains(path, "/.git/") or str.contains(path, "/.nudge/") or str.contains(path, "/target/") {
+        ignored = true
+    }
+    if str.starts_with(path, ".#") or str.starts_with(path, "#") {
+        ignored = true
+    }
+    ignored
+}
+
+agent EventDebouncer {
+    state {
+        pending_events: [CoalescedEvent] = []
+        debounce_window_ms: int = 50
+        total_coalesced: int = 0
+    }
+
+    fn reset_debouncer() {
+        state.pending_events = []
+        state.debounce_window_ms = 50
+        state.total_coalesced = 0
+    }
+
+    fn set_window(window_ms: int) {
+        state.debounce_window_ms = window_ms
+    }
+
+    fn push_raw_event(path: string, event_kind: string, timestamp_ms: int) -> bool {
+        let mut accepted = false
+        if !is_ephemeral_path(path) {
+            let mut updated: [CoalescedEvent] = []
+            let mut found = false
+
+            for ev in state.pending_events {
+                if ev.file_path == path {
+                    let mut resolved_action = ev.action
+                    if ev.action == "CREATE" and event_kind == "WRITE" {
+                        resolved_action = "FILE_CREATED"
+                    } else if ev.action == "DELETE" and (event_kind == "CREATE" or event_kind == "WRITE") {
+                        // Atomic save swap pattern (delete old target, rename new temp)
+                        resolved_action = "FILE_MUTATED"
+                    } else if event_kind == "DELETE" {
+                        resolved_action = "FILE_DELETED"
+                    } else {
+                        resolved_action = "FILE_MUTATED"
+                    }
+
+                    let merged: CoalescedEvent = {
+                        file_path: path,
+                        action: resolved_action,
+                        burst_count: ev.burst_count + 1,
+                        first_seen_ms: ev.first_seen_ms,
+                        last_seen_ms: timestamp_ms
+                    }
+                    updated = updated + [merged]
+                    found = true
+                } else {
+                    updated = updated + [ev]
+                }
+            }
+
+            if !found {
+                let initial_action = if event_kind == "CREATE" {
+                    "FILE_CREATED"
+                } else if event_kind == "DELETE" {
+                    "FILE_DELETED"
+                } else {
+                    "FILE_MUTATED"
+                }
+
+                let new_ev: CoalescedEvent = {
+                    file_path: path,
+                    action: initial_action,
+                    burst_count: 1,
+                    first_seen_ms: timestamp_ms,
+                    last_seen_ms: timestamp_ms
+                }
+                updated = updated + [new_ev]
+            }
+
+            state.pending_events = updated
+            state.total_coalesced = state.total_coalesced + 1
+            accepted = true
+        }
+        accepted
+    }
+
+    fn flush_ready_events(current_time_ms: int) -> [CoalescedEvent] {
+        let mut ready: [CoalescedEvent] = []
+        let mut remaining: [CoalescedEvent] = []
+
+        for ev in state.pending_events {
+            let elapsed = current_time_ms - ev.last_seen_ms
+            if elapsed >= state.debounce_window_ms {
+                ready = ready + [ev]
+            } else {
+                remaining = remaining + [ev]
+            }
+        }
+
+        state.pending_events = remaining
+        ready
+    }
+
+    fn drain_all() -> [CoalescedEvent] {
+        let all_events = state.pending_events
+        state.pending_events = []
+        all_events
+    }
+
+    fn pending_count() -> int {
+        len(state.pending_events)
+    }
+}
+
+fn main() -> int {
+    EventDebouncer.reset_debouncer()
+    let ignored = EventDebouncer.push_raw_event("/src/app.ndg.tmp", "CREATE", 100)
+    let accepted = EventDebouncer.push_raw_event("/src/app.ndg", "WRITE", 100)
+    if !ignored and accepted and EventDebouncer.pending_count() == 1 {
+        0
+    } else {
+        1
+    }
+}
+
+test "debouncer filters ephemeral swap and target paths" {
+    EventDebouncer.reset_debouncer()
+    assert !EventDebouncer.push_raw_event("/repo/.git/HEAD", "WRITE", 10)
+    assert !EventDebouncer.push_raw_event("/repo/.nudge/store.json", "WRITE", 20)
+    assert !EventDebouncer.push_raw_event("/repo/src/lib.ndg~", "WRITE", 30)
+    assert !EventDebouncer.push_raw_event("/repo/target/debug/nudgec", "WRITE", 40)
+    assert EventDebouncer.pending_count() == 0
+}
+
+test "debouncer coalesces burst writes into single event" {
+    EventDebouncer.reset_debouncer()
+    let p = "/src/math.ndg"
+    // Rapid editor burst: write, write, write within 10ms
+    assert EventDebouncer.push_raw_event(p, "WRITE", 1000)
+    assert EventDebouncer.push_raw_event(p, "WRITE", 1005)
+    assert EventDebouncer.push_raw_event(p, "WRITE", 1010)
+
+    assert EventDebouncer.pending_count() == 1
+
+    // At 1030ms, only 20ms elapsed (< 50ms window) -> not ready
+    let not_ready = EventDebouncer.flush_ready_events(1030)
+    assert len(not_ready) == 0
+
+    // At 1065ms, 55ms elapsed -> flushed!
+    let ready = EventDebouncer.flush_ready_events(1065)
+    assert len(ready) == 1
+    assert ready[0].file_path == p
+    assert ready[0].action == "FILE_MUTATED"
+    assert ready[0].burst_count == 3
+    assert EventDebouncer.pending_count() == 0
+}
+
+test "debouncer recognizes atomic save delete then write pattern" {
+    EventDebouncer.reset_debouncer()
+    let p = "/src/config.ndg"
+    // Atomic rename sequence: delete original, write new buffer
+    assert EventDebouncer.push_raw_event(p, "DELETE", 2000)
+    assert EventDebouncer.push_raw_event(p, "CREATE", 2005)
+    assert EventDebouncer.push_raw_event(p, "WRITE", 2010)
+
+    let drained = EventDebouncer.drain_all()
+    assert len(drained) == 1
+    assert drained[0].action == "FILE_MUTATED"
+    assert drained[0].burst_count == 3
+}
