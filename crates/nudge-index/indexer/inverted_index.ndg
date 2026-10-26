@@ -69,3 +69,36 @@ agent InvertedIndex {
         results
     }
 }
+
+fn main() -> int {
+    InvertedIndex.reset_inverted_index()
+    InvertedIndex.index_term("calculate", "/src/calc.ndg", "calc_tax", 10, "fn calc_tax()")
+    let results = InvertedIndex.search("calculate")
+    if len(results) == 1 and results[0].symbol == "calc_tax" {
+        0
+    } else {
+        1
+    }
+}
+
+test "inverted index case-insensitive and substring search" {
+    InvertedIndex.reset_inverted_index()
+    InvertedIndex.index_term("AuthToken", "/auth.ndg", "validate_token", 5, "fn validate_token()")
+    InvertedIndex.index_term("RefreshToken", "/auth.ndg", "refresh_session", 25, "fn refresh_session()")
+    InvertedIndex.index_term("PaymentGateway", "/pay.ndg", "charge_card", 100, "fn charge_card()")
+
+    // Case-insensitive exact match
+    let r1 = InvertedIndex.search("authtoken")
+    assert len(r1) == 1
+    assert r1[0].symbol == "validate_token"
+
+    // Substring search matching both token entries
+    let r2 = InvertedIndex.search("token")
+    assert len(r2) == 2
+    assert r2[0].symbol == "validate_token"
+    assert r2[1].symbol == "refresh_session"
+
+    // No match
+    let r3 = InvertedIndex.search("nonexistent")
+    assert len(r3) == 0
+}

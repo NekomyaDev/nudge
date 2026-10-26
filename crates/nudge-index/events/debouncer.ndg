@@ -24,6 +24,9 @@ fn is_ephemeral_path(path: string) -> bool {
     if str.contains(path, "/.git/") or str.contains(path, "/.nudge/") or str.contains(path, "/target/") {
         ignored = true
     }
+    if str.starts_with(path, ".git/") or str.starts_with(path, ".nudge/") or str.starts_with(path, "target/") {
+        ignored = true
+    }
     if str.starts_with(path, ".#") or str.starts_with(path, "#") {
         ignored = true
     }
@@ -149,9 +152,12 @@ fn main() -> int {
 test "debouncer filters ephemeral swap and target paths" {
     EventDebouncer.reset_debouncer()
     assert !EventDebouncer.push_raw_event("/repo/.git/HEAD", "WRITE", 10)
+    assert !EventDebouncer.push_raw_event(".git/HEAD", "WRITE", 15)
     assert !EventDebouncer.push_raw_event("/repo/.nudge/store.json", "WRITE", 20)
+    assert !EventDebouncer.push_raw_event(".nudge/store.json", "WRITE", 25)
     assert !EventDebouncer.push_raw_event("/repo/src/lib.ndg~", "WRITE", 30)
     assert !EventDebouncer.push_raw_event("/repo/target/debug/nudgec", "WRITE", 40)
+    assert !EventDebouncer.push_raw_event("target/debug/nudgec", "WRITE", 45)
     assert EventDebouncer.pending_count() == 0
 }
 

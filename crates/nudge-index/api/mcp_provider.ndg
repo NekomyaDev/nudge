@@ -14,8 +14,16 @@ type McpIndexResponse = {
     result_json: string
 }
 
+fn json_escape(s: string) -> string {
+    let mut esc = str.replace(s, "\\", "\\\\")
+    esc = str.replace(esc, "\"", "\\\"")
+    esc = str.replace(esc, "\n", "\\n")
+    esc = str.replace(esc, "\t", "\\t")
+    esc
+}
+
 fn json_quote(s: string) -> string {
-    "\"" + s + "\""
+    "\"" + json_escape(s) + "\""
 }
 
 fn json_list(items: [string]) -> string {
@@ -123,9 +131,10 @@ fn main() -> int {
 }
 
 test "mcp provider formats symbol and blast radius json" {
-    let sym_json = format_symbol_json("compute", "fn", "/math.ndg", 12, "fn compute() -> int")
+    let sym_json = format_symbol_json("compute", "fn", "/math.ndg", 12, "fn compute(prefix: string = \"val\") -> int")
     assert str.contains(sym_json, "\"name\": \"compute\"")
     assert str.contains(sym_json, "\"line\": 12")
+    assert str.contains(sym_json, "\\\"val\\\"")
 
     let blast_json = format_blast_json("compute", 2, 2, ["svc_a", "svc_b"])
     assert str.contains(blast_json, "\"total_impacted\": 2")

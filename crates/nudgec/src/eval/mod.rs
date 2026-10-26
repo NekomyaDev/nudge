@@ -1544,6 +1544,77 @@ fn test_f5_suite() -> bool {{
     }
 
     #[test]
+    fn test_prelude_web_js_engine() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let url_src = std::fs::read_to_string(root_dir.join("prelude/net/url.ndg")).expect("read url.ndg");
+        let policy_src = std::fs::read_to_string(root_dir.join("prelude/web/policy.ndg")).expect("read policy.ndg");
+        let html_src = std::fs::read_to_string(root_dir.join("prelude/web/html.ndg")).expect("read html.ndg");
+        let dom_src = std::fs::read_to_string(root_dir.join("prelude/web/dom.ndg")).expect("read dom.ndg");
+        let snapshot_src = std::fs::read_to_string(root_dir.join("prelude/web/snapshot.ndg")).expect("read snapshot.ndg");
+        let form_src = std::fs::read_to_string(root_dir.join("prelude/web/form.ndg")).expect("read form.ndg");
+        let lexer_src = std::fs::read_to_string(root_dir.join("prelude/web/js/lexer.ndg")).expect("read lexer.ndg");
+        let parser_src = std::fs::read_to_string(root_dir.join("prelude/web/js/parser.ndg")).expect("read parser.ndg");
+        let eval_src = std::fs::read_to_string(root_dir.join("prelude/web/js/eval.ndg")).expect("read eval.ndg");
+        let bridge_src = std::fs::read_to_string(root_dir.join("prelude/web/js/dom_bridge.ndg")).expect("read dom_bridge.ndg");
+
+        let test_src = format!(
+            r##"{url_src}
+{policy_src}
+{html_src}
+{dom_src}
+{snapshot_src}
+{form_src}
+{lexer_src}
+{parser_src}
+{eval_src}
+{bridge_src}
+fn test_f6_suite() -> bool {{
+    // 1. Lexer & Parser
+    let js_code = "var count = 42; function add(a, b) {{ return a + b; }}"
+    let tokens = tokenize_js(js_code)
+    let ast = parse_js_script(tokens)
+    let ok_ast = len(ast.nodes) >= 2
+
+    // 2. Sandboxed execution & 3-tier shield
+    let vm_cfg = default_vm_config()
+    let exec_res = execute_js(ast, vm_cfg)
+    let ok_exec = exec_res.ok
+
+    // Infinite loop step-budget termination test
+    let inf_code = "while (true) {{ var x = 1; }}"
+    let inf_tokens = tokenize_js(inf_code)
+    let inf_ast = parse_js_script(inf_tokens)
+    let inf_res = execute_js(inf_ast, vm_cfg)
+    let ok_shield = !inf_res.ok and str.contains(inf_res.error, "step budget exceeded")
+
+    // 3. DOM Bridge mutation
+    let doc = "<div id=\"app\"><input id=\"target\" value=\"initial\"/></div>"
+    let tree = build_dom_tree(tokenize_html(doc))
+    let pol: PolicyConfig = {{
+        allow: ["*"],
+        workspace_root: "/home",
+        max_redirects: 20
+    }}
+
+    let mutation_script = "document.querySelector(\"#target\").value = \"updated_by_js\";"
+    let bridge_res = execute_dom_script(tree, mutation_script, pol)
+    let ok_mutation = bridge_res.executed
+
+    let snap = make_snapshot("p-1", "https://example.com", "SPA", 1, bridge_res.tree)
+    let ok_snap = str.contains(snap.tree, "updated_by_js")
+
+    ok_ast and ok_exec and ok_shield and ok_mutation and ok_snap
+}}
+"##
+        );
+        let items = parse_src(&test_src);
+        let ok = run_program(&items, "test_f6_suite", &[]).expect("f6 suite succeeds");
+        assert_eq!(ok, NudgeVal::Bool(true));
+    }
+
+    #[test]
     fn test_eval_index_assign_list_and_map() {
         let src = r#"
             fn test_list_assign() -> [int] {

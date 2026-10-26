@@ -5794,8 +5794,15 @@ fn f(c: bool) -> string uses IO {
         );
         paths.sort();
         for path in paths {
-            let src = std::fs::read_to_string(&path)
+            let mut src = std::fs::read_to_string(&path)
                 .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+            if path.to_string_lossy().contains("browser-agent") {
+                let html_src = std::fs::read_to_string(manifest_dir.join("../../prelude/web/html.ndg")).unwrap();
+                let dom_src = std::fs::read_to_string(manifest_dir.join("../../prelude/web/dom.ndg")).unwrap();
+                let snap_src = std::fs::read_to_string(manifest_dir.join("../../prelude/web/snapshot.ndg")).unwrap();
+                let drift_src = std::fs::read_to_string(manifest_dir.join("../../prelude/web/drift.ndg")).unwrap();
+                src = format!("{html_src}\n{dom_src}\n{snap_src}\n{drift_src}\n{src}");
+            }
             let errs = check_src(&src);
             assert!(
                 errs.is_empty(),
