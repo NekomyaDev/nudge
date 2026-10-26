@@ -16,6 +16,9 @@
 //!   W0006 computer-unscoped — a `computer.*` call with no `allow` option:
 //!                           the automation may touch ANY app on the machine;
 //!                           scope it to the apps the task actually needs
+//!   W0008 browser-unscoped — a `browser.*` call with no `allow` option:
+//!                           the automation may access ANY origin;
+//!                           scope it to the origins the task actually needs
 
 use crate::ast::{Expr, ExprKind, Item, Stmt, StmtKind, TypeExpr};
 
@@ -246,6 +249,59 @@ fn has_computer_call(e: &Expr) -> bool {
     }
 }
 
+/// True when the expression contains a `browser.*` call — catching network/side-effects
+/// inside par race branches where thread cancellation is unavailable.
+fn has_browser_call(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Call { func, args, kwargs } => {
+            if let ExprKind::Field { obj, .. } = &func.kind {
+                if let ExprKind::Ident(prefix) = &obj.kind {
+                    if prefix == "browser" {
+                        return true;
+                    }
+                }
+            }
+            has_browser_call(func)
+                || args.iter().any(has_browser_call)
+                || kwargs.iter().any(|(_, v)| has_browser_call(v))
+        }
+        ExprKind::ListLit(xs) | ExprKind::ParAll(xs) | ExprKind::ParRace(xs) => {
+            xs.iter().any(has_browser_call)
+        }
+        ExprKind::Binary { l, r, .. } | ExprKind::Merge { l, r, .. } => {
+            has_browser_call(l) || has_browser_call(r)
+        }
+        ExprKind::Unary { x, .. } => has_browser_call(x),
+        ExprKind::RecordLit(fields) => fields.iter().any(|(_, v)| has_browser_call(v)),
+        ExprKind::Index { obj, idx } => has_browser_call(obj) || has_browser_call(idx),
+        ExprKind::If { cond, then, else_ } => {
+            has_browser_call(cond)
+                || has_browser_call(then)
+                || else_.as_ref().is_some_and(|el| has_browser_call(el))
+        }
+        ExprKind::Field { obj, .. } => has_browser_call(obj),
+        ExprKind::ParMap {
+            coll, kwargs, body, ..
+        } => {
+            has_browser_call(coll)
+                || has_browser_call(body)
+                || kwargs.iter().any(|(_, v)| has_browser_call(v))
+        }
+        ExprKind::Route { arms } => arms
+            .iter()
+            .any(|(_, v, c)| has_browser_call(v) || c.as_ref().is_some_and(has_browser_call)),
+        ExprKind::Spawn(b) => has_browser_call(b),
+        ExprKind::Block(stmts) => stmts.iter().any(|s| match &s.kind {
+            StmtKind::Let { value, .. }
+            | StmtKind::Assign { value, .. }
+            | StmtKind::StateWrite { value, .. } => has_browser_call(value),
+            StmtKind::Assert(e) | StmtKind::ExprStmt(e) => has_browser_call(e),
+            _ => false,
+        }),
+        _ => false,
+    }
+}
+
 fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut Vec<Lint>) {
     match &e.kind {
         ExprKind::LlmCall {
@@ -317,13 +373,18 @@ fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut V
             // W0007: losing par race branches are NOT cancelled — python
             // threads cannot be interrupted after a winner returns, so any
             // side effect a loser performs (computer action, tool call,
-            // llm spend) still happens and still counts against the budget
+            // llm spend, browser network fetch) still happens and still counts against the budget
             for (i, x) in xs.iter().enumerate() {
-                if has_computer_call(x) {
+                if has_computer_call(x) || has_browser_call(x) {
+                    let desc = if has_browser_call(x) {
+                        "browser.*"
+                    } else {
+                        "computer.*"
+                    };
                     out.push(lint(
                         "W0007",
                         format!(
-                            "in {ctx}: race branch {i} performs a computer.* action — losing par race branches are NOT cancelled (their computer actions, tool effects and llm spend still happen and still count against the budget); prefer race for read-only branches"
+                            "in {ctx}: race branch {i} performs a {desc} action — losing par race branches are NOT cancelled (their computer/browser actions, tool effects and spend still happen and still count against the budget); prefer race for read-only branches"
                         ),
                     ));
                 }
@@ -331,6 +392,30 @@ fn walk_expr(ctx: &str, e: &Expr, records: &[(String, Vec<String>)], out: &mut V
             }
         }
         ExprKind::Call { func, args, kwargs } => {
+            if let ExprKind::Field { obj, name } = &func.kind {
+                if let ExprKind::Ident(prefix) = &obj.kind {
+                    if prefix == "browser" {
+                        // W0008: unscoped browser automation
+                        if !kwargs.iter().any(|(k, _)| k == "allow") {
+                            out.push(lint(
+                                "W0008",
+                                format!(
+                                    "in {ctx}: browser.{name} has no `allow` option — the browser automation may access any origin; scope it, e.g. browser.{name}(..., allow = [\"*.example.com\"])"
+                                ),
+                            ));
+                        } else if kwargs.iter().any(|(k, v)| {
+                            k == "allow" && matches!(&v.kind, ExprKind::ListLit(xs) if xs.is_empty())
+                        }) {
+                            out.push(lint(
+                                "W0008",
+                                format!(
+                                    "in {ctx}: browser.{name} passes `allow: []` — an empty scope allows NOTHING and every request will be denied; drop the option for unscoped or list the allowed origins"
+                                ),
+                            ));
+                        }
+                    }
+                }
+            }
             walk_expr(ctx, func, records, out);
             for a in args {
                 walk_expr(ctx, a, records, out);
@@ -699,5 +784,26 @@ mod tests {
         assert!(bare.iter().any(|l| l.code == "W0006"), "{bare:?}");
         let scoped = lints("fn f() -> bool uses Computer { let o = computer.observe(\"Notes\", allow = [\"Notes\"])\n    o.drift.changed }");
         assert!(scoped.is_empty(), "{scoped:?}");
+    }
+
+    #[test]
+    fn unscoped_browser_calls_warn_w0008_and_allow_clears_it() {
+        let bare = lints("fn f() -> int uses Browser { let r = browser.fetch(\"https://example.com\")\n    r.status }");
+        assert!(bare.iter().any(|l| l.code == "W0008"), "{bare:?}");
+
+        let empty = lints("fn f() -> int uses Browser { let r = browser.fetch(\"https://example.com\", allow = [])\n    r.status }");
+        assert!(empty.iter().any(|l| l.code == "W0008" && l.msg.contains("allows NOTHING")), "{empty:?}");
+
+        let scoped = lints("fn f() -> int uses Browser { let r = browser.fetch(\"https://example.com\", allow = [\"example.com\"])\n    r.status }");
+        assert!(scoped.is_empty(), "{scoped:?}");
+    }
+
+    #[test]
+    fn race_branch_with_browser_action_warns_w0007() {
+        let src = r#"fn race_browse() -> int uses Browser {
+    par race [browser.fetch("https://a.com", allow = ["a.com"]).status, 0]
+}"#;
+        let ls = lints(src);
+        assert!(ls.iter().any(|l| l.code == "W0007" && l.msg.contains("browser.*")), "{ls:?}");
     }
 }

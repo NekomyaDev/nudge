@@ -50,14 +50,14 @@
     - TypeScript target: Emit kernel `browser.fetch` mapping to standard `fetch` API.
   - **Acceptance Gate:** Standalone build tests (`nudgec build --target python` & `ts`) pass fixture checks.
 
-- [ ] **Task F1.4 — Safety Lint W0008 (Browser Unscoped)**
+- [X] **Task F1.4 — Safety Lint W0008 (Browser Unscoped)**
   - **Owner / Agent:** `agent:compiler-lint`
   - **Files:** `crates/nudgec/src/lint.rs`
   - **Contract:**
     - Implement `W0008`: Warn at every `browser.*` network call lacking an `allow` domain pattern list.
     - Warn if `allow: []` is passed (empty list denies everything).
     - Update `W0007` to warn if `browser.*` calls occur within `par race` branches under Python target.
-  - **Acceptance Gate:** `cargo test -p nudgec lint` validates W0008 triggers and fixes.
+  - **Acceptance Gate:** `cargo test -p nudgec lint` validates W0008 triggers and fixes. (PASSED: 16/16 tests green)
 
 ---
 
