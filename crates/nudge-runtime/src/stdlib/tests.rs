@@ -1077,4 +1077,65 @@ mod computer_tests {
         )
         .is_err());
     }
+
+    #[test]
+    fn test_browser_fetch_file_fixture_and_kill_switch() {
+        use std::io::Write;
+        let temp_dir = std::env::temp_dir().join("nudge_browser_test");
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let fixture_path = temp_dir.join("sample.html");
+        {
+            let mut f = std::fs::File::create(&fixture_path).expect("create test file");
+            f.write_all(b"<html><body><h1>Hello Nudge Browser</h1></body></html>")
+                .expect("write test file");
+        }
+
+        let file_url = format!("file://{}", fixture_path.to_str().unwrap());
+
+        // 1. Successful file fetch
+        let res =
+            crate::stdlib::browser::execute("browser.fetch", vec![Value::String(file_url.clone())])
+                .expect("browser.fetch file fixture works");
+
+        match res {
+            Value::Map(m) => {
+                assert_eq!(m.get("status"), Some(&Value::Int(200)));
+                assert_eq!(m.get("url"), Some(&Value::String(file_url)));
+                let body = m.get("body").expect("body present");
+                assert_eq!(
+                    body,
+                    &Value::String(
+                        "<html><body><h1>Hello Nudge Browser</h1></body></html>".to_string()
+                    )
+                );
+            }
+            other => panic!("expected Map, got {other:?}"),
+        }
+
+        // 2. Unsupported scheme fail-closed
+        let bad_scheme = crate::stdlib::browser::execute(
+            "browser.fetch",
+            vec![Value::String("ftp://example.com/test.txt".to_string())],
+        );
+        assert!(bad_scheme.is_err());
+        assert!(bad_scheme
+            .unwrap_err()
+            .contains("BrowserDenied: unsupported scheme"));
+
+        // 3. Kill-switch check
+        std::env::set_var("NUDGE_BROWSER_KILL", "1");
+        let killed = crate::stdlib::browser::execute(
+            "browser.fetch",
+            vec![Value::String("http://example.com".to_string())],
+        );
+        std::env::remove_var("NUDGE_BROWSER_KILL");
+        assert!(killed.is_err());
+        assert!(killed
+            .unwrap_err()
+            .contains("BrowserDenied: NUDGE_BROWSER_KILL=1"));
+
+        // Clean up
+        let _ = std::fs::remove_file(fixture_path);
+        let _ = std::fs::remove_dir(temp_dir);
+    }
 }

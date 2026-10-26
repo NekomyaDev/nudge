@@ -3867,8 +3867,15 @@ fn run(app: string) -> bool uses Computer {
 
     #[test]
     fn browser_infers_the_browser_effect() {
-        let missing = check_src("fn f(url: string) -> int {\n    let r = browser.fetch(url)\n    r.status\n}");
-        assert!(missing.iter().any(|e| e.code == "E0301" && e.msg.contains("Browser")), "{missing:?}");
+        let missing = check_src(
+            "fn f(url: string) -> int {\n    let r = browser.fetch(url)\n    r.status\n}",
+        );
+        assert!(
+            missing
+                .iter()
+                .any(|e| e.code == "E0301" && e.msg.contains("Browser")),
+            "{missing:?}"
+        );
 
         let ok = check_src("fn f(url: string) -> int uses Browser {\n    let r = browser.fetch(url)\n    r.status\n}");
         assert!(ok.is_empty(), "{ok:?}");

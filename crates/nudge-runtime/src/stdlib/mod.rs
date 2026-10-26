@@ -2,6 +2,7 @@
 //!
 //! Provides built-in functions for I/O, math, string operations, and more.
 
+pub mod browser;
 pub mod computer;
 pub mod env;
 pub mod io;
@@ -46,6 +47,9 @@ pub fn register_all() -> HashMap<String, Value> {
 
     // Register computer-use functions (v1.5, docs/computer-use.md)
     functions.extend(computer::register());
+
+    // Register browser-use functions (v1.6, docs/browser-use.md)
+    functions.extend(browser::register());
 
     // Register os functions
     functions.extend(os::register());
