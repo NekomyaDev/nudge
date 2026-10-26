@@ -99,7 +99,7 @@ fn validate_redirect_hop(current_hops: int, max_hops: int) -> PolicyDecision {
     if current_hops >= limit {
         res = {
             allowed: false,
-            reason: "Exceeded maximum redirect hop limit of 20"
+            reason: "Exceeded maximum redirect hop limit of " + str.to_string(limit)
         }
     }
     res

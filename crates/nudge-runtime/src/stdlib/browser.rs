@@ -457,6 +457,7 @@ fn execute_fetch(args: Vec<Value>) -> Result<Value, String> {
     let mut body: Option<String> = None;
     let mut headers: Vec<(String, String)> = Vec::new();
     let mut timeout_ms: u64 = 20_000;
+    let mut max_redirects: u32 = 5;
 
     // Optional options record / map
     if let Some(Value::Map(m)) = args.get(1) {
@@ -470,6 +471,9 @@ fn execute_fetch(args: Vec<Value>) -> Result<Value, String> {
             if *t > 0 {
                 timeout_ms = *t as u64;
             }
+        }
+        if let Some(Value::Int(r)) = m.get("max_redirects") {
+            max_redirects = (*r).max(0) as u32;
         }
         if let Some(Value::List(h_list)) = m.get("headers") {
             for item in h_list {
@@ -504,7 +508,7 @@ fn execute_fetch(args: Vec<Value>) -> Result<Value, String> {
         ));
     }
 
-    execute_network_fetch(&url, &method, headers, body, timeout_ms, start)
+    execute_network_fetch(&url, &method, headers, body, timeout_ms, max_redirects, start)
 }
 
 fn execute_file_fetch(path: &str, url: &str, start: Instant) -> Result<Value, String> {
@@ -555,12 +559,14 @@ fn execute_network_fetch(
     headers: Vec<(String, String)>,
     body: Option<String>,
     timeout_ms: u64,
+    max_redirects: u32,
     start: Instant,
 ) -> Result<Value, String> {
     use std::io::Read;
     use std::time::Duration;
 
     let agent = ureq::AgentBuilder::new()
+        .redirects(max_redirects)
         .timeout(Duration::from_millis(timeout_ms))
         .build();
 
@@ -656,6 +662,7 @@ fn execute_network_fetch(
     _headers: Vec<(String, String)>,
     _body: Option<String>,
     _timeout_ms: u64,
+    _max_redirects: u32,
     start: Instant,
 ) -> Result<Value, String> {
     // When live-provider feature is disabled, fail gracefully or provide deterministic test fixture

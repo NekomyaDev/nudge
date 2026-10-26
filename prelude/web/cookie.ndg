@@ -96,8 +96,13 @@ fn parse_set_cookie(header_value: string, default_domain: string) -> Cookie {
 }
 
 fn domain_matches_cookie(cookie_domain: string, host: string) -> bool {
-    let cd = str.lower(str.trim(cookie_domain))
+    let mut cd = str.lower(str.trim(cookie_domain))
     let h = str.lower(str.trim(host))
+
+    // RFC 6265 §4.1.2.3: ignore leading dot in cookie domain attribute
+    if str.starts_with(cd, ".") {
+        cd = str.substring(cd, 1)
+    }
 
     if cd == "" or h == "" {
         false

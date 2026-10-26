@@ -1414,7 +1414,21 @@ fn test_f4_suite() -> bool {{
     }}
     let ok_isolation = h1_has_cookie and !h2_has_cookie
 
-    let doc = "<div id=\"app\"><form id=\"f1\" method=\"POST\" action=\"/api/login\"><input type=\"text\" name=\"user\" value=\"\"/><input type=\"password\" name=\"pass\" value=\"\"/><button type=\"submit\" id=\"sub\">Login</button></form></div>"
+    // Leading dot RFC 6265 cookie test
+    let dot_cookie_hdr: [Header] = [
+        {{ name: "Set-Cookie", value: "track=xyz; Domain=.example.com; Path=/; Secure" }}
+    ]
+    let prof1_with_dot = apply_response_headers(prof1_updated, dot_cookie_hdr, "example.com")
+    let hdrs_sub = build_profile_headers(prof1_with_dot, "sub.example.com", "/dashboard", true, [])
+    let mut sub_has_dot_cookie = false
+    for h in hdrs_sub {{
+        if str.contains(h.value, "track=xyz") {{
+            sub_has_dot_cookie = true
+        }}
+    }}
+    let ok_dot_cookie = sub_has_dot_cookie
+
+    let doc = "<div id=\"app\"><form id=\"f1\" method=\"POST\" action=\"/api/login\"><input type=\"text\" name=\"user\" value=\"\"/><input type=\"password\" name=\"pass\" value=\"\"/><input type=\"checkbox\" name=\"remember\" value=\"yes\"/><button type=\"submit\" id=\"sub\">Login</button></form></div>"
     let tokens = tokenize_html(doc)
     let tree = build_dom_tree(tokens)
 
@@ -1426,14 +1440,14 @@ fn test_f4_suite() -> bool {{
     let sub = build_form_submission(filled_tree, 2, "https://example.com/login.html")
     let ok_sub_method = sub.method == "POST"
     let ok_sub_action = sub.action == "https://example.com/api/login"
-    let ok_sub_body = str.contains(sub.body, "user=alice%40example.com") and str.contains(sub.body, "pass=secret+123%26pass")
+    let ok_sub_body = str.contains(sub.body, "user=alice%40example.com") and str.contains(sub.body, "pass=secret+123%26pass") and !str.contains(sub.body, "remember")
 
     let snap0 = make_snapshot("p-1", "https://example.com", "Test App", 1, filled_tree)
 
-    let click_res = execute_click_target(filled_tree, 5, snap0)
+    let click_res = execute_click_target(filled_tree, 6, snap0)
     let ok_click = click_res.ok and click_res.action_sent
 
-    let compound_res = execute_compound_clicks(filled_tree, [5], 10, snap0)
+    let compound_res = execute_compound_clicks(filled_tree, [6], 10, snap0)
     let ok_compound = compound_res.ok
 
     let type_res = execute_type_action(filled_tree, 3, "bob", 2, snap0)
@@ -1445,7 +1459,7 @@ fn test_f4_suite() -> bool {{
     let wait_fail = execute_wait_selector(filled_tree, "#nonexistent", 1000, snap0)
     let ok_wait_fail = !wait_fail.ok and wait_fail.timed_out
 
-    ok_locale and ok_isolation and ok_sub_method and ok_sub_action and ok_sub_body and ok_click and ok_compound and ok_type and ok_wait and ok_wait_fail
+    ok_locale and ok_isolation and ok_dot_cookie and ok_sub_method and ok_sub_action and ok_sub_body and ok_click and ok_compound and ok_type and ok_wait and ok_wait_fail
 }}
 "##
         );

@@ -153,8 +153,12 @@ fn extract_form_fields(tree: DomTree, form_ref: int) -> [{ name: string, value: 
 
             if is_descendant {
                 let name_attr = get_attr_value(n.attrs, "name", "")
-                if name_attr != "" {
-                    out = out + [{ name: name_attr, value: n.value }]
+                let input_type = str.lower(get_attr_value(n.attrs, "type", "text"))
+                let is_checkable = (input_type == "checkbox" or input_type == "radio")
+                let is_checked = has_attr(n.attrs, "checked") or (n.value == "on" or n.value == "checked" or n.value == "true")
+                if name_attr != "" and (!is_checkable or is_checked) {
+                    let field_val = if is_checkable and n.value == "" { "on" } else { n.value }
+                    out = out + [{ name: name_attr, value: field_val }]
                 }
             }
         }

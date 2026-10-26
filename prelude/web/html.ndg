@@ -20,8 +20,18 @@ fn decode_entities(s: string) -> string {
     out = str.replace(out, "&gt;", ">")
     out = str.replace(out, "&quot;", "\"")
     out = str.replace(out, "&#39;", "'")
+    out = str.replace(out, "&#x27;", "'")
+    out = str.replace(out, "&#x22;", "\"")
+    out = str.replace(out, "&#34;", "\"")
     out = str.replace(out, "&apos;", "'")
     out = str.replace(out, "&nbsp;", " ")
+    out = str.replace(out, "&#160;", " ")
+    out = str.replace(out, "&#xA0;", " ")
+    out = str.replace(out, "&mdash;", "—")
+    out = str.replace(out, "&ndash;", "–")
+    out = str.replace(out, "&copy;", "©")
+    out = str.replace(out, "&euro;", "€")
+    out = str.replace(out, "&pound;", "£")
     out
 }
 
