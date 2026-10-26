@@ -107,7 +107,7 @@ agent FileManagerApp {
         }
     }
 
-    fn navigate_to(p: string) uses Workspace {
+    fn navigate_to(p: string) uses Workspace, Store {
         let norm = normalize_vfs_path(p)
         if norm != state.current_path {
             state.history_back = state.history_back + [state.current_path]
@@ -132,7 +132,7 @@ agent FileManagerApp {
         }
     }
 
-    fn nav_back() uses UI, Workspace {
+    fn nav_back() uses UI, Workspace, Store {
         let count = len(state.history_back)
         if count > 0 {
             let prev = state.history_back[count - 1]
@@ -149,7 +149,7 @@ agent FileManagerApp {
         }
     }
 
-    fn nav_forward() uses UI, Workspace {
+    fn nav_forward() uses UI, Workspace, Store {
         let count = len(state.history_forward)
         if count > 0 {
             let next_p = state.history_forward[count - 1]
@@ -166,67 +166,67 @@ agent FileManagerApp {
         }
     }
 
-    fn nav_up() uses UI, Workspace {
+    fn nav_up() uses UI, Workspace, Store {
         let parent_p = parent_vfs_path(state.current_path)
         FileManagerApp.navigate_to(parent_p)
     }
 
-    fn reload_current() uses UI, Workspace {
+    fn reload_current() uses UI, Workspace, Store {
         VfsBridge.invalidate(state.current_path)
         FileManagerApp.refresh()
     }
 
-    fn nav_home() uses UI, Workspace {
+    fn nav_home() uses UI, Workspace, Store {
         let target = if workspace.exists("/home/neko") { "/home/neko" } else { "." }
         FileManagerApp.navigate_to(target)
     }
 
-    fn nav_root() uses UI, Workspace {
+    fn nav_root() uses UI, Workspace, Store {
         let target = if workspace.exists("/") { "/" } else { "." }
         FileManagerApp.navigate_to(target)
     }
 
-    fn nav_desktop() uses UI, Workspace {
+    fn nav_desktop() uses UI, Workspace, Store {
         let target = if workspace.exists("/home/neko/Masaüstü") { "/home/neko/Masaüstü" } else { "." }
         FileManagerApp.navigate_to(target)
     }
 
-    fn nav_docs() uses UI, Workspace {
+    fn nav_docs() uses UI, Workspace, Store {
         let target = if workspace.exists("/home/neko/Belgeler") { "/home/neko/Belgeler" } else { "docs" }
         FileManagerApp.navigate_to(target)
     }
 
-    fn nav_downloads() uses UI, Workspace {
+    fn nav_downloads() uses UI, Workspace, Store {
         let target = if workspace.exists("/home/neko/İndirilenler") { "/home/neko/İndirilenler" } else { "." }
         FileManagerApp.navigate_to(target)
     }
 
-    fn nav_music() uses UI, Workspace {
+    fn nav_music() uses UI, Workspace, Store {
         let target = if workspace.exists("/home/neko/Müzik") { "/home/neko/Müzik" } else { "." }
         FileManagerApp.navigate_to(target)
     }
 
-    fn nav_pictures() uses UI, Workspace {
+    fn nav_pictures() uses UI, Workspace, Store {
         let target = if workspace.exists("/home/neko/Resimler") { "/home/neko/Resimler" } else { "." }
         FileManagerApp.navigate_to(target)
     }
 
-    fn nav_videos() uses UI, Workspace {
+    fn nav_videos() uses UI, Workspace, Store {
         let target = if workspace.exists("/home/neko/Videolar") { "/home/neko/Videolar" } else { "." }
         FileManagerApp.navigate_to(target)
     }
 
-    fn nav_trash() uses UI, Workspace {
+    fn nav_trash() uses UI, Workspace, Store {
         let target = if workspace.exists("/home/neko/.local/share/Trash") { "/home/neko/.local/share/Trash" } else { "." }
         FileManagerApp.navigate_to(target)
     }
 
-    fn nav_nvfs() uses UI, Workspace {
+    fn nav_nvfs() uses UI, Workspace, Store {
         let target = if workspace.exists("/tmp") { "/tmp" } else { "." }
         FileManagerApp.navigate_to(target)
     }
 
-    fn on_tab_click(clicked_id: string) uses UI, Workspace {
+    fn on_tab_click(clicked_id: string) uses UI, Workspace, Store {
         let idx_str = str.replace(clicked_id, "tab_sel_", "")
         let target_idx = if idx_str == "0" {
             0
@@ -247,7 +247,7 @@ agent FileManagerApp {
         }
     }
 
-    fn on_tab_close(clicked_id: string) uses UI, Workspace {
+    fn on_tab_close(clicked_id: string) uses UI, Workspace, Store {
         let idx_str = str.replace(clicked_id, "tab_close_", "")
         let target_idx = if idx_str == "0" {
             0
@@ -276,20 +276,20 @@ agent FileManagerApp {
         }
     }
 
-    fn on_new_tab() uses UI, Workspace {
+    fn on_new_tab() uses UI, Workspace, Store {
         state.tabs = state.tabs + [state.current_path]
         state.active_tab_idx = len(state.tabs) - 1
         FileManagerApp.refresh()
     }
 
-    fn on_crumb_click(clicked_id: string) uses UI, Workspace {
+    fn on_crumb_click(clicked_id: string) uses UI, Workspace, Store {
         let target_p = str.replace(clicked_id, "crumb_", "")
         if workspace.exists(target_p) {
             FileManagerApp.navigate_to(target_p)
         }
     }
 
-    fn on_item_click(clicked_id: string) uses UI, Workspace {
+    fn on_item_click(clicked_id: string) uses UI, Workspace, Store {
         let mut clean_name = str.replace(clicked_id, "entry_", "")
         clean_name = str.replace(clean_name, "sz_", "")
         clean_name = str.replace(clean_name, "perm_", "")
@@ -333,7 +333,7 @@ agent FileManagerApp {
         state.view_mode = "details"
     }
 
-    fn toggle_split() uses UI, Workspace {
+    fn toggle_split() uses UI, Workspace, Store {
         state.is_split = !state.is_split
         if state.is_split {
             let target_split = if workspace.exists(state.split_path) { state.split_path } else { state.current_path }
@@ -385,7 +385,7 @@ agent FileManagerApp {
         state.edit_path_mode = !state.edit_path_mode
     }
 
-    fn on_path_input_change(new_val: string) uses UI, Workspace {
+    fn on_path_input_change(new_val: string) uses UI, Workspace, Store {
         state.current_path = new_val
         FileManagerApp.refresh()
     }
@@ -439,7 +439,7 @@ agent FileManagerApp {
         }
     }
 
-    fn paste_clipboard() uses UI, Workspace {
+    fn paste_clipboard() uses UI, Workspace, Store {
         if state.clipboard_path != "" {
             let dest_name = "copy_of_" + state.clipboard_name
             let dest_path = if state.current_path == "." {
@@ -455,7 +455,7 @@ agent FileManagerApp {
         }
     }
 
-    fn create_new_folder() uses UI, Workspace {
+    fn create_new_folder() uses UI, Workspace, Store {
         let keep_file = if state.current_path == "." {
             "New_Folder/.keep"
         } else if state.current_path == "/" {
@@ -476,7 +476,7 @@ agent FileManagerApp {
         FileManagerApp.refresh()
     }
 
-    fn undo_last_action() uses UI, Workspace, WorkspaceDelete {
+    fn undo_last_action() uses UI, Workspace, WorkspaceDelete, Store {
         if state.last_created_path != "" {
             workspace.delete(state.last_created_path, recursive = true)
             state.last_created_path = ""
@@ -485,7 +485,7 @@ agent FileManagerApp {
         }
     }
 
-    fn open_selected_directory() uses UI, Workspace {
+    fn open_selected_directory() uses UI, Workspace, Store {
         if state.selected_path != "" {
             let mut is_d = false
             for e in state.filtered_entries {

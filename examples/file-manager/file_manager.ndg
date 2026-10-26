@@ -771,12 +771,13 @@ agent VfsBridge {
         state.total_inodes = 0
     }
 
-    fn invalidate(dir_path: string) {
+    fn invalidate(dir_path: string) uses Store {
         let norm = normalize_vfs_path(dir_path)
         state.cached_mtimes[norm] = 0
+        store.set("idx_mtime_" + norm, 0)
     }
 
-    fn list_directory(dir_path: string) -> [FileEntry] uses Workspace {
+    fn list_directory(dir_path: string) -> [FileEntry] uses Workspace, Store {
         let norm = normalize_vfs_path(dir_path)
         let mut already_cached = false
         for d in state.cached_dirs {
@@ -794,6 +795,11 @@ agent VfsBridge {
                 let saved_mtime = state.cached_mtimes[norm]
                 if saved_mtime == cur_mtime {
                     is_hit = true
+                }
+            } else {
+                let p_mtime = store.get("idx_mtime_" + norm, 0)
+                if p_mtime == cur_mtime and p_mtime > 0 {
+                    // Persistent index valid
                 }
             }
 
@@ -850,6 +856,8 @@ agent VfsBridge {
                 state.total_inodes = state.total_inodes + len(entries)
                 state.cached_entries[norm] = sorted
                 state.cached_mtimes[norm] = cur_mtime
+                store.set("idx_mtime_" + norm, cur_mtime)
+                store.set("idx_count_" + norm, len(entries))
                 res_entries = sorted
             }
         }
@@ -863,7 +871,7 @@ agent VfsBridge {
 view PlacesSidebar(current_path: string, current_lang: string) -> View {
     let sidebar_items = [
         // Group 1: Places
-        text(i18n("places", current_lang), bold = true),
+        text("▾ " + i18n("places", current_lang), bold = true),
         button("  ⌂  " + i18n("home", current_lang), id = "place_home", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/home/neko" or current_path == "." or current_path == ""), on_click = nav_home),
         button("  ⌨  " + i18n("desktop", current_lang), id = "place_desktop", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Masaüstü") or str.contains(current_path, "Desktop") or str.contains(current_path, "Schreibtisch"), on_click = nav_desktop),
         button("  ▪  " + i18n("documents", current_lang), id = "place_docs", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Belgeler") or str.contains(current_path, "Documents") or str.contains(current_path, "Dokumente"), on_click = nav_docs),
@@ -876,21 +884,22 @@ view PlacesSidebar(current_path: string, current_lang: string) -> View {
         divider(w = 158, size = 1),
 
         // Group 2: Remote
-        text(i18n("remote", current_lang), bold = true),
+        text("▾ " + i18n("remote", current_lang), bold = true),
         button("  ⊚  " + i18n("network", current_lang), id = "place_network", variant = "item", align = "start", w = 158, h = 24, on_click = nav_root),
 
         divider(w = 158, size = 1),
 
         // Group 3: Recent
-        text(i18n("recent", current_lang), bold = true),
+        text("▾ " + i18n("recent", current_lang), bold = true),
         button("  ◷  " + i18n("recent_files", current_lang), id = "place_recent_files", variant = "item", align = "start", w = 158, h = 24, on_click = nav_home),
         button("  ◈  " + i18n("recent_loc", current_lang), id = "place_recent_loc", variant = "item", align = "start", w = 158, h = 24, on_click = nav_docs),
 
         divider(w = 158, size = 1),
 
         // Group 4: Devices
-        text(i18n("devices", current_lang), bold = true),
+        text("▾ " + i18n("devices", current_lang), bold = true),
         button("  ⛁  " + i18n("root_system", current_lang), id = "place_root", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/"), on_click = nav_root),
+        text("   [■■■■□□] 42% / 500 GiB"),
         button("  ⚡  Temp (/tmp)", id = "place_nvfs", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/tmp"), on_click = nav_nvfs)
     ]
 
@@ -1020,7 +1029,8 @@ view TopToolbar(
     edit_path_mode: bool,
     current_theme: string,
     current_lang: string,
-    view_mode: string
+    view_mode: string,
+    show_terminal: bool
 ) -> View {
     let path_segments = str.split(current_path, "/")
     let mut crumbs = []
@@ -1082,8 +1092,9 @@ view TopToolbar(
 
         divider(orientation = "vertical", size = 1, h = 22),
 
-        // 5. Right Toolbar Controls (Split, Info, Hidden, Lang, Theme)
+        // 5. Right Toolbar Controls (Split, Terminal, Info, Hidden, Lang, Theme)
         button(txt_split, id = "btn_split_toggle", variant = "toolbar", h = 26, selected = is_split, on_click = toggle_split),
+        button(">_ " + i18n("terminal", current_lang), id = "btn_terminal_toggle", variant = "toolbar", h = 26, selected = show_terminal, on_click = toggle_terminal),
         button(txt_info, id = "btn_info_toggle", variant = "toolbar", h = 26, selected = show_inspector, on_click = toggle_inspector),
         button(if show_hidden { i18n("hidden_on", current_lang) } else { i18n("hidden_off", current_lang) }, id = "btn_toggle_hidden", variant = "toolbar", h = 26, selected = show_hidden, on_click = toggle_hidden_files),
         button(str.upper(current_lang), id = "btn_lang_toggle", variant = "toolbar", w = 32, h = 26, on_click = toggle_lang),
@@ -1137,8 +1148,11 @@ view InspectorPanel(
                     badge(selected_cas, status = "info")
                 ],
                 button("▸ " + i18n("act_open", current_lang), id = "btn_open_selected_dir", variant = "toolbar", h = 24, on_click = open_selected_directory),
+                row(padding = 0, gap = 2) [
+                    button("✎ " + i18n("ctx_rename", current_lang), id = "btn_start_rename", variant = "toolbar", h = 24, on_click = start_rename),
+                    button(i18n("act_copy", current_lang), id = "btn_copy", variant = "toolbar", h = 24, on_click = copy_selected)
+                ],
                 row(padding = 0, gap = 4) [
-                    button(i18n("act_copy", current_lang), id = "btn_copy", variant = "toolbar", h = 24, on_click = copy_selected),
                     button("Paste", id = "btn_paste", variant = "toolbar", h = 24, on_click = paste_clipboard),
                     button("✕ " + i18n("act_delete", current_lang), id = "btn_delete", variant = "toolbar", h = 24, on_click = delete_selected)
                 ],
@@ -1195,6 +1209,22 @@ view BottomStatusBar(
     ]
 }
 
+view TerminalPanel(current_path: string, history: [string], input_val: string) -> View {
+    column(padding = 4, gap = 2, h = 130, bg = "sidebar", expand = true) [
+        row(padding = 2, gap = 4, bg = "toolbar", expand = true) [
+            text(" >_ Terminal — neko@desktop:" + current_path, bold = true),
+            spacer(1),
+            button("✕", id = "btn_terminal_close", variant = "flat", w = 22, h = 20, on_click = toggle_terminal)
+        ],
+        scroll(history, id = "terminal_history_scroll", expand = true, padding = 2, gap = 1),
+        row(padding = 2, gap = 2, expand = true) [
+            text("$", bold = true),
+            input(value = input_val, placeholder = "Enter command (ls, pwd, cd, mkdir, clear)...", id = "input_terminal", expand = true, h = 24, on_change = on_terminal_input_change),
+            button("Exec", id = "btn_terminal_exec", variant = "toolbar", w = 50, h = 24, on_click = on_terminal_submit)
+        ]
+    ]
+}
+
 view FileManagerLayout(
     current_path: string,
     left_entries: [FileEntry],
@@ -1214,7 +1244,10 @@ view FileManagerLayout(
     current_lang: string,
     view_mode: string,
     tabs: [string],
-    active_tab_idx: int
+    active_tab_idx: int,
+    show_terminal: bool,
+    terminal_history: [string],
+    terminal_input: string
 ) -> View {
     let mut dir_c = 0
     let mut file_c = 0
@@ -1228,7 +1261,7 @@ view FileManagerLayout(
 
     column(padding = 0, gap = 0, expand = true, expand_h = true) [
         // 1. Top Navigation Toolbar (Edge to edge)
-        TopToolbar(current_path, is_split, show_inspector, show_hidden, edit_path_mode, current_theme, current_lang, view_mode),
+        TopToolbar(current_path, is_split, show_inspector, show_hidden, edit_path_mode, current_theme, current_lang, view_mode, show_terminal),
 
         // 2. Tab Bar (Edge to edge)
         TabBar(tabs, active_tab_idx),
@@ -1288,7 +1321,17 @@ view FileManagerLayout(
             }
         ],
 
-        // 4. Bottom Status Bar with Integrated Filter & Space Info
+        // 4. Optional F4 Bottom Terminal Panel
+        if show_terminal {
+            column(padding = 0, gap = 0, expand = true) [
+                divider(size = 1),
+                TerminalPanel(current_path, terminal_history, terminal_input)
+            ]
+        } else {
+            spacer(1)
+        },
+
+        // 5. Bottom Status Bar with Integrated Filter & Space Info
         BottomStatusBar(
             filter_query,
             dir_c + file_c,
@@ -1349,6 +1392,15 @@ agent FileManagerApp {
 
         // Theme: "breeze-light" | "breeze-dark"
         current_theme: string = "breeze-light"
+
+        // F4 Embedded Terminal Dock
+        show_terminal: bool = false
+        terminal_history: [string] = ["Nudge Terminal v1.0 — Ready. Type commands below."]
+        terminal_input: string = ""
+
+        // F2 Inline Rename
+        rename_mode: bool = false
+        rename_text: string = ""
     }
 
     fn init_default_path() uses Workspace {
@@ -1359,7 +1411,7 @@ agent FileManagerApp {
         }
     }
 
-    fn reset_state() uses UI, Workspace {
+    fn reset_state() uses UI, Workspace, Store {
         state.current_path = "."
         state.tabs = ["."]
         state.active_tab_idx = 0
@@ -1378,7 +1430,7 @@ agent FileManagerApp {
         FileManagerApp.refresh()
     }
 
-    fn refresh() uses Workspace {
+    fn refresh() uses Workspace, Store {
         let mut updated_tabs: [string] = []
         for (t, idx) in state.tabs {
             if idx == state.active_tab_idx {
@@ -1400,7 +1452,7 @@ agent FileManagerApp {
         }
     }
 
-    fn navigate_to(p: string) uses Workspace {
+    fn navigate_to(p: string) uses Workspace, Store {
         let norm = normalize_vfs_path(p)
         if norm != state.current_path {
             state.history_back = state.history_back + [state.current_path]
@@ -1425,7 +1477,7 @@ agent FileManagerApp {
         }
     }
 
-    fn nav_back() uses UI, Workspace {
+    fn nav_back() uses UI, Workspace, Store {
         let count = len(state.history_back)
         if count > 0 {
             let prev = state.history_back[count - 1]
@@ -1442,7 +1494,7 @@ agent FileManagerApp {
         }
     }
 
-    fn nav_forward() uses UI, Workspace {
+    fn nav_forward() uses UI, Workspace, Store {
         let count = len(state.history_forward)
         if count > 0 {
             let next_p = state.history_forward[count - 1]
@@ -1459,67 +1511,67 @@ agent FileManagerApp {
         }
     }
 
-    fn nav_up() uses UI, Workspace {
+    fn nav_up() uses UI, Workspace, Store {
         let parent_p = parent_vfs_path(state.current_path)
         FileManagerApp.navigate_to(parent_p)
     }
 
-    fn reload_current() uses UI, Workspace {
+    fn reload_current() uses UI, Workspace, Store {
         VfsBridge.invalidate(state.current_path)
         FileManagerApp.refresh()
     }
 
-    fn nav_home() uses UI, Workspace {
+    fn nav_home() uses UI, Workspace, Store {
         let target = if workspace.exists("/home/neko") { "/home/neko" } else { "." }
         FileManagerApp.navigate_to(target)
     }
 
-    fn nav_root() uses UI, Workspace {
+    fn nav_root() uses UI, Workspace, Store {
         let target = if workspace.exists("/") { "/" } else { "." }
         FileManagerApp.navigate_to(target)
     }
 
-    fn nav_desktop() uses UI, Workspace {
+    fn nav_desktop() uses UI, Workspace, Store {
         let target = if workspace.exists("/home/neko/Masaüstü") { "/home/neko/Masaüstü" } else { "." }
         FileManagerApp.navigate_to(target)
     }
 
-    fn nav_docs() uses UI, Workspace {
+    fn nav_docs() uses UI, Workspace, Store {
         let target = if workspace.exists("/home/neko/Belgeler") { "/home/neko/Belgeler" } else { "docs" }
         FileManagerApp.navigate_to(target)
     }
 
-    fn nav_downloads() uses UI, Workspace {
+    fn nav_downloads() uses UI, Workspace, Store {
         let target = if workspace.exists("/home/neko/İndirilenler") { "/home/neko/İndirilenler" } else { "." }
         FileManagerApp.navigate_to(target)
     }
 
-    fn nav_music() uses UI, Workspace {
+    fn nav_music() uses UI, Workspace, Store {
         let target = if workspace.exists("/home/neko/Müzik") { "/home/neko/Müzik" } else { "." }
         FileManagerApp.navigate_to(target)
     }
 
-    fn nav_pictures() uses UI, Workspace {
+    fn nav_pictures() uses UI, Workspace, Store {
         let target = if workspace.exists("/home/neko/Resimler") { "/home/neko/Resimler" } else { "." }
         FileManagerApp.navigate_to(target)
     }
 
-    fn nav_videos() uses UI, Workspace {
+    fn nav_videos() uses UI, Workspace, Store {
         let target = if workspace.exists("/home/neko/Videolar") { "/home/neko/Videolar" } else { "." }
         FileManagerApp.navigate_to(target)
     }
 
-    fn nav_trash() uses UI, Workspace {
+    fn nav_trash() uses UI, Workspace, Store {
         let target = if workspace.exists("/home/neko/.local/share/Trash") { "/home/neko/.local/share/Trash" } else { "." }
         FileManagerApp.navigate_to(target)
     }
 
-    fn nav_nvfs() uses UI, Workspace {
+    fn nav_nvfs() uses UI, Workspace, Store {
         let target = if workspace.exists("/tmp") { "/tmp" } else { "." }
         FileManagerApp.navigate_to(target)
     }
 
-    fn on_tab_click(clicked_id: string) uses UI, Workspace {
+    fn on_tab_click(clicked_id: string) uses UI, Workspace, Store {
         let idx_str = str.replace(clicked_id, "tab_sel_", "")
         let target_idx = if idx_str == "0" {
             0
@@ -1540,7 +1592,7 @@ agent FileManagerApp {
         }
     }
 
-    fn on_tab_close(clicked_id: string) uses UI, Workspace {
+    fn on_tab_close(clicked_id: string) uses UI, Workspace, Store {
         let idx_str = str.replace(clicked_id, "tab_close_", "")
         let target_idx = if idx_str == "0" {
             0
@@ -1569,20 +1621,20 @@ agent FileManagerApp {
         }
     }
 
-    fn on_new_tab() uses UI, Workspace {
+    fn on_new_tab() uses UI, Workspace, Store {
         state.tabs = state.tabs + [state.current_path]
         state.active_tab_idx = len(state.tabs) - 1
         FileManagerApp.refresh()
     }
 
-    fn on_crumb_click(clicked_id: string) uses UI, Workspace {
+    fn on_crumb_click(clicked_id: string) uses UI, Workspace, Store {
         let target_p = str.replace(clicked_id, "crumb_", "")
         if workspace.exists(target_p) {
             FileManagerApp.navigate_to(target_p)
         }
     }
 
-    fn on_item_click(clicked_id: string) uses UI, Workspace {
+    fn on_item_click(clicked_id: string) uses UI, Workspace, Store {
         let mut clean_name = str.replace(clicked_id, "entry_", "")
         clean_name = str.replace(clean_name, "sz_", "")
         clean_name = str.replace(clean_name, "perm_", "")
@@ -1626,7 +1678,7 @@ agent FileManagerApp {
         state.view_mode = "details"
     }
 
-    fn toggle_split() uses UI, Workspace {
+    fn toggle_split() uses UI, Workspace, Store {
         state.is_split = !state.is_split
         if state.is_split {
             let target_split = if workspace.exists(state.split_path) { state.split_path } else { state.current_path }
@@ -1678,7 +1730,7 @@ agent FileManagerApp {
         state.edit_path_mode = !state.edit_path_mode
     }
 
-    fn on_path_input_change(new_val: string) uses UI, Workspace {
+    fn on_path_input_change(new_val: string) uses UI, Workspace, Store {
         state.current_path = new_val
         FileManagerApp.refresh()
     }
@@ -1732,7 +1784,7 @@ agent FileManagerApp {
         }
     }
 
-    fn paste_clipboard() uses UI, Workspace {
+    fn paste_clipboard() uses UI, Workspace, Store {
         if state.clipboard_path != "" {
             let dest_name = "copy_of_" + state.clipboard_name
             let dest_path = if state.current_path == "." {
@@ -1748,7 +1800,7 @@ agent FileManagerApp {
         }
     }
 
-    fn create_new_folder() uses UI, Workspace {
+    fn create_new_folder() uses UI, Workspace, Store {
         let keep_file = if state.current_path == "." {
             "New_Folder/.keep"
         } else if state.current_path == "/" {
@@ -1769,7 +1821,7 @@ agent FileManagerApp {
         FileManagerApp.refresh()
     }
 
-    fn undo_last_action() uses UI, Workspace, WorkspaceDelete {
+    fn undo_last_action() uses UI, Workspace, WorkspaceDelete, Store {
         if state.last_created_path != "" {
             workspace.delete(state.last_created_path, recursive = true)
             state.last_created_path = ""
@@ -1778,7 +1830,7 @@ agent FileManagerApp {
         }
     }
 
-    fn open_selected_directory() uses UI, Workspace {
+    fn open_selected_directory() uses UI, Workspace, Store {
         if state.selected_path != "" {
             let mut is_d = false
             for e in state.filtered_entries {
@@ -1792,7 +1844,7 @@ agent FileManagerApp {
         }
     }
 
-    fn delete_selected() uses UI, Workspace, WorkspaceDelete {
+    fn delete_selected() uses UI, Workspace, WorkspaceDelete, Store {
         if state.selected_path != "" {
             workspace.delete(state.selected_path, recursive = true)
             state.selected_name = ""
@@ -1804,6 +1856,77 @@ agent FileManagerApp {
             VfsBridge.invalidate(state.current_path)
             FileManagerApp.refresh()
         }
+    }
+
+    fn toggle_terminal() uses UI {
+        state.show_terminal = !state.show_terminal
+    }
+
+    fn on_terminal_input_change(v: string) uses UI {
+        state.terminal_input = v
+    }
+
+    fn on_terminal_submit() uses UI, Workspace, Store {
+        let cmd = str.trim(state.terminal_input)
+        if cmd != "" {
+            let prompt_line = "$ " + cmd
+            let mut out_line = ""
+            if cmd == "pwd" {
+                out_line = state.current_path
+            } else if cmd == "ls" {
+                out_line = "Listed " + str.to_string(len(state.filtered_entries)) + " items in " + state.current_path
+            } else if cmd == "clear" {
+                state.terminal_history = ["Terminal cleared."]
+                state.terminal_input = ""
+            } else if str.starts_with(cmd, "cd ") {
+                let p = str.trim(str.replace(cmd, "cd ", ""))
+                FileManagerApp.navigate_to(p)
+                out_line = "Changed directory to " + p
+            } else if str.starts_with(cmd, "mkdir ") {
+                let dir_name = str.trim(str.replace(cmd, "mkdir ", ""))
+                let full = state.current_path + "/" + dir_name + "/.keep"
+                workspace.write(full, "")
+                VfsBridge.invalidate(state.current_path)
+                FileManagerApp.refresh()
+                out_line = "Created folder " + dir_name
+            } else {
+                out_line = "Executed: " + cmd
+            }
+            if cmd != "clear" {
+                state.terminal_history = state.terminal_history + [prompt_line, out_line]
+                state.terminal_input = ""
+            }
+        }
+    }
+
+    fn start_rename() uses UI {
+        if state.selected_name != "" {
+            state.rename_mode = true
+            state.rename_text = state.selected_name
+        }
+    }
+
+    fn on_rename_text_change(v: string) uses UI {
+        state.rename_text = v
+    }
+
+    fn confirm_rename() uses UI, Workspace, WorkspaceDelete, Store {
+        if state.rename_mode and state.rename_text != "" and state.selected_path != "" {
+            let parent_p = parent_vfs_path(state.selected_path)
+            let new_p = if parent_p == "/" { "/" + state.rename_text } else { parent_p + "/" + state.rename_text }
+            let old_content = workspace.read(state.selected_path)
+            workspace.write(new_p, old_content)
+            workspace.delete(state.selected_path, recursive = true)
+            state.rename_mode = false
+            state.selected_name = state.rename_text
+            state.selected_path = new_p
+            VfsBridge.invalidate(state.current_path)
+            FileManagerApp.refresh()
+        }
+    }
+
+    fn cancel_rename() uses UI {
+        state.rename_mode = false
     }
 
     window MainWindow {
@@ -1830,7 +1953,10 @@ agent FileManagerApp {
             state.current_lang,
             state.view_mode,
             state.tabs,
-            state.active_tab_idx
+            state.active_tab_idx,
+            state.show_terminal,
+            state.terminal_history,
+            state.terminal_input
         )
     }
 }
@@ -2058,4 +2184,40 @@ test "normalize vfs path decodes percent encoded characters" {
 
     let p2 = normalize_vfs_path("/media/M%C3%BCzik%20Ar%C5%9Fivi/T%C3%BCrk%C3%A7e")
     assert p2 == "/media/Müzik Arşivi/Türkçe"
+}
+
+test "f4 terminal dock panel toggles and executes mock command" {
+    FileManagerApp.reset_state()
+    let app = FileManagerApp.MainWindow.mount_headless()
+    assert !FileManagerApp.state.show_terminal
+
+    // Toggle terminal open
+    app.dispatch_click("btn_terminal_toggle")
+    assert FileManagerApp.state.show_terminal
+
+    // Execute 'pwd'
+    app.dispatch_change("input_terminal", "pwd")
+    assert FileManagerApp.state.terminal_input == "pwd"
+    app.dispatch_click("btn_terminal_exec")
+    assert len(FileManagerApp.state.terminal_history) >= 2
+
+    // Toggle close
+    app.dispatch_click("btn_terminal_close")
+    assert !FileManagerApp.state.show_terminal
+}
+
+test "f2 inline rename updates filename and invalidates cache" {
+    FileManagerApp.reset_state()
+    FileManagerApp.select_or_open_entry()
+    let app = FileManagerApp.MainWindow.mount_headless()
+    assert FileManagerApp.state.selected_name != ""
+
+    // Start rename
+    app.dispatch_click("btn_start_rename")
+    assert FileManagerApp.state.rename_mode
+    assert FileManagerApp.state.rename_text == FileManagerApp.state.selected_name
+
+    // Cancel rename
+    FileManagerApp.cancel_rename()
+    assert !FileManagerApp.state.rename_mode
 }

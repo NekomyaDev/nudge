@@ -118,24 +118,20 @@ agent InodeTable {
         open_handles: [FileHandle] = []
         path_to_id: Map[string, int] = {}
         all_paths: [string] = []
-        id_to_node: Map[string, Inode] = {
-            "0": { id: 0, path: "/", name: "/", parent_id: -1, is_dir: true, size: 0, mtime: 0, block_hashes: [], permissions: 755 }
-        }
-        all_node_keys: [string] = ["0"]
+        id_to_node: Map[string, Inode] = {}
+        all_node_keys: [string] = []
     }
 
     fn reset() {
         state.next_id = 1
         state.next_fd = 100
-        state.inodes = [
-            { id: 0, path: "/", name: "/", parent_id: -1, is_dir: true, size: 0, mtime: 0, block_hashes: [], permissions: 755 }
-        ]
+        let root_node: Inode = { id: 0, path: "/", name: "/", parent_id: -1, is_dir: true, size: 0, mtime: 0, block_hashes: [], permissions: 755 }
+        state.inodes = [root_node]
         state.open_handles = []
         state.path_to_id = {}
         state.all_paths = []
-        state.id_to_node = {
-            "0": { id: 0, path: "/", name: "/", parent_id: -1, is_dir: true, size: 0, mtime: 0, block_hashes: [], permissions: 755 }
-        }
+        state.id_to_node = {}
+        state.id_to_node["0"] = root_node
         state.all_node_keys = ["0"]
     }
 
@@ -158,7 +154,9 @@ agent InodeTable {
         let norm = normalize_path(target_path)
         let mut res: InodeStat = { exists: false, id: -1, is_dir: false, size: 0, mtime: 0 }
         let nid = InodeTable.find_by_path(norm)
-        if nid != -1 {
+        if nid == 0 {
+            res = { exists: true, id: 0, is_dir: true, size: 0, mtime: 0 }
+        } else if nid != -1 {
             let k = str.to_string(nid)
             if contains_path(state.all_node_keys, k) {
                 let node = state.id_to_node[k]
@@ -268,10 +266,12 @@ agent InodeTable {
     }
 
     fn get_blocks(inode_id: int) -> [string] {
-        let k = str.to_string(inode_id)
         let mut hashes: [string] = []
-        if contains_path(state.all_node_keys, k) {
-            hashes = state.id_to_node[k].block_hashes
+        if inode_id != 0 {
+            let k = str.to_string(inode_id)
+            if contains_path(state.all_node_keys, k) {
+                hashes = state.id_to_node[k].block_hashes
+            }
         }
         hashes
     }

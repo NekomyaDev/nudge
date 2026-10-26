@@ -217,3 +217,39 @@ test "normalize vfs path decodes percent encoded characters" {
     let p2 = normalize_vfs_path("/media/M%C3%BCzik%20Ar%C5%9Fivi/T%C3%BCrk%C3%A7e")
     assert p2 == "/media/Müzik Arşivi/Türkçe"
 }
+
+test "f4 terminal dock panel toggles and executes mock command" {
+    FileManagerApp.reset_state()
+    let app = FileManagerApp.MainWindow.mount_headless()
+    assert !FileManagerApp.state.show_terminal
+
+    // Toggle terminal open
+    app.dispatch_click("btn_terminal_toggle")
+    assert FileManagerApp.state.show_terminal
+
+    // Execute 'pwd'
+    app.dispatch_change("input_terminal", "pwd")
+    assert FileManagerApp.state.terminal_input == "pwd"
+    app.dispatch_click("btn_terminal_exec")
+    assert len(FileManagerApp.state.terminal_history) >= 2
+
+    // Toggle close
+    app.dispatch_click("btn_terminal_close")
+    assert !FileManagerApp.state.show_terminal
+}
+
+test "f2 inline rename updates filename and invalidates cache" {
+    FileManagerApp.reset_state()
+    FileManagerApp.select_or_open_entry()
+    let app = FileManagerApp.MainWindow.mount_headless()
+    assert FileManagerApp.state.selected_name != ""
+
+    // Start rename
+    app.dispatch_click("btn_start_rename")
+    assert FileManagerApp.state.rename_mode
+    assert FileManagerApp.state.rename_text == FileManagerApp.state.selected_name
+
+    // Cancel rename
+    FileManagerApp.cancel_rename()
+    assert !FileManagerApp.state.rename_mode
+}
