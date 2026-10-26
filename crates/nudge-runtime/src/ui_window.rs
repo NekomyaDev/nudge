@@ -3912,7 +3912,7 @@ pub fn draw_focus_ring(
     radius: i32,
     ring_color: u32,
 ) {
-    if w <= 0 || h <= 0 {
+    if w <= 0 || h <= 0 || stride == 0 || height == 0 || buf.len() < stride * height {
         return;
     }
     let offset = 2;
@@ -12450,9 +12450,14 @@ mod tests {
         assert!(js.contains("\"role\": \"assistant\""));
 
         // 3. Export to files with toast feedback
-        let out_md = "/tmp/opencode/test_export.md";
-        let out_json = "/tmp/opencode/test_export.json";
-        let out_png = "/tmp/opencode/test_export.png";
+        let out_dir = std::env::temp_dir().join("nudge_test_export");
+        let _ = std::fs::create_dir_all(&out_dir);
+        let out_md_path = out_dir.join("test_export.md");
+        let out_json_path = out_dir.join("test_export.json");
+        let out_png_path = out_dir.join("test_export.png");
+        let out_md = out_md_path.to_str().unwrap();
+        let out_json = out_json_path.to_str().unwrap();
+        let out_png = out_png_path.to_str().unwrap();
 
         let _ = app.export_chat_to_file("md", out_md).unwrap();
         assert_eq!(*app.dispatcher.last_key, format!("ChatExport:md:{out_md}"));
