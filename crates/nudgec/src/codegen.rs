@@ -1389,6 +1389,8 @@ class _HeadlessApp:
                 "on_reorder",
                 "on_context_menu",
                 "on_context",
+                "on_copy_code",
+                "on_copy",
             ):
                 fn = getattr(self.agent, fn_name, None)
                 if callable(fn):
@@ -1415,6 +1417,24 @@ class _HeadlessApp:
     def dispatch_context_menu(self, action_id, target_id):
         """Simulate selecting an action from the right-click context menu."""
         self.dispatch_key(f"ContextMenu:{action_id}:{target_id}")
+
+    def dispatch_copy_code(self, code_id):
+        """Simulate clicking copy on a code block."""
+        self.dispatch_key(f"CopyCode:{code_id}")
+        self.dispatch_change(code_id, "copied")
+
+    def paste(self, text, target_id=None):
+        """Simulate pasting text, normalizing rich text and HTML into markdown."""
+        s = text.replace("\r\n", "\n").replace("\r", "\n")
+        s = s.replace("<b>", "**").replace("</b>", "**").replace("<strong>", "**").replace("</strong>", "**")
+        s = s.replace("<i>", "*").replace("</i>", "*").replace("<em>", "*").replace("</em>", "*")
+        s = s.replace("<code>", "`").replace("</code>", "`")
+        s = s.replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n")
+        s = s.replace("<p>", "").replace("</p>", "\n")
+        clean_text = "".join(c for c in s if c in "\n\t" or ord(c) >= 32)
+        if target_id:
+            self.dispatch_change(target_id, clean_text)
+        return clean_text
 
 
 class _Window:

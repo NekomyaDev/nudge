@@ -4867,6 +4867,43 @@ impl<D: UiDispatcher> NativeApp<D> {
         self.render();
     }
 
+    /// Programmatically copies a code block to clipboard and displays toast.
+    pub fn simulate_copy_code(&mut self, code_id: &str) {
+        if let Some(lbox) = self
+            .layout_boxes
+            .iter()
+            .find(|b| b.id.as_deref() == Some(code_id) && b.tag == "code_block")
+        {
+            let text = lbox.text.clone().unwrap_or_default();
+            self.clipboard = text;
+            self.show_toast("Code copied to clipboard!", "success");
+            self.dispatcher
+                .dispatch_key(&format!("CopyCode:{code_id}"), None);
+            self.dispatcher.dispatch_change(code_id, "copied");
+            self.render();
+        }
+    }
+
+    /// Programmatically pastes text into the focused input or composer,
+    /// normalizing rich text formatting.
+    pub fn paste_text(&mut self, text: &str) {
+        let normalized = normalize_rich_text_paste(text);
+        self.clipboard = normalized.clone();
+        if let Some(focused_id) = self.focused_id.clone() {
+            let initial = self
+                .layout_boxes
+                .iter()
+                .find(|b| b.id.as_deref() == Some(&focused_id))
+                .and_then(|b| b.text.clone())
+                .unwrap_or_default();
+            let st = self.ensure_input_state(&focused_id, &initial);
+            st.paste(&normalized);
+            let new_val = st.text.clone();
+            self.dispatcher.dispatch_change(&focused_id, &new_val);
+            self.render();
+        }
+    }
+
     /// Clamp every measured region's offset to its current content height.
     /// Returns `true` when any offset moved (the caller should re-run layout
     /// so drawn boxes never use a stale offset).
@@ -8008,7 +8045,7 @@ impl<D: UiDispatcher> NativeApp<D> {
                     }
                     Key::Character(s) if s.eq_ignore_ascii_case("v") => {
                         if !self.clipboard.is_empty() {
-                            let clip = self.clipboard.clone();
+                            let clip = normalize_rich_text_paste(&self.clipboard);
                             let st = self.ensure_input_state(focused_id, initial);
                             st.paste(&clip);
                             value_changed = true;
@@ -9655,13 +9692,18 @@ mod tests {
         assert_eq!(w, 64);
         assert_eq!(h, 64);
 
-        // 2. Decode test on valid PNG bytes
-        let raw_png = std::fs::read("/tmp/opencode/test4x4.png").expect("test PNG");
-        let decoded = crate::ui::decode_png(&raw_png).expect("decode PNG");
+        // 2. Decode test on valid PNG bytes (4x4 red image)
+        const TINY_4X4_PNG: &[u8] = &[
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 4, 0, 0, 0, 4,
+            8, 6, 0, 0, 0, 169, 241, 158, 126, 0, 0, 0, 18, 73, 68, 65, 84, 120, 156, 99, 248, 207,
+            192, 240, 31, 25, 51, 144, 46, 0, 0, 60, 64, 31, 225, 224, 129, 119, 180, 0, 0, 0, 0,
+            73, 69, 78, 68, 174, 66, 96, 130,
+        ];
+        let decoded = crate::ui::decode_png(TINY_4X4_PNG).expect("decode PNG");
         assert_eq!(decoded.width, 4);
         assert_eq!(decoded.height, 4);
         assert_eq!(decoded.data.len(), 4 * 4 * 4);
-        // First pixel was red (255, 0, 0, 255)
+        // First pixel is red (255, 0, 0, 255)
         assert_eq!(&decoded.data[0..4], &[255, 0, 0, 255]);
     }
 
@@ -10076,6 +10118,60 @@ mod tests {
         app.trigger_context_menu_action("delete", "user_prompt");
         assert_eq!(*app.dispatcher.notes, "context:delete");
         assert_eq!(*app.dispatcher.last_key, "ContextMenu:delete:user_prompt");
+    }
+
+    #[test]
+    fn test_rich_text_paste_and_copy_code_toast() {
+        // 1. Rich text paste normalization
+        let raw_html = "<b>Bold text</b> and <code>let x = 1;</code><br><p>Second paragraph</p>";
+        let normalized = normalize_rich_text_paste(raw_html);
+        assert_eq!(
+            normalized,
+            "**Bold text** and `let x = 1;`\nSecond paragraph\n"
+        );
+
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "CopyPaste".into(),
+                width: 400,
+                height: 400,
+            },
+            dummy,
+        );
+
+        let mut inp = test_box("input", "composer", 30, false);
+        inp.text = Some("".into());
+        let mut code = test_box("code_block", "snippet_1", 80, false);
+        code.text = Some("fn main() {\n    println!(\"hi\");\n}".into());
+        app.layout_boxes = vec![inp, code];
+
+        // 2. Focused input accepts normalized rich text paste
+        app.focused_id = Some("composer".into());
+        app.paste_text("<strong>Nudge Studio</strong> <i>fast</i>");
+        assert_eq!(
+            app.text_inputs.get("composer").unwrap().text,
+            "**Nudge Studio** *fast*"
+        );
+        assert_eq!(*app.dispatcher.notes, "**Nudge Studio** *fast*");
+
+        // 3. Copy code block triggers clipboard, toast, and dispatch event
+        app.simulate_copy_code("snippet_1");
+        assert_eq!(app.clipboard, "fn main() {\n    println!(\"hi\");\n}");
+        assert_eq!(
+            app.toast.as_ref().unwrap().message,
+            "Code copied to clipboard!"
+        );
+        assert_eq!(app.toast.as_ref().unwrap().status, "success");
+        assert_eq!(*app.dispatcher.last_key, "CopyCode:snippet_1");
+        assert_eq!(*app.dispatcher.notes, "copied");
     }
 
     #[test]
