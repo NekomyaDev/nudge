@@ -33,11 +33,9 @@ Located in `snap/snapcraft.yaml`.
 
 Located in `winget/Nekomya.Nudge.*.yaml`.
 
-## 5. Linux Desktop Integration (.ndg Single-Click Support)
+## 5. Nudge App Runner & Installer (Single-Click .ndg Support)
 
-Located in `packaging/linux-desktop/`. Provides complete XDG FreeDesktop integration:
-- Single-click `.ndg` application launcher and GUI installer (`nudge-app-installer`)
-- Application runner with foreground window & interactive terminal management (`nudge-runner`)
-- MIME type association (`application/x-nudge`)
-- One-command setup (`packaging/linux-desktop/setup-desktop.sh`)
+Distributed in its dedicated repository: [`NekomyaDev/nudge-app-runner`](https://github.com/NekomyaDev/nudge-app-runner).
+Provides single-click GUI installation, launcher associations (`application/x-nudge`), and interactive execution windows for Nudge applications on Linux (Windows and macOS coming soon).
+
 

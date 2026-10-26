@@ -129,24 +129,40 @@ impl Theme {
         shadow: 0xFF00_0000,                // black; strength is per element
     };
 
+    /// KDE Breeze Dark theme: official KDE Plasma 6 charcoal + Breeze Blue palette.
+    pub const BREEZE_DARK: Theme = Theme {
+        bg: 0xFF24_272B,                    // KDE Breeze Dark base
+        text: 0xFFFC_FCFC,                  // Breeze crisp text
+        text_dim: 0xFF8A_95A0,              // Breeze muted grey
+        border: 0xFF3A_4048,                // Breeze separator / border
+        input_bg: 0xFF1B_1E20,              // Dark input field
+        input_border: 0xFF3A_4048,          // Input border
+        input_border_focused: 0xFF3D_AEE9,  // KDE Breeze Blue
+        button_bg: 0xFF31_363B,             // Breeze button surface
+        button_bg_hover: 0xFF3D_AEE9,       // Breeze Blue hover
+        button_bg_top: 0xFF38_3E45,         // Subtle dome top
+        button_bg_pressed: 0xFF1D_80B5,     // Pressed blue ladder rung
+        button_border: 0xFF4D_5660,         // Button border
+        button_text: 0xFFFC_FCFC,           // Breeze button text
+        selection_bg: 0xFF3D_AEE9,          // KDE Breeze Blue active selection
+        cursor: 0xFFFC_FCFC,                // white caret
+        scrollbar_track: 0xFF1E_2022,       // Dark scroll track
+        scrollbar_thumb: 0xFF4D_5660,       // Scroll thumb
+        bubble_user_bg: 0xFF3D_AEE9,        // Breeze Blue
+        bubble_user_text: 0xFFFF_FFFF,      // white
+        bubble_assistant_bg: 0xFF31_363B,   // Assistant card
+        bubble_assistant_text: 0xFFFC_FCFC, // white
+        shadow: 0xFF00_0000,                // black
+    };
+
     /// Zinc-50 light theme: the same ladder, walked the other way.
-    ///
-    /// Every role is re-picked rather than inverted, because the two surfaces
-    /// ask different things of a colour. The accent steps *up* to Blue-600 so
-    /// white button text still clears contrast against a page that is now
-    /// bright; the caret goes dark, since a white one would be invisible in a
-    /// white field; the shadow softens to grey, since a hard black halo on a
-    /// light page reads as a smudge rather than as depth.
     pub const LIGHT: Theme = Theme {
         bg: 0xFFFA_FAFA,           // Zinc-50
         text: 0xFF18_181B,         // Zinc-900
         text_dim: 0xFF71_717A,     // Zinc-500 — muted on either surface
         border: 0xFFE4_E4E7,       // Zinc-200
         input_bg: 0xFFFF_FFFF,     // white
-        input_border: 0xFFA1_A1AA, // Zinc-400 — the field is white on
-        // Zinc-50, so the border is the only
-        // thing that says "this is a box";
-        // Zinc-300 left it at 1.4:1
+        input_border: 0xFFA1_A1AA, // Zinc-400
         input_border_focused: 0xFF25_63EB,  // Blue-600
         button_bg: 0xFF25_63EB,             // Blue-600
         button_bg_hover: 0xFF1D_4ED8,       // Blue-700
@@ -165,13 +181,37 @@ impl Theme {
         shadow: 0xFF71_717A,                // a soft grey; black would smudge
     };
 
+    /// KDE Breeze Light theme: official KDE Plasma 6 clean light palette.
+    pub const BREEZE_LIGHT: Theme = Theme {
+        bg: 0xFFEF_F0F1,                    // Breeze Light base
+        text: 0xFF23_2629,                  // Breeze dark text
+        text_dim: 0xFF7F_8C8D,              // Breeze muted text
+        border: 0xFFBD_C3C7,                // Breeze light border
+        input_bg: 0xFFFF_FFFF,              // Pure white input field
+        input_border: 0xFFBD_C3C7,          // Input border
+        input_border_focused: 0xFF3D_AEE9,  // KDE Breeze Blue
+        button_bg: 0xFFDF_E1E2,             // Breeze light button surface
+        button_bg_hover: 0xFF3D_AEE9,       // Breeze Blue hover
+        button_bg_top: 0xFFE5_E7E8,         // Button dome top
+        button_bg_pressed: 0xFF29_80B9,     // Pressed blue
+        button_border: 0xFFBD_C3C7,         // Button border
+        button_text: 0xFF23_2629,           // Dark text
+        selection_bg: 0xFF3D_AEE9,          // KDE Breeze Blue selection
+        cursor: 0xFF23_2629,                // Dark caret
+        scrollbar_track: 0xFFDF_E1E2,       // Scroll track
+        scrollbar_thumb: 0xFFBD_C3C7,       // Scroll thumb
+        bubble_user_bg: 0xFF3D_AEE9,        // Breeze Blue
+        bubble_user_text: 0xFFFF_FFFF,      // white
+        bubble_assistant_bg: 0xFFFF_FFFF,   // white card
+        bubble_assistant_text: 0xFF23_2629, // dark text
+        shadow: 0xFF7F_8C8D,                // soft grey
+    };
+
     /// The palette a `theme:` window field names, if it names one at all.
-    ///
-    /// An unknown name resolves to nothing rather than to dark, so a typo in a
-    /// `.ndg` file leaves the theme already in force standing instead of
-    /// quietly dragging the app back to the default.
     pub fn named(name: &str) -> Option<Theme> {
         match name.trim().to_ascii_lowercase().as_str() {
+            "breeze" | "breeze-dark" => Some(Theme::BREEZE_DARK),
+            "breeze-light" => Some(Theme::BREEZE_LIGHT),
             "dark" => Some(Theme::DARK),
             "light" => Some(Theme::LIGHT),
             _ => None,
@@ -179,7 +219,19 @@ impl Theme {
     }
 
     pub fn is_dark(&self) -> bool {
-        self.bg == Theme::DARK.bg
+        self.bg == Theme::DARK.bg || self.bg == Theme::BREEZE_DARK.bg
+    }
+}
+
+pub fn parse_hex_color(s: &str) -> Option<u32> {
+    let raw = s.strip_prefix('#').unwrap_or(s);
+    if raw.len() == 6 {
+        let v = u32::from_str_radix(raw, 16).ok()?;
+        Some(0xFF00_0000 | v)
+    } else if raw.len() == 8 {
+        u32::from_str_radix(raw, 16).ok()
+    } else {
+        None
     }
 }
 
@@ -511,6 +563,8 @@ pub struct LayoutBox {
     pub options: Vec<String>,
     /// Whether this element can be dragged to reorder.
     pub draggable: bool,
+    /// Element properties map preserved from the AST (e.g. w, h, variant, align, bg, selected).
+    pub props: std::collections::HashMap<String, String>,
 }
 
 impl LayoutBox {
@@ -4920,11 +4974,16 @@ pub fn layout_element_ctx(
             } else {
                 child_y - gap + padding - y
             };
-            let total_w = if expand {
+            let explicit_w = elem.props.get("width").or_else(|| elem.props.get("w")).and_then(|s| s.parse::<i32>().ok());
+            let explicit_h = elem.props.get("height").or_else(|| elem.props.get("h")).and_then(|s| s.parse::<i32>().ok());
+            let total_w = if let Some(ew) = explicit_w {
+                ew
+            } else if expand {
                 max_w
             } else {
                 max_child_w + 2 * padding
             };
+            let final_h = explicit_h.unwrap_or(total_h);
 
             // Post-pass: apply cross-axis alignment (`align` = "center" | "end")
             if align == "center" || align == "end" {
@@ -4941,7 +5000,29 @@ pub fn layout_element_ctx(
                 }
             }
 
-            (total_w, total_h)
+            if elem.props.contains_key("bg") {
+                boxes.insert(start_box_idx, LayoutBox {
+                    rect: Rect { x, y, w: total_w, h: final_h },
+                    tag: "panel".into(),
+                    id: elem.id.clone(),
+                    text: None,
+                    on_click: None,
+                    on_change: None,
+                    on_key: None,
+                    pan,
+                    clips: clips_owned(clips),
+                    pad: 0,
+                    disabled: false,
+                    tooltip: None,
+                    checked: false,
+                    slider: None,
+                    options: Vec::new(),
+                    draggable: false,
+                    props: elem.props.clone(),
+                });
+            }
+
+            (total_w, final_h)
         }
         "row" => {
             let padding = elem
@@ -4986,13 +5067,16 @@ pub fn layout_element_ctx(
             } else {
                 child_x - gap - (x + padding)
             };
-            let total_w =
-                if expand || justify == "between" || justify == "end" || justify == "center" {
-                    max_w
-                } else {
-                    content_w + 2 * padding
-                };
-            let total_h = max_child_h + 2 * padding;
+            let explicit_w = elem.props.get("width").or_else(|| elem.props.get("w")).and_then(|s| s.parse::<i32>().ok());
+            let explicit_h = elem.props.get("height").or_else(|| elem.props.get("h")).and_then(|s| s.parse::<i32>().ok());
+            let total_w = if let Some(ew) = explicit_w {
+                ew
+            } else if expand || justify == "between" || justify == "end" || justify == "center" {
+                max_w
+            } else {
+                content_w + 2 * padding
+            };
+            let total_h = explicit_h.unwrap_or(max_child_h + 2 * padding);
 
             // Post-pass: apply main-axis distribution (`justify`) and cross-axis alignment (`align`)
             let avail_w = total_w - 2 * padding;
@@ -5032,6 +5116,28 @@ pub fn layout_element_ctx(
                         b.rect.y += offset;
                     }
                 }
+            }
+
+            if elem.props.contains_key("bg") {
+                boxes.insert(start_box_idx, LayoutBox {
+                    rect: Rect { x, y, w: total_w, h: total_h },
+                    tag: "panel".into(),
+                    id: elem.id.clone(),
+                    text: None,
+                    on_click: None,
+                    on_change: None,
+                    on_key: None,
+                    pan,
+                    clips: clips_owned(clips),
+                    pad: 0,
+                    disabled: false,
+                    tooltip: None,
+                    checked: false,
+                    slider: None,
+                    options: Vec::new(),
+                    draggable: false,
+                    props: elem.props.clone(),
+                });
             }
 
             (total_w, total_h)
@@ -5172,6 +5278,7 @@ pub fn layout_element_ctx(
                 checked: false,
                 slider: None,
                 draggable: elem.props.get("draggable").is_some_and(|s| is_truthy(s)),
+                props: elem.props.clone(),
             });
             (w, h)
         }
@@ -5252,6 +5359,7 @@ pub fn layout_element_ctx(
                 slider: None,
                 draggable: elem.props.get("draggable").is_some_and(|s| is_truthy(s))
                     || elem.id.is_some(),
+                props: elem.props.clone(),
             });
             (w, h)
         }
@@ -5269,8 +5377,25 @@ pub fn layout_element_ctx(
                     }
                 });
             let text_w = (content.chars().count() as i32) * CELL_W;
-            let w = (text_w + 32).max(80);
-            let h = (CELL_H + 16).max(36);
+            let explicit_w = elem.props.get("width").or_else(|| elem.props.get("w")).and_then(|s| s.parse::<i32>().ok());
+            let explicit_h = elem.props.get("height").or_else(|| elem.props.get("h")).and_then(|s| s.parse::<i32>().ok());
+            let variant = elem.props.get("variant").map(|s| s.as_str()).unwrap_or("default");
+            let w = if let Some(ew) = explicit_w {
+                ew
+            } else if variant == "toolbar" || variant == "icon" {
+                (text_w + 16).max(28)
+            } else if variant == "flat" || variant == "ghost" {
+                text_w + 12
+            } else {
+                (text_w + 32).max(80)
+            };
+            let h = if let Some(eh) = explicit_h {
+                eh
+            } else if variant == "toolbar" || variant == "icon" || variant == "flat" || variant == "ghost" || variant == "item" {
+                28
+            } else {
+                (CELL_H + 16).max(36)
+            };
             boxes.push(LayoutBox {
                 rect: Rect { x, y, w, h },
                 tag: "button".into(),
@@ -5288,6 +5413,7 @@ pub fn layout_element_ctx(
                 checked: false,
                 slider: None,
                 draggable: elem.props.get("draggable").is_some_and(|s| is_truthy(s)),
+                props: elem.props.clone(),
             });
             (w, h)
         }
@@ -5303,8 +5429,10 @@ pub fn layout_element_ctx(
                 .map(|l| l.chars().count())
                 .max()
                 .unwrap_or(0) as i32;
-            let w = 220.max(max_line_len * CELL_W + 24);
-            let h = (CELL_H + 16).max(lines * CELL_H + 16);
+            let explicit_w = elem.props.get("width").or_else(|| elem.props.get("w")).and_then(|s| s.parse::<i32>().ok());
+            let explicit_h = elem.props.get("height").or_else(|| elem.props.get("h")).and_then(|s| s.parse::<i32>().ok());
+            let w = explicit_w.unwrap_or(220.max(max_line_len * CELL_W + 24));
+            let h = explicit_h.unwrap_or((CELL_H + 16).max(lines * CELL_H + 16));
             boxes.push(LayoutBox {
                 rect: Rect { x, y, w, h },
                 tag: "input".into(),
@@ -5322,6 +5450,7 @@ pub fn layout_element_ctx(
                 checked: false,
                 slider: None,
                 draggable: false,
+                props: elem.props.clone(),
             });
             (w, h)
         }
@@ -5366,6 +5495,7 @@ pub fn layout_element_ctx(
                 checked: false,
                 slider: None,
                 draggable: false,
+                props: elem.props.clone(),
             });
             (w, h)
         }
@@ -5406,6 +5536,7 @@ pub fn layout_element_ctx(
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
                 draggable: false,
+                props: elem.props.clone(),
             });
             (w, h)
         }
@@ -5471,6 +5602,7 @@ pub fn layout_element_ctx(
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
                 draggable: false,
+                props: elem.props.clone(),
             });
             (w, h)
         }
@@ -5524,6 +5656,7 @@ pub fn layout_element_ctx(
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
                 draggable: false,
+                props: elem.props.clone(),
             });
             (w, h)
         }
@@ -5557,6 +5690,7 @@ pub fn layout_element_ctx(
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
                 draggable: false,
+                props: elem.props.clone(),
             });
             (w, h)
         }
@@ -5590,6 +5724,7 @@ pub fn layout_element_ctx(
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
                 draggable: false,
+                props: elem.props.clone(),
             });
             (w, h)
         }
@@ -5633,6 +5768,7 @@ pub fn layout_element_ctx(
                 tooltip: elem.props.get("tooltip").cloned(),
                 options,
                 draggable: false,
+                props: elem.props.clone(),
             });
             (w, h)
         }
@@ -5660,12 +5796,23 @@ pub fn layout_element_ctx(
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
                 draggable: false,
+                props: elem.props.clone(),
             });
             (w, h)
         }
         "divider" => {
-            let h = 16;
-            let w = max_w.max(20);
+            let orientation = elem.props.get("orientation").map(|s| s.as_str()).unwrap_or("horizontal");
+            let default_size = if orientation == "vertical" { 1 } else { 16 };
+            let size = elem.props.get("size").and_then(|s| s.parse::<i32>().ok()).unwrap_or(default_size);
+            let explicit_w = elem.props.get("width").or_else(|| elem.props.get("w")).and_then(|s| s.parse::<i32>().ok());
+            let explicit_h = elem.props.get("height").or_else(|| elem.props.get("h")).and_then(|s| s.parse::<i32>().ok());
+            let (w, h) = if orientation == "vertical" {
+                let vh = explicit_h.unwrap_or(24);
+                (size.max(1), vh)
+            } else {
+                let hw = explicit_w.unwrap_or(max_w.max(20));
+                (hw, size.max(1))
+            };
             boxes.push(LayoutBox {
                 rect: Rect { x, y, w, h },
                 tag: "divider".into(),
@@ -5683,6 +5830,7 @@ pub fn layout_element_ctx(
                 tooltip: None,
                 options: Vec::new(),
                 draggable: false,
+                props: elem.props.clone(),
             });
             (w, h)
         }
@@ -5719,6 +5867,7 @@ pub fn layout_element_ctx(
                 tooltip: None,
                 options: Vec::new(),
                 draggable: false,
+                props: elem.props.clone(),
             });
             (w, h)
         }
@@ -5744,6 +5893,7 @@ pub fn layout_element_ctx(
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
                 draggable: false,
+                props: elem.props.clone(),
             });
             (w, h)
         }
@@ -5774,6 +5924,7 @@ pub fn layout_element_ctx(
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: vec![status],
                 draggable: false,
+                props: elem.props.clone(),
             });
             (w, h)
         }
@@ -6798,6 +6949,7 @@ impl<D: UiDispatcher> NativeApp<D> {
             tooltip: None,
             options: Vec::new(),
             draggable: false,
+            props: std::collections::HashMap::new(),
         });
 
         let mut sec = SecondaryWindow {
@@ -8442,31 +8594,88 @@ impl<D: UiDispatcher> NativeApp<D> {
                     } else {
                         self.hover_ramps.get(&key).copied().unwrap_or(0.0)
                     };
-                    let (grad_top, grad_bottom) =
-                        button_tones(&theme, hover_t, pressed, lbox.disabled);
-                    let border_color = if lbox.disabled {
-                        theme.border
-                    } else if is_focused {
-                        theme.input_border_focused
+                    let variant = lbox.props.get("variant").map(|s| s.as_str()).unwrap_or("default");
+                    let is_selected = lbox.props.get("selected").is_some_and(|s| is_truthy(s))
+                        || lbox.props.get("active").is_some_and(|s| is_truthy(s));
+                    let align = lbox.props.get("align").map(|s| s.as_str()).unwrap_or("center");
+
+                    let mut text_color = theme.button_text;
+
+                    if is_selected {
+                        draw_rounded_rect_box_clipped(
+                            &mut buffer,
+                            stride,
+                            h_usize,
+                            clip,
+                            rx,
+                            ry,
+                            lbox.rect.w,
+                            lbox.rect.h,
+                            CORNER_RADIUS,
+                            theme.selection_bg,
+                            theme.selection_bg,
+                        );
+                        text_color = 0xFFFF_FFFF;
+                    } else if variant == "flat" || variant == "ghost" || variant == "toolbar" || variant == "item" {
+                        text_color = theme.text;
+                        if pressed {
+                            draw_rounded_rect_box_clipped(
+                                &mut buffer,
+                                stride,
+                                h_usize,
+                                clip,
+                                rx,
+                                ry,
+                                lbox.rect.w,
+                                lbox.rect.h,
+                                CORNER_RADIUS,
+                                theme.selection_bg,
+                                theme.selection_bg,
+                            );
+                            text_color = 0xFFFF_FFFF;
+                        } else if hovered || hover_t > 0.05 {
+                            let hover_bg = if theme.is_dark() { 0xFF35_3B42 } else { 0xFFD8_DCDF };
+                            draw_rounded_rect_box_clipped(
+                                &mut buffer,
+                                stride,
+                                h_usize,
+                                clip,
+                                rx,
+                                ry,
+                                lbox.rect.w,
+                                lbox.rect.h,
+                                CORNER_RADIUS,
+                                hover_bg,
+                                hover_bg,
+                            );
+                        }
                     } else {
-                        theme.button_border
-                    };
-                    draw_rounded_rect_gradient_box_clipped(
-                        &mut buffer,
-                        stride,
-                        h_usize,
-                        clip,
-                        rx,
-                        ry,
-                        lbox.rect.w,
-                        lbox.rect.h,
-                        CORNER_RADIUS,
-                        grad_top,
-                        grad_bottom,
-                        border_color,
-                        false,
-                    );
-                    if is_focused {
+                        let (grad_top, grad_bottom) =
+                            button_tones(&theme, hover_t, pressed, lbox.disabled);
+                        let border_color = if lbox.disabled {
+                            theme.border
+                        } else if is_focused {
+                            theme.input_border_focused
+                        } else {
+                            theme.button_border
+                        };
+                        draw_rounded_rect_gradient_box_clipped(
+                            &mut buffer,
+                            stride,
+                            h_usize,
+                            clip,
+                            rx,
+                            ry,
+                            lbox.rect.w,
+                            lbox.rect.h,
+                            CORNER_RADIUS,
+                            grad_top,
+                            grad_bottom,
+                            border_color,
+                            false,
+                        );
+                    }
+                    if is_focused && !is_selected {
                         draw_focus_ring(
                             &mut buffer,
                             stride,
@@ -8482,12 +8691,16 @@ impl<D: UiDispatcher> NativeApp<D> {
                     }
                     if let Some(ref text) = lbox.text {
                         let text_w = self.fonts.measure_width(FaceKind::Ui, text);
-                        let tx = rx + ((lbox.rect.w - text_w) / 2).max(8);
-                        let ty = ry + ((lbox.rect.h - cell_h) / 2).max(4);
+                        let tx = if align == "start" || align == "left" {
+                            rx + 8
+                        } else {
+                            rx + ((lbox.rect.w - text_w) / 2).max(8)
+                        };
+                        let ty = ry + ((lbox.rect.h - cell_h) / 2).max(2);
                         let color = if lbox.disabled {
                             theme.text_dim
                         } else {
-                            theme.button_text
+                            text_color
                         };
                         let fonts = &self.fonts;
                         // Clip to the button interior (intersected with any
@@ -9518,12 +9731,21 @@ impl<D: UiDispatcher> NativeApp<D> {
                     }
                 }
                 "divider" => {
-                    let line_y = ry + lbox.rect.h / 2;
-                    let line_rect = Rect {
-                        x: rx,
-                        y: line_y,
-                        w: lbox.rect.w,
-                        h: 1,
+                    let is_vert = lbox.props.get("orientation").map(|s| s.as_str()) == Some("vertical");
+                    let line_rect = if is_vert {
+                        Rect {
+                            x: rx + lbox.rect.w / 2,
+                            y: ry,
+                            w: 1,
+                            h: lbox.rect.h,
+                        }
+                    } else {
+                        Rect {
+                            x: rx,
+                            y: ry + lbox.rect.h / 2,
+                            w: lbox.rect.w,
+                            h: 1,
+                        }
                     };
                     if let Some(lc) = match clip {
                         None => Some(line_rect),
@@ -9539,6 +9761,50 @@ impl<D: UiDispatcher> NativeApp<D> {
                             lc.h,
                             theme.border,
                         );
+                    }
+                }
+                "panel" => {
+                    let bg_color = match lbox.props.get("bg").map(|s| s.as_str()) {
+                        Some("sidebar") => if theme.is_dark() { 0xFF1E_2022 } else { 0xFFE3_E5E8 },
+                        Some("toolbar") => if theme.is_dark() { 0xFF24_272B } else { 0xFFE9_EBEC },
+                        Some("table") | Some("view") => if theme.is_dark() { 0xFF2A_2E32 } else { 0xFFFF_FFFF },
+                        Some("card") => if theme.is_dark() { 0xFF31_363B } else { 0xFFF5_F6F7 },
+                        Some(hex) if hex.starts_with('#') => parse_hex_color(hex).unwrap_or(theme.bg),
+                        _ => theme.bg,
+                    };
+                    let rect = Rect {
+                        x: rx,
+                        y: ry,
+                        w: lbox.rect.w,
+                        h: lbox.rect.h,
+                    };
+                    if let Some(rc) = match clip {
+                        None => Some(rect),
+                        Some(c) => intersect(rect, c),
+                    } {
+                        draw_rect(
+                            &mut buffer,
+                            stride,
+                            h_usize,
+                            rc.x,
+                            rc.y,
+                            rc.w,
+                            rc.h,
+                            bg_color,
+                        );
+                        if let Some(bc_str) = lbox.props.get("border") {
+                            let bc = if bc_str == "true" { theme.border } else { parse_hex_color(bc_str).unwrap_or(theme.border) };
+                            draw_rect_outline(
+                                &mut buffer,
+                                stride,
+                                h_usize,
+                                rc.x,
+                                rc.y,
+                                rc.w,
+                                rc.h,
+                                bc,
+                            );
+                        }
                     }
                 }
                 "spacer" => {}
@@ -11852,6 +12118,7 @@ mod tests {
             checked: false,
             slider: None,
             draggable: false,
+            props: std::collections::HashMap::new(),
         }];
 
         // Simulate click on line 1, col 2:
@@ -12220,6 +12487,7 @@ mod tests {
             checked: false,
             slider: None,
             draggable: false,
+            props: std::collections::HashMap::new(),
         }];
 
         // Initially at (0, 0) - not hovering
@@ -13340,6 +13608,7 @@ mod tests {
             checked: false,
             slider: None,
             draggable: false,
+            props: std::collections::HashMap::new(),
         }];
 
         assert!(app.focus_input("test_input"));
@@ -14056,6 +14325,7 @@ mod tests {
             checked: false,
             slider: None,
             draggable: false,
+            props: std::collections::HashMap::new(),
         };
         b.clips = Some(vec![outer, inner]);
         assert_eq!(
@@ -14575,6 +14845,7 @@ mod tests {
                 checked: false,
                 slider: None,
                 draggable: false,
+                props: std::collections::HashMap::new(),
             },
             // Only 2px below the first: its halo *would* reach back over the
             // first box's bottom edge if drawn inline.
@@ -14600,6 +14871,7 @@ mod tests {
                 checked: false,
                 slider: None,
                 draggable: false,
+                props: std::collections::HashMap::new(),
             },
         ];
 
@@ -15013,6 +15285,7 @@ mod tests {
             checked: false,
             slider: None,
             draggable: false,
+            props: std::collections::HashMap::new(),
         }
     }
 
@@ -15043,6 +15316,7 @@ mod tests {
             checked: false,
             slider: None,
             draggable: false,
+            props: std::collections::HashMap::new(),
         }
     }
 
@@ -16405,6 +16679,7 @@ mod tests {
                 checked: false,
                 slider: None,
                 draggable: false,
+                props: std::collections::HashMap::new(),
             }
         }
 
@@ -17065,6 +17340,7 @@ mod tests {
             checked: false,
             slider: None,
             draggable: false,
+            props: std::collections::HashMap::new(),
         }
     }
 
@@ -18435,6 +18711,7 @@ mod tests {
                 options: vec![],
                 tooltip: None,
                 draggable: false,
+                props: std::collections::HashMap::new(),
             },
             LayoutBox {
                 rect: Rect {
@@ -18458,6 +18735,7 @@ mod tests {
                 options: vec![],
                 tooltip: None,
                 draggable: false,
+                props: std::collections::HashMap::new(),
             },
             LayoutBox {
                 rect: Rect {
@@ -18481,6 +18759,7 @@ mod tests {
                 options: vec![],
                 tooltip: None,
                 draggable: false,
+                props: std::collections::HashMap::new(),
             },
         ];
 
@@ -18546,6 +18825,7 @@ mod tests {
                 options: vec![],
                 tooltip: None,
                 draggable: false,
+                props: std::collections::HashMap::new(),
             },
             LayoutBox {
                 rect: Rect {
@@ -18569,6 +18849,7 @@ mod tests {
                 options: vec![],
                 tooltip: None,
                 draggable: false,
+                props: std::collections::HashMap::new(),
             },
             LayoutBox {
                 rect: Rect {
@@ -18592,6 +18873,7 @@ mod tests {
                 options: vec![],
                 tooltip: None,
                 draggable: false,
+                props: std::collections::HashMap::new(),
             },
             LayoutBox {
                 rect: Rect {
@@ -18620,6 +18902,7 @@ mod tests {
                 options: vec![],
                 tooltip: None,
                 draggable: false,
+                props: std::collections::HashMap::new(),
             },
         ];
 

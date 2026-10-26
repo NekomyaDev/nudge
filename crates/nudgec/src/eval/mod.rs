@@ -1995,4 +1995,22 @@ fn test_f8_suite() -> bool uses Browser {{
             .expect("inverted index main execution succeeds");
         assert_eq!(res, NudgeVal::Int(0));
     }
+
+    #[test]
+    fn test_file_manager_acceptance_suite() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let _guard_ws = nudge_runtime::workspace::WS_TEST_LOCK.lock().unwrap();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        std::env::set_var("NUDGE_WORKSPACE_DIR", root_dir);
+        let fm_path = root_dir.join("examples/file-manager/file_manager.ndg");
+
+        let fm_src = std::fs::read_to_string(&fm_path).expect("read file_manager.ndg");
+        let items = parse_src(&fm_src);
+        let mut interp = crate::eval::interpreter::Interpreter::new();
+        interp.load_items(&items).expect("load items succeeds");
+        interp
+            .run_all_tests()
+            .expect("all file manager test blocks pass");
+    }
 }
