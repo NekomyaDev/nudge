@@ -1822,6 +1822,108 @@ pub struct ContextMenuItem {
     pub label: String,
 }
 
+/// Floating toast notification (e.g. "Code copied to clipboard!").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToastNotification {
+    pub message: String,
+    pub status: String,
+}
+
+/// Normalizes rich text or HTML pasted into inputs/composers, preserving
+/// markdown syntax (**bold**, `code`, [link](url)) and stripping HTML tags/control characters.
+pub fn normalize_rich_text_paste(raw: &str) -> String {
+    let mut s = raw.replace("\r\n", "\n").replace('\r', "\n");
+    // Convert basic HTML formatting to markdown
+    s = s
+        .replace("<b>", "**")
+        .replace("</b>", "**")
+        .replace("<strong>", "**")
+        .replace("</strong>", "**")
+        .replace("<i>", "*")
+        .replace("</i>", "*")
+        .replace("<em>", "*")
+        .replace("</em>", "*")
+        .replace("<code>", "`")
+        .replace("</code>", "`")
+        .replace("<br>", "\n")
+        .replace("<br/>", "\n")
+        .replace("<br />", "\n")
+        .replace("<p>", "")
+        .replace("</p>", "\n");
+
+    s.chars()
+        .filter(|&c| c == '\n' || c == '\t' || !c.is_control())
+        .collect()
+}
+
+/// Draws the floating toast notification at top-right of window.
+pub fn draw_toast_notification(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    fonts: &FontEngine,
+    theme: &Theme,
+    win_w: i32,
+    toast: &ToastNotification,
+) {
+    let text_w = fonts.measure_width(FaceKind::Ui, &toast.message);
+    let toast_w = (text_w + 48).max(160);
+    let toast_h = 32;
+    let toast_x = (win_w - toast_w - 20).max(10);
+    let toast_y = 20;
+
+    let accent = match toast.status.as_str() {
+        "success" => 0xFF10_B981,        // Emerald-500
+        "error" => 0xFFEF_4444,          // Red-500
+        _ => theme.input_border_focused, // Blue-500
+    };
+
+    // Notification pill background
+    draw_rounded_rect_box(
+        buf,
+        stride,
+        height,
+        toast_x,
+        toast_y,
+        toast_w,
+        toast_h,
+        6,
+        theme.input_bg,
+        accent,
+    );
+
+    // Indicator bar (4px on left)
+    draw_rect(
+        buf,
+        stride,
+        height,
+        toast_x + 3,
+        toast_y + 4,
+        4,
+        toast_h - 8,
+        accent,
+    );
+
+    let cell_h = fonts.cell_h;
+    let ty = toast_y + (toast_h - cell_h) / 2;
+    draw_text_ttf_clipped(
+        fonts,
+        FaceKind::Ui,
+        toast_x + 16,
+        ty,
+        &toast.message,
+        Rect {
+            x: toast_x + 12,
+            y: toast_y,
+            w: toast_w - 20,
+            h: toast_h,
+        },
+        |px, py, w, h, cov| {
+            draw_rect_alpha(buf, stride, height, px, py, w, h, theme.text, cov);
+        },
+    );
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextMenuState {
     pub target_id: Option<String>,
@@ -4581,6 +4683,8 @@ pub struct NativeApp<D: UiDispatcher> {
     pub hovered_file: Option<String>,
     /// State of the active right-click Context Menu.
     pub context_menu: Option<ContextMenuState>,
+    /// Floating toast notification.
+    pub toast: Option<ToastNotification>,
 }
 
 impl<D: UiDispatcher> NativeApp<D> {
@@ -4634,6 +4738,7 @@ impl<D: UiDispatcher> NativeApp<D> {
             last_dropped_file: None,
             hovered_file: None,
             context_menu: None,
+            toast: None,
         }
     }
 
@@ -4750,6 +4855,15 @@ impl<D: UiDispatcher> NativeApp<D> {
             .dispatch_change(target_id, &format!("context:{action_id}"));
         self.dispatcher
             .dispatch_key(&format!("ContextMenu:{action_id}:{target_id}"), None);
+        self.render();
+    }
+
+    /// Displays a floating toast notification.
+    pub fn show_toast(&mut self, message: &str, status: &str) {
+        self.toast = Some(ToastNotification {
+            message: message.to_string(),
+            status: status.to_string(),
+        });
         self.render();
     }
 
@@ -6912,6 +7026,60 @@ impl<D: UiDispatcher> NativeApp<D> {
                             }
                         }
                     }
+
+                    // Top-right "Copy" badge pill
+                    let copy_w = 48;
+                    let copy_h = 18;
+                    let copy_x = rx + lbox.rect.w - copy_w - 8;
+                    let copy_y = ry + 6;
+                    let copy_rect = Rect {
+                        x: copy_x,
+                        y: copy_y,
+                        w: copy_w,
+                        h: copy_h,
+                    };
+                    if let Some(cc) = match clip {
+                        None => Some(copy_rect),
+                        Some(c) => intersect(copy_rect, c),
+                    } {
+                        draw_rounded_rect_box_clipped(
+                            &mut buffer,
+                            stride,
+                            h_usize,
+                            Some(cc),
+                            copy_x,
+                            copy_y,
+                            copy_w,
+                            copy_h,
+                            3,
+                            theme.selection_bg,
+                            theme.input_border_focused,
+                        );
+                        let copy_tw = fonts.measure_width(FaceKind::Ui, "Copy");
+                        let copy_tx = copy_x + (copy_w - copy_tw) / 2;
+                        let copy_ty = copy_y + (copy_h - fonts.cell_h) / 2;
+                        draw_text_ttf_clipped(
+                            fonts,
+                            FaceKind::Ui,
+                            copy_tx,
+                            copy_ty,
+                            "Copy",
+                            cc,
+                            |px, py, w, h, cov| {
+                                draw_rect_alpha(
+                                    &mut buffer,
+                                    stride,
+                                    h_usize,
+                                    px,
+                                    py,
+                                    w,
+                                    h,
+                                    theme.button_text,
+                                    cov,
+                                );
+                            },
+                        );
+                    }
                 }
                 "divider" => {
                     let line_y = ry + lbox.rect.h / 2;
@@ -7288,6 +7456,19 @@ impl<D: UiDispatcher> NativeApp<D> {
             draw_context_menu(&mut buffer, stride, h_usize, &self.fonts, &theme, menu);
         }
 
+        // Floating Toast Notification overlay
+        if let Some(ref toast) = self.toast {
+            draw_toast_notification(
+                &mut buffer,
+                stride,
+                h_usize,
+                &self.fonts,
+                &theme,
+                self.width as i32,
+                toast,
+            );
+        }
+
         // Tooltip overlay, painted last so it layers over every box, including
         // those inside a scroll viewport that would otherwise clip it. Asked
         // for above, while `self` could still be read — and already made to
@@ -7323,6 +7504,7 @@ impl<D: UiDispatcher> NativeApp<D> {
                     if item.id == "copy" {
                         if let Some(ref text) = menu.target_text {
                             self.clipboard = text.clone();
+                            self.show_toast("Message copied to clipboard!", "info");
                         }
                     }
                     let target_str = menu.target_id.as_deref().unwrap_or("window");
@@ -7386,6 +7568,7 @@ impl<D: UiDispatcher> NativeApp<D> {
         // The id of a boolean control to flip, and the value it lands on.
         let mut clicked_flag: Option<(String, bool)> = None;
         let mut clicked_tab: Option<(String, String)> = None;
+        let mut clicked_code: Option<(String, String)> = None;
 
         for (box_index, lbox) in self.layout_boxes.iter().enumerate() {
             // Screen-space test accounts for the window scroll, the enclosing
@@ -7458,6 +7641,13 @@ impl<D: UiDispatcher> NativeApp<D> {
                     }
                 }
                 break;
+            } else if lbox.tag == "code_block" {
+                if !lbox.disabled {
+                    let code_id = lbox.id.clone().unwrap_or_else(|| "code".into());
+                    let code_text = lbox.text.clone().unwrap_or_default();
+                    clicked_code = Some((code_id, code_text));
+                }
+                break;
             }
         }
 
@@ -7479,6 +7669,13 @@ impl<D: UiDispatcher> NativeApp<D> {
             self.render();
         } else if let Some((id, chosen)) = clicked_tab {
             self.dispatcher.dispatch_change(&id, &chosen);
+            self.render();
+        } else if let Some((code_id, code_text)) = clicked_code {
+            self.clipboard = code_text;
+            self.show_toast("Code copied to clipboard!", "success");
+            self.dispatcher
+                .dispatch_key(&format!("CopyCode:{code_id}"), None);
+            self.dispatcher.dispatch_change(&code_id, "copied");
             self.render();
         } else if let Some(lbox) = clicked_input {
             // Map the click back into content space for caret placement.
@@ -7566,6 +7763,7 @@ impl<D: UiDispatcher> NativeApp<D> {
                             if item.id == "copy" {
                                 if let Some(ref text) = menu.target_text {
                                     self.clipboard = text.clone();
+                                    self.show_toast("Message copied to clipboard!", "info");
                                 }
                             }
                             let target_str = menu.target_id.as_deref().unwrap_or("window");
@@ -14920,5 +15118,26 @@ mod tests {
             lbox.rect.contains(label_x, track.y),
             "…and the label is in the row"
         );
+    }
+
+    #[test]
+    fn test_normalize_rich_text_paste() {
+        let input = "<b>Bold</b> and <i>italic</i> and <code>code</code><br/>Next line";
+        let out = normalize_rich_text_paste(input);
+        assert_eq!(out, "**Bold** and *italic* and `code`\nNext line");
+
+        let p_input = "<p>First paragraph</p><p>Second paragraph</p>";
+        let out_p = normalize_rich_text_paste(p_input);
+        assert_eq!(out_p, "First paragraph\nSecond paragraph\n");
+    }
+
+    #[test]
+    fn test_toast_notification_struct() {
+        let t = ToastNotification {
+            message: "Copied!".into(),
+            status: "success".into(),
+        };
+        assert_eq!(t.message, "Copied!");
+        assert_eq!(t.status, "success");
     }
 }
