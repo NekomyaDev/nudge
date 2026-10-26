@@ -253,16 +253,17 @@ The implementation must strictly satisfy five quality gates before production re
 
 ## 10. Phased Implementation Roadmap
 
-### Phase 1: Core Substrate Extensions (v2.1)
-- [ ] Add `Map[K, V]` generic resolution to `check.rs` and AST.
-- [ ] Implement `Op::StoreIndex` in `vm.rs` and `IndexAssign` syntax in `parser.rs`.
-- [ ] Introduce `uses MemStore` effect and ephemeral runtime backing.
-- [ ] Register `str.char_code` and `str.hash` standard library builtins.
+### Phase 1: Core Substrate Extensions (v2.1) [COMPLETED]
+- [x] Add `Map[K, V]` generic resolution to `check.rs` and AST.
+- [x] Implement `Op::StoreIndex` in `vm.rs` and `IndexAssign` syntax in `parser.rs`.
+- [x] Introduce `uses MemStore` effect and ephemeral runtime backing.
+- [x] Register `str.char_code` and `str.hash` standard library builtins.
 
-### Phase 2: NVFS Foundation (v2.2)
-- [ ] Implement pure-Nudge `inode.ndg` and virtual file handle table.
-- [ ] Build content-addressable storage (`cas_store.ndg`) with memory deduplication.
-- [ ] Intercept `workspace.read` calls to route through NVFS buffers.
+### Phase 2: NVFS Foundation (v2.2) [COMPLETED]
+- [x] Implement pure-Nudge `inode.ndg` and virtual file handle table.
+- [x] Build content-addressable storage (`cas_store.ndg`) with memory deduplication.
+- [x] Intercept `workspace.read` calls to route through NVFS buffers (`mod.ndg`).
+- [x] Complete end-to-end acceptance test suite and microbenchmarks (`test_nvfs.ndg`).
 
 ### Phase 3: Lexer & Full-Spectrum AST Parser (v2.3)
 - [ ] Develop pure-Nudge state-machine tokenizer (`scanner.ndg`) with prompt protection.
