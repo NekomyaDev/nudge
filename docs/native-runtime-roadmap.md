@@ -2,7 +2,7 @@
 # 原生独立执行引擎与去 Python 依赖路线图
 
 > **Status:** Active Execution (Phases 1-3 Shipped: Interpreter, Runtime, Standalone, WASM & Bytecode VM)
-> **Authors:** Nudge Core Architecture Team
+> **Authors:** NekomyaDev
 > **Language Support:** English & Chinese (zh-CN)
 > **Target Version:** v1.3 - v2.0
 

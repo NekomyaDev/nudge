@@ -2,7 +2,7 @@
 
 > **Document ID:** RFC-NDG-2026-04
 > **Status:** Official Architectural Specification & Implementation Roadmap
-> **Authors:** Nudge Core Architecture Team
+> **Authors:** NekomyaDev
 > **Default Language:** English (with formal technical terminology)
 > **Target Version:** Nudge v2.1 – v3.0
 > **Primary Objective:** Eliminate disk I/O bottlenecks, achieve $\ge 20\times$ faster execution (targeting $100\times - 300\times$), eliminate all external language/syscall dependencies ($0$ foreign dependencies), and establish the self-hosted Nudge Virtual File System (NVFS).
@@ -265,15 +265,16 @@ The implementation must strictly satisfy five quality gates before production re
 - [x] Intercept `workspace.read` calls to route through NVFS buffers (`mod.ndg`).
 - [x] Complete end-to-end acceptance test suite and microbenchmarks (`test_nvfs.ndg`).
 
-### Phase 3: Lexer & Full-Spectrum AST Parser (v2.3)
-- [ ] Develop pure-Nudge state-machine tokenizer (`scanner.ndg`) with prompt protection.
-- [ ] Implement structural block parser supporting all 12 effects, UI views, and contract bounds.
-- [ ] Validate AST generation against full language test suite (`docs/learn/*.ndg`).
+### Phase 3: Lexer & Full-Spectrum AST Parser (v2.3) [COMPLETED]
+- [x] Develop pure-Nudge state-machine tokenizer (`scanner.ndg`) with prompt protection.
+- [x] Implement structural block parser supporting all 12 effects, UI views, and contract bounds.
+- [x] Validate AST generation against full language test suite (`test_parser.ndg`).
 
-### Phase 4: Reactive Diff & Blast Radius Engine (v2.4)
-- [ ] Deploy two-tier hashing (`sig_hash` vs `body_hash`).
-- [ ] Construct bidirectional call-graph matrix (`call_graph.ndg`).
-- [ ] Implement 4-tier semantic diff categorization and automated caller invalidation.
+### Phase 4: Reactive Diff & Blast Radius Engine (v2.4) [COMPLETED]
+- [x] Deploy two-tier hashing (`sig_hash` vs `body_hash`).
+- [x] Construct bidirectional call-graph matrix (`call_graph.ndg`).
+- [x] Implement 4-tier semantic diff categorization and automated caller invalidation (`diff_engine.ndg`, `mod.ndg`).
+- [x] Complete acceptance test suite and microbenchmarks (`test_indexer.ndg`).
 
 ### Phase 5: Query Engine & Production Benchmarking (v2.5)
 - [ ] Finalize high-level query API (`api/query.ndg`).
