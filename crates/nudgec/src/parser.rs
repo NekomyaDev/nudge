@@ -51,9 +51,10 @@ impl Parser {
     }
 
     /// Re-raise as a parse error when composite nesting gets pathological.
-    /// 256 comfortably exceeds any real program; the default main-thread
-    /// stack handles ~10k nested parse_expr frames.
-    const MAX_DEPTH: usize = 256;
+    /// 32 comfortably exceeds any reasonable real program while preventing stack
+    /// overflow across deep recursive expression parsing chains (each nesting level
+    /// consumes ~10 stack frames in unoptimized debug builds).
+    const MAX_DEPTH: usize = 32;
     fn enter(&mut self) -> PResult<DepthGuard> {
         self.depth += 1;
         if self.depth > Self::MAX_DEPTH {
@@ -2405,6 +2406,33 @@ test "budget" {
             },
             other => panic!("expected agent, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_nested_list_and_record_depth_limit() {
+        // Deeply nested list literal: [[[[... 100 times ...]]]]
+        let open_brackets = "[".repeat(100);
+        let close_brackets = "]".repeat(100);
+        let list_src = format!("fn f() -> any {{ {open_brackets} 1 {close_brackets} }}");
+        let tokens = lex(&list_src).expect("lex should succeed");
+        let res = parse(tokens);
+        assert!(res.is_err());
+        assert!(res.unwrap_err().msg.contains("nesting too deep"));
+
+        // Deeply nested record literal: { a: { a: { a: ... 100 times ... 1 }}}
+        let mut rec_src = String::from("fn f() -> any { ");
+        for _ in 0..100 {
+            rec_src.push_str("{ a: ");
+        }
+        rec_src.push('1');
+        for _ in 0..100 {
+            rec_src.push_str(" }");
+        }
+        rec_src.push_str(" }");
+        let rec_tokens = lex(&rec_src).expect("lex should succeed");
+        let rec_res = parse(rec_tokens);
+        assert!(rec_res.is_err());
+        assert!(rec_res.unwrap_err().msg.contains("nesting too deep"));
     }
 
     #[test]

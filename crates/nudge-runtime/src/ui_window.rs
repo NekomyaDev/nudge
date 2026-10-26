@@ -177,6 +177,10 @@ impl Theme {
             _ => None,
         }
     }
+
+    pub fn is_dark(&self) -> bool {
+        self.bg == Theme::DARK.bg
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,6 +194,19 @@ pub struct Rect {
 impl Rect {
     pub fn contains(&self, px: i32, py: i32) -> bool {
         px >= self.x && px < self.x + self.w && py >= self.y && py < self.y + self.h
+    }
+
+    pub fn union(&self, other: &Rect) -> Rect {
+        let x1 = self.x.min(other.x);
+        let y1 = self.y.min(other.y);
+        let x2 = (self.x + self.w).max(other.x + other.w);
+        let y2 = (self.y + self.h).max(other.y + other.h);
+        Rect {
+            x: x1,
+            y: y1,
+            w: (x2 - x1).max(0),
+            h: (y2 - y1).max(0),
+        }
     }
 }
 
@@ -7024,6 +7041,191 @@ impl<D: UiDispatcher> NativeApp<D> {
         res
     }
 
+    // =========================================================================
+    // SECTION 5: Error capture, Async LLM, Persistence, and Partial Redraw
+    // =========================================================================
+
+    /// Sets the active UI error banner (Section 5.1).
+    pub fn set_error(
+        &mut self,
+        message: &str,
+        error_type: &str,
+        retryable: bool,
+        action_id: Option<String>,
+    ) {
+        self.current_error = Some(UiErrorState {
+            message: message.to_string(),
+            error_type: error_type.to_string(),
+            retryable,
+            action_id,
+        });
+        self.dispatcher
+            .dispatch_key(&format!("ErrorShown:{error_type}"), None);
+        self.dispatcher.dispatch_change("error_state", error_type);
+        self.render();
+    }
+
+    /// Clears and dismisses the active error banner.
+    pub fn clear_error(&mut self) {
+        if self.current_error.take().is_some() {
+            self.dispatcher.dispatch_key("ErrorDismissed", None);
+            self.dispatcher.dispatch_change("error_state", "none");
+            self.render();
+        }
+    }
+
+    /// Triggers retry for a retryable error.
+    pub fn trigger_error_retry(&mut self) {
+        if let Some(err) = self.current_error.take() {
+            self.dispatcher.dispatch_key("ErrorRetry", None);
+            if let Some(ref aid) = err.action_id {
+                self.dispatcher.dispatch_key(&format!("Action:{aid}"), None);
+            }
+            self.dispatcher.dispatch_change("error_state", "retry");
+            self.show_toast("Retrying operation...", "info");
+            self.render();
+        }
+    }
+
+    /// Saves an input draft record for crash recovery (Section 5.1).
+    pub fn save_draft_recovery(&self, input_id: &str, text: &str) {
+        let record = DraftRecoveryRecord {
+            draft: text.to_string(),
+            input_id: input_id.to_string(),
+            timestamp_secs: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        };
+        let path = format!("/tmp/opencode/draft_{input_id}.json");
+        if let Ok(js) = serde_json::to_string_pretty(&record) {
+            let _ = std::fs::write(path, js);
+        }
+    }
+
+    /// Restores a saved input draft record if one exists.
+    pub fn load_draft_recovery(&self, input_id: &str) -> Option<String> {
+        let path = format!("/tmp/opencode/draft_{input_id}.json");
+        let content = std::fs::read_to_string(path).ok()?;
+        let record: DraftRecoveryRecord = serde_json::from_str(&content).ok()?;
+        Some(record.draft)
+    }
+
+    /// Starts a background async LLM or tool execution task with progress & status (Section 5.2).
+    pub fn start_async_task(&mut self, task_id: &str, status: &str) {
+        self.async_state = AsyncExecutionState {
+            in_flight: true,
+            status_text: status.to_string(),
+            task_id: Some(task_id.to_string()),
+            progress_percent: Some(0.0),
+            chunks_received: 0,
+        };
+        if self.spinner_origin.is_none() {
+            self.spinner_origin = Some(Instant::now());
+        }
+        self.dispatcher.dispatch_change("async_task", task_id);
+        self.dispatcher
+            .dispatch_key(&format!("TaskStarted:{task_id}"), None);
+        self.render();
+    }
+
+    /// Receives a live chunk during async streaming execution.
+    pub fn update_async_chunk(&mut self, chunk_text: &str) {
+        if self.async_state.in_flight {
+            self.async_state.chunks_received += 1;
+            self.dispatcher.dispatch_change("stream_chunk", chunk_text);
+            self.render();
+        }
+    }
+
+    /// Cancels the currently executing async task via Stop / Cancel button.
+    pub fn cancel_async_task(&mut self) {
+        if let Some(task_id) = self.async_state.task_id.take() {
+            self.async_state.in_flight = false;
+            self.show_toast("Execution cancelled.", "info");
+            self.dispatcher
+                .dispatch_key(&format!("TaskCancelled:{task_id}"), None);
+            self.dispatcher.dispatch_change("task_cancel", &task_id);
+            self.render();
+        }
+    }
+
+    /// Completes the currently executing async task.
+    pub fn finish_async_task(&mut self, result_text: &str) {
+        if let Some(task_id) = self.async_state.task_id.take() {
+            self.async_state.in_flight = false;
+            self.dispatcher
+                .dispatch_key(&format!("TaskFinished:{task_id}"), None);
+            self.dispatcher.dispatch_change(&task_id, result_text);
+            self.render();
+        }
+    }
+
+    /// Saves window state (size, theme, locale, sidebar) to JSON file (Section 5.4).
+    pub fn save_window_state(&self, path: &str) -> Result<(), String> {
+        let state = PersistedWindowState {
+            width: self.width,
+            height: self.height,
+            x: None,
+            y: None,
+            dark_theme: self.theme.is_dark(),
+            locale: format!("{:?}", self.locale).to_lowercase(),
+            sidebar_open: self.sidebar_open,
+        };
+        let js = serde_json::to_string_pretty(&state).map_err(|e| e.to_string())?;
+        std::fs::write(path, js).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Loads window state from JSON file (Section 5.4).
+    pub fn load_window_state(&mut self, path: &str) -> Result<PersistedWindowState, String> {
+        let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let state: PersistedWindowState =
+            serde_json::from_str(&content).map_err(|e| e.to_string())?;
+        self.apply_persisted_state(&state);
+        Ok(state)
+    }
+
+    /// Applies loaded window state to the current app.
+    pub fn apply_persisted_state(&mut self, state: &PersistedWindowState) {
+        self.width = state.width.max(200);
+        self.height = state.height.max(150);
+        self.sidebar_open = state.sidebar_open;
+        if state.dark_theme {
+            self.theme = Theme::DARK;
+        } else {
+            self.theme = Theme::LIGHT;
+        }
+        self.locale = match state.locale.as_str() {
+            "tr" => Locale::Tr,
+            _ => Locale::En,
+        };
+        self.render();
+    }
+
+    /// Toggles sidebar visibility (Section 5.4).
+    pub fn toggle_sidebar(&mut self) {
+        self.sidebar_open = !self.sidebar_open;
+        let open_str = if self.sidebar_open { "true" } else { "false" };
+        self.dispatcher.dispatch_change("sidebar_open", open_str);
+        self.dispatcher
+            .dispatch_key(&format!("SidebarToggled:{}", self.sidebar_open), None);
+        self.render();
+    }
+
+    /// Marks a bounding box as dirty for partial redraw (Section 5.5).
+    pub fn mark_dirty(&mut self, rect: Rect) {
+        self.dirty_rect = Some(match self.dirty_rect {
+            Some(cur) => cur.union(&rect),
+            None => rect,
+        });
+    }
+
+    /// Clears the dirty rect tracker once redraw is completed.
+    pub fn clear_dirty(&mut self) {
+        self.dirty_rect = None;
+    }
+
     /// Clamp every measured region's offset to its current content height.
     /// Returns `true` when any offset moved (the caller should re-run layout
     /// so drawn boxes never use a stale offset).
@@ -9713,6 +9915,37 @@ impl<D: UiDispatcher> NativeApp<D> {
             );
         }
 
+        // Active Error Banner overlay (Section 5.1)
+        if let Some(ref err) = self.current_error {
+            draw_error_banner(
+                &mut buffer,
+                stride,
+                h_usize,
+                &self.fonts,
+                self.width as i32,
+                err,
+            );
+        }
+
+        // Active Async LLM / Streaming Status Bar (Section 5.2)
+        if self.async_state.in_flight {
+            let phase = self.spinner_origin.map_or(0.0, |t| {
+                (Instant::now().duration_since(t).as_secs_f32() % SPINNER_PERIOD_SECS)
+                    / SPINNER_PERIOD_SECS
+            });
+            draw_async_status_bar(
+                &mut buffer,
+                stride,
+                h_usize,
+                &self.fonts,
+                &theme,
+                self.width as i32,
+                self.height as i32,
+                &self.async_state,
+                phase,
+            );
+        }
+
         // Tooltip overlay, painted last so it layers over every box, including
         // those inside a scroll viewport that would otherwise clip it. Asked
         // for above, while `self` could still be read — and already made to
@@ -9735,10 +9968,61 @@ impl<D: UiDispatcher> NativeApp<D> {
         self.last_frame = buffer.to_vec();
         self.render_count += 1;
         let _ = buffer.present();
+        self.clear_dirty();
     }
 
     pub fn handle_click(&mut self) {
         let (mx, my) = self.cursor_pos;
+
+        // Error banner owns click if active (Section 5.1)
+        if let Some(ref err) = self.current_error {
+            let banner_h = 38;
+            let banner_w = (self.width as i32 - 40).max(200);
+            let banner_x = 20;
+            let banner_y = 10;
+            if mx >= banner_x
+                && mx < banner_x + banner_w
+                && my >= banner_y
+                && my < banner_y + banner_h
+            {
+                // Check Close '✕' on far right
+                let close_x = banner_x + banner_w - 28;
+                if mx >= close_x {
+                    self.clear_error();
+                    return;
+                }
+                // Check Retry button if retryable
+                if err.retryable {
+                    let retry_w = 80;
+                    let retry_x = banner_x + banner_w - retry_w - 32;
+                    if mx >= retry_x && mx < retry_x + retry_w {
+                        self.trigger_error_retry();
+                        return;
+                    }
+                }
+                return;
+            }
+        }
+
+        // Async status bar Cancel button click (Section 5.2)
+        if self.async_state.in_flight {
+            let bar_h = 34;
+            let bar_w = (self.width as i32 - 40).max(200);
+            let bar_x = 20;
+            let bar_y = self.height as i32 - bar_h - 14;
+            let cancel_w = 70;
+            let cancel_h = 24;
+            let cancel_x = bar_x + bar_w - cancel_w - 8;
+            let cancel_y = bar_y + (bar_h - cancel_h) / 2;
+            if mx >= cancel_x
+                && mx < cancel_x + cancel_w
+                && my >= cancel_y
+                && my < cancel_y + cancel_h
+            {
+                self.cancel_async_task();
+                return;
+            }
+        }
 
         // Context menu owns click before anything else
         if let Some(menu) = self.context_menu.take() {
@@ -18371,5 +18655,229 @@ mod tests {
         // 9. Escape -> clears focus
         app.handle_key_input(&Key::Named(NamedKey::Escape), None);
         assert_eq!(app.focused_id, None);
+    }
+
+    #[test]
+    fn test_error_banner_lifecycle_retry_and_dismissal() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "Error Test".into(),
+                width: 500,
+                height: 400,
+            },
+            dummy,
+        );
+
+        // 1. Initial state has no error
+        assert!(app.current_error.is_none());
+
+        // 2. Set retryable network error
+        app.set_error(
+            "Connection timeout to LLM provider",
+            "timeout",
+            true,
+            Some("retry_send".into()),
+        );
+        assert!(app.current_error.is_some());
+        let err = app.current_error.as_ref().unwrap();
+        assert_eq!(err.error_type, "timeout");
+        assert!(err.retryable);
+        assert_eq!(*app.dispatcher.last_key, "ErrorShown:timeout");
+        assert_eq!(*app.dispatcher.notes, "timeout");
+
+        // 3. Trigger retry
+        app.trigger_error_retry();
+        assert!(app.current_error.is_none());
+        assert_eq!(*app.dispatcher.last_key, "Action:retry_send");
+        assert_eq!(*app.dispatcher.notes, "retry");
+
+        // 4. Set non-retryable error and dismiss
+        app.set_error("Schema validation failed", "schema", false, None);
+        assert!(app.current_error.is_some());
+        app.clear_error();
+        assert!(app.current_error.is_none());
+        assert_eq!(*app.dispatcher.last_key, "ErrorDismissed");
+        assert_eq!(*app.dispatcher.notes, "none");
+    }
+
+    #[test]
+    fn test_draft_recovery_persistence() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let app = NativeApp::new(
+            WindowConfig {
+                title: "Draft Test".into(),
+                width: 500,
+                height: 400,
+            },
+            dummy,
+        );
+
+        let input_id = "test_draft_input";
+        let draft_text = "Important unsaved message draft";
+
+        // Save draft
+        app.save_draft_recovery(input_id, draft_text);
+
+        // Load draft
+        let loaded = app.load_draft_recovery(input_id);
+        assert_eq!(loaded.as_deref(), Some(draft_text));
+
+        // Clean up
+        let _ = std::fs::remove_file(format!("/tmp/opencode/draft_{input_id}.json"));
+    }
+
+    #[test]
+    fn test_async_llm_execution_chunks_and_cancellation() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "Async Test".into(),
+                width: 500,
+                height: 400,
+            },
+            dummy,
+        );
+
+        // 1. Initial state not in flight
+        assert!(!app.async_state.in_flight);
+
+        // 2. Start async task
+        app.start_async_task("task_42", "Generating response...");
+        assert!(app.async_state.in_flight);
+        assert_eq!(app.async_state.task_id.as_deref(), Some("task_42"));
+        assert_eq!(*app.dispatcher.last_key, "TaskStarted:task_42");
+        assert_eq!(*app.dispatcher.notes, "task_42");
+
+        // 3. Receive streaming chunks
+        app.update_async_chunk("Hello ");
+        app.update_async_chunk("world!");
+        assert_eq!(app.async_state.chunks_received, 2);
+        assert_eq!(*app.dispatcher.notes, "world!");
+
+        // 4. Cancel task
+        app.cancel_async_task();
+        assert!(!app.async_state.in_flight);
+        assert_eq!(*app.dispatcher.last_key, "TaskCancelled:task_42");
+        assert_eq!(*app.dispatcher.notes, "task_42");
+        assert!(app.toast.is_some());
+    }
+
+    #[test]
+    fn test_window_state_persistence_and_sidebar_toggle() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "Persistence Test".into(),
+                width: 640,
+                height: 480,
+            },
+            dummy,
+        );
+
+        // Toggle sidebar
+        assert!(app.sidebar_open);
+        app.toggle_sidebar();
+        assert!(!app.sidebar_open);
+        assert_eq!(*app.dispatcher.last_key, "SidebarToggled:false");
+
+        // Save window state
+        let path = "/tmp/opencode/test_window_state.json";
+        app.save_window_state(path).expect("save state");
+
+        // Modify app state
+        app.width = 300;
+        app.height = 250;
+        app.sidebar_open = true;
+
+        // Load window state back
+        let loaded = app.load_window_state(path).expect("load state");
+        assert_eq!(loaded.width, 640);
+        assert_eq!(loaded.height, 480);
+        assert!(!loaded.sidebar_open);
+        assert_eq!(app.width, 640);
+        assert_eq!(app.height, 480);
+        assert!(!app.sidebar_open);
+
+        // Clean up
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_partial_redraw_dirty_rect_tracking() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "Dirty Rect Test".into(),
+                width: 500,
+                height: 400,
+            },
+            dummy,
+        );
+
+        assert_eq!(app.dirty_rect, None);
+
+        // Mark first rect dirty
+        let r1 = Rect {
+            x: 10,
+            y: 10,
+            w: 100,
+            h: 50,
+        };
+        app.mark_dirty(r1);
+        assert_eq!(app.dirty_rect, Some(r1));
+
+        // Mark second rect dirty, should union
+        let r2 = Rect {
+            x: 50,
+            y: 30,
+            w: 120,
+            h: 80,
+        };
+        app.mark_dirty(r2);
+        let union_rect = app.dirty_rect.unwrap();
+        assert_eq!(union_rect.x, 10);
+        assert_eq!(union_rect.y, 10);
+        assert_eq!(union_rect.w, 160); // (50 + 120) - 10
+        assert_eq!(union_rect.h, 100); // (30 + 80) - 10
+
+        // Clear dirty
+        app.clear_dirty();
+        assert_eq!(app.dirty_rect, None);
     }
 }
