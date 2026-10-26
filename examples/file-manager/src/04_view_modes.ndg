@@ -56,7 +56,7 @@ view FileIconsGrid(entries: [FileEntry], selected_name: string, current_lang: st
             on_click = on_item_click
         )
         current_row = current_row + [card]
-        if len(current_row) == 4 {
+        if len(current_row) == 6 {
             grid_rows = grid_rows + [
                 row(current_row, padding = 4, gap = 8, expand = true)
             ]
@@ -93,7 +93,7 @@ view FileCompactGrid(entries: [FileEntry], selected_name: string, current_lang: 
             on_click = on_item_click
         )
         current_row = current_row + [item_btn]
-        if len(current_row) == 3 {
+        if len(current_row) == 5 {
             compact_rows = compact_rows + [
                 row(current_row, padding = 1, gap = 4, expand = true)
             ]

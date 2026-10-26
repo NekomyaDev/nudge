@@ -15,20 +15,20 @@ view PlacesSidebar(current_path: string, current_lang: string) -> View {
         button(if is_en { "  ▶  Videos" } else { "  ▶  Videolar" }, id = "place_videos", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Videolar"), on_click = nav_videos),
         button(if is_en { "  ✕  Trash" } else { "  ✕  Çöp" }, id = "place_trash", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Trash"), on_click = nav_trash),
 
-        divider(size = 1),
+        divider(w = 158, size = 1),
 
         // Group 2: Remote (Uzak)
         text(if is_en { "Remote" } else { "Uzak" }, bold = true),
         button(if is_en { "  ⊚  Network" } else { "  ⊚  Ağ" }, id = "place_network", variant = "item", align = "start", w = 158, h = 24, on_click = nav_root),
 
-        divider(size = 1),
+        divider(w = 158, size = 1),
 
         // Group 3: Recent (Son)
         text(if is_en { "Recent" } else { "Son" }, bold = true),
         button(if is_en { "  ◷  Recent Files" } else { "  ◷  Son Dosyalar" }, id = "place_recent_files", variant = "item", align = "start", w = 158, h = 24, on_click = nav_home),
         button(if is_en { "  ◈  Recent Locations" } else { "  ◈  Son Konumlar" }, id = "place_recent_loc", variant = "item", align = "start", w = 158, h = 24, on_click = nav_docs),
 
-        divider(size = 1),
+        divider(w = 158, size = 1),
 
         // Group 4: Devices (Aygıtlar)
         text(if is_en { "Devices" } else { "Aygıtlar" }, bold = true),

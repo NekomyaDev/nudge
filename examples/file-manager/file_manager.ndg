@@ -290,20 +290,20 @@ view PlacesSidebar(current_path: string, current_lang: string) -> View {
         button(if is_en { "  ▶  Videos" } else { "  ▶  Videolar" }, id = "place_videos", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Videolar"), on_click = nav_videos),
         button(if is_en { "  ✕  Trash" } else { "  ✕  Çöp" }, id = "place_trash", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Trash"), on_click = nav_trash),
 
-        divider(size = 1),
+        divider(w = 158, size = 1),
 
         // Group 2: Remote (Uzak)
         text(if is_en { "Remote" } else { "Uzak" }, bold = true),
         button(if is_en { "  ⊚  Network" } else { "  ⊚  Ağ" }, id = "place_network", variant = "item", align = "start", w = 158, h = 24, on_click = nav_root),
 
-        divider(size = 1),
+        divider(w = 158, size = 1),
 
         // Group 3: Recent (Son)
         text(if is_en { "Recent" } else { "Son" }, bold = true),
         button(if is_en { "  ◷  Recent Files" } else { "  ◷  Son Dosyalar" }, id = "place_recent_files", variant = "item", align = "start", w = 158, h = 24, on_click = nav_home),
         button(if is_en { "  ◈  Recent Locations" } else { "  ◈  Son Konumlar" }, id = "place_recent_loc", variant = "item", align = "start", w = 158, h = 24, on_click = nav_docs),
 
-        divider(size = 1),
+        divider(w = 158, size = 1),
 
         // Group 4: Devices (Aygıtlar)
         text(if is_en { "Devices" } else { "Aygıtlar" }, bold = true),
@@ -373,7 +373,7 @@ view FileIconsGrid(entries: [FileEntry], selected_name: string, current_lang: st
             on_click = on_item_click
         )
         current_row = current_row + [card]
-        if len(current_row) == 4 {
+        if len(current_row) == 6 {
             grid_rows = grid_rows + [
                 row(current_row, padding = 4, gap = 8, expand = true)
             ]
@@ -410,7 +410,7 @@ view FileCompactGrid(entries: [FileEntry], selected_name: string, current_lang: 
             on_click = on_item_click
         )
         current_row = current_row + [item_btn]
-        if len(current_row) == 3 {
+        if len(current_row) == 5 {
             compact_rows = compact_rows + [
                 row(current_row, padding = 1, gap = 4, expand = true)
             ]
@@ -514,19 +514,21 @@ view TopToolbar(
 }
 
 view TabBar(tabs: [string], active_idx: int) -> View {
+    let count = len(tabs)
+    let tab_w = if count <= 1 { 220 } else if count == 2 { 200 } else if count == 3 { 180 } else { 150 }
     let mut tab_elements = []
     for (t, idx) in tabs {
         let is_active = (idx == active_idx)
         let tab_name = extract_tab_name(t)
         tab_elements = tab_elements + [
-            row(padding = 0, gap = 0) [
-                button("  " + tab_name + "  ", id = "tab_sel_" + str.to_string(idx), variant = "toolbar", selected = is_active, h = 24, on_click = on_tab_click),
-                button("✕", id = "tab_close_" + str.to_string(idx), variant = "toolbar", w = 20, h = 24, on_click = on_tab_close)
+            row(padding = 0, gap = 0, w = tab_w) [
+                button("⌂ " + tab_name, id = "tab_sel_" + str.to_string(idx), variant = "toolbar", selected = is_active, align = "start", w = tab_w - 24, h = 26, on_click = on_tab_click),
+                button("✕", id = "tab_close_" + str.to_string(idx), variant = "toolbar", w = 24, h = 26, on_click = on_tab_close)
             ]
         ]
     }
     let all_elements = tab_elements + [
-        button("+", id = "btn_new_tab", variant = "toolbar", w = 24, h = 24, on_click = on_new_tab)
+        button("+", id = "btn_new_tab", variant = "toolbar", w = 26, h = 26, on_click = on_new_tab)
     ]
 
     row(all_elements, padding = 2, gap = 4, bg = "toolbar", expand = true)

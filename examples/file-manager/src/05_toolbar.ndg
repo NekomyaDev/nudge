@@ -85,19 +85,21 @@ view TopToolbar(
 }
 
 view TabBar(tabs: [string], active_idx: int) -> View {
+    let count = len(tabs)
+    let tab_w = if count <= 1 { 220 } else if count == 2 { 200 } else if count == 3 { 180 } else { 150 }
     let mut tab_elements = []
     for (t, idx) in tabs {
         let is_active = (idx == active_idx)
         let tab_name = extract_tab_name(t)
         tab_elements = tab_elements + [
-            row(padding = 0, gap = 0) [
-                button("  " + tab_name + "  ", id = "tab_sel_" + str.to_string(idx), variant = "toolbar", selected = is_active, h = 24, on_click = on_tab_click),
-                button("✕", id = "tab_close_" + str.to_string(idx), variant = "toolbar", w = 20, h = 24, on_click = on_tab_close)
+            row(padding = 0, gap = 0, w = tab_w) [
+                button("⌂ " + tab_name, id = "tab_sel_" + str.to_string(idx), variant = "toolbar", selected = is_active, align = "start", w = tab_w - 24, h = 26, on_click = on_tab_click),
+                button("✕", id = "tab_close_" + str.to_string(idx), variant = "toolbar", w = 24, h = 26, on_click = on_tab_close)
             ]
         ]
     }
     let all_elements = tab_elements + [
-        button("+", id = "btn_new_tab", variant = "toolbar", w = 24, h = 24, on_click = on_new_tab)
+        button("+", id = "btn_new_tab", variant = "toolbar", w = 26, h = 26, on_click = on_new_tab)
     ]
 
     row(all_elements, padding = 2, gap = 4, bg = "toolbar", expand = true)
