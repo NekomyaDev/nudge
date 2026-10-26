@@ -1184,6 +1184,159 @@ fn test_http_framing() -> bool {{
     }
 
     #[test]
+    fn test_prelude_web_html_and_dom() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let html_src = std::fs::read_to_string(root_dir.join("prelude/web/html.ndg")).expect("read html.ndg");
+        let dom_src = std::fs::read_to_string(root_dir.join("prelude/web/dom.ndg")).expect("read dom.ndg");
+
+        let test_src = format!(
+            r#"{html_src}
+{dom_src}
+fn test_dom_suite() -> bool {{
+    let doc = "<div id=\"main\" class=\"container wrapper\"><header><h1 class=\"title\">Hello &amp; Welcome</h1></header><form action=\"/submit\"><input type=\"text\" name=\"username\" value=\"alice\"/><button type=\"submit\" class=\"btn primary\">Send</button></form></div>"
+    let tokens = tokenize_html(doc)
+    let tree = build_dom_tree(tokens)
+
+    let cnt_ok = len(tree.nodes) == 6
+
+    let h1_nodes = query_selector_all(tree, "h1")
+    let h1_ok = len(h1_nodes) == 1 and h1_nodes[0].name == "Hello & Welcome" and h1_nodes[0].role == "heading"
+
+    let main_div = query_selector(tree, "#main")
+    let main_ok = if main_div != none {{
+        main_div.tag == "div" and main_div.ref == 1
+    }} else {{
+        false
+    }}
+
+    let btns = query_selector_all(tree, ".btn")
+    let btn_ok = len(btns) == 1 and btns[0].tag == "button" and btns[0].clickable and btns[0].role == "button"
+
+    let inputs = query_selector_all(tree, "[name=\"username\"]")
+    let input_ok = len(inputs) == 1 and inputs[0].value == "alice" and inputs[0].editable and inputs[0].role == "textbox"
+
+    let form_btns = query_selector_all(tree, "form button")
+    let desc_ok = len(form_btns) == 1 and form_btns[0].name == "Send"
+
+    let by_ref = get_element_by_ref(tree, 1)
+    let ref_ok = if by_ref != none {{
+        by_ref.tag == "div"
+    }} else {{
+        false
+    }}
+
+    cnt_ok and h1_ok and main_ok and btn_ok and input_ok and desc_ok and ref_ok
+}}
+"#
+        );
+        let items = parse_src(&test_src);
+        let ok = run_program(&items, "test_dom_suite", &[]).expect("dom suite succeeds");
+        assert_eq!(ok, NudgeVal::Bool(true));
+    }
+
+    #[test]
+    fn test_prelude_web_policy() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let url_src = std::fs::read_to_string(root_dir.join("prelude/net/url.ndg")).expect("read url.ndg");
+        let policy_src = std::fs::read_to_string(root_dir.join("prelude/web/policy.ndg")).expect("read policy.ndg");
+
+        let test_src = format!(
+            r#"{url_src}
+{policy_src}
+fn test_policy_suite() -> bool {{
+    let policy = {{
+        allow: ["*.example.com", "api.github.com"],
+        workspace_root: "/home/app/workspace",
+        max_redirects: 20
+    }}
+
+    let u1 = parse_url("https://sub.example.com/v1/data")
+    let ok1 = validate_url_policy(u1, policy).allowed
+
+    let u2 = parse_url("https://api.github.com/repos")
+    let ok2 = validate_url_policy(u2, policy).allowed
+
+    let u3 = parse_url("https://malicious.com/steal")
+    let ok3 = !validate_url_policy(u3, policy).allowed
+
+    let empty_policy = {{
+        allow: [],
+        workspace_root: "/home/app/workspace",
+        max_redirects: 20
+    }}
+    let ok4 = !validate_url_policy(u1, empty_policy).allowed
+
+    let u5 = parse_url("ftp://example.com/file.zip")
+    let ok5 = !validate_url_policy(u5, policy).allowed
+
+    let u6 = parse_url("file:///home/app/workspace/docs/index.html")
+    let ok6 = validate_url_policy(u6, policy).allowed
+
+    let u7 = parse_url("file:///etc/passwd")
+    let ok7 = !validate_url_policy(u7, policy).allowed
+
+    let u8 = parse_url("file:///home/app/workspace/../etc/passwd")
+    let ok8 = !validate_url_policy(u8, policy).allowed
+
+    let r_ok = validate_redirect_hop(19, 20).allowed
+    let r_denied = !validate_redirect_hop(20, 20).allowed
+
+    ok1 and ok2 and ok3 and ok4 and ok5 and ok6 and ok7 and ok8 and r_ok and r_denied
+}}
+"#
+        );
+        let items = parse_src(&test_src);
+        let ok = run_program(&items, "test_policy_suite", &[]).expect("policy suite succeeds");
+        assert_eq!(ok, NudgeVal::Bool(true));
+    }
+
+    #[test]
+    fn test_prelude_web_snapshot() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let html_src = std::fs::read_to_string(root_dir.join("prelude/web/html.ndg")).expect("read html.ndg");
+        let dom_src = std::fs::read_to_string(root_dir.join("prelude/web/dom.ndg")).expect("read dom.ndg");
+        let snapshot_src = std::fs::read_to_string(root_dir.join("prelude/web/snapshot.ndg")).expect("read snapshot.ndg");
+
+        let test_src = format!(
+            r#"{html_src}
+{dom_src}
+{snapshot_src}
+fn test_snapshot_suite() -> bool {{
+    let doc = "<div id=\"main\"><header><h1>Doc Title</h1></header><form><input type=\"text\" name=\"query\" value=\"search terms\"/><button type=\"submit\">Go</button></form></div>"
+    let tokens = tokenize_html(doc)
+    let tree = build_dom_tree(tokens)
+    let snap = make_snapshot("p-1", "https://example.com/search", "Search Page", 1, tree)
+
+    let ok_page = snap.page == "p-1"
+    let ok_url = snap.url == "https://example.com/search"
+    let ok_title = snap.title == "Search Page"
+    let ok_state = snap.state_id == "s-1"
+    let ok_cnt = snap.count == 6 and len(snap.elements) == 6
+
+    let t = snap.tree
+    let has_h1 = str.contains(t, "[3] heading \"Doc Title\"")
+    let has_input = str.contains(t, "[5] textbox \"query\" = search terms (editable)")
+    let has_btn = str.contains(t, "[6] button \"Go\" (clickable)")
+
+    let s2 = make_state_id(2)
+    let ok_s2 = s2 == "s-2"
+
+    ok_page and ok_url and ok_title and ok_state and ok_cnt and has_h1 and has_input and has_btn and ok_s2
+}}
+"#
+        );
+        let items = parse_src(&test_src);
+        let ok = run_program(&items, "test_snapshot_suite", &[]).expect("snapshot suite succeeds");
+        assert_eq!(ok, NudgeVal::Bool(true));
+    }
+
+    #[test]
     fn test_eval_index_assign_list_and_map() {
         let src = r#"
             fn test_list_assign() -> [int] {
@@ -1340,6 +1493,24 @@ fn test_http_framing() -> bool {{
         let res = interp
             .invoke_fn("main", &[])
             .expect("indexer main execution succeeds");
+        assert_eq!(res, NudgeVal::Int(0));
+    }
+
+    #[test]
+    fn test_query_acceptance_suite() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let query_test_path = root_dir.join("crates/nudge-index/api/test_query.ndg");
+
+        let query_src = std::fs::read_to_string(&query_test_path).expect("read test_query.ndg");
+        let items = parse_src(&query_src);
+        let mut interp = crate::eval::interpreter::Interpreter::new();
+        interp.load_items(&items).expect("load items succeeds");
+        interp.run_all_tests().expect("all query test blocks pass");
+        let res = interp
+            .invoke_fn("main", &[])
+            .expect("query main execution succeeds");
         assert_eq!(res, NudgeVal::Int(0));
     }
 }

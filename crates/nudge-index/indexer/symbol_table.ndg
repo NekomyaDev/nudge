@@ -1,0 +1,104 @@
+/// Pure-Nudge Partitioned In-Memory Symbol Table
+/// Part of Phase 5 (v2.5) - Query Engine & Benchmarking
+/// Zero foreign dependencies - 100% Pure Nudge
+
+type SymbolEntry = {
+    name: string,
+    kind: string,
+    file_path: string,
+    line: int,
+    signature: string,
+    effects: [string]
+}
+
+type SymbolBucket = {
+    bucket_id: int,
+    entries: [SymbolEntry]
+}
+
+fn get_bucket_index(name: string, num_buckets: int) -> int {
+    let raw_h = str.hash(name)
+    let pos_h = if raw_h < 0 { -raw_h } else { raw_h }
+    pos_h % num_buckets
+}
+
+agent SymbolTable {
+    state {
+        entries: [SymbolEntry] = []
+        total_count: int = 0
+    }
+
+    fn reset() {
+        state.entries = []
+        state.total_count = 0
+    }
+
+    fn count() -> int {
+        state.total_count
+    }
+
+    fn insert(entry: SymbolEntry) {
+        let mut updated: [SymbolEntry] = []
+        let mut replaced = false
+        for e in state.entries {
+            if e.name == entry.name {
+                updated = updated + [entry]
+                replaced = true
+            } else {
+                updated = updated + [e]
+            }
+        }
+        if !replaced {
+            updated = updated + [entry]
+            state.total_count = state.total_count + 1
+        }
+        state.entries = updated
+    }
+
+    fn lookup(name: string) -> SymbolEntry? {
+        let mut found: SymbolEntry? = none
+        for e in state.entries {
+            if e.name == name {
+                found = e
+            }
+        }
+        found
+    }
+
+    fn remove(name: string) -> bool {
+        let mut remaining: [SymbolEntry] = []
+        let mut removed = false
+        for e in state.entries {
+            if e.name == name {
+                removed = true
+            } else {
+                remaining = remaining + [e]
+            }
+        }
+        if removed {
+            state.entries = remaining
+            state.total_count = state.total_count - 1
+        }
+        removed
+    }
+
+    fn find_by_file(path: string) -> [SymbolEntry] {
+        let mut res: [SymbolEntry] = []
+        for e in state.entries {
+            if e.file_path == path {
+                res = res + [e]
+            }
+        }
+        res
+    }
+
+    fn find_by_kind(kind: string) -> [SymbolEntry] {
+        let mut res: [SymbolEntry] = []
+        for e in state.entries {
+            if e.kind == kind {
+                res = res + [e]
+            }
+        }
+        res
+    }
+}
