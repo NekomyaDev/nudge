@@ -1,4 +1,4 @@
-/// Pure-Nudge State-Machine Scanner & Lexer
+/// Pure-Nudge State-Machine Scanner & Lexer (Optimized Zero-Allocation Slices)
 /// Part of Phase 3 (v2.3) - Lexer & Full-Spectrum AST Parser
 /// Zero foreign dependencies - 100% Pure Nudge
 
@@ -24,18 +24,21 @@ fn is_alphanumeric_code(c: int) -> bool {
 }
 
 fn is_kw(s: string) -> bool {
-    let kw = [
-        "fn", "agent", "tool", "type", "view", "window", "decide", "auth",
-        "provider", "account", "uses", "costs", "retry", "with", "repair",
-        "state", "test", "for_all", "gen", "let", "mut", "if", "else",
-        "for", "in", "return", "assert", "none", "true", "false", "and",
-        "or", "not", "par", "race", "map", "merge", "route", "stream",
-        "impl", "mcp", "side_effects"
-    ]
+    let len_s = str.length(s)
     let mut found = false
-    for k in kw {
-        if k == s {
-            found = true
+    if len_s >= 2 and len_s <= 12 {
+        let kw = [
+            "fn", "agent", "tool", "type", "view", "window", "decide", "auth",
+            "provider", "account", "uses", "costs", "retry", "with", "repair",
+            "state", "test", "for_all", "gen", "let", "mut", "if", "else",
+            "for", "in", "return", "assert", "none", "true", "false", "and",
+            "or", "not", "par", "race", "map", "merge", "route", "stream",
+            "impl", "mcp", "side_effects"
+        ]
+        for k in kw {
+            if k == s {
+                found = true
+            }
         }
     }
     found
@@ -109,13 +112,11 @@ fn scan_tokens(src: string) -> [Token] {
                 let start_line = line
                 pos = pos + 6
                 col = col + 6
+                let content_start = pos
                 let mut in_prompt = true
-                let mut prompt_content = ""
                 for _ in chars {
                     if pos < n and in_prompt {
                         if pos + 2 < n and str.substring(src, pos, pos + 3) == "\"\"\"" {
-                            pos = pos + 3
-                            col = col + 3
                             in_prompt = false
                         } else {
                             let ch_code = str.char_code(src, pos)
@@ -125,10 +126,14 @@ fn scan_tokens(src: string) -> [Token] {
                             } else {
                                 col = col + 1
                             }
-                            prompt_content = prompt_content + str.substring(src, pos, pos + 1)
                             pos = pos + 1
                         }
                     }
+                }
+                let prompt_content = str.substring(src, content_start, pos)
+                if pos + 2 < n {
+                    pos = pos + 3
+                    col = col + 3
                 }
                 tokens = tokens + [{
                     kind: "prompt",
@@ -145,23 +150,16 @@ fn scan_tokens(src: string) -> [Token] {
                 let start_line = line
                 pos = pos + 1
                 col = col + 1
+                let content_start = pos
                 let mut in_str = true
-                let mut content = ""
+                let mut has_escapes = false
                 for _ in chars {
                     if pos < n and in_str {
                         let sc = str.char_code(src, pos)
                         if sc == 34 {
-                            pos = pos + 1
-                            col = col + 1
                             in_str = false
                         } else if sc == 92 and pos + 1 < n {
-                            // Escape
-                            let next_c = str.char_code(src, pos + 1)
-                            if next_c == 110 { content = content + "\n" }
-                            else if next_c == 116 { content = content + "\t" }
-                            else if next_c == 34 { content = content + "\"" }
-                            else if next_c == 92 { content = content + "\\" }
-                            else { content = content + str.substring(src, pos + 1, pos + 2) }
+                            has_escapes = true
                             pos = pos + 2
                             col = col + 2
                         } else {
@@ -171,10 +169,41 @@ fn scan_tokens(src: string) -> [Token] {
                             } else {
                                 col = col + 1
                             }
-                            content = content + str.substring(src, pos, pos + 1)
                             pos = pos + 1
                         }
                     }
+                }
+                let content_end = pos
+                if pos < n {
+                    pos = pos + 1
+                    col = col + 1
+                }
+                let mut content = ""
+                if !has_escapes {
+                    content = str.substring(src, content_start, content_end)
+                } else {
+                    let raw = str.substring(src, content_start, content_end)
+                    let raw_len = str.length(raw)
+                    let mut unescaped = ""
+                    let mut i = 0
+                    for _ in chars {
+                        if i < raw_len {
+                            let cc = str.char_code(raw, i)
+                            if cc == 92 and i + 1 < raw_len {
+                                let next_c = str.char_code(raw, i + 1)
+                                if next_c == 110 { unescaped = unescaped + "\n" }
+                                else if next_c == 116 { unescaped = unescaped + "\t" }
+                                else if next_c == 34 { unescaped = unescaped + "\"" }
+                                else if next_c == 92 { unescaped = unescaped + "\\" }
+                                else { unescaped = unescaped + str.substring(raw, i + 1, i + 2) }
+                                i = i + 2
+                            } else {
+                                unescaped = unescaped + str.substring(raw, i, i + 1)
+                                i = i + 1
+                            }
+                        }
+                    }
+                    content = unescaped
                 }
                 tokens = tokens + [{
                     kind: "string",
@@ -286,4 +315,30 @@ fn scan_tokens(src: string) -> [Token] {
 
     tokens = tokens + [{ kind: "EOF", text: "", line: line, col: col, offset: pos, length: 0 }]
     tokens
+}
+
+fn main() -> int {
+    let toks = scan_tokens("fn hello() { \"test\" }")
+    if len(toks) > 0 { 0 } else { 1 }
+}
+
+test "scanner tokens, prompts and string slices" {
+    let code = "fn run() uses LLM { llm\"\"\"SELECT * FROM users WHERE status = 'active';\"\"\" let msg = \"hello \\n world\" }"
+    let toks = scan_tokens(code)
+    assert len(toks) > 8
+
+    let mut found_prompt = false
+    let mut found_str = false
+    for t in toks {
+        if t.kind == "prompt" {
+            found_prompt = true
+            assert str.contains(t.text, "SELECT * FROM users")
+        }
+        if t.kind == "string" {
+            found_str = true
+            assert str.contains(t.text, "hello \n world")
+        }
+    }
+    assert found_prompt
+    assert found_str
 }
