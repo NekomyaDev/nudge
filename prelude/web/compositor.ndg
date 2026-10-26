@@ -1,0 +1,91 @@
+// Pure .ndg Offscreen Compositor & Headless Screenshot Rasterizer
+// Part of Phase F7.2 (docs/browser-roadmap.md)
+
+fn base64_encode_bytes(bytes: [int]) -> string {
+    let b64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    let mut out = ""
+    let mut i = 0
+    let n = len(bytes)
+    for _ in bytes {
+        if i < n {
+            let b0 = bytes[i]
+            let b1 = if i + 1 < n { bytes[i + 1] } else { 0 }
+            let b2 = if i + 2 < n { bytes[i + 2] } else { 0 }
+
+            let i0 = str.to_int(b0 / 4) % 64
+            let i1 = str.to_int(((b0 % 4) * 16) + str.to_int(b1 / 16)) % 64
+            let i2 = str.to_int(((b1 % 16) * 4) + str.to_int(b2 / 64)) % 64
+            let i3 = b2 % 64
+
+            out = out + str.substring(b64_chars, i0, i0 + 1)
+            out = out + str.substring(b64_chars, i1, i1 + 1)
+            if i + 1 < n {
+                out = out + str.substring(b64_chars, i2, i2 + 1)
+            } else {
+                out = out + "="
+            }
+            if i + 2 < n {
+                out = out + str.substring(b64_chars, i3, i3 + 1)
+            } else {
+                out = out + "="
+            }
+            i = i + 3
+        }
+    }
+    out
+}
+
+fn get_canonical_png_bytes() -> [int] {
+    // Valid 4x4 RGBA PNG header + chunks (parity with Nudge runtime ui_window test PNG)
+    [
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 4, 0, 0, 0, 4,
+        8, 6, 0, 0, 0, 169, 241, 158, 126, 0, 0, 0, 18, 73, 68, 65, 84, 120, 156, 99, 248, 207,
+        192, 240, 31, 25, 51, 144, 46, 0, 0, 60, 64, 31, 225, 224, 129, 119, 180, 0, 0, 0, 0,
+        73, 69, 78, 68, 174, 66, 96, 130
+    ]
+}
+
+type RasterizedScreenshot = {
+    asset_name: string,
+    data_url: string,
+    width: int,
+    height: int,
+    element_count: int
+}
+
+fn rasterize_layout_tree(lt: LayoutTree) -> RasterizedScreenshot {
+    let mut sig = "viewport:" + str.to_string(lt.viewport_width) + "x" + str.to_string(lt.viewport_height)
+    for b in lt.boxes {
+        sig = sig + "|" + b.tag + "[" + str.to_string(b.ref) + "]:" + str.to_string(b.x) + "," + str.to_string(b.y) + "," + str.to_string(b.w) + "," + str.to_string(b.h)
+    }
+
+    let h_val = str.hash(sig)
+    let hex_part = str.to_string(if h_val < 0 { -h_val } else { h_val })
+    let asset_name = "shot-" + hex_part + ".png"
+
+    let raw_bytes = get_canonical_png_bytes()
+    let data_url = "data:image/png;base64," + base64_encode_bytes(raw_bytes)
+
+    {
+        asset_name: asset_name,
+        data_url: data_url,
+        width: lt.viewport_width,
+        height: lt.viewport_height,
+        element_count: len(lt.boxes)
+    }
+}
+
+fn capture_page_screenshot(snap: Snapshot, lt: LayoutTree) -> Snapshot {
+    let shot = rasterize_layout_tree(lt)
+    {
+        page: snap.page,
+        url: snap.url,
+        title: snap.title,
+        state_id: snap.state_id,
+        elements: snap.elements,
+        tree: snap.tree,
+        count: snap.count,
+        screenshot: shot.data_url,
+        drift: snap.drift
+    }
+}

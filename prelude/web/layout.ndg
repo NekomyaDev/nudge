@@ -1,0 +1,237 @@
+// Pure .ndg Box Model & Text Layout Engine
+// Part of Phase F7.1 (docs/browser-roadmap.md)
+
+type BoxStyle = {
+    display: string,
+    width: int,
+    height: int,
+    margin_top: int,
+    margin_bottom: int,
+    margin_left: int,
+    margin_right: int,
+    padding: int
+}
+
+type LayoutBox = {
+    ref: int,
+    tag: string,
+    role: string,
+    name: string,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    display: string
+}
+
+type LayoutTree = {
+    boxes: [LayoutBox],
+    viewport_width: int,
+    viewport_height: int
+}
+
+fn parse_css_px_val(s: string, key: string, fallback: int) -> int {
+    let pos = str.index_of(s, key)
+    let mut out = fallback
+    if pos >= 0 {
+        let after_key = pos + str.length(key)
+        let colon = str.index_of(str.substring(s, after_key), ":")
+        if colon >= 0 {
+            let start = after_key + colon + 1
+            let semi = str.index_of(str.substring(s, start), ";")
+            let val_part = if semi >= 0 {
+                str.substring(s, start, start + semi)
+            } else {
+                str.substring(s, start)
+            }
+            let trimmed = str.trim(val_part)
+            let px_pos = str.index_of(trimmed, "px")
+            let num_str = if px_pos >= 0 {
+                str.substring(trimmed, 0, px_pos)
+            } else {
+                trimmed
+            }
+            let parsed = str.to_int(num_str)
+            if parsed != 0 or num_str == "0" {
+                out = parsed
+            }
+        }
+    }
+    out
+}
+
+fn compute_node_style(tag: string, style_attr: string) -> BoxStyle {
+    let is_block_tag = (tag == "div" or tag == "p" or tag == "h1" or tag == "h2" or tag == "h3" or tag == "form" or tag == "section" or tag == "header" or tag == "footer" or tag == "ul" or tag == "ol" or tag == "li")
+    let default_display = if is_block_tag { "block" } else { "inline" }
+
+    let mut display = default_display
+    if str.contains(style_attr, "display: none") or str.contains(style_attr, "display:none") {
+        display = "none"
+    } else if str.contains(style_attr, "display: block") or str.contains(style_attr, "display:block") {
+        display = "block"
+    } else if str.contains(style_attr, "display: inline") or str.contains(style_attr, "display:inline") {
+        display = "inline"
+    }
+
+    let def_w = if is_block_tag { -1 } else if tag == "button" { 80 } else if tag == "input" { 160 } else { 0 }
+    let def_h = if tag == "h1" { 36 } else if tag == "h2" { 30 } else if tag == "button" { 28 } else if tag == "input" { 26 } else if is_block_tag { 20 } else { 18 }
+
+    let w = parse_css_px_val(style_attr, "width", def_w)
+    let h = parse_css_px_val(style_attr, "height", def_h)
+    let m = parse_css_px_val(style_attr, "margin", 0)
+    let p = parse_css_px_val(style_attr, "padding", 0)
+
+    let mt = parse_css_px_val(style_attr, "margin-top", m)
+    let mb = parse_css_px_val(style_attr, "margin-bottom", m)
+    let ml = parse_css_px_val(style_attr, "margin-left", m)
+    let mr = parse_css_px_val(style_attr, "margin-right", m)
+
+    {
+        display: display,
+        width: w,
+        height: h,
+        margin_top: mt,
+        margin_bottom: mb,
+        margin_left: ml,
+        margin_right: mr,
+        padding: p
+    }
+}
+
+fn compute_layout(tree: DomTree, viewport_w: int, viewport_h: int) -> LayoutTree {
+    let mut boxes: [LayoutBox] = []
+    let mut cur_x = 0
+    let mut cur_y = 0
+    let line_height = 20
+
+    for n in tree.nodes {
+        let style_attr = get_attr_value(n.attrs, "style", "")
+        let style = compute_node_style(n.tag, style_attr)
+
+        if style.display == "none" {
+            boxes = boxes + [{
+                ref: n.ref,
+                tag: n.tag,
+                role: n.role,
+                name: n.name,
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+                display: "none"
+            }]
+        } else if style.display == "block" {
+            if cur_x > 0 {
+                cur_x = 0
+                cur_y = cur_y + line_height
+            }
+            cur_y = cur_y + style.margin_top
+            let box_x = cur_x + style.margin_left
+            let box_y = cur_y
+            let box_w = if style.width > 0 { style.width } else { viewport_w - box_x - style.margin_right }
+            let text_extra = if n.text != "" { 18 } else { 0 }
+            let box_h = if style.height > 0 { style.height } else { 24 + text_extra }
+
+            cur_y = box_y + box_h + style.margin_bottom
+            cur_x = 0
+
+            boxes = boxes + [{
+                ref: n.ref,
+                tag: n.tag,
+                role: n.role,
+                name: n.name,
+                x: box_x,
+                y: box_y,
+                w: box_w,
+                h: box_h,
+                display: "block"
+            }]
+        } else {
+            let elem_w = if style.width > 0 {
+                style.width
+            } else if n.tag == "button" {
+                80
+            } else if n.tag == "input" {
+                160
+            } else if n.text != "" {
+                str.length(n.text) * 8 + 10
+            } else {
+                30
+            }
+            let elem_h = if style.height > 0 { style.height } else { 24 }
+
+            if cur_x + elem_w > viewport_w and cur_x > 0 {
+                cur_x = 0
+                cur_y = cur_y + line_height + 4
+            }
+
+            let box_x = cur_x + style.margin_left
+            let box_y = cur_y + style.margin_top
+            cur_x = box_x + elem_w + style.margin_right
+
+            boxes = boxes + [{
+                ref: n.ref,
+                tag: n.tag,
+                role: n.role,
+                name: n.name,
+                x: box_x,
+                y: box_y,
+                w: elem_w,
+                h: elem_h,
+                display: "inline"
+            }]
+        }
+    }
+
+    {
+        boxes: boxes,
+        viewport_width: viewport_w,
+        viewport_height: viewport_h
+    }
+}
+
+fn get_box_bounds(lt: LayoutTree, target_ref: int) -> [int] {
+    let mut res = [0, 0, 0, 0]
+    for b in lt.boxes {
+        if b.ref == target_ref {
+            res = [b.x, b.y, b.w, b.h]
+        }
+    }
+    res
+}
+
+fn apply_layout_to_snapshot(snap: Snapshot, lt: LayoutTree) -> Snapshot {
+    let mut updated_elements: [Element] = []
+    for el in snap.elements {
+        let b = get_box_bounds(lt, el.ref)
+        updated_elements = updated_elements + [{
+            index: el.index,
+            ref: el.ref,
+            role: el.role,
+            title: el.title,
+            name: el.name,
+            value: el.value,
+            tag: el.tag,
+            href: el.href,
+            pressable: el.pressable,
+            clickable: el.clickable,
+            editable: el.editable,
+            focused: el.focused,
+            enabled: el.enabled,
+            actions: el.actions,
+            bounds: b
+        }]
+    }
+
+    {
+        page: snap.page,
+        url: snap.url,
+        title: snap.title,
+        state_id: snap.state_id,
+        elements: updated_elements,
+        tree: snap.tree,
+        count: snap.count,
+        screenshot: snap.screenshot,
+        drift: snap.drift
+    }
+}

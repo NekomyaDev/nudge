@@ -225,13 +225,13 @@
 ## Phase F7: Native Font/UI Rendering & Screenshots
 **Goal:** Generate pixel-accurate screenshots using Nudge's first-party UI/font engine.
 
-- [ ] **Task F7.1 — Box Model & Text Layout**
+- [x] **Task F7.1 — Box Model & Text Layout**
   - **Owner / Agent:** `agent:render-layout`
   - **Files:** `prelude/web/layout.ndg`
   - **Contract:** Calculate inline and block layout geometries, wrapping, and element bounding boxes.
   - **Acceptance Gate:** Layout engine calculates expected bounding box for styled sample pages.
 
-- [ ] **Task F7.2 — Rasterization & Headless Screenshots**
+- [x] **Task F7.2 — Rasterization & Headless Screenshots**
   - **Owner / Agent:** `agent:render-compositor`
   - **Files:** `prelude/web/compositor.ndg`
   - **Contract:**

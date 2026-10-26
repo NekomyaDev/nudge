@@ -1635,6 +1635,67 @@ fn test_f6_suite() -> bool {{
     }
 
     #[test]
+    fn test_prelude_web_layout_and_compositor() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let url_src =
+            std::fs::read_to_string(root_dir.join("prelude/net/url.ndg")).expect("read url.ndg");
+        let html_src =
+            std::fs::read_to_string(root_dir.join("prelude/web/html.ndg")).expect("read html.ndg");
+        let dom_src =
+            std::fs::read_to_string(root_dir.join("prelude/web/dom.ndg")).expect("read dom.ndg");
+        let snapshot_src = std::fs::read_to_string(root_dir.join("prelude/web/snapshot.ndg"))
+            .expect("read snapshot.ndg");
+        let layout_src = std::fs::read_to_string(root_dir.join("prelude/web/layout.ndg"))
+            .expect("read layout.ndg");
+        let compositor_src = std::fs::read_to_string(root_dir.join("prelude/web/compositor.ndg"))
+            .expect("read compositor.ndg");
+
+        let test_src = format!(
+            r##"{url_src}
+{html_src}
+{dom_src}
+{snapshot_src}
+{layout_src}
+{compositor_src}
+fn test_f7_suite() -> bool {{
+    // 1. Box Model & Layout
+    let doc = "<div id=\"card\" style=\"width: 400px; height: 200px; margin: 20px;\"><button id=\"btn\" style=\"width: 100px; height: 30px;\">Click</button><span style=\"display: none;\">Hidden</span></div>"
+    let tree = build_dom_tree(tokenize_html(doc))
+    let lt = compute_layout(tree, 1280, 800)
+
+    let b_card = get_box_bounds(lt, 1)
+    let ok_card = b_card[0] == 20 and b_card[1] == 20 and b_card[2] == 400 and b_card[3] == 200
+
+    let b_btn = get_box_bounds(lt, 2)
+    let ok_btn = b_btn[2] == 100 and b_btn[3] == 30
+
+    let b_hidden = get_box_bounds(lt, 3)
+    let ok_hidden = b_hidden[0] == 0 and b_hidden[1] == 0 and b_hidden[2] == 0 and b_hidden[3] == 0
+
+    // 2. Snapshot Integration
+    let snap0 = make_snapshot("p-1", "https://example.com", "Test Page", 1, tree)
+    let snap_with_layout = apply_layout_to_snapshot(snap0, lt)
+    let ok_snap_bounds = len(snap_with_layout.elements) >= 2 and snap_with_layout.elements[0].bounds[2] == 400
+
+    // 3. Rasterization & Screenshot
+    let shot_res = rasterize_layout_tree(lt)
+    let ok_shot = str.starts_with(shot_res.data_url, "data:image/png;base64,") and str.starts_with(shot_res.asset_name, "shot-")
+
+    let captured = capture_page_screenshot(snap_with_layout, lt)
+    let ok_captured = str.starts_with(captured.screenshot, "data:image/png;base64,")
+
+    ok_card and ok_btn and ok_hidden and ok_snap_bounds and ok_shot and ok_captured
+}}
+"##
+        );
+        let items = parse_src(&test_src);
+        let ok = run_program(&items, "test_f7_suite", &[]).expect("f7 suite succeeds");
+        assert_eq!(ok, NudgeVal::Bool(true));
+    }
+
+    #[test]
     fn test_eval_index_assign_list_and_map() {
         let src = r#"
             fn test_list_assign() -> [int] {
