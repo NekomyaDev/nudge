@@ -4319,6 +4319,16 @@ def str_index_of(s, sub):
         return -1
     return s.find(sub)
 
+def str_lower(s):
+    if not isinstance(s, str):
+        return ""
+    return s.lower()
+
+def str_upper(s):
+    if not isinstance(s, str):
+        return ""
+    return s.upper()
+
 def str_split(s, delim=" "):
     if not isinstance(s, str):
         return []

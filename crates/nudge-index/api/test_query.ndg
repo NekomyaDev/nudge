@@ -60,7 +60,7 @@ agent SymbolTable {
         total_count: int = 0
     }
 
-    fn reset() {
+    fn reset_symbol_table() {
         state.entries = []
         state.total_count = 0
     }
@@ -110,7 +110,7 @@ agent InvertedIndex {
         term_count: int = 0
     }
 
-    fn reset() {
+    fn reset_inverted_index() {
         state.postings = []
         state.term_count = 0
     }
@@ -166,7 +166,7 @@ agent CallGraph {
         registered_callers: [string] = []
     }
 
-    fn reset() {
+    fn reset_call_graph() {
         state.edges = []
         state.registered_callers = []
     }
@@ -227,9 +227,9 @@ agent CallGraph {
 }
 
 fn query_init() {
-    SymbolTable.reset()
-    InvertedIndex.reset()
-    CallGraph.reset()
+    SymbolTable.reset_symbol_table()
+    InvertedIndex.reset_inverted_index()
+    CallGraph.reset_call_graph()
 }
 
 fn register_symbol(

@@ -20,7 +20,7 @@ agent InvertedIndex {
         term_count: int = 0
     }
 
-    fn reset() {
+    fn reset_inverted_index() {
         state.postings = []
         state.term_count = 0
     }

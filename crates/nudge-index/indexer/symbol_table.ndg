@@ -28,7 +28,7 @@ agent SymbolTable {
         total_count: int = 0
     }
 
-    fn reset() {
+    fn reset_symbol_table() {
         state.entries = []
         state.total_count = 0
     }

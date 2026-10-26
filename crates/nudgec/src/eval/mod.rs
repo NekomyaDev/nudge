@@ -1192,7 +1192,7 @@ fn test_http_framing() -> bool {{
         let dom_src = std::fs::read_to_string(root_dir.join("prelude/web/dom.ndg")).expect("read dom.ndg");
 
         let test_src = format!(
-            r#"{html_src}
+            r##"{html_src}
 {dom_src}
 fn test_dom_suite() -> bool {{
     let doc = "<div id=\"main\" class=\"container wrapper\"><header><h1 class=\"title\">Hello &amp; Welcome</h1></header><form action=\"/submit\"><input type=\"text\" name=\"username\" value=\"alice\"/><button type=\"submit\" class=\"btn primary\">Send</button></form></div>"
@@ -1229,7 +1229,7 @@ fn test_dom_suite() -> bool {{
 
     cnt_ok and h1_ok and main_ok and btn_ok and input_ok and desc_ok and ref_ok
 }}
-"#
+"##
         );
         let items = parse_src(&test_src);
         let ok = run_program(&items, "test_dom_suite", &[]).expect("dom suite succeeds");
@@ -1245,7 +1245,7 @@ fn test_dom_suite() -> bool {{
         let policy_src = std::fs::read_to_string(root_dir.join("prelude/web/policy.ndg")).expect("read policy.ndg");
 
         let test_src = format!(
-            r#"{url_src}
+            r##"{url_src}
 {policy_src}
 fn test_policy_suite() -> bool {{
     let policy = {{
@@ -1287,7 +1287,7 @@ fn test_policy_suite() -> bool {{
 
     ok1 and ok2 and ok3 and ok4 and ok5 and ok6 and ok7 and ok8 and r_ok and r_denied
 }}
-"#
+"##
         );
         let items = parse_src(&test_src);
         let ok = run_program(&items, "test_policy_suite", &[]).expect("policy suite succeeds");
@@ -1304,7 +1304,7 @@ fn test_policy_suite() -> bool {{
         let snapshot_src = std::fs::read_to_string(root_dir.join("prelude/web/snapshot.ndg")).expect("read snapshot.ndg");
 
         let test_src = format!(
-            r#"{html_src}
+            r##"{html_src}
 {dom_src}
 {snapshot_src}
 fn test_snapshot_suite() -> bool {{
@@ -1329,7 +1329,7 @@ fn test_snapshot_suite() -> bool {{
 
     ok_page and ok_url and ok_title and ok_state and ok_cnt and has_h1 and has_input and has_btn and ok_s2
 }}
-"#
+"##
         );
         let items = parse_src(&test_src);
         let ok = run_program(&items, "test_snapshot_suite", &[]).expect("snapshot suite succeeds");

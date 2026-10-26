@@ -260,12 +260,22 @@ pub fn emit(items: &[Item]) -> String {
 }
 
 fn emit_body(body: &[Stmt], aliases: &HashSet<String>, agent: Option<&str>) -> String {
+    emit_body_inner(body, aliases, agent, true)
+}
+
+fn emit_body_inner(
+    body: &[Stmt],
+    aliases: &HashSet<String>,
+    agent: Option<&str>,
+    is_return_context: bool,
+) -> String {
     if body.is_empty() {
         return "    pass\n".into();
     }
     let mut out = String::new();
     let last = body.len() - 1;
     for (i, st) in body.iter().enumerate() {
+        let is_last = i == last && is_return_context;
         let line = match &st.kind {
             StmtKind::Let {
                 name,
@@ -315,7 +325,7 @@ fn emit_body(body: &[Stmt], aliases: &HashSet<String>, agent: Option<&str>) -> S
             }
             StmtKind::Assert(e) => format!("assert {}", py(e, aliases)),
             // MVP return rule: the fn's final expression is its return value.
-            StmtKind::ExprStmt(e) if i == last => format!("return {}", py(e, aliases)),
+            StmtKind::ExprStmt(e) if is_last => format!("return {}", py(e, aliases)),
             StmtKind::ExprStmt(e) => py(e, aliases),
             StmtKind::ForAll { .. } => {
                 "# error: for_all outside a test block (E0801)\n    pass".to_string()
@@ -331,7 +341,7 @@ fn emit_body(body: &[Stmt], aliases: &HashSet<String>, agent: Option<&str>) -> S
                     None => format!("for {var} in {}:", py(coll, aliases)),
                 };
                 let mut s = header;
-                for l in emit_body(body, aliases, agent).trim_end().lines() {
+                for l in emit_body_inner(body, aliases, agent, false).trim_end().lines() {
                     s.push_str("\n    ");
                     s.push_str(l);
                 }
@@ -343,13 +353,13 @@ fn emit_body(body: &[Stmt], aliases: &HashSet<String>, agent: Option<&str>) -> S
                 else_body,
             } => {
                 let mut s = format!("if {}:", py(cond, aliases));
-                for l in emit_body(then_body, aliases, agent).trim_end().lines() {
+                for l in emit_body_inner(then_body, aliases, agent, is_last).trim_end().lines() {
                     s.push_str("\n    ");
                     s.push_str(l);
                 }
                 if let Some(eb) = else_body {
                     s.push_str("\n    else:");
-                    for l in emit_body(eb, aliases, agent).trim_end().lines() {
+                    for l in emit_body_inner(eb, aliases, agent, is_last).trim_end().lines() {
                         s.push_str("\n    ");
                         s.push_str(l);
                     }
@@ -989,6 +999,8 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
                                     | "substring"
                                     | "index_of"
                                     | "split"
+                                    | "lower"
+                                    | "upper"
                                     | "contains"
                                     | "starts_with"
                                     | "ends_with"
