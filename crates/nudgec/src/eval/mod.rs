@@ -1848,6 +1848,45 @@ fn test_f8_suite() -> bool uses Browser {{
     }
 
     #[test]
+    fn test_prelude_web_recipes_f9() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let html_src =
+            std::fs::read_to_string(root_dir.join("prelude/web/html.ndg")).expect("read html.ndg");
+        let dom_src =
+            std::fs::read_to_string(root_dir.join("prelude/web/dom.ndg")).expect("read dom.ndg");
+        let search_recipe =
+            std::fs::read_to_string(root_dir.join("recipes/browser_search.ndg"))
+                .expect("read browser_search.ndg");
+        let price_recipe =
+            std::fs::read_to_string(root_dir.join("recipes/price_tracker.ndg"))
+                .expect("read price_tracker.ndg");
+
+        let test_src = format!(
+            r##"{html_src}
+{dom_src}
+{search_recipe}
+{price_recipe}
+fn test_f9_recipes() -> bool uses Browser {{
+    // 1. Search Recipe execution
+    let search_res = execute_search("nudge language")
+    let ok_search = len(search_res) >= 0
+
+    // 2. Price Tracker Recipe execution
+    let price_report = track_product_price("https://shop.example.com/shoes", 150.0)
+    let ok_price = price_report.product_name != ""
+
+    ok_search and ok_price
+}}
+"##
+        );
+        let items = parse_src(&test_src);
+        let ok = run_program(&items, "test_f9_recipes", &[]).expect("f9 recipes succeed");
+        assert_eq!(ok, NudgeVal::Bool(true));
+    }
+
+    #[test]
     fn test_eval_index_assign_list_and_map() {
         let src = r#"
             fn test_list_assign() -> [int] {
