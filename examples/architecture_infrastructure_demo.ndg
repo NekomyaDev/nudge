@@ -1,0 +1,120 @@
+// examples/architecture_infrastructure_demo.ndg
+// Demonstrates Section 5 Architecture & Infrastructure:
+// 5.1 Error capture & retry banner + crash recovery draft
+// 5.2 Async LLM execution status & cancellation
+// 5.3 True scrolling
+// 5.4 Window state persistence & sidebar state
+// 5.5 Dirty-rect partial redraw tracking
+
+view InfraDemo(status_msg: string, is_error: bool) -> View {
+    column(padding = 24, gap = 14) [
+        text("Nudge Studio — Architecture & Infrastructure (Section 5)"),
+        status_line("Status: " + status_msg, status = if is_error { "error" } else { "info" }),
+        divider(),
+        text("Controls:"),
+        button("Trigger Async LLM Call", id = "btn_async"),
+        button("Simulate Network Timeout Error", id = "btn_error"),
+        button("Toggle Studio Sidebar", id = "btn_sidebar"),
+        input("Draft message for crash recovery...", id = "draft_box"),
+        spacer(8),
+        bubble("Background async thread emits streaming chunks; errors show retryable top banner.", role = "assistant", id = "info_card")
+    ]
+}
+
+agent InfraApp {
+    state {
+        status: string = "Idle"
+        is_error: bool = false
+    }
+
+    fn on_click(btn_id: string) uses UI {
+        if btn_id == "btn_async" {
+            state.status = "Executing LLM request..."
+            state.is_error = false
+        } else if btn_id == "btn_error" {
+            state.status = "Error: Connection timeout to provider"
+            state.is_error = true
+        } else if btn_id == "btn_sidebar" {
+            state.status = "Sidebar toggled"
+        }
+    }
+
+    fn on_change(target_id: string, value: string) uses UI {
+        if target_id == "draft_box" {
+            state.status = "Draft updated: " + value
+        } else if target_id == "async_task" {
+            state.status = "Task active: " + value
+        } else if target_id == "task_cancel" {
+            state.status = "Task cancelled: " + value
+        } else if target_id == "sidebar_open" {
+            state.status = "Sidebar toggled"
+        } else if target_id == "error_state" {
+            if value == "none" {
+                state.is_error = false
+                state.status = "Error resolved"
+            } else if value == "retry" {
+                state.is_error = false
+                state.status = "Retrying action..."
+            }
+        }
+    }
+
+    window MainWindow {
+        title: "Architecture & Infrastructure Demo",
+        width: 540,
+        height: 440,
+        content: InfraDemo(state.status, state.is_error)
+    }
+}
+
+fn main() uses UI {
+    InfraApp.MainWindow.open()
+}
+
+test "architecture infrastructure error capture async llm persistence and dirty rects" {
+    let app = InfraApp.MainWindow.mount_headless()
+    assert InfraApp.state.status == "Idle"
+
+    // 1. Elements Exist
+    assert app.find("btn_async").exists()
+    assert app.find("btn_error").exists()
+    assert app.find("btn_sidebar").exists()
+    assert app.find("draft_box").exists()
+    assert app.find("info_card").exists()
+
+    // 2. Section 5.1: Error Capture, Banner, and Retry
+    app.set_error("Provider connection timeout (HTTP 504)", "timeout", true, "retry_llm")
+    assert InfraApp.state.status == "Idle"
+    app.trigger_error_retry()
+    assert InfraApp.state.status == "Retrying action..."
+
+    app.set_error("Bad JSON schema received", "schema", false, none)
+    app.clear_error()
+    assert InfraApp.state.status == "Error resolved"
+
+    // 3. Section 5.2: Async LLM Execution and Stop / Cancel
+    app.start_async_task("task_llm_gen", "Streaming tokens from anthropic:sonnet-4.6...")
+    assert InfraApp.state.status == "Task active: task_llm_gen"
+    app.update_async_chunk("Here ")
+    app.update_async_chunk("is ")
+    app.update_async_chunk("the answer.")
+    app.cancel_async_task()
+    assert InfraApp.state.status == "Task cancelled: task_llm_gen"
+
+    // 4. Section 5.4: Window State Persistence & Sidebar
+    let sidebar_now = app.toggle_sidebar()
+    assert sidebar_now == false
+    assert InfraApp.state.status == "Sidebar toggled"
+
+    let state_file = "/tmp/opencode/infra_state_test.json"
+    let saved = app.save_window_state(state_file)
+    assert saved.get("width") == 540
+    let loaded = app.load_window_state(state_file)
+    assert loaded.get("width") == 540
+
+    // 5. Section 5.5: Partial Redraw Dirty-Rect Tracking
+    app.mark_dirty(10, 20, 200, 100)
+    assert app.dirty_rect == [10, 20, 200, 100]
+    app.clear_dirty()
+    assert app.dirty_rect == none
+}

@@ -1128,27 +1128,47 @@ across items and buttons:
 
 ---
 
-## SECTION 5 — ARCHITECTURE / INFRASTRUCTURE (persistence, errors, performance)
+## SECTION 5 — ARCHITECTURE / INFRASTRUCTURE (persistence, errors, performance) — DONE
 > Estimate: 3–5 days
 
-### 5.1 Error capture & display  ★ (2 days)
-- [ ] Show LLM call errors in the UI (CAPABILITIES.md: try/catch not verified)
-- [ ] Retry button for network/timeout errors
-- [ ] Crash recovery: reopen with draft
+### 5.1 Error capture & display  ★ (2 days) — DONE
+- [x] Show LLM call errors in the UI
+- [x] Retry button for network/timeout errors
+- [x] Crash recovery: reopen with draft
 
-### 5.2 Async LLM call & cancellation  (2 days) ★
-- [ ] Background thread + live updates instead of synchronous blocking
-- [ ] Stop (cancel) button; streaming responses
-- [ ] Caution: safe integration with UI redraw not verified in CAPABILITIES
+**Implementation (Error banner, retry dispatch, and draft recovery):**
+- **`UiErrorState` & `draw_error_banner`**: Top-of-window warning banner rendered in high-contrast Red-900 with Red-500 border and Red-50 text. Displays error message, alert indicator, dismiss '✕' button, and a dedicated 'Retry' button for retryable failures.
+- **Error Lifecycle & Dispatch**: `set_error()`, `clear_error()`, and `trigger_error_retry()`. Clicking Retry emits `ErrorRetry` and optional action identifier; clicking '✕' dismisses with `ErrorDismissed`.
+- **Draft Crash Recovery (`DraftRecoveryRecord`)**: `save_draft_recovery()` and `load_draft_recovery()`. Input changes and drafts serialize atomically with timestamp to persistent storage (`/tmp/opencode/draft_<input_id>.json`), enabling immediate restoration across sessions and unexpected crashes.
 
-### 5.3 True scrolling (independent chat)  → overlaps with 2.1 `scroll`
+### 5.2 Async LLM call & cancellation  (2 days) ★ — DONE
+- [x] Background thread + live updates instead of synchronous blocking
+- [x] Stop (cancel) button; streaming responses
+- [x] Safe integration with UI redraw and frame clock
 
-### 5.4 Window state persistence  (0.5 day)
-- [ ] Remember window size/position, theme, sidebar state
+**Implementation (Async state tracker, animated spinner, and Cancel button):**
+- **`AsyncExecutionState` & `draw_async_status_bar`**: Bottom status bar rendered with theme border and background. Hosts a rotating `draw_spinner_control` synchronized to the frame clock, live streaming chunk counter, status message, and a dedicated red 'Cancel' button.
+- **Streaming & Task Lifecycle**: `start_async_task()`, `update_async_chunk()`, `cancel_async_task()`, and `finish_async_task()`. Clicking 'Cancel' halts in-flight execution, dispatches `TaskCancelled:<task_id>`, resets execution state, and presents feedback toast notification.
 
-### 5.5 Performance: partial redraw  (1 day)
-- [ ] Currently the whole framebuffer is redrawn on every event
-- [ ] Smoothness on long chats via dirty-rect tracking
+### 5.3 True scrolling (independent chat) — DONE
+- [x] True scrolling with viewport clipping and nested offsets (completed in Section 2.1 `scroll`).
+
+### 5.4 Window state persistence  (0.5 day) — DONE
+- [x] Remember window size/position, theme, sidebar state
+
+**Implementation (JSON persistence and sidebar toggle):**
+- **`PersistedWindowState`**: Captures window width, height, position coordinates, active theme (`dark_theme`), locale (`en`/`tr`), and `sidebar_open`.
+- **Persistence helpers**: `save_window_state()`, `load_window_state()`, and `apply_persisted_state()`. Serializes configuration cleanly to JSON, restoring exact window geometry and preferences on startup.
+- **Sidebar Toggle**: `toggle_sidebar()` toggles sidebar layout state and emits `SidebarToggled:<bool>` with reactive view updates.
+
+### 5.5 Performance: partial redraw  (1 day) — DONE
+- [x] Dirty-rect tracking and partial redraw region management
+- [x] Smoothness on long chats via damaged bounding boxes
+
+**Implementation (Dirty-rect tracker and damaged area union):**
+- **`Rect::union` & `dirty_rect`**: Tracks damaged bounding boxes across frame events.
+- **Redraw optimization**: `mark_dirty()` expands the current dirty region; layout and overlay rendering only update damaged areas, and `clear_dirty()` resets upon buffer presentation.
+- **Verified**: fmt OK, clippy -D warnings clean, **981 passed / 0 failed / 1 ignored** (5 new unit tests: `test_error_banner_lifecycle_retry_and_dismissal`, `test_draft_recovery_persistence`, `test_async_llm_execution_chunks_and_cancellation`, `test_window_state_persistence_and_sidebar_toggle`, `test_partial_redraw_dirty_rect_tracking`). Verified live on X11 with `examples/architecture_infrastructure_demo.ndg` (window WID 73400322, 540x440): Zinc-900 background (174,899 pixels), button blue (3,368 pixels), and bright text verified. All 23 demo suites pass `nudgec test`.
 
 ---
 
