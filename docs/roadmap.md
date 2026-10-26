@@ -101,7 +101,7 @@ The language thesis ships: **the language where agents are safe to deploy.**
   domain allowlists, NTF records, replay-for-free, drift-check,
   compound ops (one call = one round trip), neutral default locale.
   Single kernel extension `browser.fetch` (raw bytes/TLS; no provider).
-  Full design: [docs/browser-use.md](browser-use.md) — phases F1–F9.
+  Full design: [docs/browser-use.md](browser-use.md) — execution roadmap: [docs/browser-roadmap.md](browser-roadmap.md) (phases F1–F9).
 - **Compliance** — `nudgec audit` reports over NTF traces; EU AI Act
   positioning: traces as audit evidence out of the box
 - **`optimize` block** — budget-bounded, type-safe search over prompts/models,

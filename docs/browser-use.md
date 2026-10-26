@@ -1,7 +1,8 @@
 # Nudge v1.6 — Browser Use: the web as a typed, replayable effect
 
-**Status:** Plan (not yet implemented). Phases: §11. Design-review
-log: §12.
+**Status:** Plan (not yet implemented). Multi-Agent Execution Roadmap: [`docs/browser-roadmap.md`](browser-roadmap.md). Phases: §11. Design-review
+log: §12. Every code construct in this document is checked against the
+real Nudge grammar (parser/AST/effects), not assumed.
 
 ## 0. Hard constraints
 
@@ -111,6 +112,11 @@ nothing else: no redirects, no cookies, no rules (all in `.ndg`, §5).
 `opts = { method, headers, body, timeout }`. TLS reuses the runtime's
 existing stack — **no new crate**. Carries the `Browser` effect
 (`KNOWN_EFFECTS` 12 → 13). Returns `{ status, headers, body }`.
+- **Fail-closed TLS & security:** Certificate validation is strictly
+  enforced; no insecure option exists.
+- **Decompression & chunked bomb guard:** Kernel enforces a strict
+  `max_body_bytes = 10_485_760` (10 MB). Exceeding bytes terminates the
+  stream immediately with `BodyTooLarge`, preventing memory starvation.
 
 **Growth path (designed now, shipped in F8).** A request/response
 primitive cannot carry HTTP/2 or WebSocket, and a real engine needs
@@ -132,58 +138,75 @@ call site without `allow`.
 
 | Call | Arguments | Result |
 |:---|:---|:---|
-| `browser.goto(url, ...)` | **compound**: fetch + parse + tree (one round trip) | `Snapshot` |
-| `browser.request(url, opts, ...)` | lower level: one policy-aware request | `Response` |
-| `browser.snapshot(page, ...)` | rebuild/serve the tree | `Snapshot` |
+| `browser.goto(url, ...)` | **compound**: fetch + parse + tree (one round trip); follows up to 20 redirects | `Snapshot` |
+| `browser.request(url, opts, ...)` | lower level: one policy-aware raw request (does **not** follow redirects; returns 3xx) | `Response` |
+| `browser.snapshot(page, ...)` | rebuild/serve the tree for the current page state | `Snapshot` |
 | `browser.query(page, selector, ...)` | minimal CSS subset (`#id`, `.class`, `tag`, `[attr=val]`, compounds) | `[Element]` |
 | `browser.click(page, target, ...)` | ref or `{selector}` — follows links / triggers form actions | `ActResult` |
 | `browser.clicks(page, targets, ...)` | up to 10 targets, sequential batch | `[ActResult]` |
-| `browser.type(page, target, text, ...)` | bind a value to a form field | `ActResult` |
+| `browser.type(page, target, text, ...)` | bind a value to a form field (in-memory DOM update) | `ActResult` |
 | `browser.fill(page, fields, submit?, ...)` | up to 20 `{ref \| selector, text}` + optional submit | `ActResult` |
 | `browser.submit(page, form, ...)` | encode fields (urlencoded / multipart subset) and POST/GET the form action | `Snapshot` |
 | `browser.key(page, key, ...)` | form-state keys: `"Enter"`, `"Escape"`, `"Tab"` | `ActResult` |
-| `browser.back(page)` / `browser.forward(page)` / `browser.refresh(page)` | in-process history stack | `Snapshot` |
-| `browser.wait(page, target, ...)` | `{ text }` \| `{ selector }` — deadline-bounded re-fetch; no poll loops in the language | `WaitResult` |
-| `browser.extract(page, schema, ...)` | a Nudge **type** — compile-time-verified structured extraction | `[T]` |
-| `browser.links(page, scope?, extension?, ...)` | | `[Link]` |
-| `browser.close(page)` | flush the profile journal | `ActResult` |
+| `browser.back(page)` / `browser.forward(page)` / `browser.refresh(page)` | in-process history stack navigation | `Snapshot` |
+| `browser.wait(page, target, ...)` | `{ text }` \| `{ selector }` — deadline-bounded re-fetch; carries matching snapshot | `WaitResult` |
+| `browser.extract(page, schema, ...)` | `schema` is a Nudge **type**, compile-time elaborated (same idiom as `llm … with { schema: T }`) | `[T]` |
+| `browser.links(page, scope?, extension?, ...)` | scope by domain; filter by link extension (`".pdf"`) | `[Link]` |
+| `browser.pages()` | list active page handles | `[Page]` |
+| `browser.close(page)` | deterministic cleanup: flush profile journal and reclaim page DOM/history memory | `ActResult` |
 
 JS-gated behavior (F6+): after the in-language interpreter lands,
 `goto` additionally executes page scripts under policy (§5) and the
 snapshot reflects the post-execution DOM. The surface does not change.
+
+**Page lifecycle & memory safety.** `goto` without a `page` option opens
+a fresh page handle (`"p-1"`, `"p-2"`, …). Passing `page = existing_page`
+navigates in-place, reusing the slot. The runtime enforces a strict quota
+of `MAX_PAGES = 16` concurrent pages per session; exceeding raises
+`PageQuotaExceeded`. `browser.close(page)` immediately frees all DOM,
+history, and snapshot memory associated with that page.
 
 **Target addressing.** Actions take an element `ref: int` from the
 latest `Snapshot`/`query` of that page, or a `{selector}` escape hatch.
 No pixel targets until the renderer lands (F7); pixel targets then bind
 to the latest screenshot frame only.
 
-**Freshness (fail-closed).** Every observation binds a `state_id`
-(url + tree hash). Actions implicitly carry the page's latest state_id;
-a ref not in that snapshot, or a stale state_id, is refused
-`stale_state` with `action_sent = false`.
+**Freshness & observation epochs (fail-closed).** Every observation binds
+a monotonic `state_id` (`"s-1"`, `"s-2"`, …) tied to the `(url, content_hash)`
+tuple. Actions carry the page's active `state_id`. Link navigations,
+refreshes, or form submissions advance the observation epoch. In-memory
+form updates (`type`, `fill`) mutate field values within the active page
+epoch without invalidating peer elements. Any action referencing an
+unrecognized ref or a dead epoch is refused with `stale_state` and
+`action_sent = false`.
 
 **Options (every method).** `allow: [DomainPattern]` — exact host or
 `*.suffix`; ABSENT is unscoped (W0008), `[]` allows nothing; enforced on
 every redirect hop and on every subresource; violations raise
 `BrowserDenied` and mark the page out-of-scope. `deadline: ms` — soft by
 default (`deadline_missed`), `NUDGE_BROWSER_STRICT=1` raises.
-`goto`/`request` also take `headers`, `profile` (persistent cookie jar +
-header signature + device identity, Store-backed with a size quota),
-`locale`, `viewport`/`device` (F7).
+`screenshot: bool` (F7, mirrors `computer.observe`) populates
+`Snapshot.screenshot`. `snapshot: bool` on act methods returns the
+post-action tree in the same call. `goto`/`request` also take `headers`,
+`profile` (persistent cookie jar + header signature + device identity,
+Store-backed with a size quota), `locale`, `viewport`/`device` (F7).
 
 ### Result types
 
 ```nudge
+Header    = { name: string, value: string }
 Page      = { page: string, url: string, title: string, depth: int }
 Snapshot  = { page: string, url: string, title: string, state_id: string,
-              elements: [Element], tree: string, count: int, drift: Drift }
+              elements: [Element], tree: string, count: int,
+              screenshot: string, drift: Drift }
 Element   = { ref: int, role: string, name: string, value: string,
               tag: string, href: string, clickable: bool, editable: bool }
-Response  = { status: int, headers: [(string, string)], body: string,
+Response  = { status: int, headers: [Header], body: string,
               url: string, latency_ms: int }
 ActResult = { ok: bool, outcome: string, latency_ms: int, error: string,
               action_sent: bool, snapshot: Snapshot }
-WaitResult= { ok: bool, timed_out: bool, latency_ms: int }
+WaitResult= { ok: bool, timed_out: bool, latency_ms: int,
+              snapshot: Snapshot }
 Link      = { href: string, text: string, download: bool }
 Drift     = { changed: bool, added: int, removed: int, summary: string }
 ```
@@ -191,9 +214,9 @@ Drift     = { changed: bool, added: int, removed: int, summary: string }
 ### A taste
 
 ```nudge
-type Product = { name: string, price: float, url: Url }
+type Product = { name: string, price: float, url: string }
 
-fn cheapest(query: string) -> [Product] uses Browser, LLM {
+fn cheapest(query: string) -> Product uses Browser, Decision, LLM {
     // ONE network round trip: fetch + parse + snapshot tree
     let snap = browser.goto("https://shop.example.com/search?q=" + query,
                             allow = ["*.example.com"], locale = "en-US",
@@ -203,17 +226,21 @@ fn cheapest(query: string) -> [Product] uses Browser, LLM {
     let r = route {
         open: browser.click(snap.page, 3, allow = ["*.example.com"],
                             snapshot = true) when sane.ok.p > 0.5,
-        scan: browser.clicks(snap.page, [1, 2], allow = ["*.example.com"],
-                             snapshot = true) otherwise
+        scan: browser.click(snap.page, 1, allow = ["*.example.com"],
+                            snapshot = true) otherwise
     }
-    let items = browser.extract(r.snapshot.page, [Product])
-    sort(items, by = x.price)[0..3]
+    let items = browser.extract(r.snapshot.page, schema = [Product])
+    llm"""Return the single cheapest product from this list: {items}"""
+        with { schema: Product, model: "llm:claude" }
 }
 ```
 
-The same program, run with `NUDGE_REPLAY=<trace>`, replays for $0; run
-with `NUDGE_REPLAY=<trace> NUDGE_BROWSER_DRIFT=1`, it becomes the
-scheduled watcher of §1 — read-only, report-only.
+Every construct above is valid Nudge: `route { … when …, … otherwise }`,
+`decide { … } on … with { … }`, `llm"""…""" with { schema: T }`, record
+types, `uses Browser, Decision, LLM`. The same program, run with
+`NUDGE_REPLAY=<trace>`, replays for $0; run with
+`NUDGE_REPLAY=<trace> NUDGE_BROWSER_DRIFT=1`, it becomes the scheduled
+watcher of §1 — read-only, report-only.
 
 ## 5. Everything above the kernel is produced in `.ndg`
 
@@ -227,22 +254,24 @@ arithmetic, lists/records, `store.*`, `io.*`, `time.*`, `env.*`):
 | `codec/hash.ndg` | deterministic content hash (djb2-family modular multiply over `int`; state_id needs determinism, not cryptography) |
 | `net/url.ndg` | URL parse/normalize, relative resolution |
 | `net/httpc.ndg` | HTTP/1.1 message building and response parsing (status line, headers, `Content-Length` / chunked decode) — framing lives in `.ndg`; F8 adds h2/ws framing on the stream channel |
-| `web/html.ndg` | HTML tokenizer + tree builder (tags/attrs/text/comments, void elements, raw-text containers) |
+| `web/html.ndg` | HTML tokenizer + tree builder (tags/attrs/text/comments, void elements, raw-text containers, character entity references) |
 | `web/dom.ndg` | tree navigation, minimal selector subset, ref enumeration |
 | `web/cookie.ndg` | cookie jar: `Set-Cookie` parse, domain/path/expiry matching; persisted per `profile` in Store with a fail-closed size quota |
-| `web/policy.ndg` | domain allowlist (exact / `*.suffix`), redirect engine (max-hop, checked every hop), scheme allowlist (`http`/`https`; `file:` for fixtures/tests), **subresource policy** (default: same-origin scripts only after F6; cross-origin requires explicit allowlist) |
+| `web/policy.ndg` | domain allowlist (exact / `*.suffix`), redirect engine (max 20 hops, checked every hop), scheme allowlist (`http`/`https`; `file:` confined strictly to workspace directory, path-traversal blocked), **subresource policy** (default: same-origin scripts only after F6; cross-origin requires explicit allowlist) |
 | `web/form.ndg` | form state, submit encoding (urlencoded + multipart subset) |
 | `web/history.ndg` | in-process back/forward stack |
 | `web/snapshot.ndg` | tree render (token-efficient), drift summary |
-| `web/journal.ndg` | NTF record emission, NUDGE_REPLAY reading (strict exhaustion, `request_hash` mismatch → `ReplayMismatch`), drift diff |
-| `web/js/*` (F6) | **in-language JavaScript**: tokenizer, parser, tree-walking bytecode interpreter, ES subset (closures, objects/arrays, promises/microtask queue, common builtins), DOM bindings (`querySelector`, event listeners, `fetch`/XHR hooked through engine policy), **step budget + deadline** (a runaway script is killed like any hung effect), pure `.ndg` data — no native escape, sandboxed by construction |
-| `web/layout.ndg` + `web/compositor.ndg` (F7) | box model + inline/block layout, rasterization **on Nudge's existing in-house font/UI stack** (font_engine, ui window system — already first-party), screenshot output into `Snapshot.screenshot` |
+| `web/journal.ndg` | NTF record emission, NUDGE_REPLAY reading (strict exhaustion, `request_hash` mismatch → `ReplayMismatch`), drift diff. Screenshots are written to content-addressed sidecar assets (`<trace>.assets/<hash>.png`), never bloating JSONL. |
+| `web/js/*` (F6) | **in-language JavaScript**: tokenizer, parser, tree-walking bytecode interpreter, ES subset (closures, objects/arrays, promises/microtask queue, common builtins), DOM bindings (`querySelector`, event listeners, `fetch`/XHR hooked through engine policy). **Three-tier sandbox shield**: (1) Step budget (max 50,000 ops), (2) Deadline, (3) Max heap objects (8 MB equivalent) + call stack depth limit (64 frames, recursion bomb guard). Pure `.ndg` data — no native escape, sandboxed by construction. |
+| `web/layout.ndg` + `web/compositor.ndg` (F7) | box model + inline/block layout, rasterization **on Nudge's existing in-house font/UI stack** (font_engine, ui window system — already first-party), screenshot output into `Snapshot.screenshot` and sidecar storage. |
 
 Reused existing machinery: `store.*` (profiles, quota), `io.*`
 (journal), `time.*` (deadlines, pacing), `env.*` (kill switch:
 `NUDGE_BROWSER_KILL=1`, checked before every kernel call), `par map`
-(parallel independent pages; race losers halt at the effect boundary —
-existing cooperative cancellation).
+(parallel independent pages). Note on `par race`: Python runtime threads
+cannot be interrupted (subject to W0007), so side-effecting browser ops in
+race branches still run and count against budgets; race is recommended for
+read-only branches.
 
 ## 6. Architecture
 
@@ -322,10 +351,10 @@ Nudge does not imitate Camoufox — it matches what makes it *complete*
 | `nudgec test` | browser tests against `file://` fixtures at $0 through the real engine |
 | Replay | free, signature-verified, strict exhaustion — first-class for browser traces, including post-JS DOM snapshots |
 | Drift | read-only live re-observation diffed against the recording |
-| NTF traces | additive kinds `browser.snapshot` / `browser.act`; trace-check/trace-diff; redaction choke point |
+| NTF traces | additive kinds `browser.snapshot` / `browser.act`; trace-check/trace-diff; redaction choke point; assets in sidecar |
 | Conformance corpus | browser flows included; compound budgets and fingerprint-consistency locked by tests |
 | `store` / profiles | cookie jar + header signature + device identity, quota-enforced |
-| Grants / kill switch | `allow` scoping, `NUDGE_BROWSER_KILL=1`, JS step budget |
+| Grants / kill switch | `allow` scoping, `NUDGE_BROWSER_KILL=1`, JS step budget & memory bounds |
 | Recipes / learn | browser recipes shipped as `.ndg`; a learn lesson added |
 | Standalone targets (Python/TS) | the `.ndg` prelude is shared by all targets; only the kernel is implemented per target runtime (full parity) |
 
@@ -353,15 +382,19 @@ Nudge does not imitate Camoufox — it matches what makes it *complete*
 - **C7 — Schedule gate.** A replay-clean flow runs as a timer in
   replay + drift mode: actions never fire, the report is `ok | error`,
   escalation only on drift. Demonstrated by `examples/browser-agent/`.
-- **C8 — Latency baselines.** Warm `file://` goto p99 < 5 ms (pre-F6);
-  every `Response`/`ActResult` carries `latency_ms`; the journal tracks
-  regressions.
+- **C8 — Latency baselines.** Warm `file://` goto p99 < 5 ms (pre-F6,
+  pages < 100 KB); every `Response`/`ActResult` carries `latency_ms`;
+  the journal tracks regressions.
 - **C9 — Fingerprint consistency.** Two runs with the same profile
   produce byte-identical request heads (header order + TLS parameters
   recorded in the journal); two profiles differ. Locked in conformance.
 - **C10 — JS sandbox budget.** Every script execution is step-budgeted
-  and deadline-bounded; an infinite loop is killed with a typed error,
-  never a hung program. Fuzz corpus required before F6 exits.
+  (≤ 50k steps), heap-capped (8 MB) and recursion-bounded (64 frames);
+  infinite loops kill with a typed error, never a hung program. Fuzz
+  corpus required before F6 exits.
+- **C11 — Buffer & quota limits.** Kernel enforces `max_body_bytes = 10 MB`;
+  session enforces `MAX_PAGES = 16`; profile enforces Store quota; all
+  fail-closed and tested.
 
 ## 11. Implementation phases
 
@@ -381,11 +414,11 @@ Nudge does not imitate Camoufox — it matches what makes it *complete*
   fixtures; CI with no network, $0, real engine.
 - **F6 — In-language JavaScript.** `web/js/*`: interpreter, DOM
   bindings, policy-gated script execution, subresource policy, CSP
-  respect, step budget (C10), fuzzing (repo has the precedent);
+  respect, 3-tier sandbox budget (C10), fuzzing (repo has precedent);
   snapshots reflect post-execution DOM.
 - **F7 — Rendering.** `web/layout.ndg` + `web/compositor.ndg` on the
-  in-house font/UI stack; screenshots into `Snapshot`; viewport/device
-  emulation (per-profile device identity).
+  in-house font/UI stack; screenshots into `Snapshot` and sidecar assets;
+  viewport/device emulation (per-profile device identity).
 - **F8 — Transport growth.** Kernel stream channel
   (`connect/read/write/close`); HTTP/2 and WebSocket framing in `.ndg`;
   ALPN/profile-driven negotiation.
@@ -393,6 +426,8 @@ Nudge does not imitate Camoufox — it matches what makes it *complete*
   syntax, browser recipes, CHANGELOG.
 
 ## 12. Design-review log (defects found and resolved)
+
+Round 1 — architecture and honesty:
 
 | # | Defect found in review | Resolution |
 |:---|:---|:---|
@@ -405,6 +440,32 @@ Nudge does not imitate Camoufox — it matches what makes it *complete*
 | D7 | `par map` racing browser ops needed explicit cancellation semantics | Race losers halt at the effect boundary (existing cooperative cancellation), stated in §5/§9 |
 | D8 | Page JS could read cross-origin content or run forever | Subresource policy default-deny cross-origin; CSP respected; step budget + deadline (C10) |
 | D9 | Parser and interpreter are new attack surface | Fuzzing required before F6 exits (C10, repo precedent `fuzz.rs`) |
+
+Round 2 — grammar & real language checking (D10–D18):
+
+| # | Defect found in review | Resolution |
+|:---|:---|:---|
+| D10 | `Response.headers: [(string, string)]` used a **tuple type** — Nudge has none (`Tuple` absent from AST) | Introduced a `Header` record; `headers: [Header]` |
+| D11 | `url: Url` in the example used a **`Url` type that does not exist** (primitives: `int/float/bool/string/none`) | `url: string` |
+| D12 | `sort(items, by = x.price)` referenced a **`sort` builtin and `by` keyword that do not exist** | Handed to `llm … with { schema: T }` — model owns intelligence (§2) |
+| D13 | `items[0..3]` used **range-slice syntax Nudge lacks** | Removed |
+| D14 | `browser.extract(page, [Product])` passed a **type as a runtime value** — not supported | `schema = [Product]` compile-time option, mirroring `llm … with { schema: T }` |
+| D15 | `route` branches returned **incompatible types** (`ActResult` vs `[ActResult]`) | Both branches unified to `ActResult` |
+| D16 | The example called `decide{}` but omitted the **`Decision` effect** | `uses Browser, Decision, LLM` |
+| D17 | `Snapshot` had no `screenshot` field although `web/layout.ndg` writes one | `screenshot: string` added (empty until F7 + `screenshot = true`) |
+| D18 | `WaitResult` discarded the post-wait tree — observing after a wait would cost an extra round trip | `snapshot` carried through `WaitResult` |
+
+Round 3 — deep runtime mechanics, memory leaks, and NTF spec parity (D19–D25):
+
+| # | Defect found in review | Resolution |
+|:---|:---|:---|
+| D19 | `state_id` as pure tree-hash caused self-locking: form input mutations (`type`, `fill`) changed the hash, failing subsequent actions with `stale_state` unless `snapshot = true` was invoked every step | Defined `state_id` as a monotonic observation epoch (`s-1`, `s-2`) bound to `(url, content_hash)`. Form mutations update in-place within the epoch; only navigation advances it (§4). |
+| D20 | Memory leak in page lifecycle: repetitive `goto` calls without cleanup would accumulate unbounded DOM trees | Added explicit `page` reuse option on `goto`, `MAX_PAGES = 16` session quota, and deterministic memory release via `browser.close(page)` (§4). |
+| D21 | Ambiguity between `browser.goto` and `browser.request` redirect semantics | Clarified: `goto` is compound and follows up to 20 redirects; `request` is a single raw policy-aware request that returns 3xx directly (§4). |
+| D22 | JS execution (F6) had no memory or recursion bounds, leaving memory exhaustion and stack overflow open | Added 3-tier sandbox shield: step budget (50k), heap object cap (8 MB equivalent), and call stack depth limit (64 frames) (§5, §10). |
+| D23 | Unbounded network responses risked decompression and chunked streaming memory bombs | Added fail-closed `max_body_bytes = 10 MB` kernel limit with immediate `BodyTooLarge` abort (§3, §10). |
+| D24 | Emitting base64 screenshot data directly in NTF JSONL would violate NTF v1 spec and inflate trace files | Aligned with NTF spec: screenshot pixels stored in content-addressed sidecar assets (`<trace>.assets/<hash>.png`), referenced via `screenshot_asset` (§5). |
+| D25 | Claim that `par race` cancels losing branches was untrue for the Python runtime | Corrected documentation: acknowledged Python threads cannot be cancelled (W0007); recommended race for read-only flows (§5, §9). |
 
 ## 13. Non-goals (v1) and evolution path
 
