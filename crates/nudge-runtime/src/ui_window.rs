@@ -491,6 +491,8 @@ pub struct LayoutBox {
     /// snapshot the width was measured from — a list that changed underneath
     /// a painted popup would highlight a row that is no longer there.
     pub options: Vec<String>,
+    /// Whether this element can be dragged to reorder.
+    pub draggable: bool,
 }
 
 impl LayoutBox {
@@ -1813,6 +1815,18 @@ pub fn fuzzy_match(pattern: &str, text: &str) -> bool {
     false
 }
 
+/// State for interactive drag-and-drop (message reordering, chat sorting).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DragState {
+    pub source_id: String,
+    pub source_tag: String,
+    pub source_text: Option<String>,
+    pub start_pos: (i32, i32),
+    pub current_pos: (i32, i32),
+    pub active: bool,
+    pub drop_target: Option<String>,
+}
+
 /// State for the modal Command Palette (`Ctrl+K`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandPaletteState {
@@ -1846,6 +1860,130 @@ impl CommandPaletteState {
             .filter(|cmd| fuzzy_match(&self.query, cmd))
             .collect()
     }
+}
+
+/// Draws a floating pill / ghost card representing the dragged item near the cursor.
+pub fn draw_drag_ghost(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    fonts: &FontEngine,
+    theme: &Theme,
+    pos: (i32, i32),
+    label: &str,
+) {
+    let (mx, my) = pos;
+    let card_w = (label.chars().count() as i32 * CELL_W + 32).clamp(120, 260);
+    let card_h = 30;
+    let card_x = mx + 12;
+    let card_y = my - card_h / 2;
+
+    draw_rounded_rect_box(
+        buf,
+        stride,
+        height,
+        card_x,
+        card_y,
+        card_w,
+        card_h,
+        6,
+        theme.input_bg,
+        theme.input_border_focused,
+    );
+
+    let cell_h = fonts.cell_h;
+    let ty = card_y + (card_h - cell_h) / 2;
+    draw_text_ttf_clipped(
+        fonts,
+        FaceKind::Ui,
+        card_x + 12,
+        ty,
+        label,
+        Rect {
+            x: card_x + 8,
+            y: card_y,
+            w: card_w - 16,
+            h: card_h,
+        },
+        |px, py, w, h, cov| {
+            draw_rect_alpha(buf, stride, height, px, py, w, h, theme.text, cov);
+        },
+    );
+}
+
+/// Draws an overlay indicating that a dragged file is hovering over the window.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_file_drop_overlay(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    fonts: &FontEngine,
+    theme: &Theme,
+    win_w: i32,
+    win_h: i32,
+    filename: &str,
+) {
+    let banner_w = 320.min(win_w - 40);
+    let banner_h = 60;
+    let banner_x = (win_w - banner_w) / 2;
+    let banner_y = win_h - banner_h - 20;
+
+    draw_rounded_rect_box(
+        buf,
+        stride,
+        height,
+        banner_x,
+        banner_y,
+        banner_w,
+        banner_h,
+        8,
+        theme.input_bg,
+        theme.input_border_focused,
+    );
+
+    let title = "Drop file to attach";
+    let cell_h = fonts.cell_h;
+    let title_w = fonts.measure_width(FaceKind::UiBold, title);
+    let tx = banner_x + (banner_w - title_w) / 2;
+    draw_text_ttf(
+        fonts,
+        FaceKind::UiBold,
+        tx,
+        banner_y + 10,
+        title,
+        |px, py, w, h, cov| {
+            draw_rect_alpha(
+                buf,
+                stride,
+                height,
+                px,
+                py,
+                w,
+                h,
+                theme.input_border_focused,
+                cov,
+            );
+        },
+    );
+
+    let file_w = fonts.measure_width(FaceKind::Ui, filename);
+    let fx = banner_x + (banner_w - file_w) / 2;
+    draw_text_ttf_clipped(
+        fonts,
+        FaceKind::Ui,
+        fx,
+        banner_y + 10 + cell_h + 4,
+        filename,
+        Rect {
+            x: banner_x + 8,
+            y: banner_y,
+            w: banner_w - 16,
+            h: banner_h,
+        },
+        |px, py, w, h, cov| {
+            draw_rect_alpha(buf, stride, height, px, py, w, h, theme.text_dim, cov);
+        },
+    );
 }
 
 /// Draws the modal Command Palette overlay at the top-center of the window.
@@ -3048,6 +3186,7 @@ pub fn layout_element_ctx(
                 options: Vec::new(),
                 checked: false,
                 slider: None,
+                draggable: elem.props.get("draggable").is_some_and(|s| is_truthy(s)),
             });
             (w, h)
         }
@@ -3126,6 +3265,8 @@ pub fn layout_element_ctx(
                 options: Vec::new(),
                 checked: false,
                 slider: None,
+                draggable: elem.props.get("draggable").is_some_and(|s| is_truthy(s))
+                    || elem.id.is_some(),
             });
             (w, h)
         }
@@ -3161,6 +3302,7 @@ pub fn layout_element_ctx(
                 options: Vec::new(),
                 checked: false,
                 slider: None,
+                draggable: elem.props.get("draggable").is_some_and(|s| is_truthy(s)),
             });
             (w, h)
         }
@@ -3194,6 +3336,7 @@ pub fn layout_element_ctx(
                 options: Vec::new(),
                 checked: false,
                 slider: None,
+                draggable: false,
             });
             (w, h)
         }
@@ -3237,6 +3380,7 @@ pub fn layout_element_ctx(
                 options,
                 checked: false,
                 slider: None,
+                draggable: false,
             });
             (w, h)
         }
@@ -3276,6 +3420,7 @@ pub fn layout_element_ctx(
                 disabled: elem.props.get("disabled").is_some_and(|sv| is_truthy(sv)),
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
+                draggable: false,
             });
             (w, h)
         }
@@ -3340,6 +3485,7 @@ pub fn layout_element_ctx(
                 disabled: elem.props.get("disabled").is_some_and(|sv| is_truthy(sv)),
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
+                draggable: false,
             });
             (w, h)
         }
@@ -3392,6 +3538,7 @@ pub fn layout_element_ctx(
                 disabled: elem.props.get("disabled").is_some_and(|sv| is_truthy(sv)),
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
+                draggable: false,
             });
             (w, h)
         }
@@ -3424,6 +3571,7 @@ pub fn layout_element_ctx(
                 disabled: elem.props.get("disabled").is_some_and(|sv| is_truthy(sv)),
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
+                draggable: false,
             });
             (w, h)
         }
@@ -3456,6 +3604,7 @@ pub fn layout_element_ctx(
                 disabled: elem.props.get("disabled").is_some_and(|sv| is_truthy(sv)),
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
+                draggable: false,
             });
             (w, h)
         }
@@ -3498,6 +3647,7 @@ pub fn layout_element_ctx(
                 disabled: elem.props.get("disabled").is_some_and(|sv| is_truthy(sv)),
                 tooltip: elem.props.get("tooltip").cloned(),
                 options,
+                draggable: false,
             });
             (w, h)
         }
@@ -3524,6 +3674,7 @@ pub fn layout_element_ctx(
                 disabled: false,
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
+                draggable: false,
             });
             (w, h)
         }
@@ -3546,6 +3697,7 @@ pub fn layout_element_ctx(
                 disabled: false,
                 tooltip: None,
                 options: Vec::new(),
+                draggable: false,
             });
             (w, h)
         }
@@ -3581,6 +3733,7 @@ pub fn layout_element_ctx(
                 disabled: false,
                 tooltip: None,
                 options: Vec::new(),
+                draggable: false,
             });
             (w, h)
         }
@@ -3605,6 +3758,7 @@ pub fn layout_element_ctx(
                 disabled: false,
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: Vec::new(),
+                draggable: false,
             });
             (w, h)
         }
@@ -3634,6 +3788,7 @@ pub fn layout_element_ctx(
                 disabled: false,
                 tooltip: elem.props.get("tooltip").cloned(),
                 options: vec![status],
+                draggable: false,
             });
             (w, h)
         }
@@ -4218,6 +4373,12 @@ pub struct NativeApp<D: UiDispatcher> {
     pub image_cache: HashMap<String, crate::ui::DecodedImage>,
     /// State of the modal Command Palette (`Ctrl+K`).
     pub command_palette: Option<CommandPaletteState>,
+    /// State of active drag-and-drop reorder operation.
+    pub drag_state: Option<DragState>,
+    /// Path of the most recently dropped OS file.
+    pub last_dropped_file: Option<String>,
+    /// Path of OS file currently hovered over window.
+    pub hovered_file: Option<String>,
 }
 
 impl<D: UiDispatcher> NativeApp<D> {
@@ -4267,6 +4428,9 @@ impl<D: UiDispatcher> NativeApp<D> {
             scroll_counter: 0,
             image_cache: HashMap::new(),
             command_palette: None,
+            drag_state: None,
+            last_dropped_file: None,
+            hovered_file: None,
         }
     }
 
@@ -4318,6 +4482,63 @@ impl<D: UiDispatcher> NativeApp<D> {
         self.scroll_offsets.insert(key.to_string(), next);
         self.render();
         true
+    }
+
+    /// Finds draggable box at screen position `pos`.
+    pub fn draggable_box_at(&self, pos: (i32, i32)) -> Option<&LayoutBox> {
+        let (mx, my) = pos;
+        for lbox in self.layout_boxes.iter().rev() {
+            if lbox.draggable && !lbox.disabled && lbox.id.is_some() {
+                let screen_rect = lbox.screen_rect(self.scroll_x, self.scroll_y);
+                let clip_ok = lbox
+                    .screen_clip(self.scroll_x, self.scroll_y)
+                    .is_none_or(|c| c.contains(mx, my));
+                if screen_rect.contains(mx, my) && clip_ok {
+                    return Some(lbox);
+                }
+            }
+        }
+        None
+    }
+
+    /// Finds drop target box under position `pos` excluding `source_id`.
+    pub fn drop_target_at(&self, pos: (i32, i32), source_id: &str) -> Option<&LayoutBox> {
+        let (mx, my) = pos;
+        for lbox in self.layout_boxes.iter().rev() {
+            if lbox.draggable && !lbox.disabled {
+                if let Some(ref id) = lbox.id {
+                    if id != source_id {
+                        let screen_rect = lbox.screen_rect(self.scroll_x, self.scroll_y);
+                        let clip_ok = lbox
+                            .screen_clip(self.scroll_x, self.scroll_y)
+                            .is_none_or(|c| c.contains(mx, my));
+                        if screen_rect.contains(mx, my) && clip_ok {
+                            return Some(lbox);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Programmatically simulates a drag-and-drop reorder operation.
+    pub fn simulate_drag_and_drop(&mut self, source_id: &str, target_id: &str) {
+        let reorder_key = format!("Reorder:{source_id}->{target_id}");
+        self.dispatcher
+            .dispatch_change(source_id, &format!("reorder:{target_id}"));
+        self.dispatcher.dispatch_key(&reorder_key, None);
+        self.render();
+    }
+
+    /// Programmatically simulates an OS file drop.
+    pub fn simulate_file_drop(&mut self, path_str: &str) {
+        self.last_dropped_file = Some(path_str.to_string());
+        self.hovered_file = None;
+        self.dispatcher.dispatch_change("file_drop", path_str);
+        self.dispatcher
+            .dispatch_key(&format!("FileDrop:{path_str}"), None);
+        self.render();
     }
 
     /// Clamp every measured region's offset to its current content height.
@@ -4438,6 +4659,25 @@ impl<D: UiDispatcher> NativeApp<D> {
         // hand slides over mid-drag cannot steal the gesture.
         if self.slider_drag.is_some() {
             return self.update_slider_drag(pos);
+        }
+
+        if let Some(drag) = self.drag_state.as_mut() {
+            drag.current_pos = pos;
+            if (drag.current_pos.0 - drag.start_pos.0).abs() > 4
+                || (drag.current_pos.1 - drag.start_pos.1).abs() > 4
+            {
+                drag.active = true;
+            }
+        }
+        if self.drag_state.as_ref().is_some_and(|d| d.active) {
+            let source_id = self.drag_state.as_ref().unwrap().source_id.clone();
+            let target = self
+                .drop_target_at(pos, &source_id)
+                .and_then(|b| b.id.clone());
+            if let Some(drag) = self.drag_state.as_mut() {
+                drag.drop_target = target;
+            }
+            return true;
         }
 
         let g = self.scrollbar_geometry();
@@ -6770,6 +7010,56 @@ impl<D: UiDispatcher> NativeApp<D> {
             );
         }
 
+        // Draw drop target insertion line if dragging
+        if let Some(ref drag) = self.drag_state {
+            if drag.active {
+                if let Some(ref target_id) = drag.drop_target {
+                    if let Some(target_box) = self
+                        .layout_boxes
+                        .iter()
+                        .find(|b| b.id.as_deref() == Some(target_id))
+                    {
+                        let sr = target_box.screen_rect(self.scroll_x, self.scroll_y);
+                        draw_rect(
+                            &mut buffer,
+                            stride,
+                            h_usize,
+                            sr.x,
+                            (sr.y - 2).max(0),
+                            sr.w,
+                            3,
+                            theme.input_border_focused,
+                        );
+                    }
+                }
+                // Floating ghost pill
+                let label = drag.source_text.as_deref().unwrap_or(&drag.source_id);
+                draw_drag_ghost(
+                    &mut buffer,
+                    stride,
+                    h_usize,
+                    &self.fonts,
+                    &theme,
+                    drag.current_pos,
+                    label,
+                );
+            }
+        }
+
+        // Draw file drop overlay if file is hovered
+        if let Some(ref file) = self.hovered_file {
+            draw_file_drop_overlay(
+                &mut buffer,
+                stride,
+                h_usize,
+                &self.fonts,
+                &theme,
+                self.width as i32,
+                self.height as i32,
+                file,
+            );
+        }
+
         // Tooltip overlay, painted last so it layers over every box, including
         // those inside a scroll viewport that would otherwise clip it. Asked
         // for above, while `self` could still be read — and already made to
@@ -7780,6 +8070,18 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
                     }
                     return;
                 }
+                // Check if pressed on a draggable box
+                if let Some(lbox) = self.draggable_box_at(self.cursor_pos) {
+                    self.drag_state = Some(DragState {
+                        source_id: lbox.id.clone().unwrap_or_default(),
+                        source_tag: lbox.tag.clone(),
+                        source_text: lbox.text.clone(),
+                        start_pos: self.cursor_pos,
+                        current_pos: self.cursor_pos,
+                        active: false,
+                        drop_target: None,
+                    });
+                }
                 // Resolve the button under the cursor *before* dispatching, so
                 // the pressed tone survives the press itself: dispatch may
                 // already have swapped the view underneath us.
@@ -7816,6 +8118,22 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
                     }
                     return;
                 }
+                // End element drag-and-drop
+                if let Some(drag) = self.drag_state.take() {
+                    if drag.active {
+                        if let Some(target_id) = drag.drop_target {
+                            let reorder_key = format!("Reorder:{}->{}", drag.source_id, target_id);
+                            self.dispatcher
+                                .dispatch_change(&drag.source_id, &format!("reorder:{target_id}"));
+                            self.dispatcher.dispatch_key(&reorder_key, None);
+                        }
+                        self.render();
+                        if let Some(win) = &self.window {
+                            win.request_redraw();
+                        }
+                        return;
+                    }
+                }
                 // The tone is held for exactly as long as the button is down.
                 // Released outside the button still clears it, so nothing can
                 // get stuck looking pressed.
@@ -7823,6 +8141,32 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
                     if let Some(win) = &self.window {
                         win.request_redraw();
                     }
+                }
+            }
+            WindowEvent::DroppedFile(path) => {
+                let p_str = path.display().to_string();
+                self.last_dropped_file = Some(p_str.clone());
+                self.hovered_file = None;
+                self.dispatcher.dispatch_change("file_drop", &p_str);
+                self.dispatcher
+                    .dispatch_key(&format!("FileDrop:{p_str}"), None);
+                self.render();
+                if let Some(win) = &self.window {
+                    win.request_redraw();
+                }
+            }
+            WindowEvent::HoveredFile(path) => {
+                self.hovered_file = Some(path.display().to_string());
+                self.render();
+                if let Some(win) = &self.window {
+                    win.request_redraw();
+                }
+            }
+            WindowEvent::HoveredFileCancelled => {
+                self.hovered_file = None;
+                self.render();
+                if let Some(win) = &self.window {
+                    win.request_redraw();
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
@@ -8105,6 +8449,7 @@ mod tests {
             options: Vec::new(),
             checked: false,
             slider: None,
+            draggable: false,
         }];
 
         // Simulate click on line 1, col 2:
@@ -8472,6 +8817,7 @@ mod tests {
             options: Vec::new(),
             checked: false,
             slider: None,
+            draggable: false,
         }];
 
         // Initially at (0, 0) - not hovering
@@ -9095,6 +9441,67 @@ mod tests {
     }
 
     #[test]
+    fn test_drag_and_drop_reorder_and_file_drop() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "DragDrop".into(),
+                width: 400,
+                height: 400,
+            },
+            dummy,
+        );
+
+        let mut msg1 = test_box("bubble:user", "msg_1", 40, false);
+        msg1.draggable = true;
+        let mut msg2 = test_box("bubble:assistant", "msg_2", 100, false);
+        msg2.draggable = true;
+        app.layout_boxes = vec![msg1, msg2];
+
+        // 1. Interactive drag from msg_1 to msg_2
+        app.cursor_pos = (60, 50);
+        let lbox = app.draggable_box_at(app.cursor_pos).unwrap();
+        app.drag_state = Some(DragState {
+            source_id: lbox.id.clone().unwrap(),
+            source_tag: lbox.tag.clone(),
+            source_text: lbox.text.clone(),
+            start_pos: app.cursor_pos,
+            current_pos: app.cursor_pos,
+            active: false,
+            drop_target: None,
+        });
+
+        // Move mouse to msg_2 at (60, 110)
+        app.handle_cursor_moved((60, 110));
+        assert!(app.drag_state.as_ref().unwrap().active);
+        assert_eq!(
+            app.drag_state.as_ref().unwrap().drop_target.as_deref(),
+            Some("msg_2")
+        );
+
+        // 2. Simulate reorder helper
+        app.simulate_drag_and_drop("msg_1", "msg_2");
+        assert_eq!(*app.dispatcher.notes, "reorder:msg_2");
+        assert_eq!(*app.dispatcher.last_key, "Reorder:msg_1->msg_2");
+
+        // 3. Simulate file drop
+        app.simulate_file_drop("/home/user/document.pdf");
+        assert_eq!(*app.dispatcher.notes, "/home/user/document.pdf");
+        assert_eq!(*app.dispatcher.last_key, "FileDrop:/home/user/document.pdf");
+        assert_eq!(
+            app.last_dropped_file.as_deref(),
+            Some("/home/user/document.pdf")
+        );
+    }
+
+    #[test]
     fn test_parse_rich_spans() {
         let input = "Hello **world**, check `cargo test` and [docs](https://nudge.dev) today!";
         let spans = parse_rich_spans(input);
@@ -9178,6 +9585,7 @@ mod tests {
             options: Vec::new(),
             checked: false,
             slider: None,
+            draggable: false,
         }];
 
         assert!(app.focus_input("test_input"));
@@ -9893,6 +10301,7 @@ mod tests {
             options: Vec::new(),
             checked: false,
             slider: None,
+            draggable: false,
         };
         b.clips = Some(vec![outer, inner]);
         assert_eq!(
@@ -10411,6 +10820,7 @@ mod tests {
                 options: Vec::new(),
                 checked: false,
                 slider: None,
+                draggable: false,
             },
             // Only 2px below the first: its halo *would* reach back over the
             // first box's bottom edge if drawn inline.
@@ -10435,6 +10845,7 @@ mod tests {
                 options: Vec::new(),
                 checked: false,
                 slider: None,
+                draggable: false,
             },
         ];
 
@@ -10847,6 +11258,7 @@ mod tests {
             options: Vec::new(),
             checked: false,
             slider: None,
+            draggable: false,
         }
     }
 
@@ -10876,6 +11288,7 @@ mod tests {
             options: options.iter().map(|o| o.to_string()).collect(),
             checked: false,
             slider: None,
+            draggable: false,
         }
     }
 
@@ -12237,6 +12650,7 @@ mod tests {
                 options: Vec::new(),
                 checked: false,
                 slider: None,
+                draggable: false,
             }
         }
 
@@ -12896,6 +13310,7 @@ mod tests {
             options: Vec::new(),
             checked: false,
             slider: None,
+            draggable: false,
         }
     }
 

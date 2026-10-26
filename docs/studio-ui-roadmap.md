@@ -1066,8 +1066,24 @@ across items and buttons:
   3,429 bright text pixels rendered. All 17 demo suites pass `nudgec test`.
 
 
-### 4.4 Drag & drop  (1 day)
-- [ ] Message reorder, chat sorting, file drop
+### 4.4 Drag & drop  (1 day) — DONE
+- [x] Message reorder, chat sorting, file drop
+
+**Drag-and-drop reordering & OS file drop.** Native drag & drop interactions:
+- **`DragState` & interactive reordering**: mouse drag across draggable items (`draggable: true`
+  or bubbles/chat items) triggers reorder event `Reorder:<source>-><target>`.
+- **Floating ghost preview & drop indicator**: rendering draws a floating pill card at the cursor
+  showing the dragged element label, and a 3px Blue-500 indicator line at the target position.
+- **Native OS file drop**: handles `WindowEvent::DroppedFile`, `WindowEvent::HoveredFile`, and
+  `WindowEvent::HoveredFileCancelled`, dispatching `file_drop` with visual "Drop file to attach"
+  overlay banner.
+- **Python front end helpers**: `dispatch_reorder` and `dispatch_file_drop` on `_HeadlessApp`.
+- **Verified**: fmt OK, clippy -D warnings clean, **971 passed / 0 failed / 1 ignored**
+  (new unit test `test_drag_and_drop_reorder_and_file_drop`). Verified live on X11 with
+  `examples/drag_drop_demo.ndg` (window WID 90177538, 480x380): mouse drag from `bubble_1`
+  to `bubble_2` swapped messages with 3,177 bright text pixels rendered on screen.
+  All 18 demo suites pass `nudgec test`.
+
 
 ### 4.5 Context menu (right-click)  (0.5 day)
 - [ ] Copy/regenerate message, delete/rename chat

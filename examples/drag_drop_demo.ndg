@@ -1,0 +1,56 @@
+// examples/drag_drop_demo.ndg
+// Demonstrates message reordering and OS file drop in Nudge Studio.
+
+view DragDropDemo(first_msg: string, second_msg: string, dropped_file: string) -> View {
+    column(padding = 24, gap = 14) [
+        text("Nudge Studio — Drag & Drop Demo"),
+        text("Drag chat bubbles to reorder messages, or drop files from the desktop:"),
+        divider(),
+        status_line("Attached File: " + dropped_file, status = "success"),
+        spacer(8),
+        text("Conversation Flow (Draggable):"),
+        bubble(first_msg, role = "user", id = "bubble_1", draggable = "true"),
+        bubble(second_msg, role = "assistant", id = "bubble_2", draggable = "true")
+    ]
+}
+
+agent DragDropApp {
+    state {
+        m1: string = "1. How do native desktop layouts work?"
+        m2: string = "2. Studio computes layout boxes and handles drag-and-drop."
+        file: string = "None"
+    }
+
+    fn on_drop(key: string) uses UI {
+        if key == "Reorder:bubble_1->bubble_2" {
+            let tmp = state.m1
+            state.m1 = state.m2
+            state.m2 = tmp
+        } else if key == "FileDrop:test_report.pdf" {
+            state.file = "test_report.pdf"
+        }
+    }
+
+    window MainWindow {
+        title: "Drag Drop Demo",
+        width: 480,
+        height: 380,
+        content: DragDropDemo(state.m1, state.m2, state.file)
+    }
+}
+
+fn main() uses UI {
+    DragDropApp.MainWindow.open()
+}
+
+test "drag and drop swaps messages and accepts file drop" {
+    let app = DragDropApp.MainWindow.mount_headless()
+    assert DragDropApp.state.m1 == "1. How do native desktop layouts work?"
+    assert DragDropApp.state.file == "None"
+
+    app.dispatch_reorder("bubble_1", "bubble_2")
+    assert DragDropApp.state.m1 == "2. Studio computes layout boxes and handles drag-and-drop."
+
+    app.dispatch_file_drop("test_report.pdf")
+    assert DragDropApp.state.file == "test_report.pdf"
+}
