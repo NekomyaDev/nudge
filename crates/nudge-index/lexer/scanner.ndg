@@ -43,12 +43,13 @@ fn is_kw(s: string) -> bool {
 
 fn scan_tokens(src: string) -> [Token] {
     let n = str.length(src)
+    let chars = str.split(src, "")
     let mut tokens: [Token] = []
     let mut pos = 0
     let mut line = 1
     let mut col = 1
 
-    for _ in str.split(src, "") {
+    for _ in chars {
         if pos < n {
             let c = str.char_code(src, pos)
 
@@ -65,7 +66,7 @@ fn scan_tokens(src: string) -> [Token] {
                 pos = pos + 2
                 col = col + 2
                 let mut in_comment = true
-                for _ in str.split(src, "") {
+                for _ in chars {
                     if pos < n and in_comment {
                         let cc = str.char_code(src, pos)
                         if cc == 10 {
@@ -84,7 +85,7 @@ fn scan_tokens(src: string) -> [Token] {
                 pos = pos + 2
                 col = col + 2
                 let mut in_block = true
-                for _ in str.split(src, "") {
+                for _ in chars {
                     if pos < n and in_block {
                         let cc = str.char_code(src, pos)
                         if cc == 10 {
@@ -110,7 +111,7 @@ fn scan_tokens(src: string) -> [Token] {
                 col = col + 6
                 let mut in_prompt = true
                 let mut prompt_content = ""
-                for _ in str.split(src, "") {
+                for _ in chars {
                     if pos < n and in_prompt {
                         if pos + 2 < n and str.substring(src, pos, pos + 3) == "\"\"\"" {
                             pos = pos + 3
@@ -146,7 +147,7 @@ fn scan_tokens(src: string) -> [Token] {
                 col = col + 1
                 let mut in_str = true
                 let mut content = ""
-                for _ in str.split(src, "") {
+                for _ in chars {
                     if pos < n and in_str {
                         let sc = str.char_code(src, pos)
                         if sc == 34 {
@@ -187,19 +188,16 @@ fn scan_tokens(src: string) -> [Token] {
                 // Number literal (int or float)
                 let start_pos = pos
                 let start_col = col
-                let mut num_str = ""
                 let mut is_float = false
                 let mut reading_num = true
-                for _ in str.split(src, "") {
+                for _ in chars {
                     if pos < n and reading_num {
                         let nc = str.char_code(src, pos)
                         if is_digit_code(nc) {
-                            num_str = num_str + str.substring(src, pos, pos + 1)
                             pos = pos + 1
                             col = col + 1
                         } else if nc == 46 and !is_float and pos + 1 < n and is_digit_code(str.char_code(src, pos + 1)) {
                             is_float = true
-                            num_str = num_str + "."
                             pos = pos + 1
                             col = col + 1
                         } else {
@@ -207,6 +205,7 @@ fn scan_tokens(src: string) -> [Token] {
                         }
                     }
                 }
+                let num_str = str.substring(src, start_pos, pos)
                 let kind = if is_float { "float" } else { "int" }
                 tokens = tokens + [{
                     kind: kind,
@@ -220,13 +219,11 @@ fn scan_tokens(src: string) -> [Token] {
                 // Identifier or Keyword
                 let start_pos = pos
                 let start_col = col
-                let mut ident_str = ""
                 let mut reading_id = true
-                for _ in str.split(src, "") {
+                for _ in chars {
                     if pos < n and reading_id {
                         let ic = str.char_code(src, pos)
                         if is_alphanumeric_code(ic) {
-                            ident_str = ident_str + str.substring(src, pos, pos + 1)
                             pos = pos + 1
                             col = col + 1
                         } else {
@@ -234,6 +231,7 @@ fn scan_tokens(src: string) -> [Token] {
                         }
                     }
                 }
+                let ident_str = str.substring(src, start_pos, pos)
                 let kind = if is_kw(ident_str) { ident_str } else { "ident" }
                 tokens = tokens + [{
                     kind: kind,

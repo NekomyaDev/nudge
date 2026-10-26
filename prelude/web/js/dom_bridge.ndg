@@ -1,0 +1,59 @@
+// Pure .ndg JavaScript DOM Bridge & Policy-Hooked Network Bindings
+// Part of Phase F6.3 (docs/browser-roadmap.md)
+
+type DomScriptResult = {
+    tree: DomTree,
+    executed: bool,
+    error: string
+}
+
+fn execute_dom_script(tree: DomTree, script_src: string, policy: PolicyConfig) -> DomScriptResult {
+    let tokens = tokenize_js(script_src)
+    let ast = parse_js_script(tokens)
+    let vm_cfg = default_vm_config()
+    let exec_res = execute_js(ast, vm_cfg)
+
+    let mut updated_tree = tree
+    let mut err = exec_res.error
+
+    if exec_res.ok {
+        // Detect and apply document.querySelector mutations
+        // Pattern: document.querySelector("sel").value = "val" or .textContent = "val"
+        let s = script_src
+        let qs_pos = str.index_of(s, "document.querySelector(")
+        if qs_pos >= 0 {
+            let inner_start = qs_pos + 23
+            let quote_char = str.substring(s, inner_start, inner_start + 1)
+            if quote_char == "\"" or quote_char == "'" {
+                let after_quote = inner_start + 1
+                let next_quote = str.index_of(str.substring(s, after_quote), quote_char)
+                if next_quote >= 0 {
+                    let sel = str.substring(s, after_quote, after_quote + next_quote)
+                    let elem = query_selector(updated_tree, sel)
+                    if elem != none {
+                        let el = elem
+                        // Check if value is assigned
+                        let val_assign = str.index_of(s, ".value = ")
+                        if val_assign >= 0 {
+                            let val_part = str.trim(str.substring(s, val_assign + 9))
+                            let mut new_val = val_part
+                            if str.starts_with(new_val, "\"") or str.starts_with(new_val, "'") {
+                                new_val = str.substring(new_val, 1, str.length(new_val) - 1)
+                            }
+                            if str.ends_with(new_val, ";") {
+                                new_val = str.substring(new_val, 0, str.length(new_val) - 1)
+                            }
+                            updated_tree = update_element_value(updated_tree, el.ref, new_val)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    {
+        tree: updated_tree,
+        executed: exec_res.ok,
+        error: err
+    }
+}

@@ -34,7 +34,7 @@ fn skip_spaces(s: string, start: int) -> int {
     let mut i = start
     let n = str.length(s)
     let ws = " \t\n"
-    for _ in str.split(s, "") {
+    for _ in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32] {
         if i < n {
             let ch = str.substring(s, i, i + 1)
             if str.contains(ws, ch) {
@@ -51,7 +51,7 @@ fn parse_tag_name(s: string, start: int) -> { name: string, next: int } {
     let term = " \t\n/>"
     let mut name = ""
     let mut done = false
-    for _ in str.split(s, "") {
+    for _ in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32] {
         if i < n and !done {
             let ch = str.substring(s, i, i + 1)
             if str.contains(term, ch) {
@@ -72,7 +72,7 @@ fn parse_attrs(s: string, start: int) -> { attrs: [HtmlAttr], is_self_closing: b
     let mut self_closing = false
     let mut done = false
 
-    for _ in str.split(s, "") {
+    for _attr_loop in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30] {
         i = skip_spaces(s, i)
         if i >= n or done {
             done = true
@@ -90,7 +90,7 @@ fn parse_attrs(s: string, start: int) -> { attrs: [HtmlAttr], is_self_closing: b
                 let mut attr_name = ""
                 let mut name_done = false
                 let term = "= \t\n/>"
-                for _ in str.split(s, "") {
+                for _ in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32] {
                     if i < n and !name_done {
                         let c = str.substring(s, i, i + 1)
                         if str.contains(term, c) {
@@ -112,24 +112,19 @@ fn parse_attrs(s: string, start: int) -> { attrs: [HtmlAttr], is_self_closing: b
                         let quote = str.substring(s, i, i + 1)
                         if quote == "\"" or quote == "'" {
                             i = i + 1
-                            let mut val_done = false
-                            for _ in str.split(s, "") {
-                                if i < n and !val_done {
-                                    let c = str.substring(s, i, i + 1)
-                                    if c == quote {
-                                        val_done = true
-                                        i = i + 1
-                                    } else {
-                                        attr_val = attr_val + c
-                                        i = i + 1
-                                    }
-                                }
+                            let close_q = str.index_of(str.substring(s, i), quote)
+                            if close_q >= 0 {
+                                attr_val = str.substring(s, i, i + close_q)
+                                i = i + close_q + 1
+                            } else {
+                                attr_val = str.substring(s, i)
+                                i = n
                             }
                         } else {
                             // Unquoted attribute value
                             let mut val_done = false
                             let val_term = " \t\n>"
-                            for _ in str.split(s, "") {
+                            for _ in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64] {
                                 if i < n and !val_done {
                                     let c = str.substring(s, i, i + 1)
                                     if str.contains(val_term, c) {

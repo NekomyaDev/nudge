@@ -100,6 +100,10 @@ fn url_encode_component(s: string) -> string {
             out = out + "%40"
         } else if ch == ":" {
             out = out + "%3A"
+        } else if ch == "\n" {
+            out = out + "%0D%0A"
+        } else if ch == "\t" {
+            out = out + "%09"
         } else {
             out = out + ch
         }
@@ -126,28 +130,32 @@ fn extract_form_fields(tree: DomTree, form_ref: int) -> [{ name: string, value: 
     let mut out: [{ name: string, value: string }] = []
 
     for n in tree.nodes {
-        // Find inputs, textareas, selects whose parent is the form, or descendants of form
-        let mut is_descendant = false
-        let mut cur_parent = n.parent
-        for _ in tree.nodes {
-            if cur_parent >= 0 {
-                if cur_parent == form_ref {
-                    is_descendant = true
-                    cur_parent = -1
-                } else {
-                    for p in tree.nodes {
-                        if p.ref == cur_parent {
-                            cur_parent = p.parent
+        // Only evaluate ancestor chain for potential form controls
+        if n.enabled and (n.tag == "input" or n.tag == "textarea" or n.tag == "select") {
+            let mut is_descendant = false
+            let mut cur_parent = n.parent
+            for _depth in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] {
+                if cur_parent >= 0 and !is_descendant {
+                    if cur_parent == form_ref {
+                        is_descendant = true
+                        cur_parent = -1
+                    } else {
+                        let mut next_parent = -1
+                        for p in tree.nodes {
+                            if p.ref == cur_parent {
+                                next_parent = p.parent
+                            }
                         }
+                        cur_parent = next_parent
                     }
                 }
             }
-        }
 
-        if is_descendant and n.enabled and (n.tag == "input" or n.tag == "textarea" or n.tag == "select") {
-            let name_attr = get_attr_value(n.attrs, "name", "")
-            if name_attr != "" {
-                out = out + [{ name: name_attr, value: n.value }]
+            if is_descendant {
+                let name_attr = get_attr_value(n.attrs, "name", "")
+                if name_attr != "" {
+                    out = out + [{ name: name_attr, value: n.value }]
+                }
             }
         }
     }

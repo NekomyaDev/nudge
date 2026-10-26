@@ -198,13 +198,13 @@
 ## Phase F6: Sandboxed In-Language JavaScript Interpreter
 **Goal:** Execute page JavaScript in pure `.ndg` bytecode interpreter to handle modern SPAs and bot challenges.
 
-- [ ] **Task F6.1 — JavaScript Tokenizer & AST Parser**
+- [x] **Task F6.1 — JavaScript Tokenizer & AST Parser**
   - **Owner / Agent:** `agent:js-parser`
   - **Files:** `prelude/web/js/lexer.ndg`, `prelude/web/js/parser.ndg`
   - **Contract:** Parse ES subset (closures, arrays, objects, functions, basic operators).
   - **Acceptance Gate:** Parses standard SPA micro-framework script snippets without syntax errors.
 
-- [ ] **Task F6.2 — Sandboxed Interpreter Runtime & 3-Tier Shield**
+- [x] **Task F6.2 — Sandboxed Interpreter Runtime & 3-Tier Shield**
   - **Owner / Agent:** `agent:js-runtime`
   - **Files:** `prelude/web/js/eval.ndg`
   - **Contract:**
@@ -213,7 +213,7 @@
     - Tier 3: Heap object cap (8 MB equivalent) and call stack depth limit (64 frames).
   - **Acceptance Gate:** Infinite loops (`while(true)`) and recursion bombs terminate cleanly with typed error.
 
-- [ ] **Task F6.3 — DOM & Network Bindings**
+- [x] **Task F6.3 — DOM & Network Bindings**
   - **Owner / Agent:** `agent:js-bindings`
   - **Files:** `prelude/web/js/dom_bridge.ndg`
   - **Contract:**

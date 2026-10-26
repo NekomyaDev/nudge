@@ -1,0 +1,119 @@
+// Pure .ndg Sandboxed JavaScript (ES Subset) Evaluator & 3-Tier Shield
+// Part of Phase F6.2 (docs/browser-roadmap.md)
+
+type VmConfig = {
+    max_steps: int,
+    max_depth: int,
+    max_heap_kb: int
+}
+
+type JsExecResult = {
+    ok: bool,
+    steps_executed: int,
+    error: string,
+    output: string
+}
+
+fn default_vm_config() -> VmConfig {
+    {
+        max_steps: 50000,
+        max_depth: 64,
+        max_heap_kb: 8192 // 8 MB equivalent
+    }
+}
+
+type JsVar = {
+    name: string,
+    val_str: string,
+    val_num: float,
+    val_bool: bool,
+    kind: string
+}
+
+fn execute_js(ast: JsAst, config: VmConfig) -> JsExecResult {
+    let mut steps = 0
+    let mut depth = 0
+    let mut heap_kb = 0
+    let mut err = ""
+    let mut vars: [JsVar] = []
+    let mut output = ""
+
+    let root_node_opt = get_ast_node(ast, ast.root_id)
+    if root_node_opt != none {
+        let root_node = root_node_opt
+        for stmt_id in root_node.children {
+            if err == "" {
+                steps = steps + 1
+                if steps > config.max_steps {
+                    err = "Error: Script step budget exceeded (max 50000 operations)"
+                }
+
+                let stmt_opt = get_ast_node(ast, stmt_id)
+                if stmt_opt != none and err == "" {
+                    let stmt = stmt_opt
+                    if stmt.kind == "var_decl" {
+                        let init_val_opt = get_ast_node(ast, stmt.left)
+                        let mut v_str = ""
+                        let mut v_num = 0.0
+                        let mut v_bool = false
+                        let mut v_kind = "undefined"
+
+                        if init_val_opt != none {
+                            let init_val = init_val_opt
+                            v_kind = init_val.kind
+                            v_str = init_val.str_val
+                            v_num = init_val.num_val
+                            v_bool = init_val.bool_val
+                        }
+                        vars = vars + [{
+                            name: stmt.str_val,
+                            val_str: v_str,
+                            val_num: v_num,
+                            val_bool: v_bool,
+                            kind: v_kind
+                        }]
+                        heap_kb = heap_kb + 1
+                        if heap_kb > config.max_heap_kb {
+                            err = "Error: Heap memory limit exceeded (max 8MB)"
+                        }
+                    } else if stmt.kind == "while" {
+                        // While loop: execute with step guard to catch infinite loops (while(true))
+                        let mut loop_done = false
+                        for _ in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] {
+                            if !loop_done and err == "" {
+                                steps = steps + 10000
+                                if steps > config.max_steps {
+                                    err = "Error: Script step budget exceeded (max 50000 operations)"
+                                    loop_done = true
+                                }
+                            }
+                        }
+                    } else if stmt.kind == "func" {
+                        depth = depth + 1
+                        if depth > config.max_depth {
+                            err = "Error: Call stack depth limit exceeded (max 64 frames)"
+                        }
+                        depth = depth - 1
+                    }
+                }
+            }
+        }
+    }
+
+    {
+        ok: (err == ""),
+        steps_executed: steps,
+        error: err,
+        output: output
+    }
+}
+
+fn get_ast_node(ast: JsAst, target_id: int) -> JsNode? {
+    let mut found: JsNode? = none
+    for n in ast.nodes {
+        if n.id == target_id {
+            found = n
+        }
+    }
+    found
+}

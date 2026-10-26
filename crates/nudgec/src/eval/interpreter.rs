@@ -3588,6 +3588,18 @@ impl Interpreter {
                     _ => NudgeVal::Unit,
                 })
             }
+            "str.to_float" => {
+                let val = args.first().ok_or("'str.to_float' requires 1 argument")?;
+                Ok(match val {
+                    NudgeVal::Str(s) => match s.trim().parse::<f64>() {
+                        Ok(v) => NudgeVal::Float(v),
+                        Err(_) => NudgeVal::Unit,
+                    },
+                    NudgeVal::Float(f) => NudgeVal::Float(*f),
+                    NudgeVal::Int(i) => NudgeVal::Float(*i as f64),
+                    _ => NudgeVal::Unit,
+                })
+            }
             "str.trim" => {
                 let s = args
                     .first()

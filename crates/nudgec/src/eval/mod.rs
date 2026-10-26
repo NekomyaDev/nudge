@@ -1447,15 +1447,25 @@ fn test_f4_suite() -> bool {{
         let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
-        let url_src = std::fs::read_to_string(root_dir.join("prelude/net/url.ndg")).expect("read url.ndg");
-        let html_src = std::fs::read_to_string(root_dir.join("prelude/web/html.ndg")).expect("read html.ndg");
-        let dom_src = std::fs::read_to_string(root_dir.join("prelude/web/dom.ndg")).expect("read dom.ndg");
-        let snapshot_src = std::fs::read_to_string(root_dir.join("prelude/web/snapshot.ndg")).expect("read snapshot.ndg");
-        let form_src = std::fs::read_to_string(root_dir.join("prelude/web/form.ndg")).expect("read form.ndg");
-        let action_src = std::fs::read_to_string(root_dir.join("prelude/web/action.ndg")).expect("read action.ndg");
-        let journal_src = std::fs::read_to_string(root_dir.join("prelude/web/journal.ndg")).expect("read journal.ndg");
-        let drift_src = std::fs::read_to_string(root_dir.join("prelude/web/drift.ndg")).expect("read drift.ndg");
-        let watcher_src = std::fs::read_to_string(root_dir.join("examples/browser-agent/watcher.ndg")).expect("read watcher.ndg");
+        let url_src =
+            std::fs::read_to_string(root_dir.join("prelude/net/url.ndg")).expect("read url.ndg");
+        let html_src =
+            std::fs::read_to_string(root_dir.join("prelude/web/html.ndg")).expect("read html.ndg");
+        let dom_src =
+            std::fs::read_to_string(root_dir.join("prelude/web/dom.ndg")).expect("read dom.ndg");
+        let snapshot_src = std::fs::read_to_string(root_dir.join("prelude/web/snapshot.ndg"))
+            .expect("read snapshot.ndg");
+        let form_src =
+            std::fs::read_to_string(root_dir.join("prelude/web/form.ndg")).expect("read form.ndg");
+        let action_src = std::fs::read_to_string(root_dir.join("prelude/web/action.ndg"))
+            .expect("read action.ndg");
+        let journal_src = std::fs::read_to_string(root_dir.join("prelude/web/journal.ndg"))
+            .expect("read journal.ndg");
+        let drift_src = std::fs::read_to_string(root_dir.join("prelude/web/drift.ndg"))
+            .expect("read drift.ndg");
+        let watcher_src =
+            std::fs::read_to_string(root_dir.join("examples/browser-agent/watcher.ndg"))
+                .expect("read watcher.ndg");
 
         let test_src = format!(
             r##"{url_src}
@@ -1548,16 +1558,26 @@ fn test_f5_suite() -> bool {{
         let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
-        let url_src = std::fs::read_to_string(root_dir.join("prelude/net/url.ndg")).expect("read url.ndg");
-        let policy_src = std::fs::read_to_string(root_dir.join("prelude/web/policy.ndg")).expect("read policy.ndg");
-        let html_src = std::fs::read_to_string(root_dir.join("prelude/web/html.ndg")).expect("read html.ndg");
-        let dom_src = std::fs::read_to_string(root_dir.join("prelude/web/dom.ndg")).expect("read dom.ndg");
-        let snapshot_src = std::fs::read_to_string(root_dir.join("prelude/web/snapshot.ndg")).expect("read snapshot.ndg");
-        let form_src = std::fs::read_to_string(root_dir.join("prelude/web/form.ndg")).expect("read form.ndg");
-        let lexer_src = std::fs::read_to_string(root_dir.join("prelude/web/js/lexer.ndg")).expect("read lexer.ndg");
-        let parser_src = std::fs::read_to_string(root_dir.join("prelude/web/js/parser.ndg")).expect("read parser.ndg");
-        let eval_src = std::fs::read_to_string(root_dir.join("prelude/web/js/eval.ndg")).expect("read eval.ndg");
-        let bridge_src = std::fs::read_to_string(root_dir.join("prelude/web/js/dom_bridge.ndg")).expect("read dom_bridge.ndg");
+        let url_src =
+            std::fs::read_to_string(root_dir.join("prelude/net/url.ndg")).expect("read url.ndg");
+        let policy_src = std::fs::read_to_string(root_dir.join("prelude/web/policy.ndg"))
+            .expect("read policy.ndg");
+        let html_src =
+            std::fs::read_to_string(root_dir.join("prelude/web/html.ndg")).expect("read html.ndg");
+        let dom_src =
+            std::fs::read_to_string(root_dir.join("prelude/web/dom.ndg")).expect("read dom.ndg");
+        let snapshot_src = std::fs::read_to_string(root_dir.join("prelude/web/snapshot.ndg"))
+            .expect("read snapshot.ndg");
+        let form_src =
+            std::fs::read_to_string(root_dir.join("prelude/web/form.ndg")).expect("read form.ndg");
+        let lexer_src = std::fs::read_to_string(root_dir.join("prelude/web/js/lexer.ndg"))
+            .expect("read lexer.ndg");
+        let parser_src = std::fs::read_to_string(root_dir.join("prelude/web/js/parser.ndg"))
+            .expect("read parser.ndg");
+        let eval_src = std::fs::read_to_string(root_dir.join("prelude/web/js/eval.ndg"))
+            .expect("read eval.ndg");
+        let bridge_src = std::fs::read_to_string(root_dir.join("prelude/web/js/dom_bridge.ndg"))
+            .expect("read dom_bridge.ndg");
 
         let test_src = format!(
             r##"{url_src}
@@ -1821,7 +1841,9 @@ fn test_f6_suite() -> bool {{
         let items = parse_src(&sym_src);
         let mut interp = crate::eval::interpreter::Interpreter::new();
         interp.load_items(&items).expect("load items succeeds");
-        interp.run_all_tests().expect("all symbol table test blocks pass");
+        interp
+            .run_all_tests()
+            .expect("all symbol table test blocks pass");
         let res = interp
             .invoke_fn("main", &[])
             .expect("symbol table main execution succeeds");
@@ -1839,7 +1861,9 @@ fn test_f6_suite() -> bool {{
         let items = parse_src(&idx_src);
         let mut interp = crate::eval::interpreter::Interpreter::new();
         interp.load_items(&items).expect("load items succeeds");
-        interp.run_all_tests().expect("all inverted index test blocks pass");
+        interp
+            .run_all_tests()
+            .expect("all inverted index test blocks pass");
         let res = interp
             .invoke_fn("main", &[])
             .expect("inverted index main execution succeeds");

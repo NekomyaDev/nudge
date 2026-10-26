@@ -1,0 +1,141 @@
+// Pure .ndg JavaScript (ES Subset) Lexer
+// Part of Phase F6.1 (docs/browser-roadmap.md)
+
+type JsToken = {
+    kind: string,
+    val: string,
+    pos: int
+}
+
+fn is_js_space(ch: string) -> bool {
+    ch == " " or ch == "\t" or ch == "\n" or str.char_code(ch, 0) == 13
+}
+
+fn is_js_ident_start(ch: string) -> bool {
+    let alpha = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$"
+    str.contains(alpha, ch)
+}
+
+fn is_js_ident_part(ch: string) -> bool {
+    let alphanum = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$"
+    str.contains(alphanum, ch)
+}
+
+fn is_js_digit(ch: string) -> bool {
+    let digits = "0123456789"
+    str.contains(digits, ch)
+}
+
+fn is_js_keyword(word: string) -> bool {
+    word == "function" or word == "var" or word == "let" or word == "const" or word == "return" or word == "if" or word == "else" or word == "while" or word == "for" or word == "true" or word == "false" or word == "null" or word == "undefined"
+}
+
+fn tokenize_js(src: string) -> [JsToken] {
+    let mut tokens: [JsToken] = []
+    let mut i = 0
+    let n = str.length(src)
+
+    for _ in str.split(src, "") {
+        if i < n {
+            let ch = str.substring(src, i, i + 1)
+            if is_js_space(ch) {
+                i = i + 1
+            } else if ch == "/" and i + 1 < n and str.substring(src, i + 1, i + 2) == "/" {
+                // Line comment
+                let next_nl = str.index_of(str.substring(src, i), "\n")
+                if next_nl >= 0 {
+                    i = i + next_nl + 1
+                } else {
+                    i = n
+                }
+            } else if ch == "/" and i + 1 < n and str.substring(src, i + 1, i + 2) == "*" {
+                // Block comment
+                let end_com = str.index_of(str.substring(src, i), "*/")
+                if end_com >= 0 {
+                    i = i + end_com + 2
+                } else {
+                    i = n
+                }
+            } else if ch == "\"" or ch == "'" {
+                // String literal
+                let quote = ch
+                let start_pos = i
+                i = i + 1
+                let mut s_val = ""
+                let mut closed = false
+                for _ in str.split(src, "") {
+                    if i < n and !closed {
+                        let c = str.substring(src, i, i + 1)
+                        if c == quote {
+                            closed = true
+                            i = i + 1
+                        } else if c == "\\" and i + 1 < n {
+                            let next_c = str.substring(src, i + 1, i + 2)
+                            s_val = s_val + next_c
+                            i = i + 2
+                        } else {
+                            s_val = s_val + c
+                            i = i + 1
+                        }
+                    }
+                }
+                tokens = tokens + [{ kind: "string", val: s_val, pos: start_pos }]
+            } else if is_js_digit(ch) {
+                // Number literal
+                let start_pos = i
+                let mut num_str = ""
+                let mut num_done = false
+                for _ in str.split(src, "") {
+                    if i < n and !num_done {
+                        let c = str.substring(src, i, i + 1)
+                        if is_js_digit(c) or c == "." {
+                            num_str = num_str + c
+                            i = i + 1
+                        } else {
+                            num_done = true
+                        }
+                    }
+                }
+                tokens = tokens + [{ kind: "number", val: num_str, pos: start_pos }]
+            } else if is_js_ident_start(ch) {
+                // Identifier or keyword
+                let start_pos = i
+                let mut word = ""
+                let mut word_done = false
+                for _ in str.split(src, "") {
+                    if i < n and !word_done {
+                        let c = str.substring(src, i, i + 1)
+                        if is_js_ident_part(c) {
+                            word = word + c
+                            i = i + 1
+                        } else {
+                            word_done = true
+                        }
+                    }
+                }
+                let k = if is_js_keyword(word) { "keyword" } else { "ident" }
+                tokens = tokens + [{ kind: k, val: word, pos: start_pos }]
+            } else {
+                // Multi-character operators
+                let start_pos = i
+                let mut op = ch
+                let next2 = if i + 2 <= n { str.substring(src, i, i + 2) } else { "" }
+                let next3 = if i + 3 <= n { str.substring(src, i, i + 3) } else { "" }
+
+                if next3 == "===" or next3 == "!==" {
+                    op = next3
+                    i = i + 3
+                } else if next2 == "==" or next2 == "!=" or next2 == "<=" or next2 == ">=" or next2 == "&&" or next2 == "||" or next2 == "+=" or next2 == "-=" or next2 == "++" or next2 == "--" {
+                    op = next2
+                    i = i + 2
+                } else {
+                    op = ch
+                    i = i + 1
+                }
+                tokens = tokens + [{ kind: "op", val: op, pos: start_pos }]
+            }
+        }
+    }
+
+    tokens
+}
