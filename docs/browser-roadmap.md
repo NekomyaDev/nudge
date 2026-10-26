@@ -32,15 +32,15 @@
     - Add NTF trace record specifications for `browser.snapshot` and `browser.act`.
   - **Acceptance Gate:** `cargo test -p nudgec test_known_effects` passes. (PASSED: 580/580 tests green)
 
-- [ ] **Task F1.2 — VM Runtime Kernel Primitive (`browser.fetch`)**
+- [X] **Task F1.2 — VM Runtime Kernel Primitive (`browser.fetch`)**
   - **Owner / Agent:** `agent:runtime-vm`
-  - **Files:** `crates/nudge-runtime/src/provider/http.rs`, `crates/nudge-runtime/src/stdlib/mod.rs`, `crates/nudgec/src/eval/interpreter.rs`
+  - **Files:** `crates/nudge-runtime/src/stdlib/browser.rs`, `crates/nudge-runtime/src/stdlib/mod.rs`, `crates/nudgec/src/eval/interpreter.rs`
   - **Contract:**
     - Expose native `browser.fetch(url, opts) -> { status: int, headers: [Header], body: string }`.
     - Reuse existing TLS stack (no new dependencies or crates).
     - Enforce fail-closed TLS verification and `max_body_bytes = 10 MB` streaming limit with `BodyTooLarge` error.
     - Hook interpreter dotted field resolution for `browser.*`.
-  - **Acceptance Gate:** Unit test fetching local fixture server over HTTP/HTTPS returns valid status and body.
+  - **Acceptance Gate:** Unit test fetching local fixture server over HTTP/HTTPS/file returns valid status and body. (PASSED: unit & e2e green)
 
 - [ ] **Task F1.3 — Standalone Target Parity (Python & TypeScript)**
   - **Owner / Agent:** `agent:codegen`

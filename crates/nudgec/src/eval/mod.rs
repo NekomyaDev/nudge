@@ -1010,4 +1010,44 @@ mod tests {
             .expect("spawn thread");
         handle.join().expect("thread join");
     }
+
+    #[test]
+    fn test_eval_browser_fetch_e2e() {
+        use std::io::Write;
+        let temp_dir = std::env::temp_dir().join("nudge_eval_browser_test");
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let fixture_path = temp_dir.join("page.html");
+        {
+            let mut f = std::fs::File::create(&fixture_path).expect("create test file");
+            f.write_all(b"<html><head><title>Test Page</title></head><body>OK</body></html>")
+                .expect("write test file");
+        }
+
+        let file_url = format!("file://{}", fixture_path.to_str().unwrap());
+
+        let src = r#"
+            fn fetch_status(url: string) -> int uses Browser {
+                let resp = browser.fetch(url)
+                resp.status
+            }
+            fn fetch_body(url: string) -> string uses Browser {
+                let resp = browser.fetch(url)
+                resp.body
+            }
+        "#;
+        let items = parse_src(src);
+        let status = run_program(&items, "fetch_status", &[NudgeVal::Str(file_url.clone())])
+            .expect("browser.fetch status succeeds");
+        assert_eq!(status, NudgeVal::Int(200));
+
+        let body = run_program(&items, "fetch_body", &[NudgeVal::Str(file_url)])
+            .expect("browser.fetch body succeeds");
+        assert_eq!(
+            body,
+            NudgeVal::Str("<html><head><title>Test Page</title></head><body>OK</body></html>".into())
+        );
+
+        let _ = std::fs::remove_file(fixture_path);
+        let _ = std::fs::remove_dir(temp_dir);
+    }
 }

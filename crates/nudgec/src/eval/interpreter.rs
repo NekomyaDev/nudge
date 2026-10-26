@@ -2535,6 +2535,7 @@ impl Interpreter {
 
             // Check standard library dispatch
             if name.starts_with("io.")
+                || name.starts_with("browser.")
                 || name.starts_with("workspace.")
                 || name.starts_with("fs.")
                 || name.starts_with("proc.")
