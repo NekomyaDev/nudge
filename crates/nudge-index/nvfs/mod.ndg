@@ -123,6 +123,16 @@ fn get_parent_dir(path: string) -> string {
     parent
 }
 
+fn contains_nvfs_str(xs: [string], target: string) -> bool {
+    let mut found = false
+    for x in xs {
+        if x == target {
+            found = true
+        }
+    }
+    found
+}
+
 fn compute_block_hash(content: string) -> string {
     let raw_h = str.hash(content)
     let pos_h = if raw_h < 0 { -raw_h } else { raw_h }
@@ -161,6 +171,8 @@ agent InodeTable {
             { id: 0, path: "/", name: "/", parent_id: -1, is_dir: true, size: 0, mtime: 0, block_hashes: [], permissions: 755 }
         ]
         open_handles: [FileHandle] = []
+        path_to_id: Map[string, int] = {}
+        all_paths: [string] = []
     }
 
     fn reset_inodes() {
@@ -170,30 +182,35 @@ agent InodeTable {
             { id: 0, path: "/", name: "/", parent_id: -1, is_dir: true, size: 0, mtime: 0, block_hashes: [], permissions: 755 }
         ]
         state.open_handles = []
+        state.path_to_id = {}
+        state.all_paths = []
     }
 
     fn find_by_path(target_path: string) -> int {
         let norm = normalize_path(target_path)
-        let mut found_id = -1
-        for node in state.inodes {
-            if node.path == norm {
-                found_id = node.id
-            }
+        if norm == "/" {
+            0
+        } else if contains_nvfs_str(state.all_paths, norm) {
+            state.path_to_id[norm]
+        } else {
+            -1
         }
-        found_id
     }
 
     fn stat(target_path: string) -> InodeStat {
         let norm = normalize_path(target_path)
         let mut res: InodeStat = { exists: false, id: -1, is_dir: false, size: 0, mtime: 0 }
-        for node in state.inodes {
-            if node.path == norm {
-                res = {
-                    exists: true,
-                    id: node.id,
-                    is_dir: node.is_dir,
-                    size: node.size,
-                    mtime: node.mtime
+        let nid = InodeTable.find_by_path(norm)
+        if nid != -1 {
+            for node in state.inodes {
+                if node.id == nid {
+                    res = {
+                        exists: true,
+                        id: node.id,
+                        is_dir: node.is_dir,
+                        size: node.size,
+                        mtime: node.mtime
+                    }
                 }
             }
         }
@@ -227,6 +244,8 @@ agent InodeTable {
                 permissions: 755
             }
             state.inodes = state.inodes + [new_node]
+            state.path_to_id[norm] = id
+            state.all_paths = state.all_paths + [norm]
             ret_id = id
         }
         ret_id
@@ -276,6 +295,8 @@ agent InodeTable {
                 permissions: 644
             }
             state.inodes = state.inodes + [new_node]
+            state.path_to_id[norm] = id
+            state.all_paths = state.all_paths + [norm]
             ret_id = id
         }
         ret_id
@@ -303,6 +324,17 @@ agent InodeTable {
                 }
             }
             state.inodes = remaining
+
+            let mut remaining_paths: [string] = []
+            let mut new_path_map: Map[string, int] = {}
+            for p in state.all_paths {
+                if p != norm {
+                    remaining_paths = remaining_paths + [p]
+                    new_path_map[p] = state.path_to_id[p]
+                }
+            }
+            state.all_paths = remaining_paths
+            state.path_to_id = new_path_map
             deleted = true
         }
         deleted
@@ -326,6 +358,8 @@ agent InodeTable {
 agent CasStore {
     state {
         blocks: [CasBlock] = []
+        block_map: Map[string, CasBlock] = {}
+        block_hashes: [string] = []
         total_allocations: int = 0
         dedup_count: int = 0
         dedup_saved_bytes: int = 0
@@ -333,6 +367,8 @@ agent CasStore {
 
     fn reset_cas() {
         state.blocks = []
+        state.block_map = {}
+        state.block_hashes = []
         state.total_allocations = 0
         state.dedup_count = 0
         state.dedup_saved_bytes = 0
@@ -341,26 +377,25 @@ agent CasStore {
     fn put_chunk(chunk: string) -> string {
         let h = compute_block_hash(chunk)
         let chunk_size = str.length(chunk)
-        let mut found = false
-        let mut updated: [CasBlock] = []
 
-        for b in state.blocks {
-            if b.hash == h {
-                found = true
-                let inc_b: CasBlock = {
-                    hash: b.hash,
-                    content: b.content,
-                    size: b.size,
-                    ref_count: b.ref_count + 1
-                }
-                updated = updated + [inc_b]
-            } else {
-                updated = updated + [b]
+        if contains_nvfs_str(state.block_hashes, h) {
+            let b = state.block_map[h]
+            let inc_b: CasBlock = {
+                hash: b.hash,
+                content: b.content,
+                size: b.size,
+                ref_count: b.ref_count + 1
             }
-        }
-
-        if found {
-            state.blocks = updated
+            state.block_map[h] = inc_b
+            let mut updated_blocks: [CasBlock] = []
+            for blk in state.blocks {
+                if blk.hash == h {
+                    updated_blocks = updated_blocks + [inc_b]
+                } else {
+                    updated_blocks = updated_blocks + [blk]
+                }
+            }
+            state.blocks = updated_blocks
             state.dedup_count += 1
             state.dedup_saved_bytes += chunk_size
         } else {
@@ -370,6 +405,8 @@ agent CasStore {
                 size: chunk_size,
                 ref_count: 1
             }
+            state.block_map[h] = new_b
+            state.block_hashes = state.block_hashes + [h]
             state.blocks = state.blocks + [new_b]
             state.total_allocations += 1
         }
@@ -378,10 +415,8 @@ agent CasStore {
 
     fn get_chunk(h: string) -> string {
         let mut res = ""
-        for b in state.blocks {
-            if b.hash == h {
-                res = b.content
-            }
+        if contains_nvfs_str(state.block_hashes, h) {
+            res = state.block_map[h].content
         }
         res
     }

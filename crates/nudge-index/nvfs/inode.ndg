@@ -1,4 +1,4 @@
-/// NVFS Inode Registry & Virtual File Descriptors
+/// NVFS Inode Registry & Virtual File Descriptors with Native Map Path Resolution
 /// Part of Phase 2 (v2.2) - In-Memory Indexing & Virtual File System
 /// Zero foreign dependencies - 100% Pure Nudge
 
@@ -98,6 +98,16 @@ fn get_parent_dir(path: string) -> string {
     parent
 }
 
+fn contains_path(xs: [string], target: string) -> bool {
+    let mut found = false
+    for x in xs {
+        if x == target {
+            found = true
+        }
+    }
+    found
+}
+
 agent InodeTable {
     state {
         next_id: int = 1
@@ -106,6 +116,8 @@ agent InodeTable {
             { id: 0, path: "/", name: "/", parent_id: -1, is_dir: true, size: 0, mtime: 0, block_hashes: [], permissions: 755 }
         ]
         open_handles: [FileHandle] = []
+        path_to_id: Map[string, int] = {}
+        all_paths: [string] = []
     }
 
     fn reset() {
@@ -115,6 +127,8 @@ agent InodeTable {
             { id: 0, path: "/", name: "/", parent_id: -1, is_dir: true, size: 0, mtime: 0, block_hashes: [], permissions: 755 }
         ]
         state.open_handles = []
+        state.path_to_id = {}
+        state.all_paths = []
     }
 
     fn count() -> int {
@@ -123,26 +137,29 @@ agent InodeTable {
 
     fn find_by_path(target_path: string) -> int {
         let norm = normalize_path(target_path)
-        let mut found_id = -1
-        for node in state.inodes {
-            if node.path == norm {
-                found_id = node.id
-            }
+        if norm == "/" {
+            0
+        } else if contains_path(state.all_paths, norm) {
+            state.path_to_id[norm]
+        } else {
+            -1
         }
-        found_id
     }
 
     fn stat(target_path: string) -> InodeStat {
         let norm = normalize_path(target_path)
         let mut res: InodeStat = { exists: false, id: -1, is_dir: false, size: 0, mtime: 0 }
-        for node in state.inodes {
-            if node.path == norm {
-                res = {
-                    exists: true,
-                    id: node.id,
-                    is_dir: node.is_dir,
-                    size: node.size,
-                    mtime: node.mtime
+        let nid = InodeTable.find_by_path(norm)
+        if nid != -1 {
+            for node in state.inodes {
+                if node.id == nid {
+                    res = {
+                        exists: true,
+                        id: node.id,
+                        is_dir: node.is_dir,
+                        size: node.size,
+                        mtime: node.mtime
+                    }
                 }
             }
         }
@@ -176,6 +193,8 @@ agent InodeTable {
                 permissions: 755
             }
             state.inodes = state.inodes + [new_node]
+            state.path_to_id[norm] = id
+            state.all_paths = state.all_paths + [norm]
             ret_id = id
         }
         ret_id
@@ -225,6 +244,8 @@ agent InodeTable {
                 permissions: 644
             }
             state.inodes = state.inodes + [new_node]
+            state.path_to_id[norm] = id
+            state.all_paths = state.all_paths + [norm]
             ret_id = id
         }
         ret_id
@@ -252,6 +273,17 @@ agent InodeTable {
                 }
             }
             state.inodes = remaining
+
+            let mut remaining_paths: [string] = []
+            let mut new_path_map: Map[string, int] = {}
+            for p in state.all_paths {
+                if p != norm {
+                    remaining_paths = remaining_paths + [p]
+                    new_path_map[p] = state.path_to_id[p]
+                }
+            }
+            state.all_paths = remaining_paths
+            state.path_to_id = new_path_map
             deleted = true
         }
         deleted
@@ -372,39 +404,55 @@ fn main() -> int {
 test "inode path normalization and resolution" {
     let p1 = normalize_path("/a/b/../c/./d")
     assert p1 == "/a/c/d"
-    let p2 = normalize_path("src/core/main.ndg")
-    assert p2 == "/src/core/main.ndg"
-    let base = get_basename("/src/core/main.ndg")
-    assert base == "main.ndg"
-    let parent = get_parent_dir("/src/core/main.ndg")
-    assert parent == "/src/core"
+
+    let p2 = normalize_path("///var//log///")
+    assert p2 == "/var/log"
+
+    let p3 = normalize_path("/a/b/c/../../..")
+    assert p3 == "/"
+
+    let p4 = normalize_path(".")
+    assert p4 == "/"
 }
 
-test "inode table lifecycle and handles" {
+test "inode table lifecycle and tree manipulation" {
     InodeTable.reset()
-    let dir_id = InodeTable.mkdir("/workspace/pkg", 10)
+    assert InodeTable.count() == 1
+
+    let dir_id = InodeTable.mkdir("/workspace/src", 1000)
     assert dir_id > 0
-    let file_id = InodeTable.create_file("/workspace/pkg/lib.ndg", ["h1", "h2"], 128, 11)
+    assert InodeTable.find_by_path("/workspace/src") == dir_id
+
+    let file_id = InodeTable.create_file("/workspace/src/app.ndg", ["hash_1", "hash_2"], 1024, 1005)
     assert file_id > dir_id
 
-    let st = InodeTable.stat("/workspace/pkg/lib.ndg")
+    let st = InodeTable.stat("/workspace/src/app.ndg")
     assert st.exists
     assert !st.is_dir
-    assert st.size == 128
+    assert st.size == 1024
 
-    let blocks = InodeTable.get_blocks(file_id)
-    assert len(blocks) == 2
-    assert blocks[0] == "h1"
+    let children = InodeTable.list_dir("/workspace/src")
+    assert len(children) == 1
+    assert children[0] == "app.ndg"
 
-    let fd = InodeTable.open_handle("/workspace/pkg/lib.ndg", "r")
+    let blks = InodeTable.get_blocks(file_id)
+    assert len(blks) == 2
+    assert blks[0] == "hash_1"
+
+    assert InodeTable.delete_inode("/workspace/src/app.ndg")
+    assert InodeTable.find_by_path("/workspace/src/app.ndg") == -1
+    assert len(InodeTable.list_dir("/workspace/src")) == 0
+}
+
+test "file descriptor handles seek and tell" {
+    InodeTable.reset()
+    let fd = InodeTable.open_handle("/test.txt", "w")
     assert fd >= 100
     assert InodeTable.tell(fd) == 0
-    assert InodeTable.seek(fd, 32)
-    assert InodeTable.tell(fd) == 32
-    assert InodeTable.close_handle(fd)
 
-    let deleted = InodeTable.delete_inode("/workspace/pkg/lib.ndg")
-    assert deleted
-    let st_after = InodeTable.stat("/workspace/pkg/lib.ndg")
-    assert !st_after.exists
+    assert InodeTable.seek(fd, 50)
+    assert InodeTable.tell(fd) == 50
+
+    assert InodeTable.close_handle(fd)
+    assert InodeTable.tell(fd) == -1
 }
