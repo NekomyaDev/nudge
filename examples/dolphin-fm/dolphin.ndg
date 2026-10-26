@@ -929,3 +929,30 @@ test "clipboard copy stores selected file in buffer" {
     assert DolphinApp.state.clipboard_path == DolphinApp.state.selected_path
     assert DolphinApp.state.clipboard_name == DolphinApp.state.selected_name
 }
+
+test "undo action rolls back newly created folder transaction" {
+    DolphinApp.refresh()
+    let app = DolphinApp.MainWindow.mount_headless()
+
+    // Create a new folder
+    app.dispatch_click("btn_new_folder")
+    assert DolphinApp.state.last_created_path != ""
+
+    // Trigger Undo
+    app.dispatch_click("btn_undo")
+    assert DolphinApp.state.last_created_path == ""
+}
+
+test "open selected directory navigates into child hierarchy" {
+    DolphinApp.refresh()
+    let app = DolphinApp.MainWindow.mount_headless()
+
+    // Select first entry if it is a directory
+    let entries = DolphinApp.state.filtered_entries
+    if len(entries) > 0 and entries[0].is_dir {
+        DolphinApp.select_or_open_entry()
+        let target_p = DolphinApp.state.selected_path
+        app.dispatch_click("btn_open_selected_dir")
+        assert DolphinApp.state.current_path == target_p
+    }
+}
