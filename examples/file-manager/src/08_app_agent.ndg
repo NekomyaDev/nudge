@@ -47,6 +47,15 @@ agent FileManagerApp {
 
         // Theme: "breeze-light" | "breeze-dark"
         current_theme: string = "breeze-light"
+
+        // F4 Embedded Terminal Dock
+        show_terminal: bool = false
+        terminal_history: [string] = ["Nudge Terminal v1.0 — Ready. Type commands below."]
+        terminal_input: string = ""
+
+        // F2 Inline Rename
+        rename_mode: bool = false
+        rename_text: string = ""
     }
 
     fn init_default_path() uses Workspace {
@@ -57,7 +66,7 @@ agent FileManagerApp {
         }
     }
 
-    fn reset_state() uses UI, Workspace {
+    fn reset_state() uses UI, Workspace, Store {
         state.current_path = "."
         state.tabs = ["."]
         state.active_tab_idx = 0
@@ -76,7 +85,7 @@ agent FileManagerApp {
         FileManagerApp.refresh()
     }
 
-    fn refresh() uses Workspace {
+    fn refresh() uses Workspace, Store {
         let mut updated_tabs: [string] = []
         for (t, idx) in state.tabs {
             if idx == state.active_tab_idx {
@@ -490,7 +499,7 @@ agent FileManagerApp {
         }
     }
 
-    fn delete_selected() uses UI, Workspace, WorkspaceDelete {
+    fn delete_selected() uses UI, Workspace, WorkspaceDelete, Store {
         if state.selected_path != "" {
             workspace.delete(state.selected_path, recursive = true)
             state.selected_name = ""
@@ -502,6 +511,77 @@ agent FileManagerApp {
             VfsBridge.invalidate(state.current_path)
             FileManagerApp.refresh()
         }
+    }
+
+    fn toggle_terminal() uses UI {
+        state.show_terminal = !state.show_terminal
+    }
+
+    fn on_terminal_input_change(v: string) uses UI {
+        state.terminal_input = v
+    }
+
+    fn on_terminal_submit() uses UI, Workspace, Store {
+        let cmd = str.trim(state.terminal_input)
+        if cmd != "" {
+            let prompt_line = "$ " + cmd
+            let mut out_line = ""
+            if cmd == "pwd" {
+                out_line = state.current_path
+            } else if cmd == "ls" {
+                out_line = "Listed " + str.to_string(len(state.filtered_entries)) + " items in " + state.current_path
+            } else if cmd == "clear" {
+                state.terminal_history = ["Terminal cleared."]
+                state.terminal_input = ""
+            } else if str.starts_with(cmd, "cd ") {
+                let p = str.trim(str.replace(cmd, "cd ", ""))
+                FileManagerApp.navigate_to(p)
+                out_line = "Changed directory to " + p
+            } else if str.starts_with(cmd, "mkdir ") {
+                let dir_name = str.trim(str.replace(cmd, "mkdir ", ""))
+                let full = state.current_path + "/" + dir_name + "/.keep"
+                workspace.write(full, "")
+                VfsBridge.invalidate(state.current_path)
+                FileManagerApp.refresh()
+                out_line = "Created folder " + dir_name
+            } else {
+                out_line = "Executed: " + cmd
+            }
+            if cmd != "clear" {
+                state.terminal_history = state.terminal_history + [prompt_line, out_line]
+                state.terminal_input = ""
+            }
+        }
+    }
+
+    fn start_rename() uses UI {
+        if state.selected_name != "" {
+            state.rename_mode = true
+            state.rename_text = state.selected_name
+        }
+    }
+
+    fn on_rename_text_change(v: string) uses UI {
+        state.rename_text = v
+    }
+
+    fn confirm_rename() uses UI, Workspace, WorkspaceDelete, Store {
+        if state.rename_mode and state.rename_text != "" and state.selected_path != "" {
+            let parent_p = parent_vfs_path(state.selected_path)
+            let new_p = if parent_p == "/" { "/" + state.rename_text } else { parent_p + "/" + state.rename_text }
+            let old_content = workspace.read(state.selected_path)
+            workspace.write(new_p, old_content)
+            workspace.delete(state.selected_path, recursive = true)
+            state.rename_mode = false
+            state.selected_name = state.rename_text
+            state.selected_path = new_p
+            VfsBridge.invalidate(state.current_path)
+            FileManagerApp.refresh()
+        }
+    }
+
+    fn cancel_rename() uses UI {
+        state.rename_mode = false
     }
 
     window MainWindow {
@@ -528,7 +608,10 @@ agent FileManagerApp {
             state.current_lang,
             state.view_mode,
             state.tabs,
-            state.active_tab_idx
+            state.active_tab_idx,
+            state.show_terminal,
+            state.terminal_history,
+            state.terminal_input
         )
     }
 }

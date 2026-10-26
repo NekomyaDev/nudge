@@ -37,5 +37,3 @@ Located in `winget/Nekomya.Nudge.*.yaml`.
 
 Distributed in its dedicated repository: [`NekomyaDev/nudge-app-runner`](https://github.com/NekomyaDev/nudge-app-runner).
 Provides single-click GUI installation, launcher associations (`application/x-nudge`), and interactive execution windows for Nudge applications on Linux (Windows and macOS coming soon).
-
-

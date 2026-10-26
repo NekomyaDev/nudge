@@ -4,10 +4,17 @@ All notable changes to Nudge will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [1.4.0] - 2026-10-26
 
 ### Added
-- **Bytecode VM as default engine**: Stack VM (`crates/nudgec/src/bytecode.rs` and `vm.rs`) compiles pure functions to NBC bytecode and executes pure compute ~70x faster than the AST interpreter with explicit frame recursion safety. The VM is now the default execution path for `nudgec run` and standalone binaries. Reversible via `NUDGE_VM=0` (reverts to AST interpreter fallback) and `NUDGE_VM=1` (forces VM execution).
+- **Interactive Learn Curriculum Expansion**: 140 comprehensive interactive lessons covering the complete Nudge language surface, JEV decision engine, formal verification, durable agent state, reactive desktop GUI, and security sandboxes (`nudgec learn`).
+- **Static Code Complexity and Metrics**: Added `nudgec stats <file.ndg> [--json]` to report LOC breakdown, declaration tallies, tracked effects, and AST cyclomatic complexity.
+- **Pure-Nudge Self-Hosted In-Memory Indexer & NVFS**: Fast in-memory virtual filesystem buffers (`mem.*`, `nvfs`), full tokenizer, AST block parser, and call-graph blast radius analysis written directly in self-hosted `.ndg`.
+- **Browser Use & Web Effects**: First-class web automation and DOM query primitives (`browser.fetch`, CSS selectors, HTML snapshotting, cookie containers, and allowlist sandboxing).
+- **Studio Section 5 Enhancements**: Native UI error banners with retry action dispatch, async LLM background task status bars with token streaming chunks and cancel controls, window state persistence (theme, locale, geometry), and partial redraw dirty rect clipping.
+- **Enhanced Runtime Overflow & Bounds Hardening**: Fail-closed protection against integer negation overflow (`-i64::MIN`), modulo overflow (`i64::MIN % -1`), inverted string slices, and maximum expression nesting recursion limits (`MAX_DEPTH`).
+
+## [1.2.1] - 2026-09-26
 - **Effect delegation in bytecode VM**: Pure functions orchestrate on the VM while delegating effectful callee functions to the AST interpreter (`DelegateCall`). Expression-level delegation (`DelegateExpr`) evaluates inline `llm` or `tool` expressions inside pure functions via the interpreter with lexical scope capture, returning to VM execution for subsequent instructions.
 - **Bytecode route support**: Compiles pure `route` branching expressions into `BranchIfFalse` and `Fail` bytecode instructions for exact parity with the interpreter.
 - **WASM live-tool host bridge end-to-end verification**: Verified live tool calls over the WebAssembly host bridge (`scripts/wasm_host_e2e.sh`, `examples/wasm-host/e2e.mjs`) under Node WASI, providing the `nudge_host_tool_call` import and completing a live `calculator::add` round-trip returning 42.

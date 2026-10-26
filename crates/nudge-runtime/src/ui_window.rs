@@ -157,12 +157,12 @@ impl Theme {
 
     /// Zinc-50 light theme: the same ladder, walked the other way.
     pub const LIGHT: Theme = Theme {
-        bg: 0xFFFA_FAFA,           // Zinc-50
-        text: 0xFF18_181B,         // Zinc-900
-        text_dim: 0xFF71_717A,     // Zinc-500 — muted on either surface
-        border: 0xFFE4_E4E7,       // Zinc-200
-        input_bg: 0xFFFF_FFFF,     // white
-        input_border: 0xFFA1_A1AA, // Zinc-400
+        bg: 0xFFFA_FAFA,                    // Zinc-50
+        text: 0xFF18_181B,                  // Zinc-900
+        text_dim: 0xFF71_717A,              // Zinc-500 — muted on either surface
+        border: 0xFFE4_E4E7,                // Zinc-200
+        input_bg: 0xFFFF_FFFF,              // white
+        input_border: 0xFFA1_A1AA,          // Zinc-400
         input_border_focused: 0xFF25_63EB,  // Blue-600
         button_bg: 0xFF25_63EB,             // Blue-600
         button_bg_hover: 0xFF1D_4ED8,       // Blue-700
@@ -4219,14 +4219,48 @@ pub fn draw_breeze_folder_icon(
     let back_highlight = 0xFF76_9CB7;
 
     // Top tab of back flap
-    draw_rounded_rect_box_clipped(buf, stride, height, clip, x, y, tab_w + 6, tab_h + 4, 3, back_color, back_color);
+    draw_rounded_rect_box_clipped(
+        buf,
+        stride,
+        height,
+        clip,
+        x,
+        y,
+        tab_w + 6,
+        tab_h + 4,
+        3,
+        back_color,
+        back_color,
+    );
 
     // Back plate body
     let body_top = y + tab_h;
-    draw_rounded_rect_box_clipped(buf, stride, height, clip, x, body_top, w, h - tab_h, 3, back_color, back_highlight);
+    draw_rounded_rect_box_clipped(
+        buf,
+        stride,
+        height,
+        clip,
+        x,
+        body_top,
+        w,
+        h - tab_h,
+        3,
+        back_color,
+        back_highlight,
+    );
 
     // Subtle dark opening slit
-    draw_rect_alpha(buf, stride, height, x + 3, body_top + 2, (w - 6).max(1), 3, 0xFF00_0000, 0.4);
+    draw_rect_alpha(
+        buf,
+        stride,
+        height,
+        x + 3,
+        body_top + 2,
+        (w - 6).max(1),
+        3,
+        0xFF00_0000,
+        0.4,
+    );
 
     // Front pocket (Breeze sky blue)
     let pocket_top = y + (h * 32) / 100;
@@ -4234,9 +4268,31 @@ pub fn draw_breeze_folder_icon(
     let front_color = 0xFF96_D0F2;
     let front_top = 0xFFAC_DDF7;
 
-    draw_rounded_rect_box_clipped(buf, stride, height, clip, x, pocket_top, w, pocket_h, 4, front_color, front_top);
+    draw_rounded_rect_box_clipped(
+        buf,
+        stride,
+        height,
+        clip,
+        x,
+        pocket_top,
+        w,
+        pocket_h,
+        4,
+        front_color,
+        front_top,
+    );
     // Subtle bottom crease
-    draw_rect_alpha(buf, stride, height, x + 2, pocket_top + pocket_h - 2, (w - 4).max(1), 2, 0xFF00_0000, 0.25);
+    draw_rect_alpha(
+        buf,
+        stride,
+        height,
+        x + 2,
+        pocket_top + pocket_h - 2,
+        (w - 4).max(1),
+        2,
+        0xFF00_0000,
+        0.25,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4260,11 +4316,35 @@ pub fn draw_breeze_file_icon(
     let fold_color = 0xFFDE_E4EA;
 
     // Main sheet
-    draw_rounded_rect_box_clipped(buf, stride, height, clip, x, y, w, h, 2, sheet_color, border_color);
+    draw_rounded_rect_box_clipped(
+        buf,
+        stride,
+        height,
+        clip,
+        x,
+        y,
+        w,
+        h,
+        2,
+        sheet_color,
+        border_color,
+    );
 
     // Dog ear fold at top-right
     let ear_x = x + w - dog_ear;
-    draw_rounded_rect_box_clipped(buf, stride, height, clip, ear_x - 1, y, dog_ear + 1, dog_ear + 1, 1, fold_color, border_color);
+    draw_rounded_rect_box_clipped(
+        buf,
+        stride,
+        height,
+        clip,
+        ear_x - 1,
+        y,
+        dog_ear + 1,
+        dog_ear + 1,
+        1,
+        fold_color,
+        border_color,
+    );
 
     // Accent content lines
     let line_y_start = y + dog_ear + 5;
@@ -4273,7 +4353,19 @@ pub fn draw_breeze_file_icon(
         let ly = line_y_start + i * 6;
         if ly + 2 < y + h - 5 {
             let lw = if i == 2 { (line_w * 6) / 10 } else { line_w };
-            draw_rounded_rect_box_clipped(buf, stride, height, clip, x + 6, ly, lw, 3, 1, color, color);
+            draw_rounded_rect_box_clipped(
+                buf,
+                stride,
+                height,
+                clip,
+                x + 6,
+                ly,
+                lw,
+                3,
+                1,
+                color,
+                color,
+            );
         }
     }
 }
@@ -5044,11 +5136,25 @@ pub fn layout_element_ctx(
             let mut max_child_w = 0;
 
             for (child_idx, child) in elem.children.iter().enumerate() {
-                let subsequent_h: i32 = elem.children.iter().skip(child_idx + 1).map(|c| {
-                    let eh = c.props.get("height").or_else(|| c.props.get("h")).and_then(|s| s.parse::<i32>().ok()).unwrap_or(28);
-                    let pad = c.props.get("padding").and_then(|s| s.parse::<i32>().ok()).unwrap_or(0);
-                    eh + pad * 2 + gap
-                }).sum();
+                let subsequent_h: i32 = elem
+                    .children
+                    .iter()
+                    .skip(child_idx + 1)
+                    .map(|c| {
+                        let eh = c
+                            .props
+                            .get("height")
+                            .or_else(|| c.props.get("h"))
+                            .and_then(|s| s.parse::<i32>().ok())
+                            .unwrap_or(28);
+                        let pad = c
+                            .props
+                            .get("padding")
+                            .and_then(|s| s.parse::<i32>().ok())
+                            .unwrap_or(0);
+                        eh + pad * 2 + gap
+                    })
+                    .sum();
                 let saved_max_h = ctx.max_h;
                 ctx.max_h = (ctx.max_h - subsequent_h).max(y + padding + 60);
                 let col_avail_w = explicit_w.unwrap_or(max_w) - 2 * padding;
@@ -5072,8 +5178,16 @@ pub fn layout_element_ctx(
             } else {
                 child_y - gap + padding - y
             };
-            let explicit_w = elem.props.get("width").or_else(|| elem.props.get("w")).and_then(|s| s.parse::<i32>().ok());
-            let explicit_h = elem.props.get("height").or_else(|| elem.props.get("h")).and_then(|s| s.parse::<i32>().ok());
+            let explicit_w = elem
+                .props
+                .get("width")
+                .or_else(|| elem.props.get("w"))
+                .and_then(|s| s.parse::<i32>().ok());
+            let explicit_h = elem
+                .props
+                .get("height")
+                .or_else(|| elem.props.get("h"))
+                .and_then(|s| s.parse::<i32>().ok());
             let total_w = if let Some(ew) = explicit_w {
                 ew
             } else if expand {
@@ -5082,7 +5196,11 @@ pub fn layout_element_ctx(
                 max_child_w + 2 * padding
             };
             let expand_h = elem.props.get("expand_h").is_some_and(|v| v == "true")
-                || elem.props.get("height").map(|s| s == "auto" || s == "100%").unwrap_or(false);
+                || elem
+                    .props
+                    .get("height")
+                    .map(|s| s == "auto" || s == "100%")
+                    .unwrap_or(false);
             let final_h = if let Some(eh) = explicit_h {
                 eh
             } else if expand_h {
@@ -5107,25 +5225,33 @@ pub fn layout_element_ctx(
             }
 
             if elem.props.contains_key("bg") {
-                boxes.insert(start_box_idx, LayoutBox {
-                    rect: Rect { x, y, w: total_w, h: final_h },
-                    tag: "panel".into(),
-                    id: elem.id.clone(),
-                    text: None,
-                    on_click: None,
-                    on_change: None,
-                    on_key: None,
-                    pan,
-                    clips: clips_owned(clips),
-                    pad: 0,
-                    disabled: false,
-                    tooltip: None,
-                    checked: false,
-                    slider: None,
-                    options: Vec::new(),
-                    draggable: false,
-                    props: elem.props.clone(),
-                });
+                boxes.insert(
+                    start_box_idx,
+                    LayoutBox {
+                        rect: Rect {
+                            x,
+                            y,
+                            w: total_w,
+                            h: final_h,
+                        },
+                        tag: "panel".into(),
+                        id: elem.id.clone(),
+                        text: None,
+                        on_click: None,
+                        on_change: None,
+                        on_key: None,
+                        pan,
+                        clips: clips_owned(clips),
+                        pad: 0,
+                        disabled: false,
+                        tooltip: None,
+                        checked: false,
+                        slider: None,
+                        options: Vec::new(),
+                        draggable: false,
+                        props: elem.props.clone(),
+                    },
+                );
             }
 
             (total_w, final_h)
@@ -5162,17 +5288,39 @@ pub fn layout_element_ctx(
                 let idx_before = boxes.len();
                 let child_expand = child.props.get("expand").is_some_and(|v| v == "true");
                 let child_max_w = if child_expand {
-                    let subsequent_w: i32 = elem.children.iter().skip(child_idx + 1).map(|c| {
-                        let ew = c.props.get("width").or_else(|| c.props.get("w")).and_then(|s| s.parse::<i32>().ok()).unwrap_or(0);
-                        let pad = c.props.get("padding").and_then(|s| s.parse::<i32>().ok()).unwrap_or(0);
-                        ew + pad * 2 + gap
-                    }).sum();
+                    let subsequent_w: i32 = elem
+                        .children
+                        .iter()
+                        .skip(child_idx + 1)
+                        .map(|c| {
+                            let ew = c
+                                .props
+                                .get("width")
+                                .or_else(|| c.props.get("w"))
+                                .and_then(|s| s.parse::<i32>().ok())
+                                .unwrap_or(0);
+                            let pad = c
+                                .props
+                                .get("padding")
+                                .and_then(|s| s.parse::<i32>().ok())
+                                .unwrap_or(0);
+                            ew + pad * 2 + gap
+                        })
+                        .sum();
                     (max_w - (child_x - x) - padding - subsequent_w).max(60)
                 } else {
                     max_w
                 };
-                let (cw, ch) =
-                    layout_element_ctx(child, child_x, y + padding, child_max_w, boxes, ctx, pan, clips);
+                let (cw, ch) = layout_element_ctx(
+                    child,
+                    child_x,
+                    y + padding,
+                    child_max_w,
+                    boxes,
+                    ctx,
+                    pan,
+                    clips,
+                );
                 let idx_after = boxes.len();
                 child_box_ranges.push((idx_before..idx_after, cw));
                 max_child_h = max_child_h.max(ch);
@@ -5184,8 +5332,16 @@ pub fn layout_element_ctx(
             } else {
                 child_x - gap - (x + padding)
             };
-            let explicit_w = elem.props.get("width").or_else(|| elem.props.get("w")).and_then(|s| s.parse::<i32>().ok());
-            let explicit_h = elem.props.get("height").or_else(|| elem.props.get("h")).and_then(|s| s.parse::<i32>().ok());
+            let explicit_w = elem
+                .props
+                .get("width")
+                .or_else(|| elem.props.get("w"))
+                .and_then(|s| s.parse::<i32>().ok());
+            let explicit_h = elem
+                .props
+                .get("height")
+                .or_else(|| elem.props.get("h"))
+                .and_then(|s| s.parse::<i32>().ok());
             let total_w = if let Some(ew) = explicit_w {
                 ew
             } else if expand || justify == "between" || justify == "end" || justify == "center" {
@@ -5194,7 +5350,11 @@ pub fn layout_element_ctx(
                 content_w + 2 * padding
             };
             let expand_h = elem.props.get("expand_h").is_some_and(|v| v == "true")
-                || elem.props.get("height").map(|s| s == "auto" || s == "100%").unwrap_or(false);
+                || elem
+                    .props
+                    .get("height")
+                    .map(|s| s == "auto" || s == "100%")
+                    .unwrap_or(false);
             let total_h = if let Some(eh) = explicit_h {
                 eh
             } else if expand_h {
@@ -5244,25 +5404,33 @@ pub fn layout_element_ctx(
             }
 
             if elem.props.contains_key("bg") {
-                boxes.insert(start_box_idx, LayoutBox {
-                    rect: Rect { x, y, w: total_w, h: total_h },
-                    tag: "panel".into(),
-                    id: elem.id.clone(),
-                    text: None,
-                    on_click: None,
-                    on_change: None,
-                    on_key: None,
-                    pan,
-                    clips: clips_owned(clips),
-                    pad: 0,
-                    disabled: false,
-                    tooltip: None,
-                    checked: false,
-                    slider: None,
-                    options: Vec::new(),
-                    draggable: false,
-                    props: elem.props.clone(),
-                });
+                boxes.insert(
+                    start_box_idx,
+                    LayoutBox {
+                        rect: Rect {
+                            x,
+                            y,
+                            w: total_w,
+                            h: total_h,
+                        },
+                        tag: "panel".into(),
+                        id: elem.id.clone(),
+                        text: None,
+                        on_click: None,
+                        on_change: None,
+                        on_key: None,
+                        pan,
+                        clips: clips_owned(clips),
+                        pad: 0,
+                        disabled: false,
+                        tooltip: None,
+                        checked: false,
+                        slider: None,
+                        options: Vec::new(),
+                        draggable: false,
+                        props: elem.props.clone(),
+                    },
+                );
             }
 
             (total_w, total_h)
@@ -5282,8 +5450,16 @@ pub fn layout_element_ctx(
             // inside instead of growing the container.
             let expand_h = elem.props.get("expand").is_some_and(|v| v == "true")
                 || elem.props.get("expand_h").is_some_and(|v| v == "true")
-                || elem.props.get("height").map(|s| s == "auto" || s == "100%").unwrap_or(false);
-            let explicit_h = elem.props.get("height").or_else(|| elem.props.get("h")).and_then(|s| s.parse::<i32>().ok());
+                || elem
+                    .props
+                    .get("height")
+                    .map(|s| s == "auto" || s == "100%")
+                    .unwrap_or(false);
+            let explicit_h = elem
+                .props
+                .get("height")
+                .or_else(|| elem.props.get("h"))
+                .and_then(|s| s.parse::<i32>().ok());
             let viewport_h = if let Some(eh) = explicit_h {
                 eh
             } else if expand_h {
@@ -5291,7 +5467,11 @@ pub fn layout_element_ctx(
             } else {
                 240
             };
-            let explicit_w = elem.props.get("width").or_else(|| elem.props.get("w")).and_then(|s| s.parse::<i32>().ok());
+            let explicit_w = elem
+                .props
+                .get("width")
+                .or_else(|| elem.props.get("w"))
+                .and_then(|s| s.parse::<i32>().ok());
             let viewport_w = explicit_w.unwrap_or(max_w).clamp(1, max_w.max(1));
 
             let viewport = Rect {
@@ -5503,9 +5683,21 @@ pub fn layout_element_ctx(
                     }
                 });
             let text_w = (content.chars().count() as i32) * CELL_W;
-            let explicit_w = elem.props.get("width").or_else(|| elem.props.get("w")).and_then(|s| s.parse::<i32>().ok());
-            let explicit_h = elem.props.get("height").or_else(|| elem.props.get("h")).and_then(|s| s.parse::<i32>().ok());
-            let variant = elem.props.get("variant").map(|s| s.as_str()).unwrap_or("default");
+            let explicit_w = elem
+                .props
+                .get("width")
+                .or_else(|| elem.props.get("w"))
+                .and_then(|s| s.parse::<i32>().ok());
+            let explicit_h = elem
+                .props
+                .get("height")
+                .or_else(|| elem.props.get("h"))
+                .and_then(|s| s.parse::<i32>().ok());
+            let variant = elem
+                .props
+                .get("variant")
+                .map(|s| s.as_str())
+                .unwrap_or("default");
             let expand = elem.props.get("expand").is_some_and(|v| v == "true");
             let w = if let Some(ew) = explicit_w {
                 ew
@@ -5520,7 +5712,12 @@ pub fn layout_element_ctx(
             };
             let h = if let Some(eh) = explicit_h {
                 eh
-            } else if variant == "toolbar" || variant == "icon" || variant == "flat" || variant == "ghost" || variant == "item" {
+            } else if variant == "toolbar"
+                || variant == "icon"
+                || variant == "flat"
+                || variant == "ghost"
+                || variant == "item"
+            {
                 28
             } else {
                 (CELL_H + 16).max(36)
@@ -5558,8 +5755,16 @@ pub fn layout_element_ctx(
                 .map(|l| l.chars().count())
                 .max()
                 .unwrap_or(0) as i32;
-            let explicit_w = elem.props.get("width").or_else(|| elem.props.get("w")).and_then(|s| s.parse::<i32>().ok());
-            let explicit_h = elem.props.get("height").or_else(|| elem.props.get("h")).and_then(|s| s.parse::<i32>().ok());
+            let explicit_w = elem
+                .props
+                .get("width")
+                .or_else(|| elem.props.get("w"))
+                .and_then(|s| s.parse::<i32>().ok());
+            let explicit_h = elem
+                .props
+                .get("height")
+                .or_else(|| elem.props.get("h"))
+                .and_then(|s| s.parse::<i32>().ok());
             let w = explicit_w.unwrap_or(220.max(max_line_len * CELL_W + 24));
             let h = explicit_h.unwrap_or((CELL_H + 16).max(lines * CELL_H + 16));
             boxes.push(LayoutBox {
@@ -5930,11 +6135,27 @@ pub fn layout_element_ctx(
             (w, h)
         }
         "divider" => {
-            let orientation = elem.props.get("orientation").map(|s| s.as_str()).unwrap_or("horizontal");
+            let orientation = elem
+                .props
+                .get("orientation")
+                .map(|s| s.as_str())
+                .unwrap_or("horizontal");
             let default_size = if orientation == "vertical" { 1 } else { 16 };
-            let size = elem.props.get("size").and_then(|s| s.parse::<i32>().ok()).unwrap_or(default_size);
-            let explicit_w = elem.props.get("width").or_else(|| elem.props.get("w")).and_then(|s| s.parse::<i32>().ok());
-            let explicit_h = elem.props.get("height").or_else(|| elem.props.get("h")).and_then(|s| s.parse::<i32>().ok());
+            let size = elem
+                .props
+                .get("size")
+                .and_then(|s| s.parse::<i32>().ok())
+                .unwrap_or(default_size);
+            let explicit_w = elem
+                .props
+                .get("width")
+                .or_else(|| elem.props.get("w"))
+                .and_then(|s| s.parse::<i32>().ok());
+            let explicit_h = elem
+                .props
+                .get("height")
+                .or_else(|| elem.props.get("h"))
+                .and_then(|s| s.parse::<i32>().ok());
             let (w, h) = if orientation == "vertical" {
                 let vh = explicit_h.unwrap_or(24);
                 (size.max(1), vh)
@@ -8704,7 +8925,8 @@ impl<D: UiDispatcher> NativeApp<D> {
                     // than on box identity, so the box that lit up when the
                     // button went down is exactly the box that fires on release.
                     let key = button_key(lbox, box_index);
-                    let is_focused = lbox.id.is_some() && self.focused_id.as_deref() == lbox.id.as_deref();
+                    let is_focused =
+                        lbox.id.is_some() && self.focused_id.as_deref() == lbox.id.as_deref();
                     let pressed = hovered && self.pressed_id.as_deref() == Some(key.as_str());
                     // How far this button has travelled toward its hovered
                     // tone. Read by the same key, so an unlabelled button
@@ -8716,10 +8938,18 @@ impl<D: UiDispatcher> NativeApp<D> {
                     } else {
                         self.hover_ramps.get(&key).copied().unwrap_or(0.0)
                     };
-                    let variant = lbox.props.get("variant").map(|s| s.as_str()).unwrap_or("default");
+                    let variant = lbox
+                        .props
+                        .get("variant")
+                        .map(|s| s.as_str())
+                        .unwrap_or("default");
                     let is_selected = lbox.props.get("selected").is_some_and(|s| is_truthy(s))
                         || lbox.props.get("active").is_some_and(|s| is_truthy(s));
-                    let align = lbox.props.get("align").map(|s| s.as_str()).unwrap_or("center");
+                    let align = lbox
+                        .props
+                        .get("align")
+                        .map(|s| s.as_str())
+                        .unwrap_or("center");
 
                     let mut text_color = theme.button_text;
 
@@ -8738,7 +8968,13 @@ impl<D: UiDispatcher> NativeApp<D> {
                             theme.selection_bg,
                         );
                         text_color = 0xFFFF_FFFF;
-                    } else if variant == "flat" || variant == "ghost" || variant == "toolbar" || variant == "item" || variant == "folder_card" || variant == "file_card" {
+                    } else if variant == "flat"
+                        || variant == "ghost"
+                        || variant == "toolbar"
+                        || variant == "item"
+                        || variant == "folder_card"
+                        || variant == "file_card"
+                    {
                         text_color = theme.text;
                         if pressed {
                             draw_rounded_rect_box_clipped(
@@ -8756,12 +8992,21 @@ impl<D: UiDispatcher> NativeApp<D> {
                             );
                             text_color = 0xFFFF_FFFF;
                         } else if hovered || hover_t > 0.05 {
-                            let (hover_bg, hover_border) = if variant == "folder_card" || variant == "file_card" {
-                                if theme.is_dark() { (0xFF35_3B42, 0xFF45_4D56) } else { (0xFFEBF3FB, 0xFFB0_D6F5) }
-                            } else {
-                                let c = if theme.is_dark() { 0xFF35_3B42 } else { 0xFFD8_DCDF };
-                                (c, c)
-                            };
+                            let (hover_bg, hover_border) =
+                                if variant == "folder_card" || variant == "file_card" {
+                                    if theme.is_dark() {
+                                        (0xFF35_3B42, 0xFF45_4D56)
+                                    } else {
+                                        (0xFFEBF3FB, 0xFFB0_D6F5)
+                                    }
+                                } else {
+                                    let c = if theme.is_dark() {
+                                        0xFF35_3B42
+                                    } else {
+                                        0xFFD8_DCDF
+                                    };
+                                    (c, c)
+                                };
                             draw_rounded_rect_box_clipped(
                                 &mut buffer,
                                 stride,
@@ -8822,14 +9067,33 @@ impl<D: UiDispatcher> NativeApp<D> {
                             let icon_h = 40;
                             let icon_x = rx + (lbox.rect.w - icon_w) / 2;
                             let icon_y = ry + 8;
-                            draw_breeze_folder_icon(&mut buffer, stride, h_usize, clip, icon_x, icon_y, icon_w, icon_h);
+                            draw_breeze_folder_icon(
+                                &mut buffer,
+                                stride,
+                                h_usize,
+                                clip,
+                                icon_x,
+                                icon_y,
+                                icon_w,
+                                icon_h,
+                            );
                         } else {
                             let icon_w = 36;
                             let icon_h = 44;
                             let icon_x = rx + (lbox.rect.w - icon_w) / 2;
                             let icon_y = ry + 8;
                             let accent = 0xFF4A_90D9;
-                            draw_breeze_file_icon(&mut buffer, stride, h_usize, clip, icon_x, icon_y, icon_w, icon_h, accent);
+                            draw_breeze_file_icon(
+                                &mut buffer,
+                                stride,
+                                h_usize,
+                                clip,
+                                icon_x,
+                                icon_y,
+                                icon_w,
+                                icon_h,
+                                accent,
+                            );
                         }
                         if let Some(ref text) = lbox.text {
                             let parts: Vec<&str> = text.split('\n').collect();
@@ -8857,14 +9121,28 @@ impl<D: UiDispatcher> NativeApp<D> {
                                     line1,
                                     tc,
                                     |px, py, w, h, cov| {
-                                        draw_rect_alpha(&mut buffer, stride, h_usize, px, py, w, h, text_color, cov);
+                                        draw_rect_alpha(
+                                            &mut buffer,
+                                            stride,
+                                            h_usize,
+                                            px,
+                                            py,
+                                            w,
+                                            h,
+                                            text_color,
+                                            cov,
+                                        );
                                     },
                                 );
                                 if !line2.is_empty() {
                                     let w2 = self.fonts.measure_width(FaceKind::Ui, line2);
                                     let tx2 = rx + ((lbox.rect.w - w2) / 2).max(4);
                                     let ty2 = ry + 70;
-                                    let sub_color = if is_selected { 0xFFEE_F2F5 } else { theme.text_dim };
+                                    let sub_color = if is_selected {
+                                        0xFFEE_F2F5
+                                    } else {
+                                        theme.text_dim
+                                    };
                                     draw_text_ttf_clipped(
                                         &self.fonts,
                                         FaceKind::Ui,
@@ -8873,7 +9151,17 @@ impl<D: UiDispatcher> NativeApp<D> {
                                         line2,
                                         tc,
                                         |px, py, w, h, cov| {
-                                            draw_rect_alpha(&mut buffer, stride, h_usize, px, py, w, h, sub_color, cov);
+                                            draw_rect_alpha(
+                                                &mut buffer,
+                                                stride,
+                                                h_usize,
+                                                px,
+                                                py,
+                                                w,
+                                                h,
+                                                sub_color,
+                                                cov,
+                                            );
                                         },
                                     );
                                 }
@@ -9176,7 +9464,8 @@ impl<D: UiDispatcher> NativeApp<D> {
                         bg,
                         border_color,
                     );
-                    let is_focused = lbox.id.is_some() && self.focused_id.as_deref() == lbox.id.as_deref();
+                    let is_focused =
+                        lbox.id.is_some() && self.focused_id.as_deref() == lbox.id.as_deref();
                     if is_focused {
                         draw_focus_ring(
                             &mut buffer,
@@ -9289,7 +9578,8 @@ impl<D: UiDispatcher> NativeApp<D> {
                         lbox.disabled,
                     );
                     draw_flag_control(&mut buffer, stride, h_usize, clip, &theme, &flag);
-                    let is_focused = lbox.id.is_some() && self.focused_id.as_deref() == lbox.id.as_deref();
+                    let is_focused =
+                        lbox.id.is_some() && self.focused_id.as_deref() == lbox.id.as_deref();
                     if is_focused {
                         draw_focus_ring(
                             &mut buffer,
@@ -9382,7 +9672,8 @@ impl<D: UiDispatcher> NativeApp<D> {
                         spec,
                     );
                     draw_slider_control(&mut buffer, stride, h_usize, clip, &theme, &view);
-                    let is_focused = lbox.id.is_some() && self.focused_id.as_deref() == lbox.id.as_deref();
+                    let is_focused =
+                        lbox.id.is_some() && self.focused_id.as_deref() == lbox.id.as_deref();
                     if is_focused {
                         draw_focus_ring(
                             &mut buffer,
@@ -9921,7 +10212,8 @@ impl<D: UiDispatcher> NativeApp<D> {
                     }
                 }
                 "divider" => {
-                    let is_vert = lbox.props.get("orientation").map(|s| s.as_str()) == Some("vertical");
+                    let is_vert =
+                        lbox.props.get("orientation").map(|s| s.as_str()) == Some("vertical");
                     let line_rect = if is_vert {
                         Rect {
                             x: rx + lbox.rect.w / 2,
@@ -9955,11 +10247,37 @@ impl<D: UiDispatcher> NativeApp<D> {
                 }
                 "panel" => {
                     let bg_color = match lbox.props.get("bg").map(|s| s.as_str()) {
-                        Some("sidebar") => if theme.is_dark() { 0xFF1E_2022 } else { 0xFFE3_E5E8 },
-                        Some("toolbar") => if theme.is_dark() { 0xFF24_272B } else { 0xFFE9_EBEC },
-                        Some("table") | Some("view") => if theme.is_dark() { 0xFF2A_2E32 } else { 0xFFFF_FFFF },
-                        Some("card") => if theme.is_dark() { 0xFF31_363B } else { 0xFFF5_F6F7 },
-                        Some(hex) if hex.starts_with('#') => parse_hex_color(hex).unwrap_or(theme.bg),
+                        Some("sidebar") => {
+                            if theme.is_dark() {
+                                0xFF1E_2022
+                            } else {
+                                0xFFE3_E5E8
+                            }
+                        }
+                        Some("toolbar") => {
+                            if theme.is_dark() {
+                                0xFF24_272B
+                            } else {
+                                0xFFE9_EBEC
+                            }
+                        }
+                        Some("table") | Some("view") => {
+                            if theme.is_dark() {
+                                0xFF2A_2E32
+                            } else {
+                                0xFFFF_FFFF
+                            }
+                        }
+                        Some("card") => {
+                            if theme.is_dark() {
+                                0xFF31_363B
+                            } else {
+                                0xFFF5_F6F7
+                            }
+                        }
+                        Some(hex) if hex.starts_with('#') => {
+                            parse_hex_color(hex).unwrap_or(theme.bg)
+                        }
                         _ => theme.bg,
                     };
                     let rect = Rect {
@@ -9983,7 +10301,11 @@ impl<D: UiDispatcher> NativeApp<D> {
                             bg_color,
                         );
                         if let Some(bc_str) = lbox.props.get("border") {
-                            let bc = if bc_str == "true" { theme.border } else { parse_hex_color(bc_str).unwrap_or(theme.border) };
+                            let bc = if bc_str == "true" {
+                                theme.border
+                            } else {
+                                parse_hex_color(bc_str).unwrap_or(theme.border)
+                            };
                             draw_rect_outline(
                                 &mut buffer,
                                 stride,

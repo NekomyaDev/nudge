@@ -20,12 +20,13 @@ agent VfsBridge {
         state.total_inodes = 0
     }
 
-    fn invalidate(dir_path: string) {
+    fn invalidate(dir_path: string) uses Store {
         let norm = normalize_vfs_path(dir_path)
         state.cached_mtimes[norm] = 0
+        store.set("idx_mtime_" + norm, 0)
     }
 
-    fn list_directory(dir_path: string) -> [FileEntry] uses Workspace {
+    fn list_directory(dir_path: string) -> [FileEntry] uses Workspace, Store {
         let norm = normalize_vfs_path(dir_path)
         let mut already_cached = false
         for d in state.cached_dirs {
@@ -43,6 +44,11 @@ agent VfsBridge {
                 let saved_mtime = state.cached_mtimes[norm]
                 if saved_mtime == cur_mtime {
                     is_hit = true
+                }
+            } else {
+                let p_mtime = store.get("idx_mtime_" + norm, 0)
+                if p_mtime == cur_mtime and p_mtime > 0 {
+                    // Persistent index valid
                 }
             }
 
@@ -99,6 +105,8 @@ agent VfsBridge {
                 state.total_inodes = state.total_inodes + len(entries)
                 state.cached_entries[norm] = sorted
                 state.cached_mtimes[norm] = cur_mtime
+                store.set("idx_mtime_" + norm, cur_mtime)
+                store.set("idx_count_" + norm, len(entries))
                 res_entries = sorted
             }
         }

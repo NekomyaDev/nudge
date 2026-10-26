@@ -59,7 +59,9 @@ pub fn lexical_normalize(path: &Path) -> PathBuf {
 ///
 /// Location: `crates/nudge-runtime/src/workspace.rs`, function `resolve_and_validate_path`.
 pub fn resolve_and_validate_path(user_path: &str) -> Result<PathBuf, String> {
-    let unconfined = std::env::var("NUDGE_UNCONFINED_FS").map(|v| v == "1" || v == "true").unwrap_or(false);
+    let unconfined = std::env::var("NUDGE_UNCONFINED_FS")
+        .map(|v| v == "1" || v == "true")
+        .unwrap_or(false);
     let input_path = Path::new(user_path);
     if unconfined {
         let raw_root = get_workspace_root();
@@ -530,20 +532,21 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 _ => return Err("workspace.stat: path must be a string".to_string()),
             };
             let safe_path = resolve_and_validate_path(&path_str)?;
-            let (size, mtime_ms, is_dir) = match fs::metadata(&safe_path).or_else(|_| fs::symlink_metadata(&safe_path)) {
-                Ok(md) => {
-                    let sz = md.len() as i64;
-                    let mt = md
-                        .modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map(|d| d.as_millis() as i64)
-                        .unwrap_or(0);
-                    let is_d = md.is_dir();
-                    (sz, mt, is_d)
-                }
-                Err(_) => (0, 0, false),
-            };
+            let (size, mtime_ms, is_dir) =
+                match fs::metadata(&safe_path).or_else(|_| fs::symlink_metadata(&safe_path)) {
+                    Ok(md) => {
+                        let sz = md.len() as i64;
+                        let mt = md
+                            .modified()
+                            .ok()
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_millis() as i64)
+                            .unwrap_or(0);
+                        let is_d = md.is_dir();
+                        (sz, mt, is_d)
+                    }
+                    Err(_) => (0, 0, false),
+                };
             let mut map = HashMap::new();
             map.insert("size".to_string(), Value::Int(size));
             map.insert("mtime_ms".to_string(), Value::Int(mtime_ms));

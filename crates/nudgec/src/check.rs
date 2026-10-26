@@ -383,7 +383,7 @@ fn assignable(src: &Ty, dst: &Ty) -> bool {
             } else {
                 false
             }
-        },
+        }
         (Ty::Task(a), Ty::Task(b)) => assignable(a, b),
         (Ty::Record(a), Ty::Record(b)) => {
             a.len() == b.len()
@@ -2053,7 +2053,9 @@ fn check_expr_pos(
                                                 msg: format!("event handler '{hname}' signature mismatch: expected at most 1 parameter"),
                                             });
                                         } else if params.len() == 1
-                                            && (k == "on_change" || k == "on_key" || k == "on_click")
+                                            && (k == "on_change"
+                                                || k == "on_key"
+                                                || k == "on_click")
                                         {
                                             let param_ty =
                                                 resolve(&params[0].1, g, &mut Vec::new(), errs);
@@ -2298,24 +2300,15 @@ fn check_expr_pos(
                             "pow" | "log" | "min" | "max" => {
                                 return arg_tys.first().cloned().unwrap_or(Ty::Float);
                             }
-                            "random_int"
-                            | "bitwise_xor"
-                            | "bitwise_and"
-                            | "bitwise_or"
-                            | "bitwise_not"
-                            | "shift_left"
-                            | "shift_right" => return Ty::Int,
+                            "random_int" | "bitwise_xor" | "bitwise_and" | "bitwise_or"
+                            | "bitwise_not" | "shift_left" | "shift_right" => return Ty::Int,
                             "random_float" | "mean" => return Ty::Float,
                             _ => {}
                         }
                     } else if prefix == "int" {
                         match name.as_str() {
-                            "bitwise_xor"
-                            | "bitwise_and"
-                            | "bitwise_or"
-                            | "bitwise_not"
-                            | "shift_left"
-                            | "shift_right" => return Ty::Int,
+                            "bitwise_xor" | "bitwise_and" | "bitwise_or" | "bitwise_not"
+                            | "shift_left" | "shift_right" => return Ty::Int,
                             _ => {}
                         }
                     } else if prefix == "str" {

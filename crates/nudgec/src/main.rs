@@ -953,7 +953,9 @@ fn main() {
                     if !found_rt {
                         if let Ok(exe) = std::env::current_exe() {
                             if let Some(exe_dir) = exe.parent() {
-                                for rel in &["runtime", "../runtime", "../../runtime", "../../../runtime"] {
+                                for rel in
+                                    &["runtime", "../runtime", "../../runtime", "../../../runtime"]
+                                {
                                     let cand = exe_dir.join(rel);
                                     if cand.join("nudge_runtime").is_dir() {
                                         if let Ok(abs_rt) = cand.canonicalize() {

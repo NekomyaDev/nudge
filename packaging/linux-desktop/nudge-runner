@@ -95,7 +95,7 @@ else
     # Terminal / CLI / Agent Application:
     # Asla arka planda gizlice çalıştırılmaz!
     # Sistem terminalini etkileşimli ve görünür bir pencere olarak açar.
-    
+
     # If already running inside an interactive terminal, run directly
     if [ -t 0 ] && [ -t 1 ]; then
         echo "=========================================================="

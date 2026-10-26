@@ -173,6 +173,10 @@ agent InodeTable {
         open_handles: [FileHandle] = []
         path_to_id: Map[string, int] = {}
         all_paths: [string] = []
+        id_to_node: Map[string, Inode] = {
+            "0": { id: 0, path: "/", name: "/", parent_id: -1, is_dir: true, size: 0, mtime: 0, block_hashes: [], permissions: 755 }
+        }
+        all_node_keys: [string] = ["0"]
     }
 
     fn reset_inodes() {
@@ -184,6 +188,10 @@ agent InodeTable {
         state.open_handles = []
         state.path_to_id = {}
         state.all_paths = []
+        state.id_to_node = {
+            "0": { id: 0, path: "/", name: "/", parent_id: -1, is_dir: true, size: 0, mtime: 0, block_hashes: [], permissions: 755 }
+        }
+        state.all_node_keys = ["0"]
     }
 
     fn find_by_path(target_path: string) -> int {
@@ -202,15 +210,15 @@ agent InodeTable {
         let mut res: InodeStat = { exists: false, id: -1, is_dir: false, size: 0, mtime: 0 }
         let nid = InodeTable.find_by_path(norm)
         if nid != -1 {
-            for node in state.inodes {
-                if node.id == nid {
-                    res = {
-                        exists: true,
-                        id: node.id,
-                        is_dir: node.is_dir,
-                        size: node.size,
-                        mtime: node.mtime
-                    }
+            let k = str.to_string(nid)
+            if contains_nvfs_str(state.all_node_keys, k) {
+                let node = state.id_to_node[k]
+                res = {
+                    exists: true,
+                    id: node.id,
+                    is_dir: node.is_dir,
+                    size: node.size,
+                    mtime: node.mtime
                 }
             }
         }
@@ -246,6 +254,9 @@ agent InodeTable {
             state.inodes = state.inodes + [new_node]
             state.path_to_id[norm] = id
             state.all_paths = state.all_paths + [norm]
+            let k = str.to_string(id)
+            state.id_to_node[k] = new_node
+            state.all_node_keys = state.all_node_keys + [k]
             ret_id = id
         }
         ret_id
@@ -271,6 +282,8 @@ agent InodeTable {
                         permissions: node.permissions
                     }
                     updated = updated + [mod_node]
+                    let k = str.to_string(existing)
+                    state.id_to_node[k] = mod_node
                 } else {
                     updated = updated + [node]
                 }
@@ -297,17 +310,19 @@ agent InodeTable {
             state.inodes = state.inodes + [new_node]
             state.path_to_id[norm] = id
             state.all_paths = state.all_paths + [norm]
+            let k = str.to_string(id)
+            state.id_to_node[k] = new_node
+            state.all_node_keys = state.all_node_keys + [k]
             ret_id = id
         }
         ret_id
     }
 
     fn get_blocks(inode_id: int) -> [string] {
+        let k = str.to_string(inode_id)
         let mut hashes: [string] = []
-        for node in state.inodes {
-            if node.id == inode_id {
-                hashes = node.block_hashes
-            }
+        if contains_nvfs_str(state.all_node_keys, k) {
+            hashes = state.id_to_node[k].block_hashes
         }
         hashes
     }
@@ -328,6 +343,29 @@ agent InodeTable {
             let mut remaining_paths: [string] = []
             let mut new_path_map: Map[string, int] = {}
             for p in state.all_paths {
+                if p != norm {
+                    remaining_paths = remaining_paths + [p]
+                    new_path_map[p] = state.path_to_id[p]
+                }
+            }
+            state.all_paths = remaining_paths
+            state.path_to_id = new_path_map
+
+            let del_k = str.to_string(existing)
+            let mut remaining_keys: [string] = []
+            let mut new_node_map: Map[string, Inode] = {}
+            for k in state.all_node_keys {
+                if k != del_k {
+                    remaining_keys = remaining_keys + [k]
+                    new_node_map[k] = state.id_to_node[k]
+                }
+            }
+            state.all_node_keys = remaining_keys
+            state.id_to_node = new_node_map
+            deleted = true
+        }
+        deleted
+    }
                 if p != norm {
                     remaining_paths = remaining_paths + [p]
                     new_path_map[p] = state.path_to_id[p]

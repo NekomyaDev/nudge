@@ -7,7 +7,7 @@ set -e
 REPO="NekomyaDev/nudge"
 BINARY="nudgec"
 
-# Parse CLI options (e.g. bash install.sh --version v1.2.1)
+# Parse CLI options (e.g. bash install.sh --version v1.4.0)
 VERSION_ARG=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -16,7 +16,7 @@ while [ $# -gt 0 ]; do
                 VERSION_ARG="$2"
                 shift 2
             else
-                echo "Error: --version requires a version string (e.g. v1.2.1 or latest)" >&2
+                echo "Error: --version requires a version string (e.g. v1.4.0 or latest)" >&2
                 exit 1
             fi
             ;;
@@ -29,7 +29,7 @@ while [ $# -gt 0 ]; do
             echo "Usage: install.sh [--version <ver>]"
             echo ""
             echo "Options:"
-            echo "  --version, -v <ver>   Install specific version (e.g. v1.2.1) or 'latest'"
+            echo "  --version, -v <ver>   Install specific version (e.g. v1.4.0) or 'latest'"
             echo "  --help, -h            Show this help message"
             exit 0
             ;;

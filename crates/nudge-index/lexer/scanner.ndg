@@ -25,23 +25,25 @@ fn is_alphanumeric_code(c: int) -> bool {
 
 fn is_kw(s: string) -> bool {
     let len_s = str.length(s)
-    let mut found = false
-    if len_s >= 2 and len_s <= 12 {
-        let kw = [
-            "fn", "agent", "tool", "type", "view", "window", "decide", "auth",
-            "provider", "account", "uses", "costs", "retry", "with", "repair",
-            "state", "test", "for_all", "gen", "let", "mut", "if", "else",
-            "for", "in", "return", "assert", "none", "true", "false", "and",
-            "or", "not", "par", "race", "map", "merge", "route", "stream",
-            "impl", "mcp", "side_effects"
-        ]
-        for k in kw {
-            if k == s {
-                found = true
-            }
-        }
+    if len_s == 2 {
+        s == "fn" or s == "in" or s == "if" or s == "or"
+    } else if len_s == 3 {
+        s == "let" or s == "mut" or s == "for" or s == "and" or s == "not" or s == "par" or s == "map" or s == "mcp" or s == "gen"
+    } else if len_s == 4 {
+        s == "auth" or s == "else" or s == "tool" or s == "type" or s == "view" or s == "uses" or s == "with" or s == "test" or s == "none" or s == "true" or s == "race" or s == "impl"
+    } else if len_s == 5 {
+        s == "agent" or s == "state" or s == "costs" or s == "retry" or s == "false" or s == "merge" or s == "route"
+    } else if len_s == 6 {
+        s == "window" or s == "decide" or s == "repair" or s == "return" or s == "assert" or s == "stream"
+    } else if len_s == 7 {
+        s == "for_all" or s == "account"
+    } else if len_s == 8 {
+        s == "provider"
+    } else if len_s == 12 {
+        s == "side_effects"
+    } else {
+        false
     }
-    found
 }
 
 fn scan_tokens(src: string) -> [Token] {

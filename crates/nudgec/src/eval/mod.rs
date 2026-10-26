@@ -1870,12 +1870,10 @@ fn test_f8_suite() -> bool uses Browser {{
             std::fs::read_to_string(root_dir.join("prelude/web/html.ndg")).expect("read html.ndg");
         let dom_src =
             std::fs::read_to_string(root_dir.join("prelude/web/dom.ndg")).expect("read dom.ndg");
-        let search_recipe =
-            std::fs::read_to_string(root_dir.join("recipes/browser_search.ndg"))
-                .expect("read browser_search.ndg");
-        let price_recipe =
-            std::fs::read_to_string(root_dir.join("recipes/price_tracker.ndg"))
-                .expect("read price_tracker.ndg");
+        let search_recipe = std::fs::read_to_string(root_dir.join("recipes/browser_search.ndg"))
+            .expect("read browser_search.ndg");
+        let price_recipe = std::fs::read_to_string(root_dir.join("recipes/price_tracker.ndg"))
+            .expect("read price_tracker.ndg");
 
         let test_src = format!(
             r##"{html_src}
@@ -2165,7 +2163,9 @@ fn test_f9_recipes() -> bool uses Browser {{
         let items = parse_src(&cg_src);
         let mut interp = crate::eval::interpreter::Interpreter::new();
         interp.load_items(&items).expect("load items succeeds");
-        interp.run_all_tests().expect("all call graph test blocks pass");
+        interp
+            .run_all_tests()
+            .expect("all call graph test blocks pass");
         let res = interp
             .invoke_fn("main", &[])
             .expect("call graph main execution succeeds");
@@ -2183,7 +2183,9 @@ fn test_f9_recipes() -> bool uses Browser {{
         let items = parse_src(&diff_src);
         let mut interp = crate::eval::interpreter::Interpreter::new();
         interp.load_items(&items).expect("load items succeeds");
-        interp.run_all_tests().expect("all diff engine test blocks pass");
+        interp
+            .run_all_tests()
+            .expect("all diff engine test blocks pass");
         let res = interp
             .invoke_fn("main", &[])
             .expect("diff engine main execution succeeds");
@@ -2201,7 +2203,9 @@ fn test_f9_recipes() -> bool uses Browser {{
         let items = parse_src(&deb_src);
         let mut interp = crate::eval::interpreter::Interpreter::new();
         interp.load_items(&items).expect("load items succeeds");
-        interp.run_all_tests().expect("all debouncer test blocks pass");
+        interp
+            .run_all_tests()
+            .expect("all debouncer test blocks pass");
         let res = interp
             .invoke_fn("main", &[])
             .expect("debouncer main execution succeeds");
@@ -2219,7 +2223,9 @@ fn test_f9_recipes() -> bool uses Browser {{
         let items = parse_src(&mcp_src);
         let mut interp = crate::eval::interpreter::Interpreter::new();
         interp.load_items(&items).expect("load items succeeds");
-        interp.run_all_tests().expect("all mcp provider test blocks pass");
+        interp
+            .run_all_tests()
+            .expect("all mcp provider test blocks pass");
         let res = interp
             .invoke_fn("main", &[])
             .expect("mcp provider main execution succeeds");

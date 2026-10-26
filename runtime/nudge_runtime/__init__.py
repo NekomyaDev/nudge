@@ -88,7 +88,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed
 from pathlib import Path
 import tempfile
 
-__version__ = "1.2.1"
+__version__ = "1.4.0"
 
 
 _SAFE_ROOTS = (Path.cwd(), tempfile.gettempdir(), Path("/tmp"))

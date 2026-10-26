@@ -1,8 +1,8 @@
 # Nudge File Manager (`file_manager.ndg`)
 
-> **Substrate:** 100% Pure Nudge Language (`.ndg`)  
-> **Foreign Dependencies:** 0 (No Python, No C, No Electron, No External Scripts)  
-> **Design Pattern:** Dual-Pane Desktop File Manager (HIG Aligned)  
+> **Substrate:** 100% Pure Nudge Language (`.ndg`)
+> **Foreign Dependencies:** 0 (No Python, No C, No Electron, No External Scripts)
+> **Design Pattern:** Dual-Pane Desktop File Manager (HIG Aligned)
 > **Engine:** Pack 3 Local UI (Softbuffer/Winit) + In-Memory NVFS Caching
 
 ---

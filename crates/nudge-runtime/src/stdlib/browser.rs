@@ -143,11 +143,7 @@ fn execute_rasterize(args: Vec<Value>) -> Result<Value, String> {
                     [79, 70, 229, 255],
                     Some([67, 56, 202, 255]),
                 );
-                let label = if !name.is_empty() {
-                    &name
-                } else {
-                    "Button"
-                };
+                let label = if !name.is_empty() { &name } else { "Button" };
                 draw_text(
                     &mut buf,
                     stride,
@@ -354,13 +350,9 @@ fn draw_rect(
 ) {
     for py in y..std::cmp::min(y + h, img_h) {
         for px in x..std::cmp::min(x + w, img_w) {
-            let is_border = border.is_some()
-                && (py == y || py == y + h - 1 || px == x || px == x + w - 1);
-            let col = if is_border {
-                border.unwrap()
-            } else {
-                fill
-            };
+            let is_border =
+                border.is_some() && (py == y || py == y + h - 1 || px == x || px == x + w - 1);
+            let col = if is_border { border.unwrap() } else { fill };
             let off = (py * stride + px) * 4;
             buf[off..off + 4].copy_from_slice(&col);
         }
@@ -576,7 +568,15 @@ fn execute_fetch(args: Vec<Value>) -> Result<Value, String> {
         ));
     }
 
-    execute_network_fetch(&url, &method, headers, body, timeout_ms, max_redirects, start)
+    execute_network_fetch(
+        &url,
+        &method,
+        headers,
+        body,
+        timeout_ms,
+        max_redirects,
+        start,
+    )
 }
 
 fn execute_file_fetch(path: &str, url: &str, start: Instant) -> Result<Value, String> {

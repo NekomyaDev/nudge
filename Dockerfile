@@ -10,7 +10,7 @@ FROM python:3.15-rc-alpine3.22 AS builder
 
 LABEL maintainer="NekomyaDev"
 LABEL description="Nudge - Typed, replayable, budget-aware programming language for LLM agents"
-LABEL version="1.2.1"
+LABEL version="1.4.0"
 LABEL org.opencontainers.image.source="https://github.com/NekomyaDev/nudge"
 LABEL org.opencontainers.image.description="Typed, replayable, budget-aware programming language for LLM agents"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
