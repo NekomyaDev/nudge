@@ -4297,6 +4297,8 @@ def workspace_write(path, content):
 
 def workspace_delete(path, recursive=False):
     import os, shutil
+    if not os.path.lexists(path):
+        return
     if os.path.isdir(path):
         if recursive:
             shutil.rmtree(path)
