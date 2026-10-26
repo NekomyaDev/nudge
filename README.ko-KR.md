@@ -264,8 +264,8 @@ fn watch_and_rebuild() -> bool uses FsWatch, Process {
 }
 ```
 
-- **파일 감시 (`fs.watch`, `FsWatch` Effect):** 워크스페이스 경로의 변경 이벤트를 감시합니다. 타임아웃으로 한계가 지정되어 무한 대기하지 않으며 워크스페이스 루트 내로 엄격히 제한됩니다(탈출 거부). 미선언 사용은 컴파일 오류(`E0301`)로 차단됩니다.
-- **통제된 자식 프로세스 (`proc.*`, `Process` Effect):** `proc.spawn(cmd, argv, timeout_ms)` / `proc.run(...)` (spawn + await) / `proc.await` / `proc.kill` / `proc.alive`. `cmd`와 `argv`는 **별도로** 전달되며 셸 없이 직접 실행되므로 셸 인젝션 공격 면이 없습니다. 수명 주기가 제한되며(`E0921`) 태스크 종료 또는 취소 시 자식 프로세스가 회수되어 **고아 프로세스가 발생하지 않습니다**. 프로세스 실행은 기본적으로 **Fail-Closed(차단)** 상태이며, `NUDGE_PROCESS_GRANTS`로 허용되지 않는 한 거부됩니다(`E0920`, 워크스페이스 격리 `E0922`).
+- **파일 감시 (`fs.watch`, `FsWatch` Effect):** 워크스페이스 경로의 변경 이벤트를 감시합니다. 타임아웃으로 한계가 지정되어 무한 대기하지 않으며 워크스페이스 루트 내로 엄격히 제한됩니다(경로 탈출 차단 `E0922`). 미선언 사용은 컴파일 오류(`E0301`)로 차단됩니다.
+- **통제된 자식 프로세스 (`proc.*`, `Process` Effect):** `proc.spawn(cmd, argv, timeout_ms)` / `proc.run(...)` (spawn + await) / `proc.await` / `proc.kill` / `proc.alive`. `cmd`와 `argv`는 **별도로** 전달되며 셸 없이 직접 실행되므로 셸 인젝션 공격 면이 없습니다. 수명 주기가 제한되며(`E0921`) 태스크 종료 또는 취소 시 자식 프로세스가 회수되어 **고아 프로세스가 발생하지 않습니다**. 프로세스 실행은 기본적으로 **Fail-Closed(차단)** 상태이며, `NUDGE_PROCESS_GRANTS`로 허용되지 않는 한 거부됩니다(`E0920`).
 
 ### 로컬 UI
 

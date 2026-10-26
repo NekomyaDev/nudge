@@ -264,8 +264,8 @@ fn watch_and_rebuild() -> bool uses FsWatch, Process {
 }
 ```
 
-- **Monitorización de archivos (`fs.watch`, effect `FsWatch`):** monitoriza una ruta del workspace en busca de eventos de cambio, acotada por un tiempo de expiración (timeout, nunca se cuelga indefinidamente) y confinada a la raíz del workspace (escapes denegados). El uso no declarado es detectado por el sistema de tipos (`E0301`).
-- **Procesos controlados (`proc.*`, effect `Process`):** `proc.spawn(cmd, argv, timeout_ms)` / `proc.run(...)` (spawn + await) / `proc.await` / `proc.kill` / `proc.alive`. El comando `cmd` y sus argumentos `argv` se pasan por **separado** y se ejecutan sin shell (eliminando la superficie de inyección en shell). Su ciclo de vida es acotado (`E0921`) sin **procesos huérfanos** (los hijos se limpian al salir o cancelar la tarea) y con terminación kill-on-cancel. La ejecución es **fail-closed**: denegada por defecto a menos que esté autorizada por `NUDGE_PROCESS_GRANTS` (`E0920`, confinamiento al workspace `E0922`).
+- **Monitorización de archivos (`fs.watch`, effect `FsWatch`):** monitoriza una ruta del workspace en busca de eventos de cambio, acotada por un tiempo de expiración (timeout, nunca se cuelga indefinidamente) y confinada a la raíz del workspace (escape denegado `E0922`). El uso no declarado es detectado por el sistema de tipos (`E0301`).
+- **Procesos controlados (`proc.*`, effect `Process`):** `proc.spawn(cmd, argv, timeout_ms)` / `proc.run(...)` (spawn + await) / `proc.await` / `proc.kill` / `proc.alive`. El comando `cmd` y sus argumentos `argv` se pasan por **separado** y se ejecutan sin shell (eliminando la superficie de inyección en shell). Su ciclo de vida es acotado (`E0921`) sin **procesos huérfanos** (los hijos se limpian al salir o cancelar la tarea) y con terminación kill-on-cancel. La ejecución es **fail-closed**: denegada por defecto a menos que esté autorizada por `NUDGE_PROCESS_GRANTS` (`E0920`).
 
 ### UI local
 

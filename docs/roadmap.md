@@ -144,12 +144,12 @@ commit refs), with the residual polish noted per item.
   surface (`Ctrl+K` command palette, `Ctrl+L` locale, `Ctrl+D` theme, `Ctrl+B` sidebar),
   and universal accessible focus rings with keyboard Tab traversal.
 - **File watching** — SHIPPED (`159ba0f`): typed `FsWatch` effect, `fs.watch`
-  bounded + workspace-confined (path escape denied), timeout-bounded (no hang),
+  bounded + workspace-confined (path escape denied E0922), timeout-bounded (no hang),
   returns change events (undeclared use -> E0301).
 - **Controlled process management** — SHIPPED (`159ba0f`): typed `Process`
   effect, `proc.run`/await/kill/alive with bounded lifecycle (E0921), NO orphans
   (reap on task exit/cancel), kill-on-cancel, and fail-closed process grants
-  (`NUDGE_PROCESS_GRANTS`, default deny, E0920; workspace confinement E0922).
+  (`NUDGE_PROCESS_GRANTS`, default deny, E0920).
 
 ## Horizon (authority plays, date-free)
 

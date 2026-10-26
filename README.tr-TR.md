@@ -264,8 +264,8 @@ fn watch_and_rebuild() -> bool uses FsWatch, Process {
 }
 ```
 
-- **Dosya İzleme (`fs.watch`, `FsWatch` effect'i):** Bir workspace yolunu değişiklik olayları için izler. Bir zaman aşımıyla sınırlandırılmıştır (asla süresiz olarak takılmaz) ve workspace köküyle sınırlandırılmıştır (kaçışlar reddedilir). Bildirilmemiş kullanım tip denetimiyle engellenir (`E0301`).
-- **Kontrollü Süreçler (`proc.*`, `Process` effect'i):** `proc.spawn(cmd, argv, timeout_ms)` / `proc.run(...)` (spawn + await) / `proc.await` / `proc.kill` / `proc.alive`. `cmd` ve `argv` argümanları **ayrı ayrı** iletilir ve kabuk (shell) olmadan yürütülür (kabuk enjeksiyonu yüzeyi yoktur). Yaşam döngüsü sınırlandırılmıştır (`E0921`), **öksüz (orphan) süreç bırakılmaz** (alt süreçler görev sonlandığında veya iptal edildiğinde temizlenir) ve iptal durumunda sonlandırma (kill-on-cancel) uygulanır. Herhangi bir şey yürütmek **hata durumunda kapalıdır (fail-closed)**: `NUDGE_PROCESS_GRANTS` ile yetkilendirilmedikçe varsayılan olarak reddedilir (`E0920`, workspace sınırlandırması `E0922`).
+- **Dosya İzleme (`fs.watch`, `FsWatch` effect'i):** Bir workspace yolunu değişiklik olayları için izler. Bir zaman aşımıyla sınırlandırılmıştır (asla süresiz olarak takılmaz) ve workspace köküyle sınırlandırılmıştır (kaçış reddedilir `E0922`). Bildirilmemiş kullanım tip denetimiyle engellenir (`E0301`).
+- **Kontrollü Süreçler (`proc.*`, `Process` effect'i):** `proc.spawn(cmd, argv, timeout_ms)` / `proc.run(...)` (spawn + await) / `proc.await` / `proc.kill` / `proc.alive`. `cmd` ve `argv` argümanları **ayrı ayrı** iletilir ve kabuk (shell) olmadan yürütülür (kabuk enjeksiyonu yüzeyi yoktur). Yaşam döngüsü sınırlandırılmıştır (`E0921`), **öksüz (orphan) süreç bırakılmaz** (alt süreçler görev sonlandığında veya iptal edildiğinde temizlenir) ve iptal durumunda sonlandırma (kill-on-cancel) uygulanır. Herhangi bir şey yürütmek **hata durumunda kapalıdır (fail-closed)**: `NUDGE_PROCESS_GRANTS` ile yetkilendirilmedikçe varsayılan olarak reddedilir (`E0920`).
 
 ### Yerel Arayüz (Local UI)
 

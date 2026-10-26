@@ -264,8 +264,8 @@ fn watch_and_rebuild() -> bool uses FsWatch, Process {
 }
 ```
 
-- **文件监控 (`fs.watch`, `FsWatch` 副作用):** 监控工作区路径的变更事件，受超时时间约束（永远不会无限期阻塞），严格限制在工作区根目录下。未声明的调用会被静态检查拦截 (`E0301`)。
-- **受控子进程 (`proc.*`, `Process` 副作用):** `proc.spawn(cmd, argv, timeout_ms)` / `proc.run(...)` / `proc.await` / `proc.kill` / `proc.alive`。命令名与参数数组分开传递，不经过 shell 执行，杜绝 shell 注入漏洞。进程生命周期受控 (`E0921`)，杜绝孤儿进程（任务退出或取消时自动回收子进程）。执行默认 fail-closed: 除非经 `NUDGE_PROCESS_GRANTS` 授权，否则默认全部拒绝 (`E0920`，工作区越界 `E0922`)。
+- **文件监控 (`fs.watch`, `FsWatch` 副作用):** 监控工作区路径的变更事件，受超时时间约束（永远不会无限期阻塞），严格限制在工作区根目录下（工作区越界拦截 `E0922`）。未声明的调用会被静态检查拦截 (`E0301`)。
+- **受控子进程 (`proc.*`, `Process` 副作用):** `proc.spawn(cmd, argv, timeout_ms)` / `proc.run(...)` / `proc.await` / `proc.kill` / `proc.alive`。命令名与参数数组分开传递，不经过 shell 执行，杜绝 shell 注入漏洞。进程生命周期受控 (`E0921`)，杜绝孤儿进程（任务退出或取消时自动回收子进程）。执行默认 fail-closed: 除非经 `NUDGE_PROCESS_GRANTS` 授权，否则默认全部拒绝 (`E0920`)。
 
 ### 本地 UI
 

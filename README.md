@@ -265,8 +265,8 @@ fn watch_and_rebuild() -> bool uses FsWatch, Process {
 }
 ```
 
-- **File Watching (`fs.watch`, `FsWatch` effect):** watch a workspace path for change events, bounded by a timeout (it never hangs indefinitely) and confined to the workspace root (escapes denied). Undeclared use is typed away (`E0301`).
-- **Controlled Processes (`proc.*`, `Process` effect):** `proc.spawn(cmd, argv, timeout_ms)` / `proc.run(...)` (spawn + await) / `proc.await` / `proc.kill` / `proc.alive`. `cmd` and its `argv` are passed **separately** and executed without a shell (no shell-injection surface). Lifecycle is bounded (`E0921`) with **no orphan processes** (children are reaped on task exit or cancel) and kill-on-cancel. Executing anything is **fail-closed**: denied by default unless authorized by `NUDGE_PROCESS_GRANTS` (`E0920`, workspace confinement `E0922`).
+- **File Watching (`fs.watch`, `FsWatch` effect):** watch a workspace path for change events, bounded by a timeout (it never hangs indefinitely) and confined to the workspace root (path escape denied `E0922`). Undeclared use is typed away (`E0301`).
+- **Controlled Processes (`proc.*`, `Process` effect):** `proc.spawn(cmd, argv, timeout_ms)` / `proc.run(...)` (spawn + await) / `proc.await` / `proc.kill` / `proc.alive`. `cmd` and its `argv` are passed **separately** and executed without a shell (no shell-injection surface). Lifecycle is bounded (`E0921`) with **no orphan processes** (children are reaped on task exit or cancel) and kill-on-cancel. Executing anything is **fail-closed**: denied by default unless authorized by `NUDGE_PROCESS_GRANTS` (`E0920`).
 
 ### Local UI
 
