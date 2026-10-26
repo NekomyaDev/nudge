@@ -43,6 +43,8 @@ Browse everything labeled
 2. `cargo test --workspace && cargo fmt && cargo clippy --workspace --all-targets` must be clean; `node --experimental-strip-types --test runtime/` for runtime changes.
 3. Open a PR describing the *problem* first, then the change. Keep PRs single-topic.
 
+Every merged PR is recognized in [CONTRIBUTORS.md](CONTRIBUTORS.md).
+
 ## Report a problem
 
 Security-sensitive? See the audit notes in the release notes; please use GitHub private vulnerability reporting rather than a public issue. Everything else: a GitHub issue with a minimal reproducer (an `.ndg` snippet, a trace, or a command) is perfect.
