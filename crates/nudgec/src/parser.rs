@@ -824,6 +824,21 @@ impl Parser {
             }
             _ => {
                 let e = self.parse_expr()?;
+                if self.eat(&Tok::Assign) {
+                    if let ExprKind::Index { obj, idx } = e.kind {
+                        let value = self.parse_expr()?;
+                        return Ok(self.spanned(
+                            start,
+                            StmtKind::IndexAssign {
+                                collection: *obj,
+                                index: *idx,
+                                value,
+                            },
+                        ));
+                    } else {
+                        return self.err("invalid assignment target: expected variable or index");
+                    }
+                }
                 Ok(self.spanned(start, StmtKind::ExprStmt(e)))
             }
         }

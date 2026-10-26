@@ -502,6 +502,15 @@ fn walk_stmt(ctx: &str, s: &Stmt, records: &[(String, Vec<String>)], out: &mut V
         }
         // properties are pure (E0804) — prompt lints don't apply inside
         StmtKind::ForAll { .. } => {}
+        StmtKind::IndexAssign {
+            collection,
+            index,
+            value,
+        } => {
+            walk_expr(ctx, collection, records, out);
+            walk_expr(ctx, index, records, out);
+            walk_expr(ctx, value, records, out);
+        }
     }
 }
 

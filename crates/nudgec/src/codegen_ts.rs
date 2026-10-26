@@ -515,6 +515,18 @@ fn emit_body(
                 }
                 s
             }
+            StmtKind::IndexAssign {
+                collection,
+                index,
+                value,
+            } => {
+                format!(
+                    "{}[{}] = {};",
+                    ts(collection, aliases, sigs),
+                    ts(index, aliases, sigs),
+                    ts(value, aliases, sigs)
+                )
+            }
         };
         out.push_str("  ");
         out.push_str(&line);
@@ -621,6 +633,18 @@ fn emit_for_all(
                     s.push_str("\n    }");
                 }
                 s
+            }
+            StmtKind::IndexAssign {
+                collection,
+                index,
+                value,
+            } => {
+                format!(
+                    "{}[{}] = {};",
+                    ts(collection, aliases, sigs),
+                    ts(index, aliases, sigs),
+                    ts(value, aliases, sigs)
+                )
             }
         };
         for l in line.lines() {

@@ -60,6 +60,15 @@ fn count_stmt(st: &Stmt, in_par: bool, c: &mut Count) {
             }
         }
         StmtKind::ForAll { .. } => {}
+        StmtKind::IndexAssign {
+            collection,
+            index,
+            value,
+        } => {
+            count_expr(collection, in_par, c);
+            count_expr(index, in_par, c);
+            count_expr(value, in_par, c);
+        }
     }
 }
 
@@ -92,6 +101,15 @@ fn collect_calls_stmt(st: &Stmt, in_par: bool, edges: &mut Vec<(String, bool)>) 
             }
         }
         StmtKind::ForAll { .. } => {}
+        StmtKind::IndexAssign {
+            collection,
+            index,
+            value,
+        } => {
+            collect_calls(collection, in_par, edges);
+            collect_calls(index, in_par, edges);
+            collect_calls(value, in_par, edges);
+        }
     }
 }
 

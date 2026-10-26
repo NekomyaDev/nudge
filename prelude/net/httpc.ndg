@@ -1,0 +1,131 @@
+// HTTP/1.1 Wire Framing and Response Parser in Pure .ndg
+// Part of Phase F2.4 (docs/browser-roadmap.md)
+
+fn build_http_request(method: string, host: string, path: string, headers: [Header], body: string) -> string {
+    let mut req = str.upper(method) + " " + path + " HTTP/1.1\n"
+    req = req + "Host: " + host + "\n"
+    req = req + "User-Agent: NudgeBrowser/1.0 (en-US)\n"
+    req = req + "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\n"
+    req = req + "Accept-Language: en-US,en;q=0.5\n"
+
+    for h in headers {
+        req = req + h.name + ": " + h.value + "\n"
+    }
+
+    if body != "" {
+        req = req + "Content-Length: " + str.to_string(str.length(body)) + "\n"
+    }
+    req = req + "Connection: close\n\n"
+    req = req + body
+    req
+}
+
+fn parse_status_code(status_line: string) -> int {
+    let parts = str.split(status_line, " ")
+    let mut code = 200
+    for (p, idx) in parts {
+        if idx == 1 {
+            let n = str.to_int(p)
+            if n > 0 {
+                code = n
+            }
+        }
+    }
+    code
+}
+
+fn parse_headers_and_body(raw: string) -> { status: int, headers: [Header], body: string } {
+    let head_end = str.index_of(raw, "\n\n")
+    let delim_len = 2
+
+    let head_str = if head_end >= 0 { str.substring(raw, 0, head_end) } else { raw }
+    let raw_body = if head_end >= 0 { str.substring(raw, head_end + delim_len) } else { "" }
+
+    let lines = str.split(head_str, "\n")
+    let mut status = 200
+    let mut headers: [Header] = []
+    let mut is_chunked = false
+
+    for (line, idx) in lines {
+        let clean_line = str.trim(line)
+        if idx == 0 {
+            status = parse_status_code(clean_line)
+        } else if clean_line != "" {
+            let colon_idx = str.index_of(clean_line, ":")
+            if colon_idx >= 0 {
+                let name = str.lower(str.trim(str.substring(clean_line, 0, colon_idx)))
+                let value = str.trim(str.substring(clean_line, colon_idx + 1))
+                if name == "transfer-encoding" and str.contains(value, "chunked") {
+                    is_chunked = true
+                }
+                headers = headers + [{ name: name, value: value }]
+            }
+        }
+    }
+
+    let final_body = if is_chunked {
+        decode_chunked_body(raw_body)
+    } else {
+        raw_body
+    }
+
+    {
+        status: status,
+        headers: headers,
+        body: final_body
+    }
+}
+
+fn hex_to_int(h_str: string) -> int {
+    let s = str.lower(str.trim(h_str))
+    let hex_digits = "0123456789abcdef"
+    let chars = str.split(s, "")
+    let mut total = 0
+    for ch in chars {
+        if ch != "" {
+            let val = str.index_of(hex_digits, ch)
+            if val >= 0 {
+                total = (total * 16) + val
+            }
+        }
+    }
+    total
+}
+
+fn decode_chunked_body(raw: string) -> string {
+    let mut out = ""
+    let mut rest = raw
+    let mut done = false
+
+    for _ in str.split(raw, "\n") {
+        if rest != "" and !done {
+            let line_end = str.index_of(rest, "\n")
+            if line_end >= 0 {
+                let size_line = str.trim(str.substring(rest, 0, line_end))
+                let chunk_size = hex_to_int(size_line)
+                if chunk_size <= 0 {
+                    done = true
+                } else {
+                    let data_start = line_end + 1
+                    let n = str.length(rest)
+                    let data_end = if data_start + chunk_size <= n { data_start + chunk_size } else { n }
+                    let chunk_data = str.substring(rest, data_start, data_end)
+                    out = out + chunk_data
+
+                    // Advance past chunk data + newline
+                    let next_start = data_end
+                    let remaining = str.substring(rest, next_start)
+                    let next_line = str.index_of(remaining, "\n")
+                    if next_line >= 0 {
+                        rest = str.substring(remaining, next_line + 1)
+                    } else {
+                        rest = ""
+                    }
+                }
+            } else {
+                done = true
+            }
+        }
+    }
+    out
+}

@@ -1,0 +1,149 @@
+// RFC 4648 Base64 Encoder & Decoder in Pure .ndg
+// Part of Phase F2.1 (docs/browser-roadmap.md)
+
+fn ascii_table() -> string {
+    " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+}
+
+fn b64_table() -> string {
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+}
+
+fn idiv(a: int, b: int) -> int {
+    let s = str.to_string(a / b)
+    let dot = str.index_of(s, ".")
+    if dot >= 0 {
+        str.to_int(str.substring(s, 0, dot))
+    } else {
+        str.to_int(s)
+    }
+}
+
+fn char_code(ch: string) -> int {
+    let t = ascii_table()
+    let idx = str.index_of(t, ch)
+    if idx >= 0 {
+        idx + 32
+    } else if ch == "\n" {
+        10
+    } else if ch == "\t" {
+        9
+    } else {
+        0
+    }
+}
+
+fn code_char(code: int) -> string {
+    let t = ascii_table()
+    if code >= 32 and code <= 126 {
+        str.substring(t, code - 32, code - 31)
+    } else if code == 10 {
+        "\n"
+    } else if code == 9 {
+        "\t"
+    } else {
+        ""
+    }
+}
+
+fn b64_char(idx: int) -> string {
+    let t = b64_table()
+    if idx >= 0 and idx < 64 {
+        str.substring(t, idx, idx + 1)
+    } else {
+        "="
+    }
+}
+
+fn b64_val(ch: string) -> int {
+    let t = b64_table()
+    str.index_of(t, ch)
+}
+
+fn to_chars(s: string) -> [string] {
+    let raw_list = str.split(s, "")
+    let mut out: [string] = []
+    for ch in raw_list {
+        if ch != "" {
+            out = out + [ch]
+        }
+    }
+    out
+}
+
+fn b64_encode(s: string) -> string {
+    let chars = to_chars(s)
+    let n = len(chars)
+    let mut out = ""
+    let mut i = 0
+
+    // Process 3-byte chunks
+    for _ in chars {
+        if i < n {
+            let b0 = char_code(chars[i])
+            let b1 = if i + 1 < n { char_code(chars[i + 1]) } else { 0 }
+            let b2 = if i + 2 < n { char_code(chars[i + 2]) } else { 0 }
+
+            let triple = (b0 * 65536) + (b1 * 256) + b2
+
+            let c0 = idiv(triple, 262144) % 64
+            let c1 = idiv(triple, 4096) % 64
+            let c2 = idiv(triple, 64) % 64
+            let c3 = triple % 64
+
+            out = out + b64_char(c0) + b64_char(c1)
+            if i + 1 < n {
+                out = out + b64_char(c2)
+            } else {
+                out = out + "="
+            }
+            if i + 2 < n {
+                out = out + b64_char(c3)
+            } else {
+                out = out + "="
+            }
+
+            i = i + 3
+        }
+    }
+    out
+}
+
+fn b64_decode(enc: string) -> string {
+    let chars = to_chars(enc)
+    let n = len(chars)
+    let mut out = ""
+    let mut i = 0
+
+    // Process 4-character chunks
+    for _ in chars {
+        if i + 3 < n {
+            let ch0 = chars[i]
+            let ch1 = chars[i + 1]
+            let ch2 = chars[i + 2]
+            let ch3 = chars[i + 3]
+
+            let v0 = b64_val(ch0)
+            let v1 = b64_val(ch1)
+            let v2 = if ch2 == "=" { 0 } else { b64_val(ch2) }
+            let v3 = if ch3 == "=" { 0 } else { b64_val(ch3) }
+
+            let triple = (v0 * 262144) + (v1 * 4096) + (v2 * 64) + v3
+
+            let b0 = idiv(triple, 65536) % 256
+            let b1 = idiv(triple, 256) % 256
+            let b2 = triple % 256
+
+            out = out + code_char(b0)
+            if ch2 != "=" {
+                out = out + code_char(b1)
+            }
+            if ch3 != "=" {
+                out = out + code_char(b2)
+            }
+
+            i = i + 4
+        }
+    }
+    out
+}

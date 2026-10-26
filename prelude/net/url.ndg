@@ -1,0 +1,131 @@
+// URL Parsing, Normalization, and Relative Resolution in Pure .ndg
+// Part of Phase F2.3 (docs/browser-roadmap.md)
+
+type ParsedUrl = {
+    scheme: string,
+    host: string,
+    port: int,
+    path: string,
+    query: string,
+    fragment: string
+}
+
+fn parse_url(raw: string) -> ParsedUrl {
+    let mut scheme = ""
+    let mut rest = raw
+
+    let scheme_idx = str.index_of(raw, "://")
+    if scheme_idx >= 0 {
+        scheme = str.lower(str.substring(raw, 0, scheme_idx))
+        rest = str.substring(raw, scheme_idx + 3)
+    }
+
+    let mut fragment = ""
+    let hash_idx = str.index_of(rest, "#")
+    if hash_idx >= 0 {
+        fragment = str.substring(rest, hash_idx + 1)
+        rest = str.substring(rest, 0, hash_idx)
+    }
+
+    let mut query = ""
+    let q_idx = str.index_of(rest, "?")
+    if q_idx >= 0 {
+        query = str.substring(rest, q_idx + 1)
+        rest = str.substring(rest, 0, q_idx)
+    }
+
+    let mut path = "/"
+    let slash_idx = str.index_of(rest, "/")
+    let mut host_port = rest
+    if slash_idx >= 0 {
+        path = str.substring(rest, slash_idx)
+        host_port = str.substring(rest, 0, slash_idx)
+    }
+
+    let mut host = host_port
+    let mut port = if scheme == "https" { 443 } else { 80 }
+    let colon_idx = str.index_of(host_port, ":")
+    if colon_idx >= 0 {
+        host = str.substring(host_port, 0, colon_idx)
+        let port_str = str.substring(host_port, colon_idx + 1)
+        if port_str != "" {
+            port = str.to_int(port_str)
+        }
+    }
+
+    {
+        scheme: scheme,
+        host: str.lower(host),
+        port: port,
+        path: path,
+        query: query,
+        fragment: fragment
+    }
+}
+
+fn base_origin(u: ParsedUrl) -> string {
+    let default_port = (u.scheme == "https" and u.port == 443) or (u.scheme == "http" and u.port == 80)
+    let port_suffix = if default_port { "" } else { ":" + str.to_string(u.port) }
+    u.scheme + "://" + u.host + port_suffix
+}
+
+fn url_to_string(u: ParsedUrl) -> string {
+    let origin = base_origin(u)
+    let q = if u.query != "" { "?" + u.query } else { "" }
+    let frag = if u.fragment != "" { "#" + u.fragment } else { "" }
+    origin + u.path + q + frag
+}
+
+fn parent_dir(path: string) -> string {
+    let last_slash = str.index_of(str.reverse(path), "/")
+    let rev_idx = str.length(path) - 1 - last_slash
+    if last_slash >= 0 and rev_idx > 0 {
+        str.substring(path, 0, rev_idx + 1)
+    } else {
+        "/"
+    }
+}
+
+fn resolve_relative(base: ParsedUrl, rel: string) -> string {
+    let mut out = ""
+    if str.starts_with(rel, "http://") or str.starts_with(rel, "https://") or str.starts_with(rel, "file://") {
+        out = rel
+    } else if str.starts_with(rel, "//") {
+        out = base.scheme + ":" + rel
+    } else if str.starts_with(rel, "/") {
+        out = base_origin(base) + rel
+    } else if str.starts_with(rel, "?") {
+        out = base_origin(base) + base.path + rel
+    } else if str.starts_with(rel, "#") {
+        let q = if base.query != "" { "?" + base.query } else { "" }
+        out = base_origin(base) + base.path + q + rel
+    } else {
+        let mut dir = parent_dir(base.path)
+        let mut target = rel
+
+        // Normalize leading ./
+        if str.starts_with(target, "./") {
+            target = str.substring(target, 2)
+        }
+
+        // Handle ../ segments
+        let mut done = false
+        for _ in str.split(target, "") {
+            if str.starts_with(target, "../") and !done {
+                target = str.substring(target, 3)
+                // Pop one directory level
+                let trimmed = if str.ends_with(dir, "/") and str.length(dir) > 1 {
+                    str.substring(dir, 0, str.length(dir) - 1)
+                } else {
+                    dir
+                }
+                dir = parent_dir(trimmed)
+            } else {
+                done = true
+            }
+        }
+
+        out = base_origin(base) + dir + target
+    }
+    out
+}

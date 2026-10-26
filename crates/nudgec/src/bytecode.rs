@@ -75,6 +75,8 @@ pub enum Op {
     Field(String),
     /// Index into list or map: pop index, pop collection, push element or field.
     Index,
+    /// In-place index assignment: pop value, pop index. Target collection is in local slot `slot`.
+    StoreIndex(u32),
     /// Verify local slot contains a List: error if not NudgeVal::List.
     CheckList(u32),
     /// Loop iteration limit check on counter slot: error if counter >= NUDGE_MAX_LOOP_ITERATIONS.
@@ -296,6 +298,34 @@ impl<'a> Compiler<'a> {
                     )));
                 } else {
                     self.chunk.emit(Op::StoreLocal(slot));
+                }
+                Ok(())
+            }
+            StmtKind::IndexAssign {
+                collection,
+                index,
+                value,
+            } => {
+                let name = match &collection.kind {
+                    ExprKind::Ident(n) => n,
+                    _ => {
+                        return Err(
+                            "not in bytecode subset: index assign on non-ident collection".to_string(),
+                        );
+                    }
+                };
+                let slot = *self
+                    .locals
+                    .get(name)
+                    .ok_or_else(|| format!("unknown local '{name}'"))?;
+                if !self.mut_locals.contains(name) {
+                    self.chunk.emit(Op::Fail(format!(
+                        "cannot mutate immutable local '{name}'; declare it with `let mut`"
+                    )));
+                } else {
+                    self.compile_expr(index)?;
+                    self.compile_expr(value)?;
+                    self.chunk.emit(Op::StoreIndex(slot));
                 }
                 Ok(())
             }
@@ -760,6 +790,7 @@ impl<'a> Compiler<'a> {
                     || name.starts_with("io.")
                     || name.starts_with("workspace.")
                     || name.starts_with("store.")
+                    || name.starts_with("mem.")
                     || name.starts_with("task.")
                     || name.starts_with("fs.")
                     || name.starts_with("proc.")
@@ -945,6 +976,15 @@ fn check_stmt_effects(stmt: &Stmt, tool_names: &[String]) -> Result<(), String> 
             }
             Ok(())
         }
+        StmtKind::IndexAssign {
+            collection,
+            index,
+            value,
+        } => {
+            check_expr_effects(collection, tool_names)?;
+            check_expr_effects(index, tool_names)?;
+            check_expr_effects(value, tool_names)
+        }
     }
 }
 
@@ -999,6 +1039,7 @@ fn check_expr_effects(expr: &Expr, tool_names: &[String]) -> Result<(), String> 
                     || name.starts_with("io.")
                     || name.starts_with("workspace.")
                     || name.starts_with("store.")
+                    || name.starts_with("mem.")
                     || name.starts_with("task.")
                     || name.starts_with("fs.")
                     || name.starts_with("proc.")

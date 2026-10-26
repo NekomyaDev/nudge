@@ -1050,4 +1050,138 @@ mod tests {
         let _ = std::fs::remove_file(fixture_path);
         let _ = std::fs::remove_dir(temp_dir);
     }
+
+    #[test]
+    fn test_prelude_codec_hash_and_b64() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let hash_path = root_dir.join("prelude/codec/hash.ndg");
+        let b64_path = root_dir.join("prelude/codec/b64.ndg");
+
+        let hash_src = std::fs::read_to_string(&hash_path).expect("read hash.ndg");
+        let hash_items = parse_src(&hash_src);
+        let state_val = run_program(
+            &hash_items,
+            "state_id",
+            &[
+                NudgeVal::Str("https://example.com".into()),
+                NudgeVal::Str("<h1>Hello</h1>".into()),
+            ],
+        )
+        .expect("hash.ndg state_id succeeds");
+        assert_eq!(state_val, NudgeVal::Str("s-6d6d2244-586564a1".into()));
+
+        let b64_src = std::fs::read_to_string(&b64_path).expect("read b64.ndg");
+        let b64_items = parse_src(&b64_src);
+
+        // RFC 4648 test vectors
+        let vectors = [
+            ("f", "Zg=="),
+            ("fooba", "Zm9vYmE="),
+            ("foobar", "Zm9vYmFy"),
+        ];
+
+        for (plain, encoded) in vectors {
+            let enc_res = run_program(&b64_items, "b64_encode", &[NudgeVal::Str(plain.into())])
+                .expect("b64_encode succeeds");
+            assert_eq!(enc_res, NudgeVal::Str(encoded.into()));
+
+            let dec_res = run_program(&b64_items, "b64_decode", &[NudgeVal::Str(encoded.into())])
+                .expect("b64_decode succeeds");
+            assert_eq!(dec_res, NudgeVal::Str(plain.into()));
+        }
+    }
+
+    #[test]
+    fn test_prelude_codec_json() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let json_path = root_dir.join("prelude/codec/json.ndg");
+
+        let json_src = std::fs::read_to_string(&json_path).expect("read json.ndg");
+        let test_src = format!(
+            r#"{json_src}
+fn test_round_trip() -> bool {{
+    let raw = "{{\"enabled\":true,\"name\":\"nudge\",\"version\":1}}"
+    let fields = parse_flat_object(raw)
+    let s_name = get_string_field(fields, "name", "")
+    let n_ver = get_int_field(fields, "version", 0)
+    let b_en = get_bool_field(fields, "enabled", false)
+    let back = stringify_fields(fields)
+    s_name == "nudge" and n_ver == 1 and b_en and back == raw
+}}
+"#
+        );
+        let items = parse_src(&test_src);
+        let ok = run_program(&items, "test_round_trip", &[]).expect("json round trip succeeds");
+        assert_eq!(ok, NudgeVal::Bool(true));
+    }
+
+    #[test]
+    fn test_prelude_net_url() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let url_path = root_dir.join("prelude/net/url.ndg");
+
+        let url_src = std::fs::read_to_string(&url_path).expect("read url.ndg");
+        let test_src = format!(
+            r#"{url_src}
+fn test_url_resolve() -> bool {{
+    let base = parse_url("https://example.com:8080/path/to/page.html?v=1#top")
+    let b_ok = base.scheme == "https" and base.host == "example.com" and base.port == 8080 and base.path == "/path/to/page.html" and base.query == "v=1" and base.fragment == "top"
+
+    let r1 = resolve_relative(base, "sub.html")
+    let r1_ok = r1 == "https://example.com:8080/path/to/sub.html"
+
+    let r2 = resolve_relative(base, "../other.html")
+    let r2_ok = r2 == "https://example.com:8080/path/other.html"
+
+    let r3 = resolve_relative(base, "/root.html")
+    let r3_ok = r3 == "https://example.com:8080/root.html"
+
+    let r4 = resolve_relative(base, "//cdn.example.org/lib.js")
+    let r4_ok = r4 == "https://cdn.example.org/lib.js"
+
+    b_ok and r1_ok and r2_ok and r3_ok and r4_ok
+}}
+"#
+        );
+        let items = parse_src(&test_src);
+        let ok = run_program(&items, "test_url_resolve", &[]).expect("url resolution succeeds");
+        assert_eq!(ok, NudgeVal::Bool(true));
+    }
+
+    #[test]
+    fn test_prelude_net_httpc() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let httpc_path = root_dir.join("prelude/net/httpc.ndg");
+
+        let httpc_src = std::fs::read_to_string(&httpc_path).expect("read httpc.ndg");
+        let test_src = format!(
+            r#"{httpc_src}
+fn test_http_framing() -> bool {{
+    let req = build_http_request("GET", "example.com", "/index.html", [{{ name: "x-custom", value: "test" }}], "")
+    let req_ok = str.contains(req, "GET /index.html HTTP/1.1") and str.contains(req, "Host: example.com") and str.contains(req, "x-custom: test")
+
+    let raw_resp = "HTTP/1.1 200 OK\nContent-Type: text/html\nServer: NudgeMock\n\n<html><body>Hello World</body></html>"
+    let resp = parse_headers_and_body(raw_resp)
+    let resp_ok = resp.status == 200 and resp.body == "<html><body>Hello World</body></html>" and len(resp.headers) == 2
+
+    let raw_chunked = "HTTP/1.1 200 OK\nTransfer-Encoding: chunked\n\n5\nHello\n6\n World\n0\n\n"
+    let resp_chunked = parse_headers_and_body(raw_chunked)
+    let chunked_ok = resp_chunked.status == 200 and resp_chunked.body == "Hello World"
+
+    req_ok and resp_ok and chunked_ok
+}}
+"#
+        );
+        let items = parse_src(&test_src);
+        let ok = run_program(&items, "test_http_framing", &[]).expect("http framing succeeds");
+        assert_eq!(ok, NudgeVal::Bool(true));
+    }
 }

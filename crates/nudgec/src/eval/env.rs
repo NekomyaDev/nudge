@@ -87,6 +87,25 @@ impl Env {
         Err(format!("unknown identifier '{name}'"))
     }
 
+    /// Mutate an existing mutable variable in place.
+    pub fn mutate<F, R>(&mut self, name: &str, f: F) -> Result<R, String>
+    where
+        F: FnOnce(&mut NudgeVal) -> Result<R, String>,
+    {
+        if let Some(b) = self.bindings.get_mut(name) {
+            if !b.mutable {
+                return Err(format!(
+                    "cannot mutate immutable local '{name}'; declare it with `let mut`"
+                ));
+            }
+            return f(&mut b.val);
+        }
+        if let Some(parent) = &self.parent {
+            return parent.borrow_mut().mutate(name, f);
+        }
+        Err(format!("unknown identifier '{name}'"))
+    }
+
     /// Snapshot all visible bindings into a flat, independent environment.
     pub fn snapshot(&self) -> Self {
         Self::from_bindings(self.snapshot_bindings())

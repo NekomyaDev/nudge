@@ -1,0 +1,225 @@
+// JSON Tokenizer, Parser, and Serializer in Pure .ndg
+// Part of Phase F2.2 (docs/browser-roadmap.md)
+
+type JsonField = {
+    key: string,
+    val_str: string,
+    val_num: int,
+    val_bool: bool,
+    kind: string
+}
+
+fn skip_whitespace(s: string, start: int) -> int {
+    let mut i = start
+    let n = str.length(s)
+    let ws = " \t\n"
+    for _ in str.split(s, "") {
+        if i < n {
+            let ch = str.substring(s, i, i + 1)
+            if str.contains(ws, ch) {
+                i = i + 1
+            }
+        }
+    }
+    i
+}
+
+fn is_digit(ch: string) -> bool {
+    let digits = "0123456789"
+    str.contains(digits, ch) and ch != ""
+}
+
+fn parse_json_string(s: string, start: int) -> { val: string, next: int } {
+    let n = str.length(s)
+    let mut i = start + 1 // skip opening quote
+    let mut out = ""
+    let mut done = false
+    for _ in str.split(s, "") {
+        if i < n and !done {
+            let ch = str.substring(s, i, i + 1)
+            if ch == "\"" {
+                i = i + 1
+                done = true
+            } else if ch == "\\" and i + 1 < n {
+                let esc = str.substring(s, i + 1, i + 2)
+                if esc == "n" {
+                    out = out + "\n"
+                } else if esc == "t" {
+                    out = out + "\t"
+                } else if esc == "\"" {
+                    out = out + "\""
+                } else if esc == "\\" {
+                    out = out + "\\"
+                } else {
+                    out = out + esc
+                }
+                i = i + 2
+            } else {
+                out = out + ch
+                i = i + 1
+            }
+        }
+    }
+    { val: out, next: i }
+}
+
+fn parse_json_number(s: string, start: int) -> { val: int, next: int } {
+    let n = str.length(s)
+    let mut i = start
+    let mut num_str = ""
+    let mut is_neg = false
+
+    if i < n and str.substring(s, i, i + 1) == "-" {
+        is_neg = true
+        i = i + 1
+    }
+
+    for _ in str.split(s, "") {
+        if i < n {
+            let ch = str.substring(s, i, i + 1)
+            if is_digit(ch) {
+                num_str = num_str + ch
+                i = i + 1
+            }
+        }
+    }
+
+    let parsed = if num_str != "" { str.to_int(num_str) } else { 0 }
+    let val = if is_neg { 0 - parsed } else { parsed }
+    { val: val, next: i }
+}
+
+fn escape_json(s: string) -> string {
+    let mut out = ""
+    let chars = str.split(s, "")
+    for ch in chars {
+        if ch == "\"" {
+            out = out + "\\\""
+        } else if ch == "\\" {
+            out = out + "\\\\"
+        } else if ch == "\n" {
+            out = out + "\\n"
+        } else if ch == "\t" {
+            out = out + "\\t"
+        } else {
+            out = out + ch
+        }
+    }
+    out
+}
+
+fn stringify_string(s: string) -> string {
+    "\"" + escape_json(s) + "\""
+}
+
+fn stringify_int(n: int) -> string {
+    str.to_string(n)
+}
+
+fn stringify_bool(b: bool) -> string {
+    if b { "true" } else { "false" }
+}
+
+fn stringify_fields(fields: [JsonField]) -> string {
+    let mut parts: [string] = []
+    for f in fields {
+        let val_repr = if f.kind == "string" {
+            stringify_string(f.val_str)
+        } else if f.kind == "int" {
+            stringify_int(f.val_num)
+        } else if f.kind == "bool" {
+            stringify_bool(f.val_bool)
+        } else {
+            "null"
+        }
+        parts = parts + ["\"" + f.key + "\":" + val_repr]
+    }
+    "{" + str.join(parts, ",") + "}"
+}
+
+fn parse_flat_object(s: string) -> [JsonField] {
+    let mut i = skip_whitespace(s, 0)
+    let n = str.length(s)
+    let mut fields: [JsonField] = []
+    let mut closed = false
+
+    if i < n and str.substring(s, i, i + 1) == "{" {
+        i = i + 1 // skip '{'
+
+        for _ in str.split(s, "") {
+            i = skip_whitespace(s, i)
+            if i >= n or str.substring(s, i, i + 1) == "}" {
+                closed = true
+            }
+
+            if !closed {
+                // Parse key
+                if str.substring(s, i, i + 1) == "\"" {
+                    let key_res = parse_json_string(s, i)
+                    let key = key_res.val
+                    i = skip_whitespace(s, key_res.next)
+
+                    if i < n and str.substring(s, i, i + 1) == ":" {
+                        i = skip_whitespace(s, i + 1)
+
+                        // Parse value
+                        if i < n and str.substring(s, i, i + 1) == "\"" {
+                            let val_res = parse_json_string(s, i)
+                            fields = fields + [{ key: key, val_str: val_res.val, val_num: 0, val_bool: false, kind: "string" }]
+                            i = val_res.next
+                        } else if i < n and (is_digit(str.substring(s, i, i + 1)) or str.substring(s, i, i + 1) == "-") {
+                            let num_res = parse_json_number(s, i)
+                            fields = fields + [{ key: key, val_str: "", val_num: num_res.val, val_bool: false, kind: "int" }]
+                            i = num_res.next
+                        } else if i + 4 <= n and str.substring(s, i, i + 4) == "true" {
+                            fields = fields + [{ key: key, val_str: "", val_num: 0, val_bool: true, kind: "bool" }]
+                            i = i + 4
+                        } else if i + 5 <= n and str.substring(s, i, i + 5) == "false" {
+                            fields = fields + [{ key: key, val_str: "", val_num: 0, val_bool: false, kind: "bool" }]
+                            i = i + 5
+                        } else if i + 4 <= n and str.substring(s, i, i + 4) == "null" {
+                            fields = fields + [{ key: key, val_str: "", val_num: 0, val_bool: false, kind: "null" }]
+                            i = i + 4
+                        }
+
+                        i = skip_whitespace(s, i)
+                        if i < n and str.substring(s, i, i + 1) == "," {
+                            i = i + 1
+                        }
+                    }
+                }
+            }
+        }
+    }
+    fields
+}
+
+fn get_string_field(fields: [JsonField], key: string, fallback: string) -> string {
+    let mut res = fallback
+    for f in fields {
+        if f.key == key and f.kind == "string" {
+            res = f.val_str
+        }
+    }
+    res
+}
+
+fn get_int_field(fields: [JsonField], key: string, fallback: int) -> int {
+    let mut res = fallback
+    for f in fields {
+        if f.key == key and f.kind == "int" {
+            res = f.val_num
+        }
+    }
+    res
+}
+
+fn get_bool_field(fields: [JsonField], key: string, fallback: bool) -> bool {
+    let mut res = fallback
+    for f in fields {
+        if f.key == key and f.kind == "bool" {
+            res = f.val_bool
+        }
+    }
+    res
+}

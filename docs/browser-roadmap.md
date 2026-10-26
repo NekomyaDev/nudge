@@ -64,37 +64,37 @@
 ## Phase F2: Pure `.ndg` Codecs & Network Wire Framing
 **Goal:** Implement essential wire framing and parsing entirely in `.ndg` source code.
 
-- [ ] **Task F2.1 — Deterministic Content Hashing & Base64**
+- [X] **Task F2.1 — Deterministic Content Hashing & Base64**
   - **Owner / Agent:** `agent:ndg-codecs`
   - **Files:** `prelude/codec/hash.ndg`, `prelude/codec/b64.ndg`
   - **Contract:**
     - `codec/hash.ndg`: djb2-family modular arithmetic over integers for deterministic `state_id` generation.
     - `codec/b64.ndg`: Pure scalar table-based base64 encoder and decoder.
-  - **Acceptance Gate:** Conformance test matching known hashes and RFC 4648 test vectors.
+  - **Acceptance Gate:** Conformance test matching known hashes and RFC 4648 test vectors. (PASSED: RFC 4648 vectors & hash tests green)
 
-- [ ] **Task F2.2 — JSON Tokenizer & Parser**
+- [X] **Task F2.2 — JSON Tokenizer & Parser**
   - **Owner / Agent:** `agent:ndg-json`
   - **Files:** `prelude/codec/json.ndg`
   - **Contract:**
     - Recursive-descent parser and serializer for nested objects, arrays, strings, numbers, and booleans.
     - Maximum recursion depth limit = 64 frames to prevent stack exhaustion.
-  - **Acceptance Gate:** JSON round-trip tests on complex payloads pass in interpreter.
+  - **Acceptance Gate:** JSON round-trip tests on complex payloads pass in interpreter. (PASSED: flat/nested parse and stringify green)
 
-- [ ] **Task F2.3 — URL Parsing & Normalization**
+- [X] **Task F2.3 — URL Parsing & Normalization**
   - **Owner / Agent:** `agent:ndg-net`
   - **Files:** `prelude/net/url.ndg`
   - **Contract:**
     - Scheme, host, port, path, query, and fragment decomposition.
     - Relative URL resolution against a base document URL.
-  - **Acceptance Gate:** WhatWG URL resolution test vector subset passes.
+  - **Acceptance Gate:** WhatWG URL resolution test vector subset passes. (PASSED: parse & relative resolution green)
 
-- [ ] **Task F2.4 — HTTP/1.1 Message Framing**
+- [X] **Task F2.4 — HTTP/1.1 Message Framing**
   - **Owner / Agent:** `agent:ndg-net`
   - **Files:** `prelude/net/httpc.ndg`
   - **Contract:**
     - Build canonical HTTP/1.1 requests with deterministic header ordering.
     - Parse HTTP response status line, headers into `[Header]`, handle `Content-Length` and chunked transfer decoding.
-  - **Acceptance Gate:** Mock socket HTTP/1.1 message parsing succeeds.
+  - **Acceptance Gate:** Mock socket HTTP/1.1 message parsing succeeds. (PASSED: request formatting & response/chunked parsing green)
 
 ---
 

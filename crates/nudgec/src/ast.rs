@@ -382,6 +382,12 @@ pub enum StmtKind {
         name: String,
         value: Expr,
     },
+    /// In-place index assignment: `collection[index] = value`.
+    IndexAssign {
+        collection: Expr,
+        index: Expr,
+        value: Expr,
+    },
     /// `state.x = v` / `+=` / `-=` inside an `agent` block (design §7):
     /// every write is an automatic checkpoint.
     StateWrite {

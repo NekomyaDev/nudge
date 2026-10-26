@@ -1829,6 +1829,92 @@ impl Interpreter {
                 let val = self.eval_expr(value, env)?;
                 env.borrow_mut().assign(name, val)
             }
+            StmtKind::IndexAssign {
+                collection,
+                index,
+                value,
+            } => {
+                let idx_val = self.eval_expr(index, env)?;
+                let new_val = self.eval_expr(value, env)?;
+                match &collection.kind {
+                    ExprKind::Ident(name) => {
+                        env.borrow_mut().mutate(name, |target| match target {
+                            NudgeVal::List(items) => match idx_val {
+                                NudgeVal::Int(i) => {
+                                    if i < 0 || i as usize >= items.len() {
+                                        return Err(format!(
+                                            "error[E0705]: index out of bounds: index {i} out of range for list of length {}",
+                                            items.len()
+                                        ));
+                                    }
+                                    items[i as usize] = new_val;
+                                    Ok(())
+                                }
+                                other => Err(format!(
+                                    "list index must be an integer, got {}",
+                                    other.type_name()
+                                )),
+                            },
+                            NudgeVal::Map(map) => {
+                                let key = match idx_val {
+                                    NudgeVal::Str(s) => s,
+                                    other => format!("{other}"),
+                                };
+                                map.insert(key, new_val);
+                                Ok(())
+                            }
+                            other => Err(format!(
+                                "cannot index-assign into {}",
+                                other.type_name()
+                            )),
+                        })?;
+                        Ok(())
+                    }
+                    ExprKind::Field { obj, name: field }
+                        if matches!(&obj.kind, ExprKind::Ident(s) if s == "state") =>
+                    {
+                        let agent_name = self.active_agent.clone().ok_or_else(|| {
+                            "error[E0701]: state write outside an agent block".to_string()
+                        })?;
+                        let mut cur = self.agent_store.get_field(&agent_name, field)?;
+                        match &mut cur {
+                            NudgeVal::List(items) => match idx_val {
+                                NudgeVal::Int(i) => {
+                                    if i < 0 || i as usize >= items.len() {
+                                        return Err(format!(
+                                            "error[E0705]: index out of bounds: index {i} out of range for list of length {}",
+                                            items.len()
+                                        ));
+                                    }
+                                    items[i as usize] = new_val;
+                                }
+                                other => {
+                                    return Err(format!(
+                                        "list index must be an integer, got {}",
+                                        other.type_name()
+                                    ))
+                                }
+                            },
+                            NudgeVal::Map(map) => {
+                                let key = match idx_val {
+                                    NudgeVal::Str(s) => s,
+                                    other => format!("{other}"),
+                                };
+                                map.insert(key, new_val);
+                            }
+                            other => {
+                                return Err(format!(
+                                    "cannot index-assign into {}",
+                                    other.type_name()
+                                ))
+                            }
+                        }
+                        self.agent_store.set_field(&agent_name, field, cur)?;
+                        Ok(())
+                    }
+                    _ => Err("index assignment target must be a variable or state field".to_string()),
+                }
+            }
             StmtKind::StateWrite { field, op, value } => {
                 let agent_name = self.active_agent.clone().ok_or_else(|| {
                     format!("error[E0701]: state write 'state.{field}' outside an agent block")
@@ -2540,6 +2626,7 @@ impl Interpreter {
                 || name.starts_with("fs.")
                 || name.starts_with("proc.")
                 || name.starts_with("store.")
+                || name.starts_with("mem.")
                 || name.starts_with("task.")
                 || name.starts_with("math.")
                 || name.starts_with("str.")
@@ -3061,7 +3148,7 @@ impl Interpreter {
                 value_to_nudgeval(&result).map_err(|e| format!("error[E-native-0203]: {name}: {e}"))
             }
             "workspace.read" | "workspace.write" | "workspace.append" | "workspace.exists"
-            | "workspace.list" | "workspace.delete" => {
+            | "workspace.list" | "workspace.delete" | "workspace.stat" => {
                 let mut call_args = Vec::with_capacity(args.len());
                 for a in args {
                     let converted = nudgeval_to_value(a)
@@ -3093,6 +3180,23 @@ impl Interpreter {
                 })?;
                 value_to_nudgeval(&result)
                     .map_err(|e| format!("error[E0913]: store schema mismatch: {name}: {e}"))
+            }
+            "mem.get" | "mem.set" | "mem.has" | "mem.delete" | "mem.keys" | "mem.clear" => {
+                let mut call_args = Vec::with_capacity(args.len());
+                for a in args {
+                    let converted = nudgeval_to_value(a)
+                        .map_err(|e| format!("error[E-native-0203]: {name}: {e}"))?;
+                    call_args.push(converted);
+                }
+                let result = nudge_runtime::mem_store::execute(name, call_args).map_err(|e| {
+                    if e.starts_with("error[") {
+                        e
+                    } else {
+                        format!("error[E-native-0202]: {name} failed: {e}")
+                    }
+                })?;
+                value_to_nudgeval(&result)
+                    .map_err(|e| format!("error[E0930]: mem store schema mismatch: {name}: {e}"))
             }
             "fs.watch" | "fs.changed" => {
                 let mut call_args = Vec::with_capacity(args.len());
@@ -3348,6 +3452,16 @@ impl Interpreter {
                     .join(sep);
                 Ok(NudgeVal::Str(joined))
             }
+            "str.reverse" => {
+                let s = args
+                    .first()
+                    .and_then(|a| match a {
+                        NudgeVal::Str(s) => Some(s),
+                        _ => None,
+                    })
+                    .ok_or("'str.reverse' requires 1 string argument")?;
+                Ok(NudgeVal::Str(s.chars().rev().collect()))
+            }
             "str.contains" => {
                 let s = args
                     .first()
@@ -3364,6 +3478,40 @@ impl Interpreter {
                     })
                     .ok_or("'str.contains' requires 2 string arguments")?;
                 Ok(NudgeVal::Bool(s.contains(pat)))
+            }
+            "str.starts_with" => {
+                let s = args
+                    .first()
+                    .and_then(|a| match a {
+                        NudgeVal::Str(s) => Some(s),
+                        _ => None,
+                    })
+                    .ok_or("'str.starts_with' requires 2 string arguments")?;
+                let pat = args
+                    .get(1)
+                    .and_then(|a| match a {
+                        NudgeVal::Str(s) => Some(s),
+                        _ => None,
+                    })
+                    .ok_or("'str.starts_with' requires 2 string arguments")?;
+                Ok(NudgeVal::Bool(s.starts_with(pat)))
+            }
+            "str.ends_with" => {
+                let s = args
+                    .first()
+                    .and_then(|a| match a {
+                        NudgeVal::Str(s) => Some(s),
+                        _ => None,
+                    })
+                    .ok_or("'str.ends_with' requires 2 string arguments")?;
+                let pat = args
+                    .get(1)
+                    .and_then(|a| match a {
+                        NudgeVal::Str(s) => Some(s),
+                        _ => None,
+                    })
+                    .ok_or("'str.ends_with' requires 2 string arguments")?;
+                Ok(NudgeVal::Bool(s.ends_with(pat)))
             }
             "str.replace" => {
                 let s = args
@@ -3448,6 +3596,42 @@ impl Interpreter {
                     })
                     .ok_or("'str.trim' requires 1 string argument")?;
                 Ok(NudgeVal::Str(s.trim().to_string()))
+            }
+            "str.char_code" => {
+                let s = args
+                    .first()
+                    .and_then(|a| match a {
+                        NudgeVal::Str(s) => Some(s),
+                        _ => None,
+                    })
+                    .ok_or("'str.char_code' requires string as first argument")?;
+                let idx = args
+                    .get(1)
+                    .and_then(|a| match a {
+                        NudgeVal::Int(i) => Some(*i),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                if idx < 0 {
+                    return Ok(NudgeVal::Int(0));
+                }
+                let code = s.chars().nth(idx as usize).map(|c| c as i64).unwrap_or(0);
+                Ok(NudgeVal::Int(code))
+            }
+            "str.hash" => {
+                let s = args
+                    .first()
+                    .and_then(|a| match a {
+                        NudgeVal::Str(s) => Some(s),
+                        _ => None,
+                    })
+                    .ok_or("'str.hash' requires 1 string argument")?;
+                let mut h: u64 = 0xcbf29ce484222325;
+                for b in s.as_bytes() {
+                    h ^= *b as u64;
+                    h = h.wrapping_mul(0x100000001b3);
+                }
+                Ok(NudgeVal::Int(h as i64))
             }
             "str.index_of" => {
                 let s = args
@@ -5817,10 +6001,10 @@ pub(crate) mod tests {
         static ENV_RESET_GUARD: std::cell::RefCell<Option<std::sync::MutexGuard<'static, ()>>> = const { std::cell::RefCell::new(None) };
     }
 
-    struct EnvResetGuard;
+    pub(crate) struct EnvResetGuard;
 
     impl EnvResetGuard {
-        fn acquire() -> Self {
+        pub(crate) fn acquire() -> Self {
             ENV_RESET_LOCK_DEPTH.with(|d| {
                 let cur = d.get();
                 if cur == 0 {
@@ -5851,9 +6035,9 @@ pub(crate) mod tests {
         }
     }
 
-    struct EnvReset(&'static str, Option<String>, EnvResetGuard);
+    pub(crate) struct EnvReset(&'static str, Option<String>, EnvResetGuard);
     impl EnvReset {
-        fn set(key: &'static str, val: &str) -> Self {
+        pub(crate) fn set(key: &'static str, val: &str) -> Self {
             let guard = EnvResetGuard::acquire();
             let prev = std::env::var(key).ok();
             unsafe {

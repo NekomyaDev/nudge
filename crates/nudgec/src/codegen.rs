@@ -356,6 +356,18 @@ fn emit_body(body: &[Stmt], aliases: &HashSet<String>, agent: Option<&str>) -> S
                 }
                 s
             }
+            StmtKind::IndexAssign {
+                collection,
+                index,
+                value,
+            } => {
+                format!(
+                    "{}[{}] = {}",
+                    py(collection, aliases),
+                    py(index, aliases),
+                    py(value, aliases)
+                )
+            }
         };
         out.push_str("    ");
         out.push_str(&line);
@@ -440,11 +452,45 @@ fn emit_stmts(
                     "def _prop_{id}({var}):\n{inner}{indent}rt.for_all(\"{gen}\", [{arg_list}], _prop_{id}, \"{var}\")"
                 )
             }
-            StmtKind::For { .. } => {
-                format!("{indent}# pack1 codegen not yet lowered: for loop\n{indent}pass")
+            StmtKind::For {
+                var,
+                idx_var,
+                coll,
+                body,
+            } => {
+                let header = match idx_var {
+                    Some(idx) => format!("for {idx}, {var} in enumerate({}):\n", py(coll, aliases)),
+                    None => format!("for {var} in {}:\n", py(coll, aliases)),
+                };
+                let inner_indent = format!("{indent}    ");
+                let inner = emit_stmts(body, aliases, &inner_indent, prop_id);
+                format!("{header}{inner}").trim_end().to_string()
             }
-            StmtKind::If { .. } => {
-                format!("{indent}# pack1 codegen not yet lowered: if statement\n{indent}pass")
+            StmtKind::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
+                let inner_indent = format!("{indent}    ");
+                let then_str = emit_stmts(then_body, aliases, &inner_indent, prop_id);
+                let mut s = format!("if {}:\n{then_str}", py(cond, aliases));
+                if let Some(eb) = else_body {
+                    let else_str = emit_stmts(eb, aliases, &inner_indent, prop_id);
+                    s.push_str(&format!("{indent}else:\n{else_str}"));
+                }
+                s.trim_end().to_string()
+            }
+            StmtKind::IndexAssign {
+                collection,
+                index,
+                value,
+            } => {
+                format!(
+                    "{}[{}] = {}",
+                    py(collection, aliases),
+                    py(index, aliases),
+                    py(value, aliases)
+                )
             }
         };
         // for_all lines arrive pre-indented (inner body at the nested
@@ -517,6 +563,15 @@ pub fn bind_state(body: &[Stmt], agent: &str) -> Vec<Stmt> {
                     cond: bind_state_expr(cond, agent),
                     then_body: bind_state(then_body, agent),
                     else_body: else_body.as_ref().map(|b| bind_state(b, agent)),
+                },
+                StmtKind::IndexAssign {
+                    collection,
+                    index,
+                    value,
+                } => StmtKind::IndexAssign {
+                    collection: bind_state_expr(collection, agent),
+                    index: bind_state_expr(index, agent),
+                    value: bind_state_expr(value, agent),
                 },
             };
             Stmt {
@@ -918,6 +973,12 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
                     if let ExprKind::Ident(prefix) = &obj.kind {
                         if prefix == "browser" {
                             format!("rt.browser_{name}")
+                        } else if prefix == "mem" {
+                            format!("rt.mem_{name}")
+                        } else if prefix == "workspace" && name == "stat" {
+                            "rt.workspace_stat".to_string()
+                        } else if prefix == "str" && matches!(name.as_str(), "hash" | "char_code" | "to_string" | "to_int" | "length" | "trim" | "substring" | "index_of") {
+                            format!("rt.str_{name}")
                         } else {
                             format!("{prefix}.{name}")
                         }

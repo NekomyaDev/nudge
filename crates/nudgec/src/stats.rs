@@ -219,6 +219,15 @@ fn walk_stmt(stmt: &Stmt, stats: &mut NudgeStats) {
                 }
             }
         }
+        StmtKind::IndexAssign {
+            collection,
+            index,
+            value,
+        } => {
+            walk_expr(collection, stats);
+            walk_expr(index, stats);
+            walk_expr(value, stats);
+        }
     }
 }
 

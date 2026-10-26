@@ -51,6 +51,7 @@ enum Ty {
     Task(Box<Ty>),
     Optional(Box<Ty>),
     Union(Vec<Ty>),
+    Map(Box<Ty>, Box<Ty>),
 }
 
 impl fmt::Display for Ty {
@@ -63,6 +64,7 @@ impl fmt::Display for Ty {
             Ty::None_ => write!(f, "none"),
             Ty::Unknown => write!(f, "unknown"),
             Ty::List(t) => write!(f, "[{t}]"),
+            Ty::Map(k, v) => write!(f, "Map[{k}, {v}]"),
             Ty::Record(fs) => {
                 let inner: Vec<String> = fs.iter().map(|(k, t)| format!("{k}: {t}")).collect();
                 write!(f, "{{{}}}", inner.join(", "))
@@ -232,6 +234,10 @@ fn resolve(
             "Confidence" if args.len() == 1 => {
                 Ty::Confidence(Box::new(resolve(&args[0], g, visiting, errs)), 0)
             }
+            "Map" if args.len() == 2 => Ty::Map(
+                Box::new(resolve(&args[0], g, visiting, errs)),
+                Box::new(resolve(&args[1], g, visiting, errs)),
+            ),
             _ => {
                 errs.push(CheckError {
                     span: None,
@@ -368,6 +374,7 @@ fn assignable(src: &Ty, dst: &Ty) -> bool {
     match (src, dst) {
         (Ty::Int, Ty::Float) => true, // numeric widening
         (Ty::List(a), Ty::List(b)) => assignable(a, b),
+        (Ty::Map(k1, v1), Ty::Map(k2, v2)) => assignable(k1, k2) && assignable(v1, v2),
         (Ty::Task(a), Ty::Task(b)) => assignable(a, b),
         (Ty::Record(a), Ty::Record(b)) => {
             a.len() == b.len()
@@ -422,7 +429,7 @@ fn elem_of(t: &Ty) -> Ty {
 
 // ── effect inference (design §3.2, v1.4) ──────────────────────────
 
-const KNOWN_EFFECTS: [&str; 13] = [
+const KNOWN_EFFECTS: [&str; 14] = [
     "LLM",
     "Tool",
     "IO",
@@ -432,6 +439,7 @@ const KNOWN_EFFECTS: [&str; 13] = [
     "Workspace",
     "WorkspaceDelete",
     "Store",
+    "MemStore",
     "UI",
     "Auth",
     "FsWatch",
@@ -688,6 +696,8 @@ fn direct_effects(
                             }
                         } else if name.starts_with("store.") {
                             effects.insert("Store".into());
+                        } else if name.starts_with("mem.") {
+                            effects.insert("MemStore".into());
                         } else if name.starts_with("fs.") {
                             effects.insert("FsWatch".into());
                         } else if name.starts_with("proc.") {
@@ -783,6 +793,15 @@ fn body_effects(
         match &st.kind {
             StmtKind::Let { value, .. } | StmtKind::Assign { value, .. } => {
                 direct_effects(value, g, effects, calls)
+            }
+            StmtKind::IndexAssign {
+                collection,
+                index,
+                value,
+            } => {
+                direct_effects(collection, g, effects, calls);
+                direct_effects(index, g, effects, calls);
+                direct_effects(value, g, effects, calls);
             }
             StmtKind::StateWrite { value, .. } => direct_effects(value, g, effects, calls),
             StmtKind::Assert(e) | StmtKind::ExprStmt(e) => direct_effects(e, g, effects, calls),
@@ -880,6 +899,7 @@ fn expr_has_effect_call(
                         || n.starts_with("io.")
                         || n.starts_with("workspace.")
                         || n.starts_with("store.")
+                        || n.starts_with("mem.")
                         || n.starts_with("fs.")
                         || n.starts_with("proc.")
                 })
@@ -947,6 +967,7 @@ fn stmts_have_effect_call(
     body.iter().any(|st| match &st.kind {
         StmtKind::Let { value, .. }
         | StmtKind::Assign { value, .. }
+        | StmtKind::IndexAssign { value, .. }
         | StmtKind::StateWrite { value, .. } => expr_has_effect_call(value, g, inferred),
         StmtKind::Assert(e) | StmtKind::ExprStmt(e) => expr_has_effect_call(e, g, inferred),
         StmtKind::For { coll, body, .. } => {
@@ -1114,6 +1135,74 @@ fn check_test_body_inner(
                         code: "E0101",
                         msg: format!("unknown identifier '{name}'{did}"),
                     });
+                }
+            }
+            StmtKind::IndexAssign {
+                collection,
+                index,
+                value,
+            } => {
+                let col_ty = check_expr(collection, &locals, g, errs);
+                let idx_ty = check_expr(index, &locals, g, errs);
+                let val_ty = check_expr(value, &locals, g, errs);
+
+                if let ExprKind::Ident(name) = &collection.kind {
+                    if !mut_locals.contains(name) {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0706",
+                            msg: format!(
+                                "cannot mutate immutable local '{name}'; declare it with `let mut`"
+                            ),
+                        });
+                    }
+                }
+
+                match col_ty {
+                    Ty::List(elem) => {
+                        if !assignable(&idx_ty, &Ty::Int) {
+                            errs.push(CheckError {
+                                span: None,
+                                code: "E0201",
+                                msg: format!("list index must be an integer, got {idx_ty}"),
+                            });
+                        }
+                        if !assignable(&val_ty, &elem) {
+                            errs.push(CheckError {
+                                span: None,
+                                code: "E0201",
+                                msg: format!(
+                                    "cannot assign value of type {val_ty} to list of element type {elem}"
+                                ),
+                            });
+                        }
+                    }
+                    Ty::Map(k, v) => {
+                        if !assignable(&idx_ty, &k) {
+                            errs.push(CheckError {
+                                span: None,
+                                code: "E0201",
+                                msg: format!("map key mismatch: expected {k}, got {idx_ty}"),
+                            });
+                        }
+                        if !assignable(&val_ty, &v) {
+                            errs.push(CheckError {
+                                span: None,
+                                code: "E0201",
+                                msg: format!(
+                                    "cannot assign value of type {val_ty} to map of value type {v}"
+                                ),
+                            });
+                        }
+                    }
+                    Ty::Unknown => {}
+                    other => {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0201",
+                            msg: format!("cannot index-assign into type {other}"),
+                        });
+                    }
                 }
             }
             StmtKind::StateWrite { field, .. } => {
@@ -1292,6 +1381,75 @@ fn check_fn_stmts(
                         code: "E0101",
                         msg: format!("unknown identifier '{name}'{did}"),
                     });
+                }
+                last_ty = Ty::None_;
+            }
+            StmtKind::IndexAssign {
+                collection,
+                index,
+                value,
+            } => {
+                let col_ty = check_expr(collection, locals, g, errs);
+                let idx_ty = check_expr(index, locals, g, errs);
+                let val_ty = check_expr(value, locals, g, errs);
+
+                if let ExprKind::Ident(name) = &collection.kind {
+                    if !mut_locals.contains(name) {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0706",
+                            msg: format!(
+                                "cannot mutate immutable local '{name}'; declare it with `let mut`"
+                            ),
+                        });
+                    }
+                }
+
+                match col_ty {
+                    Ty::List(elem) => {
+                        if !assignable(&idx_ty, &Ty::Int) {
+                            errs.push(CheckError {
+                                span: None,
+                                code: "E0201",
+                                msg: format!("list index must be an integer, got {idx_ty}"),
+                            });
+                        }
+                        if !assignable(&val_ty, &elem) {
+                            errs.push(CheckError {
+                                span: None,
+                                code: "E0201",
+                                msg: format!(
+                                    "cannot assign value of type {val_ty} to list of element type {elem}"
+                                ),
+                            });
+                        }
+                    }
+                    Ty::Map(k, v) => {
+                        if !assignable(&idx_ty, &k) {
+                            errs.push(CheckError {
+                                span: None,
+                                code: "E0201",
+                                msg: format!("map key mismatch: expected {k}, got {idx_ty}"),
+                            });
+                        }
+                        if !assignable(&val_ty, &v) {
+                            errs.push(CheckError {
+                                span: None,
+                                code: "E0201",
+                                msg: format!(
+                                    "cannot assign value of type {val_ty} to map of value type {v}"
+                                ),
+                            });
+                        }
+                    }
+                    Ty::Unknown => {}
+                    other => {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0201",
+                            msg: format!("cannot index-assign into type {other}"),
+                        });
+                    }
                 }
                 last_ty = Ty::None_;
             }
@@ -2013,7 +2171,7 @@ fn check_expr_pos(
             }
             if let ExprKind::Field { obj, name } = &func.as_ref().kind {
                 if let ExprKind::Ident(prefix) = &obj.kind {
-                    if prefix == "store" {
+                    if prefix == "store" || prefix == "mem" {
                         match name.as_str() {
                             "get" => {
                                 if let Some((_, dt)) =
@@ -2026,7 +2184,7 @@ fn check_expr_pos(
                                 }
                                 return Ty::Unknown;
                             }
-                            "set" => return Ty::None_,
+                            "set" | "clear" => return Ty::None_,
                             "has" | "delete" => return Ty::Bool,
                             "keys" => return Ty::List(Box::new(Ty::Str)),
                             _ => {}
@@ -2037,6 +2195,13 @@ fn check_expr_pos(
                             "write" | "append" | "delete" => return Ty::None_,
                             "exists" => return Ty::Bool,
                             "list" => return Ty::List(Box::new(Ty::Str)),
+                            "stat" => {
+                                return Ty::Record(vec![
+                                    ("is_dir".to_string(), Ty::Bool),
+                                    ("mtime_ms".to_string(), Ty::Int),
+                                    ("size".to_string(), Ty::Int),
+                                ])
+                            }
                             _ => {}
                         }
                     } else if prefix == "fs" {
@@ -2130,7 +2295,7 @@ fn check_expr_pos(
                         }
                     } else if prefix == "str" {
                         match name.as_str() {
-                            "length" | "to_int" => return Ty::Int,
+                            "length" | "to_int" | "char_code" | "hash" => return Ty::Int,
                             "to_float" => return Ty::Float,
                             "upper" | "lower" | "trim" | "replace" | "substring" | "to_string" => {
                                 return Ty::Str
@@ -2772,6 +2937,16 @@ fn check_expr_pos(
                     } else {
                         Ty::Unknown
                     }
+                }
+                Ty::Map(k, v) => {
+                    if !assignable(&idx_ty, &k) {
+                        errs.push(CheckError {
+                            span: None,
+                            code: "E0201",
+                            msg: format!("map index must be of type {k}, got {idx_ty}"),
+                        });
+                    }
+                    *v
                 }
                 Ty::Unknown => Ty::Unknown,
                 _ => {

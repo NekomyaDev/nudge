@@ -1,0 +1,70 @@
+// Deterministic content hashing and observation epoch generation for Nudge Browser
+// Part of Phase F2.1 (docs/browser-roadmap.md)
+
+fn ascii_code(ch: string) -> int {
+    let ascii = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+    let idx = str.index_of(ascii, ch)
+    if idx >= 0 {
+        idx + 32
+    } else if ch == "\n" {
+        10
+    } else if ch == "\t" {
+        9
+    } else {
+        0
+    }
+}
+
+fn djb2(s: string) -> int {
+    let mut h = 5381
+    let chars = str.split(s, "")
+    for ch in chars {
+        if ch != "" {
+            let code = ascii_code(ch)
+            h = ((h * 33) + code) % 2147483647
+        }
+    }
+    h
+}
+
+fn hex_char(n: int) -> string {
+    let hex_digits = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"]
+    let idx = n % 16
+    if idx >= 0 and idx < 16 {
+        hex_digits[idx]
+    } else {
+        "0"
+    }
+}
+
+fn idiv(a: int, b: int) -> int {
+    let s = str.to_string(a / b)
+    let dot = str.index_of(s, ".")
+    if dot >= 0 {
+        str.to_int(str.substring(s, 0, dot))
+    } else {
+        str.to_int(s)
+    }
+}
+
+fn to_hex8(val: int) -> string {
+    let mut v = val
+    let mut out = ""
+    for _ in [0, 1, 2, 3, 4, 5, 6, 7] {
+        let digit = hex_char(v % 16)
+        out = digit + out
+        v = idiv(v, 16)
+    }
+    out
+}
+
+fn hash_content(s: string) -> string {
+    let h = djb2(s)
+    to_hex8(h)
+}
+
+fn state_id(url: string, content: string) -> string {
+    let h1 = hash_content(url)
+    let h2 = hash_content(content)
+    "s-" + h1 + "-" + h2
+}

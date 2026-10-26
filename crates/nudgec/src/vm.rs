@@ -557,6 +557,41 @@ impl<'a> VM<'a> {
                         }
                     }
                 }
+                Op::StoreIndex(slot) => {
+                    let val = self.stack.pop().ok_or("stack underflow")?;
+                    let idx = self.stack.pop().ok_or("stack underflow")?;
+                    let base = self.frames[frame_idx].stack_base;
+                    let target = &mut self.stack[base + *slot as usize];
+                    match target {
+                        NudgeVal::List(items) => match idx {
+                            NudgeVal::Int(i) => {
+                                if i < 0 || i as usize >= items.len() {
+                                    return Err(format!(
+                                        "error[E0705]: index out of bounds: index {i} out of range for list of length {}",
+                                        items.len()
+                                    ));
+                                }
+                                items[i as usize] = val;
+                            }
+                            other => {
+                                return Err(format!(
+                                    "list index must be an integer, got {}",
+                                    other.type_name()
+                                ));
+                            }
+                        },
+                        NudgeVal::Map(map) => {
+                            let key = match idx {
+                                NudgeVal::Str(s) => s,
+                                other => format!("{other}"),
+                            };
+                            map.insert(key, val);
+                        }
+                        other => {
+                            return Err(format!("cannot index into type {}", other.type_name()));
+                        }
+                    }
+                }
                 Op::CheckList(slot) => {
                     let base = self.frames[frame_idx].stack_base;
                     let val = &self.stack[base + *slot as usize];
@@ -741,6 +776,7 @@ mod tests {
     /// Differential parity harness: asserts that the interpreter and the NBC bytecode VM
     /// produce identical outputs for the given program.
     fn assert_parity(src: &str, entry: &str, args: &[NudgeVal]) {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
         let items = parse_src(src);
         let interp_res = run_program(&items, entry, args);
         let program = compile(&items).expect("compilation to bytecode failed");
@@ -754,6 +790,7 @@ mod tests {
     /// Differential error parity harness: asserts that both interpreter and VM fail with
     /// the exact same error message.
     fn assert_parity_error(src: &str, entry: &str, args: &[NudgeVal]) {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
         let items = parse_src(src);
         let interp_err =
             run_program(&items, entry, args).expect_err("interpreter should fail on this program");
@@ -1705,23 +1742,34 @@ mod tests {
     struct EnvVarGuard {
         var: &'static str,
         prev: Option<String>,
+        _guard: crate::eval::interpreter::tests::EnvResetGuard,
     }
 
     impl EnvVarGuard {
         fn set(var: &'static str, val: &str) -> Self {
+            let guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
             let prev = std::env::var(var).ok();
             unsafe {
                 std::env::set_var(var, val);
             }
-            Self { var, prev }
+            Self {
+                var,
+                prev,
+                _guard: guard,
+            }
         }
         #[allow(dead_code)]
         fn remove(var: &'static str) -> Self {
+            let guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
             let prev = std::env::var(var).ok();
             unsafe {
                 std::env::remove_var(var);
             }
-            Self { var, prev }
+            Self {
+                var,
+                prev,
+                _guard: guard,
+            }
         }
     }
 
