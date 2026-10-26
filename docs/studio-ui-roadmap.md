@@ -1306,9 +1306,9 @@ across items and buttons:
 1. **1.8 Theme** (centralize colors) — quick win, simplifies everything — DONE
 2. **1.2 Real font** + **1.3 Rounded corners** + **1.1 Alpha** — visual leap — DONE
 3. **2.1 `scroll`** — unblocks the chat feed — DONE
-4. **3.1 Bubbles** — where the "ChatGPT feel" comes from
-5. **5.2 Async + 5.1 Errors** — required for real usage
-6. Remaining widgets (SECTION 2) and interaction (SECTION 4)
+4. **3.1 Bubbles** — chat bubble cards and alignment — DONE
+5. **5.2 Async + 5.1 Errors** — async LLM, streaming, retry & cancel — DONE
+6. Remaining widgets (SECTION 2), interaction (SECTION 4), and extensions (SECTION 6) — ALL DONE
 
 ### Critical dependency notes
 - `code_block` (2.8) and Turkish/text → impossible without **1.2 font**

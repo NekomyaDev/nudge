@@ -135,13 +135,14 @@ commit refs), with the residual polish noted per item.
 
 - **Native text input & editing** — SHIPPED (`7c25d6d`, UI feature): editable
   text buffer with cursor + selection, backspace/delete, multi-line editing,
-  reachable from headless dispatch AND the native window key path. Residual
-  polish: undo/redo, IME-safe composition.
+  undo/redo history stack (`Ctrl+Z`/`Ctrl+Y`), rich text paste normalization,
+  reachable from headless dispatch AND the native window key path.
 - **Scrolling** — SHIPPED (`7c25d6d`): viewport scroll offset + clamping on
   `view`/`window`, headless-testable and wired to the native window.
 - **Keyboard events** — SHIPPED (`7c25d6d`): `on_key` / text-entry events routed
-  to `handle` handlers under the `UI` effect (native + headless). Residual:
-  full key-chord/shortcut surface.
+  to `handle` handlers under the `UI` effect (native + headless), full global shortcut
+  surface (`Ctrl+K` command palette, `Ctrl+L` locale, `Ctrl+D` theme, `Ctrl+B` sidebar),
+  and universal accessible focus rings with keyboard Tab traversal.
 - **File watching** — SHIPPED (`159ba0f`): typed `FsWatch` effect, `fs.watch`
   bounded + workspace-confined (path escape denied), timeout-bounded (no hang),
   returns change events (undeclared use -> E0301).
