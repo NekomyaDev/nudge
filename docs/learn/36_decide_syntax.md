@@ -1,0 +1,14 @@
+# 36/60 - decide { ... } on state with { ... }
+
+`decide { ... } on state with { ... }` sends structured questions to a
+JEV decision model. The `on` expression is the state or evidence the model
+must judge. The optional `with` block selects the model and places a deadline
+on the request.
+
+Each named question becomes a named field in the returned record. Keep the
+state focused: it is the evidence used for every question in this batch.
+
+Try:
+  nudgec check decide_syntax.ndg
+  nudgec build decide_syntax.ndg
+  python3 out/decide_syntax.py

@@ -1,0 +1,18 @@
+agent EchoPeer {
+    state {
+        calls: int = 0
+    }
+
+    fn echo(message: string) -> string {
+        state.calls += 1
+        "echo: " + message
+    }
+}
+
+fn main() {
+}
+
+test "peer skill is callable locally" {
+    assert EchoPeer.echo("hello") == "echo: hello"
+    assert EchoPeer.state.calls == 1
+}

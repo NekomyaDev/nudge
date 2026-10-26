@@ -1,0 +1,29 @@
+type Team = {
+    winner: string,
+    p: float,
+    distribution: {string: float},
+    confidence: float
+}
+
+type Result = { team: Team }
+
+fn classify(ticket: string) -> Result uses Decision {
+    decide {
+        team: "which team should own this ticket?" choose [billing, technical, security]
+    }
+    on ticket
+    with { model: "fake:default", deadline: 50 }
+}
+
+fn route_ticket(ticket: string) -> string uses Decision {
+    let result = classify(ticket)
+    route {
+        secure: "security_queue" when result.team.winner == "security" and result.team.confidence >= 0.8,
+        auto: result.team.winner when result.team.confidence >= 0.8,
+        review: "manual_review" otherwise
+    }
+}
+
+fn main() -> string uses Decision {
+    route_ticket("please reset my password")
+}

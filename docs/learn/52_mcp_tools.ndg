@@ -1,0 +1,12 @@
+tool lookup_city(name: string) -> string {
+    impl: mcp("directory").lookup(name)
+    side_effects: none
+}
+
+fn add(left: int, right: int) -> int {
+    left + right
+}
+
+fn main() -> int {
+    add(20, 22)
+}

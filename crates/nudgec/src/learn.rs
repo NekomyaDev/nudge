@@ -1,384 +1,418 @@
-// `nudgec learn` - a terminal tutorial: seven short lessons, each with an
-// explanation, a program that compiles against the compiler shipping the
-// lessons, and the exact commands to run. No TTY assumptions: plain
-// stdout, works over SSH and in CI.
+// `nudgec learn` - a terminal tutorial: sixty comprehensive lessons.
+// Lessons and programs live cleanly in `docs/learn/*.md` and `docs/learn/*.ndg`
+// without code duplication, type-checked by test against the shipping compiler.
 
 pub struct Lesson {
     pub name: &'static str,
     pub title: &'static str,
-    /// Lesson body — what the learner should read.
-    pub body: &'static str,
-    /// Program shown to the learner; every lesson program must type-check
-    /// (the test below enforces it against the compiler shipping these).
+    /// Lesson markdown body loaded from docs/learn.
+    pub doc: &'static str,
+    /// Lesson program loaded from docs/learn (if any).
     pub program: Option<&'static str>,
+}
+
+impl Lesson {
+    /// Body text to show the learner (stripping the markdown H1 title line).
+    pub fn body(&self) -> &'static str {
+        if let Some(pos) = self.doc.find("\n\n") {
+            &self.doc[pos + 2..]
+        } else {
+            self.doc
+        }
+    }
 }
 
 pub const LESSONS: &[Lesson] = &[
     Lesson {
         name: "hello",
-        title: "1/8 - Your first LLM call",
-        body: r#"Nudge compiles typed LLM calls into plain Python/TypeScript.
-
-An `llm"""..."""` block is a prompt with {interpolation} holes; `with {}`
-declares the contract: `schema` pins the output type, `budget` caps the
-cost, `model` names the provider. `uses LLM` is an *effect* — the
-compiler tracks it, so a function that calls a model can never hide it.
-
-Best part: every program runs against a deterministic fake provider by
-default. No API key, no token spend, byte-reproducible tests.
-
-Try:
-  nudgec check hello.ndg      # type-check
-  nudgec build hello.ndg      # compile to out/hello.py
-  python3 out/hello.py        # run — fake provider, offline"#,
-        program: Some(
-            r#"fn main() -> string uses LLM {
-    llm"""Say hello to the Nudge language in one short sentence."""
-    with { model: "anthropic:sonnet-4.6", budget: 0.01 USD }
-}
-"#,
-        ),
+        title: "1/60 - Your first LLM call",
+        doc: include_str!("../../../docs/learn/01_hello.md"),
+        program: Some(include_str!("../../../docs/learn/01_hello.ndg")),
     },
     Lesson {
         name: "types",
-        title: "2/8 - Typed outputs (schemas)",
-        body: r#"Free-text LLM output is a bug factory. In Nudge you declare a
-record type and pin it with `schema:` — the runtime validates every
-response against the type and repairs or rejects mismatches.
-
-The prompt must describe the contract in words too (the compiler checks
-that schema fields actually appear in the prompt — Prompt Clippy W0003).
-
-Try:
-  nudgec check types.ndg && nudgec build types.ndg"#,
-        program: Some(
-            r#"type Ticket = { category: string, priority: string, summary: string }
-
-fn triage(body: string) -> Ticket uses LLM {
-    llm"""Classify this support ticket.
-
-    Ticket body:
-    {body}
-
-    category: one of "billing", "technical", "account", "other"
-    priority: one of "low", "normal", "high", "urgent"
-    summary: one sentence a support lead can act on"""
-    with { schema: Ticket, model: "anthropic:sonnet-4.6", budget: 0.02 USD }
-}
-"#,
-        ),
+        title: "2/60 - Typed outputs (schemas)",
+        doc: include_str!("../../../docs/learn/02_types.md"),
+        program: Some(include_str!("../../../docs/learn/02_types.ndg")),
     },
     Lesson {
         name: "decide",
-        title: "3/8 - Typed decisions (decide{})",
-        body: r#"`decide{}` asks a *decision model* (the JEV family: Laya, Jev, Valen)
-typed questions about a state — one batched call, answers with
-probabilities and confidence. A decision is an effect like LLM: tracked,
-traced, replayable.
-
-The fake decision provider synthesizes deterministic distributions, so
-this too is $0 offline.
-
-Try:
-  nudgec check decide.ndg && nudgec build decide.ndg
-  python3 out/decide.py"#,
-        program: Some(
-            r#"type Triage = {
-    dept:    { winner: string, p: float, distribution: {string: float}, confidence: float },
-    churn:   { p: float },
-    urgency: { score: float, distribution: {string: float} }
-}
-
-fn triage(t: string) -> Triage uses Decision {
-    decide {
-        dept:    "which team should handle this ticket?" choose [billing, technical, security],
-        churn:   "does the customer threaten to cancel?" yes/no,
-        urgency: "how urgent is this?" score [low, soon, critical]
-    }
-    on t
-    with { model: "fake:default", deadline: 50 }
-}
-
-fn main() -> Triage uses Decision {
-    triage("my laptop is broken and I want a refund")
-}
-"#,
-        ),
+        title: "3/60 - Typed decisions (decide{})",
+        doc: include_str!("../../../docs/learn/03_decide.md"),
+        program: Some(include_str!("../../../docs/learn/03_decide.ndg")),
     },
     Lesson {
         name: "policy",
-        title: "4/8 - Confidence policies (route{})",
-        body: r#"raw model output should not reach users unchecked. `route{}` is a
-policy switch: arms carry conditions (confidence thresholds, winner
-equality) and an `otherwise` fallback. The compiler unifies the arm
-types, so every path returns the same shape.
-
-This is the "safe to deploy" pattern: high confidence → automate,
-anything else → a human.
-
-Try:
-  nudgec check policy.ndg && nudgec build policy.ndg && python3 out/policy.py"#,
-        program: Some(
-            r#"type Triage = {
-    dept:    { winner: string, p: float, distribution: {string: float}, confidence: float },
-    churn:   { p: float },
-    urgency: { score: float, distribution: {string: float} }
-}
-
-fn triage(t: string) -> Triage uses Decision {
-    decide {
-        dept:    "which team should handle this ticket?" choose [billing, technical, security],
-        churn:   "does the customer threaten to cancel?" yes/no,
-        urgency: "how urgent is this?" score [low, soon, critical]
-    }
-    on t
-    with { model: "fake:default", deadline: 50 }
-}
-
-fn handle(t: string) -> string uses IO {
-    "handled"
-}
-
-fn main() -> string uses Decision, IO {
-    let d = triage("my laptop is broken and I want a refund")
-    route {
-        auto:   handle(d.dept.winner) when d.dept.confidence > 0.6,
-        security: handle("security queue") when d.dept.winner == "security",
-        review: handle("manual review") otherwise
-    }
-}
-
-test "triage stays deterministic and policy picks an arm" {
-    let d = triage("my laptop is broken and I want a refund")
-    assert d.dept.p <= 1
-    assert d.churn.p >= 0
-}
-"#,
-        ),
+        title: "4/60 - Confidence policies (route{})",
+        doc: include_str!("../../../docs/learn/04_policy.md"),
+        program: Some(include_str!("../../../docs/learn/04_policy.ndg")),
     },
     Lesson {
         name: "test",
-        title: "5/8 - $0 tests and property fuzzing",
-        body: r#"test blocks run against the fake provider: deterministic, $0, no API
-keys — your whole suite runs on every save.
-
-`for_all` goes further: it loops a property over generated cases (edge
-values + a seeded sweep) and *shrinks* any failure to a minimal
-counterexample you can paste into a regression assert. gen.injection()
-feeds adversarial prompt-injection strings into pure code.
-
-Try:
-  nudgec test test.ndg"#,
-        program: Some(
-            r#"fn sanitize(s: string) -> int {
-    len(s)
-}
-
-test "sanitize output stays within bounds" {
-    for_all s in gen.str(64) {
-        assert len(s) >= 0
-    }
-}
-
-test "injection corpus never crashes the checker" {
-    for_all p in gen.injection() {
-        assert len(p) >= 0
-    }
-}
-"#,
-        ),
+        title: "5/60 - $0 tests and property fuzzing",
+        doc: include_str!("../../../docs/learn/05_test.md"),
+        program: Some(include_str!("../../../docs/learn/05_test.ndg")),
     },
     Lesson {
         name: "trace",
-        title: "6/8 - Traces, replay and regressions",
-        body: r#"Set NUDGE_TRACE=<file> and every LLM call, tool call and decision
-lands in an NTF trace (an open, frozen-v1 JSONL format — no vendor
-lock-in). Then:
-
-  nudgec trace-check t.jsonl    # validate against the schema
-  NUDGE_REPLAY=t.jsonl python3 out/hello.py   # replay: $0, byte-identical
-  nudgec trace-diff a.jsonl b.jsonl --fail-on-regression   # CI gate: cost/tokens/latency growth
-  nudgec policy-sweep t.jsonl --question dept --thresholds 0.5,0.8  # re-cut thresholds, zero calls
-
-And NUDGE_DECISION_CACHE=<path> stops you from ever paying for the same
-decision twice.
-
-You now know the whole loop: write → check → build → test → trace →
-gate. Next: `nudgec init my-agent --list` and ship something."#,
+        title: "6/60 - Traces, replay and regressions",
+        doc: include_str!("../../../docs/learn/06_trace.md"),
         program: None,
     },
     Lesson {
         name: "ui",
-        title: "7/8 - Interactive UI & Agents",
-        body: r#"Agents often require human oversight, review stations, and interactive
-interfaces. Nudge provides typed UI primitives (`view`, `column`, `row`,
-`text`, `button`, `input`) declared in code and managed by stateful agents.
-
-The `UI` effect tracks interface actions. In CI and unit tests,
-`mount_headless()` evaluates views, button clicks, and state transitions
-in memory without requiring a physical display.
-
-Try:
-  nudgec check ui.ndg
-  nudgec run ui.ndg
-  nudgec test ui.ndg"#,
-        program: Some(
-            r#"type Review = { summary: string, risk: string }
-
-fn analyze(prompt: string) -> Review uses LLM {
-    llm"""Review this requested action for security risks.
-
-    Request:
-    {prompt}
-
-    summary: one concise sentence explaining what this request does
-    risk: one of safe, medium, critical"""
-    with { schema: Review, model: "fake:default", budget: 0.01 USD, retry: 1 with repair }
-}
-
-view ApprovalView(prompt: string, status: string, risk: string) -> View {
-    column(padding = 16, gap = 10) [
-        text("Agent Review Station", size = 18, bold = true),
-        text("Request: " + prompt),
-        input(prompt, id = "input_prompt", on_change = update_prompt),
-        row(gap = 8) [
-            button("Inspect", id = "btn_inspect", on_click = inspect_action),
-            button("Approve", id = "btn_approve", on_click = approve_action),
-            button("Reject", id = "btn_reject", on_click = reject_action)
-        ],
-        text("Status: " + status),
-        text("Risk Level: " + risk)
-    ]
-}
-
-agent ApprovalStation {
-    state {
-        prompt: string = "deploy updates"
-        status: string = "pending review"
-        risk: string = "unknown"
-    }
-
-    fn update_prompt(val: string) uses UI {
-        state.prompt = val
-    }
-
-    fn inspect_action() uses UI, LLM {
-        let res = analyze(state.prompt)
-        state.status = res.summary
-        state.risk = res.risk
-    }
-
-    fn approve_action() uses UI {
-        state.status = "approved"
-    }
-
-    fn reject_action() uses UI {
-        state.status = "rejected"
-    }
-
-    window MainWindow {
-        title: "Approval Station",
-        width: 400,
-        height: 300,
-        content: ApprovalView(state.prompt, state.status, state.risk)
-    }
-}
-
-fn main() uses UI {
-    ApprovalStation.MainWindow.open()
-}
-
-test "approval station mounts headlessly and executes actions" {
-    let app = ApprovalStation.MainWindow.mount_headless()
-    assert app.find("input_prompt").exists()
-    assert app.find("btn_inspect").exists()
-    assert app.find_text("Status: pending review").exists()
-
-    app.dispatch_click("btn_inspect")
-    assert ApprovalStation.state.risk != "unknown"
-
-    app.dispatch_click("btn_approve")
-    assert ApprovalStation.state.status == "approved"
-    assert app.find_text("Status: approved").exists()
-}
-"#,
-        ),
+        title: "7/60 - Interactive UI & Agents",
+        doc: include_str!("../../../docs/learn/07_ui.md"),
+        program: Some(include_str!("../../../docs/learn/07_ui.ndg")),
     },
     Lesson {
         name: "a2a",
-        title: "8/8 - Agent-to-Agent (A2A) Peer Serving",
-        body: r#"Agents cannot live in isolation. Nudge compiles agent definitions directly into
-network-addressable Agent-to-Agent (A2A v2.0) protocol peers.
-
-The compiler extracts an Agent Card (`agent.json`) describing the agent's identity,
-capabilities, and exposed skills. Running `nudgec a2a-serve` starts a high-performance
-native Rust HTTP and JSON-RPC 2.0 server with multi-threaded task execution,
-background cancellation, and security boundaries.
-
-Key commands:
-  nudgec a2a <file.ndg>                 # export Agent Card to out/<name>.agent.json
-  nudgec a2a-serve <file.ndg> --port N  # serve native A2A peer on port N
-
-Endpoints served:
-  GET  /.well-known/agent.json          # A2A Agent Card metadata
-  GET  /health                          # server status and peer health
-  POST /skills/<name>                   # call an exposed skill synchronously
-  POST /tasks                           # create a task (supports "async": true)
-  GET  /tasks/<id>                      # query task execution status
-  POST /rpc                             # standard A2A JSON-RPC 2.0 (agent.card, task.create, task.get, task.cancel)
-
-Try:
-  nudgec check a2a.ndg
-  nudgec a2a a2a.ndg
-  nudgec a2a-serve a2a.ndg --port 9000"#,
-        program: Some(
-            r#"agent MathAgent {
-    state {
-        total_ops: int = 0
-    }
-
-    fn calculate(a: int, b: int) -> int {
-        state.total_ops += 1
-        a + b
-    }
-
-    fn summarize(topic: string) -> string uses LLM {
-        state.total_ops += 1
-        llm"""Summarize this topic in one concise sentence: {topic}"""
-        with { model: "fake:default" }
-    }
-}
-
-fn main() {
-}
-
-test "math agent calculates sum" {
-    assert MathAgent.calculate(15, 27) == 42
-    assert MathAgent.state.total_ops == 1
-}
-"#,
-        ),
+        title: "8/60 - Agent-to-Agent (A2A) Peer Serving",
+        doc: include_str!("../../../docs/learn/08_a2a.md"),
+        program: Some(include_str!("../../../docs/learn/08_a2a.ndg")),
+    },
+    Lesson {
+        name: "variables_mut",
+        title: "9/60 - Variables and mutable state",
+        doc: include_str!("../../../docs/learn/09_variables_mut.md"),
+        program: Some(include_str!("../../../docs/learn/09_variables_mut.ndg")),
+    },
+    Lesson {
+        name: "primitives",
+        title: "10/60 - Primitive types",
+        doc: include_str!("../../../docs/learn/10_primitives.md"),
+        program: Some(include_str!("../../../docs/learn/10_primitives.ndg")),
+    },
+    Lesson {
+        name: "functions",
+        title: "11/60 - Functions, parameters, and return types",
+        doc: include_str!("../../../docs/learn/11_functions.md"),
+        program: Some(include_str!("../../../docs/learn/11_functions.ndg")),
+    },
+    Lesson {
+        name: "operators",
+        title: "12/60 - Arithmetic, logical, and comparison operators",
+        doc: include_str!("../../../docs/learn/12_operators.md"),
+        program: Some(include_str!("../../../docs/learn/12_operators.ndg")),
+    },
+    Lesson {
+        name: "string_ops",
+        title: "13/60 - String operations",
+        doc: include_str!("../../../docs/learn/13_string_ops.md"),
+        program: Some(include_str!("../../../docs/learn/13_string_ops.ndg")),
+    },
+    Lesson {
+        name: "records",
+        title: "14/60 - Records and type aliases",
+        doc: include_str!("../../../docs/learn/14_records.md"),
+        program: Some(include_str!("../../../docs/learn/14_records.ndg")),
+    },
+    Lesson {
+        name: "lists",
+        title: "15/60 - Lists, indexing, and collection loops",
+        doc: include_str!("../../../docs/learn/15_lists.md"),
+        program: Some(include_str!("../../../docs/learn/15_lists.ndg")),
+    },
+    Lesson {
+        name: "options_results",
+        title: "16/60 - Optional values and error-shaped data",
+        doc: include_str!("../../../docs/learn/16_options_results.md"),
+        program: Some(include_str!("../../../docs/learn/16_options_results.ndg")),
+    },
+    Lesson {
+        name: "pattern_matching",
+        title: "17/60 - Branching before match expressions",
+        doc: include_str!("../../../docs/learn/17_pattern_matching.md"),
+        program: Some(include_str!("../../../docs/learn/17_pattern_matching.ndg")),
+    },
+    Lesson {
+        name: "loops",
+        title: "18/60 - Collection loops",
+        doc: include_str!("../../../docs/learn/18_loops.md"),
+        program: Some(include_str!("../../../docs/learn/18_loops.ndg")),
+    },
+    Lesson {
+        name: "purity_effects",
+        title: "19/60 - Purity and tracked effects",
+        doc: include_str!("../../../docs/learn/19_purity_effects.md"),
+        program: Some(include_str!("../../../docs/learn/19_purity_effects.ndg")),
+    },
+    Lesson {
+        name: "modules_imports",
+        title: "20/60 - Organizing modules",
+        doc: include_str!("../../../docs/learn/20_modules_imports.md"),
+        program: Some(include_str!("../../../docs/learn/20_modules_imports.ndg")),
+    },
+    Lesson {
+        name: "assertions_contracts",
+        title: "21/60 - Assertions and lightweight contracts",
+        doc: include_str!("../../../docs/learn/21_assertions_contracts.md"),
+        program: Some(include_str!(
+            "../../../docs/learn/21_assertions_contracts.ndg"
+        )),
+    },
+    Lesson {
+        name: "comments_docs",
+        title: "22/60 - Comments and documentation",
+        doc: include_str!("../../../docs/learn/22_comments_docs.md"),
+        program: Some(include_str!("../../../docs/learn/22_comments_docs.ndg")),
+    },
+    Lesson {
+        name: "prompt_syntax",
+        title: "23/60 - Prompt syntax and multi-line blocks",
+        doc: include_str!("../../../docs/learn/23_prompt_syntax.md"),
+        program: Some(include_str!("../../../docs/learn/23_prompt_syntax.ndg")),
+    },
+    Lesson {
+        name: "prompt_interpolation",
+        title: "24/60 - Prompt interpolation and formatting",
+        doc: include_str!("../../../docs/learn/24_prompt_interpolation.md"),
+        program: Some(include_str!(
+            "../../../docs/learn/24_prompt_interpolation.ndg"
+        )),
+    },
+    Lesson {
+        name: "structured_schemas",
+        title: "25/60 - Nested structured-output schemas",
+        doc: include_str!("../../../docs/learn/25_structured_schemas.md"),
+        program: Some(include_str!(
+            "../../../docs/learn/25_structured_schemas.ndg"
+        )),
+    },
+    Lesson {
+        name: "model_budget",
+        title: "26/60 - Budgets, token caps, and hard limits",
+        doc: include_str!("../../../docs/learn/26_model_budget.md"),
+        program: Some(include_str!("../../../docs/learn/26_model_budget.ndg")),
+    },
+    Lesson {
+        name: "model_routing",
+        title: "27/60 - Selecting and routing models",
+        doc: include_str!("../../../docs/learn/27_model_routing.md"),
+        program: Some(include_str!("../../../docs/learn/27_model_routing.ndg")),
+    },
+    Lesson {
+        name: "retry_repair",
+        title: "28/60 - Retry and automatic JSON repair",
+        doc: include_str!("../../../docs/learn/28_retry_repair.md"),
+        program: Some(include_str!("../../../docs/learn/28_retry_repair.ndg")),
+    },
+    Lesson {
+        name: "fallback_models",
+        title: "29/60 - Fallback models for failures and timeouts",
+        doc: include_str!("../../../docs/learn/29_fallback_models.md"),
+        program: Some(include_str!("../../../docs/learn/29_fallback_models.ndg")),
+    },
+    Lesson {
+        name: "few_shot",
+        title: "30/60 - Few-shot prompting and context conditioning",
+        doc: include_str!("../../../docs/learn/30_few_shot.md"),
+        program: Some(include_str!("../../../docs/learn/30_few_shot.ndg")),
+    },
+    Lesson {
+        name: "prompt_clippy",
+        title: "31/60 - Prompt Clippy reliability warnings",
+        doc: include_str!("../../../docs/learn/31_prompt_clippy.md"),
+        program: Some(include_str!("../../../docs/learn/31_prompt_clippy.ndg")),
+    },
+    Lesson {
+        name: "temperature_params",
+        title: "32/60 - Temperature, top_p, and seed parameters",
+        doc: include_str!("../../../docs/learn/32_temperature_params.md"),
+        program: Some(include_str!(
+            "../../../docs/learn/32_temperature_params.ndg"
+        )),
+    },
+    Lesson {
+        name: "streaming",
+        title: "33/60 - Streaming responses and token chunks",
+        doc: include_str!("../../../docs/learn/33_streaming.md"),
+        program: Some(include_str!("../../../docs/learn/33_streaming.ndg")),
+    },
+    Lesson {
+        name: "system_prompts",
+        title: "34/60 - System prompts and role management",
+        doc: include_str!("../../../docs/learn/34_system_prompts.md"),
+        program: Some(include_str!("../../../docs/learn/34_system_prompts.ndg")),
+    },
+    Lesson {
+        name: "caching_cost",
+        title: "35/60 - Prompt caching and cost optimization",
+        doc: include_str!("../../../docs/learn/35_caching_cost.md"),
+        program: Some(include_str!("../../../docs/learn/35_caching_cost.ndg")),
+    },
+    Lesson {
+        name: "decide_syntax",
+        title: "36/60 - decide { ... } on state with { ... }",
+        doc: include_str!("../../../docs/learn/36_decide_syntax.md"),
+        program: Some(include_str!("../../../docs/learn/36_decide_syntax.ndg")),
+    },
+    Lesson {
+        name: "choose_questions",
+        title: "37/60 - choose [a, b, c]: classifying with a winner",
+        doc: include_str!("../../../docs/learn/37_choose_questions.md"),
+        program: Some(include_str!("../../../docs/learn/37_choose_questions.ndg")),
+    },
+    Lesson {
+        name: "yesno_questions",
+        title: "38/60 - yes/no questions and probability p",
+        doc: include_str!("../../../docs/learn/38_yesno_questions.md"),
+        program: Some(include_str!("../../../docs/learn/38_yesno_questions.ndg")),
+    },
+    Lesson {
+        name: "score_questions",
+        title: "39/60 - score [low, medium, high] and weighted scores",
+        doc: include_str!("../../../docs/learn/39_score_questions.md"),
+        program: Some(include_str!("../../../docs/learn/39_score_questions.ndg")),
+    },
+    Lesson {
+        name: "multi_question_batch",
+        title: "40/60 - batch three questions in one decision call",
+        doc: include_str!("../../../docs/learn/40_multi_question_batch.md"),
+        program: Some(include_str!(
+            "../../../docs/learn/40_multi_question_batch.ndg"
+        )),
+    },
+    Lesson {
+        name: "confidence_thresholds",
+        title: "41/60 - filter with p and confidence thresholds",
+        doc: include_str!("../../../docs/learn/41_confidence_thresholds.md"),
+        program: Some(include_str!(
+            "../../../docs/learn/41_confidence_thresholds.ndg"
+        )),
+    },
+    Lesson {
+        name: "route_syntax",
+        title: "42/60 - route { arm: expr when cond, otherwise: fallback }",
+        doc: include_str!("../../../docs/learn/42_route_syntax.md"),
+        program: Some(include_str!("../../../docs/learn/42_route_syntax.ndg")),
+    },
+    Lesson {
+        name: "human_in_the_loop",
+        title: "43/60 - escalate low-confidence decisions to a human",
+        doc: include_str!("../../../docs/learn/43_human_in_the_loop.md"),
+        program: Some(include_str!("../../../docs/learn/43_human_in_the_loop.ndg")),
+    },
+    Lesson {
+        name: "policy_sweep",
+        title: "44/60 - calibrate thresholds offline with policy-sweep",
+        doc: include_str!("../../../docs/learn/44_policy_sweep.md"),
+        program: Some(include_str!("../../../docs/learn/44_policy_sweep.ndg")),
+    },
+    Lesson {
+        name: "injection_guard",
+        title: "45/60 - gen.injection() and prompt-injection defenses",
+        doc: include_str!("../../../docs/learn/45_injection_guard.md"),
+        program: Some(include_str!("../../../docs/learn/45_injection_guard.ndg")),
+    },
+    Lesson {
+        name: "decision_caching",
+        title: "46/60 - cache repeated decisions with NUDGE_DECISION_CACHE",
+        doc: include_str!("../../../docs/learn/46_decision_caching.md"),
+        program: Some(include_str!("../../../docs/learn/46_decision_caching.ndg")),
+    },
+    Lesson {
+        name: "explain_reports",
+        title: "47/60 - audit decisions with nudgec explain",
+        doc: include_str!("../../../docs/learn/47_explain_reports.md"),
+        program: Some(include_str!("../../../docs/learn/47_explain_reports.ndg")),
+    },
+    Lesson {
+        name: "agent_state",
+        title: "48/60 - Agent state and durable mutations",
+        doc: include_str!("../../../docs/learn/48_agent_state.md"),
+        program: Some(include_str!("../../../docs/learn/48_agent_state.ndg")),
+    },
+    Lesson {
+        name: "agent_actions",
+        title: "49/60 - Agent actions and effect labels",
+        doc: include_str!("../../../docs/learn/49_agent_actions.md"),
+        program: Some(include_str!("../../../docs/learn/49_agent_actions.ndg")),
+    },
+    Lesson {
+        name: "ui_views",
+        title: "50/60 - Typed views with columns, rows, and controls",
+        doc: include_str!("../../../docs/learn/50_ui_views.md"),
+        program: Some(include_str!("../../../docs/learn/50_ui_views.ndg")),
+    },
+    Lesson {
+        name: "ui_headless_test",
+        title: "51/60 - Headless UI tests",
+        doc: include_str!("../../../docs/learn/51_ui_headless_test.md"),
+        program: Some(include_str!("../../../docs/learn/51_ui_headless_test.ndg")),
+    },
+    Lesson {
+        name: "mcp_tools",
+        title: "52/60 - Publish functions through MCP",
+        doc: include_str!("../../../docs/learn/52_mcp_tools.md"),
+        program: Some(include_str!("../../../docs/learn/52_mcp_tools.ndg")),
+    },
+    Lesson {
+        name: "a2a_agent_card",
+        title: "53/60 - A2A Agent Cards, capabilities, and skills",
+        doc: include_str!("../../../docs/learn/53_a2a_agent_card.md"),
+        program: Some(include_str!("../../../docs/learn/53_a2a_agent_card.ndg")),
+    },
+    Lesson {
+        name: "a2a_peer_serving",
+        title: "54/60 - Serve an A2A peer over REST and JSON-RPC",
+        doc: include_str!("../../../docs/learn/54_a2a_peer_serving.md"),
+        program: Some(include_str!("../../../docs/learn/54_a2a_peer_serving.ndg")),
+    },
+    Lesson {
+        name: "deterministic_fakes",
+        title: "55/60 - Deterministic fakes: offline and zero cost",
+        doc: include_str!("../../../docs/learn/55_deterministic_fakes.md"),
+        program: Some(include_str!(
+            "../../../docs/learn/55_deterministic_fakes.ndg"
+        )),
+    },
+    Lesson {
+        name: "property_fuzzing",
+        title: "56/60 - Property fuzzing and shrinking",
+        doc: include_str!("../../../docs/learn/56_property_fuzzing.md"),
+        program: Some(include_str!("../../../docs/learn/56_property_fuzzing.ndg")),
+    },
+    Lesson {
+        name: "ntf_traces",
+        title: "57/60 - Open NTF traces",
+        doc: include_str!("../../../docs/learn/57_ntf_traces.md"),
+        program: Some(include_str!("../../../docs/learn/57_ntf_traces.ndg")),
+    },
+    Lesson {
+        name: "trace_replay",
+        title: "58/60 - Byte-identical trace replay",
+        doc: include_str!("../../../docs/learn/58_trace_replay.md"),
+        program: Some(include_str!("../../../docs/learn/58_trace_replay.ndg")),
+    },
+    Lesson {
+        name: "trace_diff_ci",
+        title: "59/60 - Trace diffs as CI regression gates",
+        doc: include_str!("../../../docs/learn/59_trace_diff_ci.md"),
+        program: Some(include_str!("../../../docs/learn/59_trace_diff_ci.ndg")),
+    },
+    Lesson {
+        name: "compilation_targets",
+        title: "60/60 - Python, TypeScript, and standalone Rust targets",
+        doc: include_str!("../../../docs/learn/60_compilation_targets.md"),
+        program: Some(include_str!(
+            "../../../docs/learn/60_compilation_targets.ndg"
+        )),
     },
 ];
 
-pub fn all_lessons() -> Vec<&'static Lesson> {
-    let mut out = Vec::with_capacity(60);
-    out.extend(LESSONS);
-    out.extend(crate::learn_part1::LESSONS_PART1);
-    out.extend(crate::learn_part2::LESSONS_PART2);
-    out.extend(crate::learn_part3::LESSONS_PART3);
-    out.extend(crate::learn_part4::LESSONS_PART4);
-    out
+pub fn all_lessons() -> &'static [Lesson] {
+    LESSONS
 }
 
 pub fn run(rest: &[String]) -> Result<(), String> {
-    let lessons = all_lessons();
+    let lessons = LESSONS;
     if rest.is_empty() {
         println!(
             "nudge learn - complete interactive language curriculum ({} lessons)\n",
             lessons.len()
         );
-        for l in &lessons {
+        for l in lessons {
             println!("  nudgec learn {:<22} {}", l.name, l.title);
         }
         println!("\nstart with: nudgec learn hello");
@@ -390,10 +424,10 @@ pub fn run(rest: &[String]) -> Result<(), String> {
         .find(|l| l.name == name)
         .ok_or_else(|| format!("unknown lesson '{name}' — run `nudgec learn` for the list"))?;
     println!("=== {} ===\n", lesson.title);
-    println!("{}", lesson.body);
+    println!("{}", lesson.body().trim_end());
     if let Some(program) = lesson.program {
-        println!("\n--- {}.ndg ---\n{}\n", name, program);
-        println!("save it as {name}.ndg and run the Try commands above.");
+        println!("\n--- {}.ndg ---\n{}", name, program.trim_end());
+        println!("\nsave it as {name}.ndg and run the Try commands above.");
     }
     Ok(())
 }
@@ -406,8 +440,10 @@ mod tests {
     fn lesson_programs_type_check_against_the_shipping_compiler() {
         for l in LESSONS {
             let Some(src) = l.program else { continue };
-            let tokens = crate::lexer::lex(src).unwrap();
-            let items = crate::parser::parse(tokens).unwrap();
+            let tokens = crate::lexer::lex(src)
+                .unwrap_or_else(|e| panic!("lesson '{}' failed to lex: {e:?}", l.name));
+            let items = crate::parser::parse(tokens)
+                .unwrap_or_else(|e| panic!("lesson '{}' failed to parse: {e:?}", l.name));
             let errs = crate::check::check(&items);
             assert!(
                 errs.is_empty(),
@@ -419,15 +455,21 @@ mod tests {
     }
 
     #[test]
-    fn eight_lessons_with_unique_names_and_helpful_titles() {
-        assert_eq!(LESSONS.len(), 8);
+    fn total_curriculum_contains_sixty_unique_lessons_and_helpful_titles() {
+        assert_eq!(LESSONS.len(), 60);
         let mut names: Vec<_> = LESSONS.iter().map(|l| l.name).collect();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), LESSONS.len());
-        for l in LESSONS {
-            assert!(l.title.len() > 5);
-            assert!(l.body.contains("Try:") || l.body.contains("know the whole loop"));
+        assert_eq!(names.len(), 60, "every lesson name must be unique");
+        for (i, l) in LESSONS.iter().enumerate() {
+            let expected_prefix = format!("{}/60 - ", i + 1);
+            assert!(
+                l.title.starts_with(&expected_prefix),
+                "lesson '{}' title '{}' should start with '{expected_prefix}'",
+                l.name,
+                l.title
+            );
+            assert!(l.doc.contains("Try:") || l.doc.contains("know the whole loop"));
         }
     }
 
@@ -439,20 +481,7 @@ mod tests {
         assert!(run(&["structured_schemas".to_string()]).is_ok());
         assert!(run(&["decide_syntax".to_string()]).is_ok());
         assert!(run(&["a2a_agent_card".to_string()]).is_ok());
+        assert!(run(&["compilation_targets".to_string()]).is_ok());
         assert!(run(&["nope".to_string()]).is_err());
-    }
-
-    #[test]
-    fn total_curriculum_contains_sixty_unique_lessons() {
-        let lessons = all_lessons();
-        assert_eq!(lessons.len(), 60);
-        let mut names: Vec<_> = lessons.iter().map(|l| l.name).collect();
-        names.sort_unstable();
-        names.dedup();
-        assert_eq!(
-            names.len(),
-            60,
-            "every lesson name across all parts must be unique"
-        );
     }
 }

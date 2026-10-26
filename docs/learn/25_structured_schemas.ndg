@@ -1,0 +1,19 @@
+type Evidence = { quote: string, source: string }
+type Classification = { label: string, confidence: float }
+type Analysis = { classification: Classification, evidence: [Evidence], summary: string }
+
+fn analyze(text: string) -> Analysis uses LLM {
+    llm"""Analyze the supplied text and return a structured analysis.
+
+Text:
+{text}
+
+classification.label: exactly one of "positive", "neutral", or "negative"
+classification.confidence: a number from 0 to 1
+evidence: a list of records, each with quote and source
+evidence.quote: a supporting excerpt
+evidence.source: "input"
+summary: one concise explanation
+"""
+    with { schema: Analysis, model: "fake:default", budget: 0.02 USD, retry: 2 with repair }
+}

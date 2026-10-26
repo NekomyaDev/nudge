@@ -1,0 +1,9 @@
+type UserName = string
+
+fn format_user(name: UserName) -> string {
+    "user: " + name
+}
+
+fn main() -> string {
+    format_user("Ada")
+}

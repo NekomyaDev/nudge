@@ -1,0 +1,13 @@
+type Customer = { name: string, plan: string }
+
+fn welcome(customer: Customer, balance: float) -> string uses LLM {
+    llm"""Write a helpful billing reply.
+
+Customer name: {customer.name}
+Subscription plan: {customer.plan}
+Current balance: {balance}
+
+Use a warm, professional tone and state the next action clearly.
+"""
+    with { model: "fake:default", budget: 0.01 USD }
+}

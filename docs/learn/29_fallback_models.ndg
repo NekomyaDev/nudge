@@ -1,0 +1,15 @@
+fn classify(message: string) -> string uses LLM {
+    llm"""Classify this incoming message as billing, technical, account, or other.
+
+Message:
+{message}
+
+Return exactly one category name.
+"""
+    with {
+        model: "anthropic:sonnet-4.6",
+        fallback: "fake:default",
+        budget: 0.02 USD,
+        max_tokens: 20
+    }
+}

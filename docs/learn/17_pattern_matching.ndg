@@ -1,0 +1,11 @@
+fn status(is_admin: bool, active: bool) -> string {
+    if is_admin and active {
+        "admin"
+    } else {
+        "member"
+    }
+}
+
+fn main() -> string {
+    status(false, true)
+}

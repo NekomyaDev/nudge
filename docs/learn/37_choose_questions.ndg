@@ -1,0 +1,21 @@
+type Team = {
+    winner: string,
+    p: float,
+    distribution: {string: float},
+    confidence: float
+}
+
+type Routing = { team: Team }
+
+fn classify(ticket: string) -> Routing uses Decision {
+    decide {
+        team: "which team should own this ticket?" choose [billing, technical, security]
+    }
+    on ticket
+    with { model: "fake:default", deadline: 50 }
+}
+
+fn main() -> string uses Decision {
+    let result = classify("I was charged twice")
+    result.team.winner
+}

@@ -1,0 +1,8 @@
+fn concise_summary(note: string) -> string uses LLM {
+    llm"""Summarize this note in one concise sentence: {note}"""
+    with { model: "fake:default", budget: 0.00 USD }
+}
+
+fn main() -> string uses LLM {
+    concise_summary("Trace comparison makes resource regressions visible.")
+}

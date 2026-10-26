@@ -1,0 +1,13 @@
+# 60/60 - Python, TypeScript, and standalone Rust targets
+
+The same checked Nudge source can target several deployment shapes:
+`nudgec build program.ndg` emits Python, `nudgec build-ts program.ndg` emits
+TypeScript, and `nudgec build program.ndg --standalone` packages a native Rust
+agent binary. Type-check first, then select the runtime ecosystem that matches
+your deployment.
+
+Try:
+  nudgec check compilation_targets.ndg
+  nudgec build compilation_targets.ndg
+  nudgec build-ts compilation_targets.ndg
+  nudgec build compilation_targets.ndg --standalone

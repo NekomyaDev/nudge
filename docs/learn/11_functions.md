@@ -1,0 +1,9 @@
+# 11/60 - Functions, parameters, and return types
+
+Define a function with `fn`, typed parameters, and `->` followed by its
+return type. The final expression in the body is its result. Call sites may use
+positional or named arguments. Default parameter values are not part of the
+current Nudge grammar, so model a default with a small wrapper function.
+
+Try:
+  nudgec check functions.ndg

@@ -1,0 +1,13 @@
+type Answer = { approved: { p: float } }
+
+fn review(request: string) -> Answer uses Decision {
+    decide {
+        approved: "is this request safe to approve?" yes/no
+    }
+    on request
+    with { model: "fake:default", deadline: 50 }
+}
+
+fn main() -> Answer uses Decision {
+    review("refund a duplicate charge")
+}

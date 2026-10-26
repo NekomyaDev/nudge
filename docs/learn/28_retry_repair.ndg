@@ -1,0 +1,14 @@
+type Todo = { title: string, priority: string, next_step: string }
+
+fn make_todo(request: string) -> Todo uses LLM {
+    llm"""Convert this request into one actionable todo item.
+
+Request:
+{request}
+
+title: a short task name
+priority: one of "low", "normal", or "high"
+next_step: the first concrete action
+"""
+    with { schema: Todo, model: "fake:default", budget: 0.02 USD, retry: 3 with repair }
+}

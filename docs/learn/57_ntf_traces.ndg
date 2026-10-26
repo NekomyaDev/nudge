@@ -1,0 +1,8 @@
+fn greet(person: string) -> string uses LLM {
+    llm"""Greet {person} in one short sentence."""
+    with { model: "fake:default", budget: 0.00 USD }
+}
+
+fn main() -> string uses LLM {
+    greet("trace reader")
+}

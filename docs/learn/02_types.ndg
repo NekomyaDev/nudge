@@ -1,0 +1,13 @@
+type Ticket = { category: string, priority: string, summary: string }
+
+fn triage(body: string) -> Ticket uses LLM {
+    llm"""Classify this support ticket.
+
+    Ticket body:
+    {body}
+
+    category: one of "billing", "technical", "account", "other"
+    priority: one of "low", "normal", "high", "urgent"
+    summary: one sentence a support lead can act on"""
+    with { schema: Ticket, model: "anthropic:sonnet-4.6", budget: 0.02 USD }
+}

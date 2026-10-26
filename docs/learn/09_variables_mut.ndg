@@ -1,0 +1,10 @@
+fn count_items() -> int {
+    let mut total: int = 0
+    total = total + 1
+    total = total + 2
+    total
+}
+
+fn main() -> int {
+    count_items()
+}

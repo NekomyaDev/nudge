@@ -1,0 +1,28 @@
+view CounterView(count: int) -> View {
+    column(gap = 8) [
+        text("Count: " + count),
+        button("Increment", id = "increment", on_click = increment)
+    ]
+}
+
+agent CounterUI {
+    state {
+        count: int = 0
+    }
+
+    fn increment() uses UI {
+        state.count += 1
+    }
+
+    window MainWindow {
+        title: "Counter",
+        content: CounterView(state.count)
+    }
+}
+
+test "headless mount finds and clicks controls" {
+    let app = CounterUI.MainWindow.mount_headless()
+    assert app.find("increment").exists()
+    app.dispatch_click("increment")
+    assert CounterUI.state.count == 1
+}

@@ -1,0 +1,13 @@
+# 26/60 - Budgets, token caps, and hard limits
+
+Put a hard `budget` on every production LLM call. The value is a money
+literal such as `0.05 USD`; it is the upper spending bound for that call.
+`max_tokens` additionally limits response length, which controls latency and
+keeps a verbose model from consuming the whole budget.
+
+Budgets are contracts, not estimates. Set the cap from the largest acceptable
+per-request cost, then monitor traces before raising it.
+
+Try:
+  nudgec check model_budget.ndg
+  nudgec cost model_budget.ndg

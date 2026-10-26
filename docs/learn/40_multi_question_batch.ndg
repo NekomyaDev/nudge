@@ -1,0 +1,20 @@
+type Batch = {
+    owner: { winner: string, p: float, distribution: {string: float}, confidence: float },
+    churn: { p: float },
+    urgency: { score: float, distribution: {string: float} }
+}
+
+fn triage(ticket: string) -> Batch uses Decision {
+    decide {
+        owner: "which team should handle this ticket?" choose [billing, technical, security],
+        churn: "does this customer intend to cancel?" yes/no,
+        urgency: "how urgent is this ticket?" score [low, medium, high]
+    }
+    on ticket
+    with { model: "fake:default", deadline: 50 }
+}
+
+fn main() -> string uses Decision {
+    let result = triage("my account was billed twice and I need help today")
+    result.owner.winner
+}

@@ -1,0 +1,12 @@
+# 58/60 - Byte-identical trace replay
+
+A captured NTF trace can replace live provider calls. Set
+`NUDGE_REPLAY=<trace-path>` when executing the same compiled program and the
+runtime replays recorded events at $0. That makes a previously observed run
+repeatable, including its exact model-facing inputs and outputs.
+
+Try:
+  nudgec check trace_replay.ndg
+  nudgec build trace_replay.ndg
+  NUDGE_TRACE=first.ntf.jsonl python3 out/trace_replay.py
+  NUDGE_REPLAY=first.ntf.jsonl python3 out/trace_replay.py

@@ -1,0 +1,9 @@
+# 17/60 - Branching before match expressions
+
+Nudge's current checked control-flow form is `if ... else ...`.
+`match`, exhaustiveness checking, pattern destructuring, and guards are future
+syntax, so this lesson uses an explicit boolean condition that compiles today.
+Keep each branch returning the same type, just as a future `match` must.
+
+Try:
+  nudgec check pattern_matching.ndg

@@ -1,0 +1,13 @@
+type Reply = { answer: string, confidence: float }
+
+fn respond(question: string) -> Reply uses LLM {
+    llm"""Answer the user's question with a factual, concise response.
+
+Question:
+{question}
+
+answer: the direct answer in one or two sentences
+confidence: a number from 0 to 1 indicating certainty
+"""
+    with { schema: Reply, model: "fake:default", budget: 0.02 USD, retry: 2 with repair }
+}

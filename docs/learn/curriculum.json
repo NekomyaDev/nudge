@@ -1,0 +1,422 @@
+[
+  {
+    "order": 1,
+    "name": "hello",
+    "title": "1/60 - Your first LLM call",
+    "doc_file": "01_hello.md",
+    "code_file": "01_hello.ndg"
+  },
+  {
+    "order": 2,
+    "name": "types",
+    "title": "2/60 - Typed outputs (schemas)",
+    "doc_file": "02_types.md",
+    "code_file": "02_types.ndg"
+  },
+  {
+    "order": 3,
+    "name": "decide",
+    "title": "3/60 - Typed decisions (decide{})",
+    "doc_file": "03_decide.md",
+    "code_file": "03_decide.ndg"
+  },
+  {
+    "order": 4,
+    "name": "policy",
+    "title": "4/60 - Confidence policies (route{})",
+    "doc_file": "04_policy.md",
+    "code_file": "04_policy.ndg"
+  },
+  {
+    "order": 5,
+    "name": "test",
+    "title": "5/60 - $0 tests and property fuzzing",
+    "doc_file": "05_test.md",
+    "code_file": "05_test.ndg"
+  },
+  {
+    "order": 6,
+    "name": "trace",
+    "title": "6/60 - Traces, replay and regressions",
+    "doc_file": "06_trace.md",
+    "code_file": null
+  },
+  {
+    "order": 7,
+    "name": "ui",
+    "title": "7/60 - Interactive UI & Agents",
+    "doc_file": "07_ui.md",
+    "code_file": "07_ui.ndg"
+  },
+  {
+    "order": 8,
+    "name": "a2a",
+    "title": "8/60 - Agent-to-Agent (A2A) Peer Serving",
+    "doc_file": "08_a2a.md",
+    "code_file": "08_a2a.ndg"
+  },
+  {
+    "order": 9,
+    "name": "variables_mut",
+    "title": "9/60 - Variables and mutable state",
+    "doc_file": "09_variables_mut.md",
+    "code_file": "09_variables_mut.ndg"
+  },
+  {
+    "order": 10,
+    "name": "primitives",
+    "title": "10/60 - Primitive types",
+    "doc_file": "10_primitives.md",
+    "code_file": "10_primitives.ndg"
+  },
+  {
+    "order": 11,
+    "name": "functions",
+    "title": "11/60 - Functions, parameters, and return types",
+    "doc_file": "11_functions.md",
+    "code_file": "11_functions.ndg"
+  },
+  {
+    "order": 12,
+    "name": "operators",
+    "title": "12/60 - Arithmetic, logical, and comparison operators",
+    "doc_file": "12_operators.md",
+    "code_file": "12_operators.ndg"
+  },
+  {
+    "order": 13,
+    "name": "string_ops",
+    "title": "13/60 - String operations",
+    "doc_file": "13_string_ops.md",
+    "code_file": "13_string_ops.ndg"
+  },
+  {
+    "order": 14,
+    "name": "records",
+    "title": "14/60 - Records and type aliases",
+    "doc_file": "14_records.md",
+    "code_file": "14_records.ndg"
+  },
+  {
+    "order": 15,
+    "name": "lists",
+    "title": "15/60 - Lists, indexing, and collection loops",
+    "doc_file": "15_lists.md",
+    "code_file": "15_lists.ndg"
+  },
+  {
+    "order": 16,
+    "name": "options_results",
+    "title": "16/60 - Optional values and error-shaped data",
+    "doc_file": "16_options_results.md",
+    "code_file": "16_options_results.ndg"
+  },
+  {
+    "order": 17,
+    "name": "pattern_matching",
+    "title": "17/60 - Branching before match expressions",
+    "doc_file": "17_pattern_matching.md",
+    "code_file": "17_pattern_matching.ndg"
+  },
+  {
+    "order": 18,
+    "name": "loops",
+    "title": "18/60 - Collection loops",
+    "doc_file": "18_loops.md",
+    "code_file": "18_loops.ndg"
+  },
+  {
+    "order": 19,
+    "name": "purity_effects",
+    "title": "19/60 - Purity and tracked effects",
+    "doc_file": "19_purity_effects.md",
+    "code_file": "19_purity_effects.ndg"
+  },
+  {
+    "order": 20,
+    "name": "modules_imports",
+    "title": "20/60 - Organizing modules",
+    "doc_file": "20_modules_imports.md",
+    "code_file": "20_modules_imports.ndg"
+  },
+  {
+    "order": 21,
+    "name": "assertions_contracts",
+    "title": "21/60 - Assertions and lightweight contracts",
+    "doc_file": "21_assertions_contracts.md",
+    "code_file": "21_assertions_contracts.ndg"
+  },
+  {
+    "order": 22,
+    "name": "comments_docs",
+    "title": "22/60 - Comments and documentation",
+    "doc_file": "22_comments_docs.md",
+    "code_file": "22_comments_docs.ndg"
+  },
+  {
+    "order": 23,
+    "name": "prompt_syntax",
+    "title": "23/60 - Prompt syntax and multi-line blocks",
+    "doc_file": "23_prompt_syntax.md",
+    "code_file": "23_prompt_syntax.ndg"
+  },
+  {
+    "order": 24,
+    "name": "prompt_interpolation",
+    "title": "24/60 - Prompt interpolation and formatting",
+    "doc_file": "24_prompt_interpolation.md",
+    "code_file": "24_prompt_interpolation.ndg"
+  },
+  {
+    "order": 25,
+    "name": "structured_schemas",
+    "title": "25/60 - Nested structured-output schemas",
+    "doc_file": "25_structured_schemas.md",
+    "code_file": "25_structured_schemas.ndg"
+  },
+  {
+    "order": 26,
+    "name": "model_budget",
+    "title": "26/60 - Budgets, token caps, and hard limits",
+    "doc_file": "26_model_budget.md",
+    "code_file": "26_model_budget.ndg"
+  },
+  {
+    "order": 27,
+    "name": "model_routing",
+    "title": "27/60 - Selecting and routing models",
+    "doc_file": "27_model_routing.md",
+    "code_file": "27_model_routing.ndg"
+  },
+  {
+    "order": 28,
+    "name": "retry_repair",
+    "title": "28/60 - Retry and automatic JSON repair",
+    "doc_file": "28_retry_repair.md",
+    "code_file": "28_retry_repair.ndg"
+  },
+  {
+    "order": 29,
+    "name": "fallback_models",
+    "title": "29/60 - Fallback models for failures and timeouts",
+    "doc_file": "29_fallback_models.md",
+    "code_file": "29_fallback_models.ndg"
+  },
+  {
+    "order": 30,
+    "name": "few_shot",
+    "title": "30/60 - Few-shot prompting and context conditioning",
+    "doc_file": "30_few_shot.md",
+    "code_file": "30_few_shot.ndg"
+  },
+  {
+    "order": 31,
+    "name": "prompt_clippy",
+    "title": "31/60 - Prompt Clippy reliability warnings",
+    "doc_file": "31_prompt_clippy.md",
+    "code_file": "31_prompt_clippy.ndg"
+  },
+  {
+    "order": 32,
+    "name": "temperature_params",
+    "title": "32/60 - Temperature, top_p, and seed parameters",
+    "doc_file": "32_temperature_params.md",
+    "code_file": "32_temperature_params.ndg"
+  },
+  {
+    "order": 33,
+    "name": "streaming",
+    "title": "33/60 - Streaming responses and token chunks",
+    "doc_file": "33_streaming.md",
+    "code_file": "33_streaming.ndg"
+  },
+  {
+    "order": 34,
+    "name": "system_prompts",
+    "title": "34/60 - System prompts and role management",
+    "doc_file": "34_system_prompts.md",
+    "code_file": "34_system_prompts.ndg"
+  },
+  {
+    "order": 35,
+    "name": "caching_cost",
+    "title": "35/60 - Prompt caching and cost optimization",
+    "doc_file": "35_caching_cost.md",
+    "code_file": "35_caching_cost.ndg"
+  },
+  {
+    "order": 36,
+    "name": "decide_syntax",
+    "title": "36/60 - decide { ... } on state with { ... }",
+    "doc_file": "36_decide_syntax.md",
+    "code_file": "36_decide_syntax.ndg"
+  },
+  {
+    "order": 37,
+    "name": "choose_questions",
+    "title": "37/60 - choose [a, b, c]: classifying with a winner",
+    "doc_file": "37_choose_questions.md",
+    "code_file": "37_choose_questions.ndg"
+  },
+  {
+    "order": 38,
+    "name": "yesno_questions",
+    "title": "38/60 - yes/no questions and probability p",
+    "doc_file": "38_yesno_questions.md",
+    "code_file": "38_yesno_questions.ndg"
+  },
+  {
+    "order": 39,
+    "name": "score_questions",
+    "title": "39/60 - score [low, medium, high] and weighted scores",
+    "doc_file": "39_score_questions.md",
+    "code_file": "39_score_questions.ndg"
+  },
+  {
+    "order": 40,
+    "name": "multi_question_batch",
+    "title": "40/60 - batch three questions in one decision call",
+    "doc_file": "40_multi_question_batch.md",
+    "code_file": "40_multi_question_batch.ndg"
+  },
+  {
+    "order": 41,
+    "name": "confidence_thresholds",
+    "title": "41/60 - filter with p and confidence thresholds",
+    "doc_file": "41_confidence_thresholds.md",
+    "code_file": "41_confidence_thresholds.ndg"
+  },
+  {
+    "order": 42,
+    "name": "route_syntax",
+    "title": "42/60 - route { arm: expr when cond, otherwise: fallback }",
+    "doc_file": "42_route_syntax.md",
+    "code_file": "42_route_syntax.ndg"
+  },
+  {
+    "order": 43,
+    "name": "human_in_the_loop",
+    "title": "43/60 - escalate low-confidence decisions to a human",
+    "doc_file": "43_human_in_the_loop.md",
+    "code_file": "43_human_in_the_loop.ndg"
+  },
+  {
+    "order": 44,
+    "name": "policy_sweep",
+    "title": "44/60 - calibrate thresholds offline with policy-sweep",
+    "doc_file": "44_policy_sweep.md",
+    "code_file": "44_policy_sweep.ndg"
+  },
+  {
+    "order": 45,
+    "name": "injection_guard",
+    "title": "45/60 - gen.injection() and prompt-injection defenses",
+    "doc_file": "45_injection_guard.md",
+    "code_file": "45_injection_guard.ndg"
+  },
+  {
+    "order": 46,
+    "name": "decision_caching",
+    "title": "46/60 - cache repeated decisions with NUDGE_DECISION_CACHE",
+    "doc_file": "46_decision_caching.md",
+    "code_file": "46_decision_caching.ndg"
+  },
+  {
+    "order": 47,
+    "name": "explain_reports",
+    "title": "47/60 - audit decisions with nudgec explain",
+    "doc_file": "47_explain_reports.md",
+    "code_file": "47_explain_reports.ndg"
+  },
+  {
+    "order": 48,
+    "name": "agent_state",
+    "title": "48/60 - Agent state and durable mutations",
+    "doc_file": "48_agent_state.md",
+    "code_file": "48_agent_state.ndg"
+  },
+  {
+    "order": 49,
+    "name": "agent_actions",
+    "title": "49/60 - Agent actions and effect labels",
+    "doc_file": "49_agent_actions.md",
+    "code_file": "49_agent_actions.ndg"
+  },
+  {
+    "order": 50,
+    "name": "ui_views",
+    "title": "50/60 - Typed views with columns, rows, and controls",
+    "doc_file": "50_ui_views.md",
+    "code_file": "50_ui_views.ndg"
+  },
+  {
+    "order": 51,
+    "name": "ui_headless_test",
+    "title": "51/60 - Headless UI tests",
+    "doc_file": "51_ui_headless_test.md",
+    "code_file": "51_ui_headless_test.ndg"
+  },
+  {
+    "order": 52,
+    "name": "mcp_tools",
+    "title": "52/60 - Publish functions through MCP",
+    "doc_file": "52_mcp_tools.md",
+    "code_file": "52_mcp_tools.ndg"
+  },
+  {
+    "order": 53,
+    "name": "a2a_agent_card",
+    "title": "53/60 - A2A Agent Cards, capabilities, and skills",
+    "doc_file": "53_a2a_agent_card.md",
+    "code_file": "53_a2a_agent_card.ndg"
+  },
+  {
+    "order": 54,
+    "name": "a2a_peer_serving",
+    "title": "54/60 - Serve an A2A peer over REST and JSON-RPC",
+    "doc_file": "54_a2a_peer_serving.md",
+    "code_file": "54_a2a_peer_serving.ndg"
+  },
+  {
+    "order": 55,
+    "name": "deterministic_fakes",
+    "title": "55/60 - Deterministic fakes: offline and zero cost",
+    "doc_file": "55_deterministic_fakes.md",
+    "code_file": "55_deterministic_fakes.ndg"
+  },
+  {
+    "order": 56,
+    "name": "property_fuzzing",
+    "title": "56/60 - Property fuzzing and shrinking",
+    "doc_file": "56_property_fuzzing.md",
+    "code_file": "56_property_fuzzing.ndg"
+  },
+  {
+    "order": 57,
+    "name": "ntf_traces",
+    "title": "57/60 - Open NTF traces",
+    "doc_file": "57_ntf_traces.md",
+    "code_file": "57_ntf_traces.ndg"
+  },
+  {
+    "order": 58,
+    "name": "trace_replay",
+    "title": "58/60 - Byte-identical trace replay",
+    "doc_file": "58_trace_replay.md",
+    "code_file": "58_trace_replay.ndg"
+  },
+  {
+    "order": 59,
+    "name": "trace_diff_ci",
+    "title": "59/60 - Trace diffs as CI regression gates",
+    "doc_file": "59_trace_diff_ci.md",
+    "code_file": "59_trace_diff_ci.ndg"
+  },
+  {
+    "order": 60,
+    "name": "compilation_targets",
+    "title": "60/60 - Python, TypeScript, and standalone Rust targets",
+    "doc_file": "60_compilation_targets.md",
+    "code_file": "60_compilation_targets.ndg"
+  }
+]

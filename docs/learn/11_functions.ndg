@@ -1,0 +1,11 @@
+fn greet(name: string, prefix: string) -> string {
+    prefix + ", " + name
+}
+
+fn friendly_greet(name: string) -> string {
+    greet(name, prefix = "Hello")
+}
+
+fn main() -> string {
+    friendly_greet("Nudge")
+}

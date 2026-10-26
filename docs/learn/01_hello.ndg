@@ -1,0 +1,4 @@
+fn main() -> string uses LLM {
+    llm"""Say hello to the Nudge language in one short sentence."""
+    with { model: "anthropic:sonnet-4.6", budget: 0.01 USD }
+}

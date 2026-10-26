@@ -1,0 +1,17 @@
+agent Counter {
+    state {
+        count: int = 0
+        label: string = "ready"
+    }
+
+    fn increment() {
+        state.count += 1
+        state.label = "counted"
+    }
+}
+
+test "agent state mutates through its methods" {
+    Counter.increment()
+    assert Counter.state.count == 1
+    assert Counter.state.label == "counted"
+}

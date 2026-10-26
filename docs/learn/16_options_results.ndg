@@ -1,0 +1,11 @@
+type Lookup = { ok: bool, value: string? }
+
+fn display(result: Lookup) -> string {
+    if result.ok { "found" } else { "missing" }
+}
+
+fn main() -> string {
+    let missing: string? = none
+    let result: Lookup = { ok: false, value: missing }
+    display(result)
+}

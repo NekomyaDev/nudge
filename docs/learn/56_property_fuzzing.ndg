@@ -1,0 +1,10 @@
+fn normalized_length(value: string) -> int {
+    len(value)
+}
+
+test "all generated strings have a non-negative length" {
+    for_all x in gen.str(64) {
+        assert normalized_length(x) >= 0
+        assert normalized_length(x) <= 64
+    }
+}

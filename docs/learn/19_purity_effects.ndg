@@ -1,0 +1,12 @@
+fn label(name: string) -> string {
+    "Hello, " + name
+}
+
+fn ask(topic: string) -> string uses LLM {
+    llm"""Reply with one concise fact about {topic}."""
+    with { model: "fake:default", budget: 0.01 USD }
+}
+
+fn main() -> string uses LLM {
+    label(ask("Nudge"))
+}

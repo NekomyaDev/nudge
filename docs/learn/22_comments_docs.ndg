@@ -1,0 +1,9 @@
+/// Produce a greeting for a caller.
+// Keep the implementation pure and easily testable.
+fn greet(name: string) -> string {
+    "Hello, " + name
+}
+
+fn main() -> string {
+    greet("reader")
+}
