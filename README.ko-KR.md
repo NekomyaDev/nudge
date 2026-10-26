@@ -488,7 +488,7 @@ jobs:
         with:
           files: "agents/**/*.ndg"
           trace-diff: "baseline.jsonl candidate.jsonl"
-          
+
 ```
 
 동결된 NTF 사양은 [docs/ntf-spec.md](docs/ntf-spec.md)에 위치하며, [`conformance/`](conformance/) 디렉터리에 전체 테스트 스위트가 있고 LangChain, CrewAI, LangGraph용 브리지를 제공합니다.

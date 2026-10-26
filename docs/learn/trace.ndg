@@ -14,4 +14,3 @@
 ///
 /// You now know the whole loop: write → check → build → test → trace →
 /// gate. Next: `nudgec init my-agent --list` and ship something.
-

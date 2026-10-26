@@ -642,6 +642,22 @@ pub fn bind_state_expr(e: &Expr, agent: &str) -> Expr {
                 .map(|(k, v)| (k.clone(), bind_state_expr(v, agent)))
                 .collect(),
         },
+        ExprKind::RecordLit(fields) => ExprKind::RecordLit(
+            fields
+                .iter()
+                .map(|(k, v)| (k.clone(), bind_state_expr(v, agent)))
+                .collect(),
+        ),
+        ExprKind::Index { obj, idx } => ExprKind::Index {
+            obj: Box::new(bind_state_expr(obj, agent)),
+            idx: Box::new(bind_state_expr(idx, agent)),
+        },
+        ExprKind::If { cond, then, else_ } => ExprKind::If {
+            cond: Box::new(bind_state_expr(cond, agent)),
+            then: Box::new(bind_state_expr(then, agent)),
+            else_: else_.as_ref().map(|e| Box::new(bind_state_expr(e, agent))),
+        },
+        ExprKind::Spawn(e) => ExprKind::Spawn(Box::new(bind_state_expr(e, agent))),
         leaf => leaf.clone(),
     };
     Expr { kind, span: e.span }
@@ -1052,10 +1068,19 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
                 alt
             )
         }
-        ExprKind::RecordLit(_)
-        | ExprKind::Index { .. }
-        | ExprKind::Spawn(_)
-        | ExprKind::Block(_) => "# pack1/pack4 codegen not yet lowered".to_string(),
+        ExprKind::RecordLit(fields) => {
+            let f_strs = fields
+                .iter()
+                .map(|(k, v)| format!("\"{k}\": {}", py(v, aliases)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("rt.AttrDict({{{f_strs}}})")
+        }
+        ExprKind::Index { obj, idx } => {
+            format!("{}[{}]", py(obj, aliases), py(idx, aliases))
+        }
+        ExprKind::Spawn(e) => format!("rt.wait(lambda: {})", py(e, aliases)),
+        ExprKind::Block(_) => "None".to_string(),
     }
 }
 
@@ -1367,6 +1392,10 @@ class _HeadlessApp:
                     fn(value)
             if callable(self._render_fn):
                 self.root = self._render_fn()
+
+    def dispatch_type(self, target_id, text):
+        """Simulate typing text into an input field, dispatching change event."""
+        self.dispatch_change(target_id, text)
 
     def dispatch_key(self, *args):
         """Dispatch a keystroke or shortcut either to a specific element or to
@@ -2142,6 +2171,18 @@ def _status_line(args, kwargs):
 
 def status_line(*args, **kwargs):
     return _status_line(args, kwargs)
+
+
+def scroll(*args, **kwargs):
+    children = []
+    for a in args:
+        if isinstance(a, list):
+            children.extend(a)
+        elif isinstance(a, _UiElement):
+            children.append(a)
+    sid = kwargs.get("id")
+    props = {k: str(v) for k, v in kwargs.items() if k != "id"}
+    return _UiElement(tag="scroll", id=sid, props=props, children=children)
 "#;
 
 /// Shared `nudgec test` driver: load a generated module by path and run

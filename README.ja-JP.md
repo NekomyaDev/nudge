@@ -488,7 +488,7 @@ jobs:
         with:
           files: "agents/**/*.ndg"
           trace-diff: "baseline.jsonl candidate.jsonl"
-          
+
 ```
 
 凍結されたNTF仕様は [docs/ntf-spec.md](docs/ntf-spec.md) にあり、[`conformance/`](conformance/) 内の完全なテストスイート、および LangChain、CrewAI、LangGraph 用のブリッジが提供されています。
