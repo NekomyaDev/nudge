@@ -1442,6 +1442,20 @@ fn computer_calls_lower_to_rt_helpers() {
 }
 
 #[test]
+fn browser_calls_lower_to_rt_helpers() {
+    let src = "fn browse(url: string) -> int uses Browser {\n    let r = browser.fetch(url, allow = [\"example.com\"])\n    r.status\n}";
+    let out = gen(src);
+    assert!(
+        out.contains("rt.browser_fetch(url, allow=[\"example.com\"])"),
+        "got:\n{out}"
+    );
+    assert!(
+        out.contains("@rt.effectful(effects={\"Browser\"})"),
+        "got:\n{out}"
+    );
+}
+
+#[test]
 fn computer_perform_and_paste_lower_to_rt_helpers() {
     let src = "fn f(app: string) -> bool uses Computer {\n    let obs = computer.observe(app, allow = [app])\n    let p = computer.perform(2, \"AXPress\", allow = [app])\n    let w = computer.paste(\"hello\", allow = [app])\n    obs.drift.changed or p.ok or w.ok\n}";
     let out = gen(src);

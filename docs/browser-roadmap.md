@@ -42,13 +42,13 @@
     - Hook interpreter dotted field resolution for `browser.*`.
   - **Acceptance Gate:** Unit test fetching local fixture server over HTTP/HTTPS/file returns valid status and body. (PASSED: unit & e2e green)
 
-- [ ] **Task F1.3 — Standalone Target Parity (Python & TypeScript)**
+- [X] **Task F1.3 — Standalone Target Parity (Python & TypeScript)**
   - **Owner / Agent:** `agent:codegen`
-  - **Files:** `crates/nudgec/src/codegen.rs`, `crates/nudgec/src/codegen_ts.rs`
+  - **Files:** `crates/nudgec/src/codegen.rs`, `crates/nudgec/src/codegen_ts.rs`, `runtime/nudge_runtime/__init__.py`, `runtime/nudge_runtime.ts`
   - **Contract:**
     - Python target: Emit kernel `browser.fetch` mapping to standard library `urllib`/`ssl` (zero third-party packages).
     - TypeScript target: Emit kernel `browser.fetch` mapping to standard `fetch` API.
-  - **Acceptance Gate:** Standalone build tests (`nudgec build --target python` & `ts`) pass fixture checks.
+  - **Acceptance Gate:** Standalone build tests (`nudgec build --target python` & `ts`) pass fixture checks. (PASSED: code emission and target runtime tests green)
 
 - [X] **Task F1.4 — Safety Lint W0008 (Browser Unscoped)**
   - **Owner / Agent:** `agent:compiler-lint`

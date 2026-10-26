@@ -4236,3 +4236,83 @@ def _last_app():
     """The app of the latest observation — actions act on what you saw.
     In replay the recorded act record carries its own app."""
     return _LAST_OBSERVED_APP.get("app", "")
+
+
+# ── browser use (v1.6, docs/browser-use.md) ───────────────────────────
+
+def browser_fetch(url, **kwargs):
+    """Native browser.fetch implementation using standard library urllib + ssl."""
+    import urllib.request
+    import urllib.error
+    import ssl
+    import time
+    import os
+
+    if os.environ.get("NUDGE_BROWSER_KILL") == "1":
+        raise RuntimeError("BrowserDenied: NUDGE_BROWSER_KILL=1 refuses all browser operations")
+
+    start_time = time.time()
+
+    # file:// scheme for fixtures
+    if url.startswith("file://"):
+        path = url[len("file://"):]
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"BrowserError: file not found: {path}")
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        latency_ms = int((time.time() - start_time) * 1000)
+        return {
+            "status": 200,
+            "url": url,
+            "body": content,
+            "latency_ms": latency_ms,
+            "headers": [{"name": "content-type", "value": "text/html; charset=utf-8"}],
+        }
+
+    if not (url.startswith("http://") or url.startswith("https://")):
+        raise ValueError(f"BrowserDenied: unsupported scheme for '{url}' (only http, https, and file: are allowed)")
+
+    method = kwargs.get("method", "GET").upper()
+    req_headers = kwargs.get("headers", {})
+    body = kwargs.get("body", None)
+    timeout_sec = kwargs.get("timeout_ms", 20000) / 1000.0
+
+    data = body.encode("utf-8") if body else None
+    req = urllib.request.Request(url, data=data, method=method)
+
+    if isinstance(req_headers, list):
+        for h in req_headers:
+            if isinstance(h, dict) and "name" in h and "value" in h:
+                req.add_header(h["name"], h["value"])
+    elif isinstance(req_headers, dict):
+        for k, v in req_headers.items():
+            req.add_header(k, str(v))
+
+    ctx = ssl.create_default_context()
+    try:
+        with urllib.request.urlopen(req, context=ctx, timeout=timeout_sec) as resp:
+            resp_body = resp.read(10_485_761).decode("utf-8", errors="replace")
+            if len(resp_body) > 10_485_760:
+                raise RuntimeError("BodyTooLarge: response exceeded max_body_bytes limit (10485760 bytes)")
+            latency_ms = int((time.time() - start_time) * 1000)
+            headers_list = [{"name": k.lower(), "value": v} for k, v in resp.getheaders()]
+            return {
+                "status": resp.status,
+                "url": url,
+                "body": resp_body,
+                "latency_ms": latency_ms,
+                "headers": headers_list,
+            }
+    except urllib.error.HTTPError as e:
+        resp_body = e.read(10_485_760).decode("utf-8", errors="replace")
+        latency_ms = int((time.time() - start_time) * 1000)
+        headers_list = [{"name": k.lower(), "value": v} for k, v in e.headers.items()]
+        return {
+            "status": e.code,
+            "url": url,
+            "body": resp_body,
+            "latency_ms": latency_ms,
+            "headers": headers_list,
+        }
+    except Exception as e:
+        raise RuntimeError(f"BrowserNetworkError: {e}")

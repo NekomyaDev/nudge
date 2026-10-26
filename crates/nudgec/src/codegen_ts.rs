@@ -865,6 +865,29 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
                 ExprKind::Ident(n) if matches!(n.as_str(), "replay" | "python" | "mcp" | "zip") => {
                     format!("rt.{n}({})", parts.join(", "))
                 }
+                ExprKind::Field { obj, name } => {
+                    if let ExprKind::Ident(prefix) = &obj.kind {
+                        if prefix == "browser" {
+                            let mut camel_name = String::new();
+                            let mut cap = true;
+                            for c in name.chars() {
+                                if c == '_' {
+                                    cap = true;
+                                } else if cap {
+                                    camel_name.extend(c.to_uppercase());
+                                    cap = false;
+                                } else {
+                                    camel_name.push(c);
+                                }
+                            }
+                            format!("await rt.browser{camel_name}({})", parts.join(", "))
+                        } else {
+                            format!("{prefix}.{name}({})", parts.join(", "))
+                        }
+                    } else {
+                        format!("{}({})", ts(func, aliases, sigs), parts.join(", "))
+                    }
+                }
                 _ => {
                     let callee_async = match &func.as_ref().kind {
                         ExprKind::Ident(n) => is_async_fn(n),
@@ -1958,6 +1981,16 @@ mod computer_tests {
         // paste with no format argument still fills the null slot
         assert!(
             out.contains("rt.computerPaste(\"hi\", null, { allow: [\"Notes\"] })"),
+            "got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn ts_browser_calls_lower_to_rt_helpers() {
+        let src = "fn browse(url: string) -> int uses Browser {\n    let r = browser.fetch(url, allow = [\"example.com\"])\n    r.status\n}";
+        let out = gen_ts(src);
+        assert!(
+            out.contains("await rt.browserFetch(url, { allow: [\"example.com\"] })"),
             "got:\n{out}"
         );
     }

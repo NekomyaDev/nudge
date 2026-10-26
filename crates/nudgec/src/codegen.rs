@@ -914,6 +914,17 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
                 ExprKind::Ident(n) if matches!(n.as_str(), "replay" | "python" | "mcp" | "zip") => {
                     format!("rt.{n}")
                 }
+                ExprKind::Field { obj, name } => {
+                    if let ExprKind::Ident(prefix) = &obj.kind {
+                        if prefix == "browser" {
+                            format!("rt.browser_{name}")
+                        } else {
+                            format!("{prefix}.{name}")
+                        }
+                    } else {
+                        py(func, aliases)
+                    }
+                }
                 _ => py(func, aliases),
             };
             format!("{}({})", f, parts.join(", "))

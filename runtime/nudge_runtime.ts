@@ -2114,3 +2114,52 @@ export function computerDrag(fromTarget, toTarget, options = {}) {
   return computerAct("drag",
     { target: computerTarget(fromTarget), to: computerTarget(toTarget) }, options);
 }
+
+// ── browser use (v1.6, docs/browser-use.md) ───────────────────────────
+
+export async function browserFetch(url, options = {}) {
+  if (process.env.NUDGE_BROWSER_KILL === "1") {
+    throw new Error("BrowserDenied: NUDGE_BROWSER_KILL=1 refuses all browser operations");
+  }
+  const startTime = Date.now();
+  if (url.startsWith("file://")) {
+    const fs = await import("fs/promises");
+    const path = url.slice("file://".length);
+    const content = await fs.readFile(path, "utf-8");
+    return {
+      status: 200,
+      url,
+      body: content,
+      latency_ms: Date.now() - startTime,
+      headers: [{ name: "content-type", value: "text/html; charset=utf-8" }],
+    };
+  }
+  if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    throw new Error(`BrowserDenied: unsupported scheme for '${url}' (only http, https, and file: are allowed)`);
+  }
+  const method = (options.method || "GET").toUpperCase();
+  const headers = {};
+  if (Array.isArray(options.headers)) {
+    for (const h of options.headers) {
+      if (h && h.name && h.value) headers[h.name] = h.value;
+    }
+  } else if (options.headers) {
+    Object.assign(headers, options.headers);
+  }
+  const resp = await fetch(url, {
+    method,
+    headers,
+    body: options.body || undefined,
+    signal: options.timeout_ms ? AbortSignal.timeout(options.timeout_ms) : undefined,
+  });
+  const text = await resp.text();
+  const respHeaders = [];
+  resp.headers.forEach((v, k) => respHeaders.push({ name: k.toLowerCase(), value: v }));
+  return {
+    status: resp.status,
+    url,
+    body: text,
+    latency_ms: Date.now() - startTime,
+    headers: respHeaders,
+  };
+}
