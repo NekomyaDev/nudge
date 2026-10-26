@@ -9,7 +9,8 @@ view TopToolbar(
     edit_path_mode: bool,
     current_theme: string,
     current_lang: string,
-    view_mode: string
+    view_mode: string,
+    show_terminal: bool
 ) -> View {
     let path_segments = str.split(current_path, "/")
     let mut crumbs = []
@@ -71,8 +72,9 @@ view TopToolbar(
 
         divider(orientation = "vertical", size = 1, h = 22),
 
-        // 5. Right Toolbar Controls (Split, Info, Hidden, Lang, Theme)
+        // 5. Right Toolbar Controls (Split, Terminal, Info, Hidden, Lang, Theme)
         button(txt_split, id = "btn_split_toggle", variant = "toolbar", h = 26, selected = is_split, on_click = toggle_split),
+        button(">_ " + i18n("terminal", current_lang), id = "btn_terminal_toggle", variant = "toolbar", h = 26, selected = show_terminal, on_click = toggle_terminal),
         button(txt_info, id = "btn_info_toggle", variant = "toolbar", h = 26, selected = show_inspector, on_click = toggle_inspector),
         button(if show_hidden { i18n("hidden_on", current_lang) } else { i18n("hidden_off", current_lang) }, id = "btn_toggle_hidden", variant = "toolbar", h = 26, selected = show_hidden, on_click = toggle_hidden_files),
         button(str.upper(current_lang), id = "btn_lang_toggle", variant = "toolbar", w = 32, h = 26, on_click = toggle_lang),

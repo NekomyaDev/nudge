@@ -130,13 +130,18 @@ agent EngineVfs {
 agent EngineSymbolTable {
     state {
         symbols: [EngineSymbol] = []
+        symbol_map: Map[string, EngineSymbol] = {}
+        all_names: [string] = []
     }
 
     fn sym_clear() {
         state.symbols = []
+        state.symbol_map = {}
+        state.all_names = []
     }
 
     fn sym_insert(s: EngineSymbol) {
+        state.symbol_map[s.name] = s
         let mut updated: [EngineSymbol] = []
         let mut replaced = false
         for sym in state.symbols {
@@ -149,32 +154,36 @@ agent EngineSymbolTable {
         }
         if !replaced {
             updated = updated + [s]
+            state.all_names = state.all_names + [s.name]
         }
         state.symbols = updated
     }
 
     fn sym_lookup(name: string) -> EngineSymbol? {
         let mut found: EngineSymbol? = none
-        for s in state.symbols {
-            if s.name == name {
-                found = s
-            }
+        if contains_engine_str(state.all_names, name) {
+            found = state.symbol_map[name]
         }
         found
     }
 
     fn sym_remove(name: string) -> bool {
-        let mut updated: [EngineSymbol] = []
         let mut removed = false
-        for s in state.symbols {
-            if s.name == name {
-                removed = true
-            } else {
-                updated = updated + [s]
+        if contains_engine_str(state.all_names, name) {
+            let mut updated: [EngineSymbol] = []
+            let mut updated_names: [string] = []
+            let mut new_map: Map[string, EngineSymbol] = {}
+            for s in state.symbols {
+                if s.name != name {
+                    updated = updated + [s]
+                    updated_names = updated_names + [s.name]
+                    new_map[s.name] = s
+                }
             }
-        }
-        if removed {
             state.symbols = updated
+            state.all_names = updated_names
+            state.symbol_map = new_map
+            removed = true
         }
         removed
     }
@@ -283,10 +292,14 @@ agent EngineCallGraph {
 agent EngineInvertedIndex {
     state {
         postings: [EnginePosting] = []
+        terms_map: Map[string, [EnginePosting]] = {}
+        all_terms: [string] = []
     }
 
     fn idx_clear() {
         state.postings = []
+        state.terms_map = {}
+        state.all_terms = []
     }
 
     fn idx_add(term: string, path: string, sym: string) {
@@ -294,16 +307,26 @@ agent EngineInvertedIndex {
         if clean != "" {
             let p: EnginePosting = { term: clean, file_path: path, symbol: sym }
             state.postings = state.postings + [p]
+            if contains_engine_str(state.all_terms, clean) {
+                state.terms_map[clean] = state.terms_map[clean] + [p]
+            } else {
+                state.terms_map[clean] = [p]
+                state.all_terms = state.all_terms + [clean]
+            }
         }
     }
 
     fn idx_search(q: string) -> [string] {
         let query = str.trim(str.lower(q))
         let mut matched: [string] = []
-        for p in state.postings {
-            if p.term == query or str.contains(p.term, query) {
-                if !contains_engine_str(matched, p.symbol) {
-                    matched = matched + [p.symbol]
+        if query != "" {
+            for t in state.all_terms {
+                if t == query or str.contains(t, query) {
+                    for p in state.terms_map[t] {
+                        if !contains_engine_str(matched, p.symbol) {
+                            matched = matched + [p.symbol]
+                        }
+                    }
                 }
             }
         }

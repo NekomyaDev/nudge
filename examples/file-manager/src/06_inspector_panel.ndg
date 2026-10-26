@@ -24,8 +24,11 @@ view InspectorPanel(
                     badge(selected_cas, status = "info")
                 ],
                 button("▸ " + i18n("act_open", current_lang), id = "btn_open_selected_dir", variant = "toolbar", h = 24, on_click = open_selected_directory),
+                row(padding = 0, gap = 2) [
+                    button("✎ " + i18n("ctx_rename", current_lang), id = "btn_start_rename", variant = "toolbar", h = 24, on_click = start_rename),
+                    button(i18n("act_copy", current_lang), id = "btn_copy", variant = "toolbar", h = 24, on_click = copy_selected)
+                ],
                 row(padding = 0, gap = 4) [
-                    button(i18n("act_copy", current_lang), id = "btn_copy", variant = "toolbar", h = 24, on_click = copy_selected),
                     button("Paste", id = "btn_paste", variant = "toolbar", h = 24, on_click = paste_clipboard),
                     button("✕ " + i18n("act_delete", current_lang), id = "btn_delete", variant = "toolbar", h = 24, on_click = delete_selected)
                 ],

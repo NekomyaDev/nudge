@@ -276,6 +276,11 @@ fn tr_en(k: string) -> string {
     if k == "items" { res = "items" }
     if k == "selected" { res = "selected" }
     if k == "free" { res = "Free" }
+    if k == "terminal" { res = "Terminal (F4)" }
+    if k == "ctx_rename" { res = "Rename (F2)" }
+    if k == "ctx_cut" { res = "Cut" }
+    if k == "ctx_properties" { res = "Properties" }
+    if k == "open_terminal_here" { res = "Open Terminal Here" }
     res
 }
 
@@ -326,6 +331,11 @@ fn tr_tr(k: string) -> string {
     if k == "items" { res = "öğe" }
     if k == "selected" { res = "seçildi" }
     if k == "free" { res = "Boş" }
+    if k == "terminal" { res = "Uçbirim (F4)" }
+    if k == "ctx_rename" { res = "Yeniden Adlandır (F2)" }
+    if k == "ctx_cut" { res = "Kes" }
+    if k == "ctx_properties" { res = "Özellikler" }
+    if k == "open_terminal_here" { res = "Burada Uçbirim Aç" }
     res
 }
 
@@ -376,6 +386,11 @@ fn tr_de(k: string) -> string {
     if k == "items" { res = "Elemente" }
     if k == "selected" { res = "ausgewählt" }
     if k == "free" { res = "Frei" }
+    if k == "terminal" { res = "Terminal (F4)" }
+    if k == "ctx_rename" { res = "Umbenennen (F2)" }
+    if k == "ctx_cut" { res = "Ausschneiden" }
+    if k == "ctx_properties" { res = "Eigenschaften" }
+    if k == "open_terminal_here" { res = "Hier Terminal öffnen" }
     res
 }
 
@@ -426,6 +441,11 @@ fn tr_fr(k: string) -> string {
     if k == "items" { res = "éléments" }
     if k == "selected" { res = "sélectionné" }
     if k == "free" { res = "Libre" }
+    if k == "terminal" { res = "Terminal (F4)" }
+    if k == "ctx_rename" { res = "Renommer (F2)" }
+    if k == "ctx_cut" { res = "Couper" }
+    if k == "ctx_properties" { res = "Propriétés" }
+    if k == "open_terminal_here" { res = "Ouvrir terminal ici" }
     res
 }
 
@@ -476,6 +496,11 @@ fn tr_es(k: string) -> string {
     if k == "items" { res = "elementos" }
     if k == "selected" { res = "seleccionado" }
     if k == "free" { res = "Libre" }
+    if k == "terminal" { res = "Terminal (F4)" }
+    if k == "ctx_rename" { res = "Renombrar (F2)" }
+    if k == "ctx_cut" { res = "Cortar" }
+    if k == "ctx_properties" { res = "Propiedades" }
+    if k == "open_terminal_here" { res = "Abrir terminal aquí" }
     res
 }
 
@@ -526,6 +551,11 @@ fn tr_ru(k: string) -> string {
     if k == "items" { res = "элементов" }
     if k == "selected" { res = "выбрано" }
     if k == "free" { res = "Свободно" }
+    if k == "terminal" { res = "Терминал (F4)" }
+    if k == "ctx_rename" { res = "Переименовать (F2)" }
+    if k == "ctx_cut" { res = "Вырезать" }
+    if k == "ctx_properties" { res = "Свойства" }
+    if k == "open_terminal_here" { res = "Открыть терминал здесь" }
     res
 }
 
@@ -576,6 +606,11 @@ fn tr_zh(k: string) -> string {
     if k == "items" { res = "项" }
     if k == "selected" { res = "已选中" }
     if k == "free" { res = "可用" }
+    if k == "terminal" { res = "终端 (F4)" }
+    if k == "ctx_rename" { res = "重命名 (F2)" }
+    if k == "ctx_cut" { res = "剪切" }
+    if k == "ctx_properties" { res = "属性" }
+    if k == "open_terminal_here" { res = "在此处打开终端" }
     res
 }
 
@@ -626,6 +661,11 @@ fn tr_ja(k: string) -> string {
     if k == "items" { res = "項目" }
     if k == "selected" { res = "選択中" }
     if k == "free" { res = "空き" }
+    if k == "terminal" { res = "ターミナル (F4)" }
+    if k == "ctx_rename" { res = "名前変更 (F2)" }
+    if k == "ctx_cut" { res = "切り取り" }
+    if k == "ctx_properties" { res = "プロパティ" }
+    if k == "open_terminal_here" { res = "ここでターミナルを開く" }
     res
 }
 
@@ -676,6 +716,11 @@ fn tr_ko(k: string) -> string {
     if k == "items" { res = "개 항목" }
     if k == "selected" { res = "선택됨" }
     if k == "free" { res = "여유 공간" }
+    if k == "terminal" { res = "터미널 (F4)" }
+    if k == "ctx_rename" { res = "이름 바꾸기 (F2)" }
+    if k == "ctx_cut" { res = "잘라내기" }
+    if k == "ctx_properties" { res = "속성" }
+    if k == "open_terminal_here" { res = "여기서 터미널 열기" }
     res
 }
 
