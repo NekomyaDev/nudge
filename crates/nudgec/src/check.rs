@@ -6199,4 +6199,126 @@ fn f() -> int | string {
             "every documented property is accepted: {ok:?}"
         );
     }
+
+    #[test]
+    fn mem_store_requires_memstore_effect() {
+        // mem.get without MemStore effect trips E0301
+        let errs1 = check_src("fn f() -> int { mem.get(\"k\", 0) }");
+        assert!(
+            errs1
+                .iter()
+                .any(|e| e.code == "E0301" && e.msg.contains("MemStore")),
+            "expected E0301 for mem.get, got {errs1:?}"
+        );
+
+        // mem.set without MemStore effect trips E0301
+        let errs2 = check_src("fn f() -> () { mem.set(\"k\", 42) }");
+        assert!(
+            errs2
+                .iter()
+                .any(|e| e.code == "E0301" && e.msg.contains("MemStore")),
+            "expected E0301 for mem.set, got {errs2:?}"
+        );
+
+        // mem with uses MemStore is clean
+        let clean = check_src("fn f() -> int uses MemStore {\nmem.set(\"k\", 42)\nmem.get(\"k\", 0)\n}");
+        assert_eq!(clean, vec![], "unexpected errors: {clean:?}");
+
+        // MemStore is a known effect (not E0101)
+        let errs3 = check_src("fn f() -> int uses MemStore { 1 }");
+        assert!(
+            !errs3.iter().any(|e| e.code == "E0101"),
+            "MemStore should be a known effect, got {errs3:?}"
+        );
+    }
+
+    #[test]
+    fn test_map_typecheck_and_indexing() {
+        let src = r#"
+            fn test_map(m: Map[string, int]) -> int {
+                let v = m["key"]
+                v
+            }
+        "#;
+        assert_eq!(check_src(src), vec![]);
+
+        // Key type mismatch
+        let src_bad_key = r#"
+            fn test_map(m: Map[string, int]) -> int {
+                m[42]
+            }
+        "#;
+        let errs = check_src(src_bad_key);
+        assert!(
+            errs.iter().any(|e| e.code == "E0201" && e.msg.contains("map index must be of type string")),
+            "got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_index_assign_typecheck() {
+        let src = r#"
+            fn f() -> [int] {
+                let mut xs = [1, 2, 3]
+                xs[0] = 10
+                xs
+            }
+        "#;
+        assert_eq!(check_src(src), vec![]);
+
+        // Index assign to immutable local trips E0706
+        let src_immut = r#"
+            fn f() -> [int] {
+                let xs = [1, 2, 3]
+                xs[0] = 10
+                xs
+            }
+        "#;
+        let errs = check_src(src_immut);
+        assert!(
+            errs.iter().any(|e| e.code == "E0706" && e.msg.contains("cannot mutate immutable local 'xs'")),
+            "got {errs:?}"
+        );
+
+        // List index not int trips E0201
+        let src_bad_idx = r#"
+            fn f() -> [int] {
+                let mut xs = [1, 2, 3]
+                xs["zero"] = 10
+                xs
+            }
+        "#;
+        let errs = check_src(src_bad_idx);
+        assert!(
+            errs.iter().any(|e| e.code == "E0201" && e.msg.contains("list index must be an integer")),
+            "got {errs:?}"
+        );
+
+        // Value type mismatch trips E0201
+        let src_bad_val = r#"
+            fn f() -> [int] {
+                let mut xs = [1, 2, 3]
+                xs[0] = "string"
+                xs
+            }
+        "#;
+        let errs = check_src(src_bad_val);
+        assert!(
+            errs.iter().any(|e| e.code == "E0201" && e.msg.contains("cannot assign value of type string to list")),
+            "got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_workspace_stat_and_str_primitives_typecheck() {
+        let src = r#"
+            fn check_stat(p: string) -> bool uses Workspace {
+                let st = workspace.stat(p)
+                let c = str.char_code(p, 0)
+                let h = str.hash(p)
+                st.size >= 0 and st.mtime_ms >= 0 and c >= 0 and h != 0
+            }
+        "#;
+        assert_eq!(check_src(src), vec![]);
+    }
 }
