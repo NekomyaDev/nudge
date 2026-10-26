@@ -1344,6 +1344,105 @@ fn test_snapshot_suite() -> bool {{
     }
 
     #[test]
+    fn test_prelude_web_cookies_forms_actions() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let url_src =
+            std::fs::read_to_string(root_dir.join("prelude/net/url.ndg")).expect("read url.ndg");
+        let cookie_src = std::fs::read_to_string(root_dir.join("prelude/web/cookie.ndg"))
+            .expect("read cookie.ndg");
+        let profile_src = std::fs::read_to_string(root_dir.join("prelude/web/profile.ndg"))
+            .expect("read profile.ndg");
+        let html_src =
+            std::fs::read_to_string(root_dir.join("prelude/web/html.ndg")).expect("read html.ndg");
+        let dom_src =
+            std::fs::read_to_string(root_dir.join("prelude/web/dom.ndg")).expect("read dom.ndg");
+        let snapshot_src = std::fs::read_to_string(root_dir.join("prelude/web/snapshot.ndg"))
+            .expect("read snapshot.ndg");
+        let form_src =
+            std::fs::read_to_string(root_dir.join("prelude/web/form.ndg")).expect("read form.ndg");
+        let action_src = std::fs::read_to_string(root_dir.join("prelude/web/action.ndg"))
+            .expect("read action.ndg");
+
+        let test_src = format!(
+            r##"{url_src}
+{cookie_src}
+{profile_src}
+{html_src}
+{dom_src}
+{snapshot_src}
+{form_src}
+{action_src}
+fn test_f4_suite() -> bool {{
+    let prof1 = new_profile("user1")
+    let prof2 = new_profile("user2")
+
+    let ok_locale = prof1.device.locale == "en-US" and prof2.device.locale == "en-US"
+
+    let set_cookie_hdr: [Header] = [
+        {{ name: "Set-Cookie", value: "sid=sess_abc123; Domain=example.com; Path=/; Secure; HttpOnly" }}
+    ]
+    let prof1_updated = apply_response_headers(prof1, set_cookie_hdr, "example.com")
+
+    let hdrs1 = build_profile_headers(prof1_updated, "example.com", "/dashboard", true, [])
+    let hdrs2 = build_profile_headers(prof2, "example.com", "/dashboard", true, [])
+
+    let mut h1_has_cookie = false
+    for h in hdrs1 {{
+        if h.name == "Cookie" and h.value == "sid=sess_abc123" {{
+            h1_has_cookie = true
+        }}
+    }}
+    let mut h2_has_cookie = false
+    for h in hdrs2 {{
+        if h.name == "Cookie" {{
+            h2_has_cookie = true
+        }}
+    }}
+    let ok_isolation = h1_has_cookie and !h2_has_cookie
+
+    let doc = "<div id=\"app\"><form id=\"f1\" method=\"POST\" action=\"/api/login\"><input type=\"text\" name=\"user\" value=\"\"/><input type=\"password\" name=\"pass\" value=\"\"/><button type=\"submit\" id=\"sub\">Login</button></form></div>"
+    let tokens = tokenize_html(doc)
+    let tree = build_dom_tree(tokens)
+
+    let filled_tree = fill_form_fields(tree, [
+        {{ ref: 3, value: "alice@example.com" }},
+        {{ ref: 4, value: "secret 123&pass" }}
+    ])
+
+    let sub = build_form_submission(filled_tree, 2, "https://example.com/login.html")
+    let ok_sub_method = sub.method == "POST"
+    let ok_sub_action = sub.action == "https://example.com/api/login"
+    let ok_sub_body = str.contains(sub.body, "user=alice%40example.com") and str.contains(sub.body, "pass=secret+123%26pass")
+
+    let snap0 = make_snapshot("p-1", "https://example.com", "Test App", 1, filled_tree)
+
+    let click_res = execute_click_target(filled_tree, 5, snap0)
+    let ok_click = click_res.ok and click_res.action_sent
+
+    let compound_res = execute_compound_clicks(filled_tree, [5], 10, snap0)
+    let ok_compound = compound_res.ok
+
+    let type_res = execute_type_action(filled_tree, 3, "bob", 2, snap0)
+    let ok_type = type_res.ok and str.contains(type_res.snapshot.tree, "textbox \"user\" = bob")
+
+    let wait_res = execute_wait_selector(filled_tree, "#sub", 1000, snap0)
+    let ok_wait = wait_res.ok and !wait_res.timed_out
+
+    let wait_fail = execute_wait_selector(filled_tree, "#nonexistent", 1000, snap0)
+    let ok_wait_fail = !wait_fail.ok and wait_fail.timed_out
+
+    ok_locale and ok_isolation and ok_sub_method and ok_sub_action and ok_sub_body and ok_click and ok_compound and ok_type and ok_wait and ok_wait_fail
+}}
+"##
+        );
+        let items = parse_src(&test_src);
+        let ok = run_program(&items, "test_f4_suite", &[]).expect("f4 suite succeeds");
+        assert_eq!(ok, NudgeVal::Bool(true));
+    }
+
+    #[test]
     fn test_eval_index_assign_list_and_map() {
         let src = r#"
             fn test_list_assign() -> [int] {

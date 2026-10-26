@@ -1,0 +1,206 @@
+// Pure .ndg Form State, Encoding and Submission Engine
+// Part of Phase F4.2 (docs/browser-roadmap.md)
+
+type FormField = {
+    ref: int,
+    value: string
+}
+
+type FormSubmission = {
+    method: string,
+    action: string,
+    enctype: string,
+    body: string,
+    headers: [Header]
+}
+
+fn update_element_value(tree: DomTree, target_ref: int, new_value: string) -> DomTree {
+    let mut updated_nodes: [DomNode] = []
+    for n in tree.nodes {
+        if n.ref == target_ref {
+            let mut updated_attrs: [HtmlAttr] = []
+            let mut val_set = false
+            for a in n.attrs {
+                if a.name == "value" {
+                    updated_attrs = updated_attrs + [{ name: "value", value: new_value }]
+                    val_set = true
+                } else {
+                    updated_attrs = updated_attrs + [a]
+                }
+            }
+            if !val_set {
+                updated_attrs = updated_attrs + [{ name: "value", value: new_value }]
+            }
+
+            updated_nodes = updated_nodes + [{
+                ref: n.ref,
+                index: n.index,
+                tag: n.tag,
+                id: n.id,
+                classes: n.classes,
+                role: n.role,
+                name: n.name,
+                title: n.title,
+                value: new_value,
+                href: n.href,
+                text: n.text,
+                attrs: updated_attrs,
+                children: n.children,
+                parent: n.parent,
+                clickable: n.clickable,
+                editable: n.editable,
+                enabled: n.enabled
+            }]
+        } else {
+            updated_nodes = updated_nodes + [n]
+        }
+    }
+
+    {
+        nodes: updated_nodes,
+        root_ref: tree.root_ref
+    }
+}
+
+fn fill_form_fields(tree: DomTree, fields: [FormField]) -> DomTree {
+    let mut cur_tree = tree
+    let max_fill = 20
+    let mut count = 0
+
+    for f in fields {
+        if count < max_fill {
+            cur_tree = update_element_value(cur_tree, f.ref, f.value)
+            count = count + 1
+        }
+    }
+
+    cur_tree
+}
+
+fn url_encode_component(s: string) -> string {
+    let mut out = ""
+    for ch in str.split(s, "") {
+        if ch == " " {
+            out = out + "+"
+        } else if ch == "&" {
+            out = out + "%26"
+        } else if ch == "=" {
+            out = out + "%3D"
+        } else if ch == "+" {
+            out = out + "%2B"
+        } else if ch == "%" {
+            out = out + "%25"
+        } else if ch == "/" {
+            out = out + "%2F"
+        } else if ch == "?" {
+            out = out + "%3F"
+        } else if ch == "#" {
+            out = out + "%23"
+        } else if ch == "@" {
+            out = out + "%40"
+        } else if ch == ":" {
+            out = out + "%3A"
+        } else {
+            out = out + ch
+        }
+    }
+    out
+}
+
+fn encode_form_urlencoded(fields: [{ name: string, value: string }]) -> string {
+    let mut body = ""
+    let mut count = 0
+
+    for f in fields {
+        if f.name != "" {
+            let pair = url_encode_component(f.name) + "=" + url_encode_component(f.value)
+            body = if count == 0 { pair } else { body + "&" + pair }
+            count = count + 1
+        }
+    }
+
+    body
+}
+
+fn extract_form_fields(tree: DomTree, form_ref: int) -> [{ name: string, value: string }] {
+    let mut out: [{ name: string, value: string }] = []
+
+    for n in tree.nodes {
+        // Find inputs, textareas, selects whose parent is the form, or descendants of form
+        let mut is_descendant = false
+        let mut cur_parent = n.parent
+        for _ in tree.nodes {
+            if cur_parent >= 0 {
+                if cur_parent == form_ref {
+                    is_descendant = true
+                    cur_parent = -1
+                } else {
+                    for p in tree.nodes {
+                        if p.ref == cur_parent {
+                            cur_parent = p.parent
+                        }
+                    }
+                }
+            }
+        }
+
+        if is_descendant and n.enabled and (n.tag == "input" or n.tag == "textarea" or n.tag == "select") {
+            let name_attr = get_attr_value(n.attrs, "name", "")
+            if name_attr != "" {
+                out = out + [{ name: name_attr, value: n.value }]
+            }
+        }
+    }
+
+    out
+}
+
+fn build_form_submission(tree: DomTree, form_ref: int, base_url: string) -> FormSubmission {
+    let mut method = "GET"
+    let mut action = base_url
+    let mut enctype = "application/x-www-form-urlencoded"
+
+    for n in tree.nodes {
+        if n.ref == form_ref {
+            let m = str.upper(get_attr_value(n.attrs, "method", "GET"))
+            if m == "POST" {
+                method = "POST"
+            }
+            let a = get_attr_value(n.attrs, "action", "")
+            if a != "" {
+                let parsed_base = parse_url(base_url)
+                action = resolve_relative(parsed_base, a)
+            }
+            let enc = get_attr_value(n.attrs, "enctype", "")
+            if enc != "" {
+                enctype = enc
+            }
+        }
+    }
+
+    let fields = extract_form_fields(tree, form_ref)
+    let encoded_data = encode_form_urlencoded(fields)
+
+    let mut headers: [Header] = []
+    let mut target_url = action
+    let mut final_body = ""
+
+    if method == "POST" {
+        headers = headers + [{ name: "Content-Type", value: enctype }]
+        final_body = encoded_data
+    } else {
+        // GET: append to query string
+        if encoded_data != "" {
+            let sep = if str.contains(action, "?") { "&" } else { "?" }
+            target_url = action + sep + encoded_data
+        }
+    }
+
+    {
+        method: method,
+        action: target_url,
+        enctype: enctype,
+        body: final_body,
+        headers: headers
+    }
+}

@@ -1,0 +1,205 @@
+// Pure .ndg Cookie Jar Engine (RFC 6265 Subset)
+// Part of Phase F4.1 (docs/browser-roadmap.md)
+
+type Cookie = {
+    name: string,
+    value: string,
+    domain: string,
+    path: string,
+    expires: int,
+    secure: bool,
+    http_only: bool,
+    same_site: string
+}
+
+type CookieJar = {
+    cookies: [Cookie],
+    max_cookies: int,
+    max_size_bytes: int
+}
+
+fn new_cookie_jar() -> CookieJar {
+    {
+        cookies: [],
+        max_cookies: 150,
+        max_size_bytes: 65536 // 64 KB fail-closed quota
+    }
+}
+
+fn parse_set_cookie(header_value: string, default_domain: string) -> Cookie {
+    let parts = str.split(header_value, ";")
+    let mut name = ""
+    let mut value = ""
+    let mut domain = default_domain
+    let mut path = "/"
+    let mut expires = 0
+    let mut secure = false
+    let mut http_only = false
+    let mut same_site = "Lax"
+
+    for (part, idx) in parts {
+        let p = str.trim(part)
+        if idx == 0 {
+            // First part is name=value
+            let eq_pos = str.index_of(p, "=")
+            if eq_pos >= 0 {
+                name = str.trim(str.substring(p, 0, eq_pos))
+                value = str.trim(str.substring(p, eq_pos + 1))
+            } else {
+                name = p
+                value = ""
+            }
+        } else {
+            let eq_pos = str.index_of(p, "=")
+            if eq_pos >= 0 {
+                let attr_name = str.lower(str.trim(str.substring(p, 0, eq_pos)))
+                let attr_val = str.trim(str.substring(p, eq_pos + 1))
+                if attr_name == "domain" {
+                    let mut d = attr_val
+                    if str.starts_with(d, ".") {
+                        d = str.substring(d, 1)
+                    }
+                    domain = str.lower(d)
+                } else if attr_name == "path" {
+                    path = attr_val
+                } else if attr_name == "max-age" {
+                    let ma = str.to_int(attr_val)
+                    if ma > 0 {
+                        expires = ma
+                    }
+                } else if attr_name == "samesite" {
+                    same_site = attr_val
+                }
+            } else {
+                let flag = str.lower(p)
+                if flag == "secure" {
+                    secure = true
+                } else if flag == "httponly" {
+                    http_only = true
+                }
+            }
+        }
+    }
+
+    {
+        name: name,
+        value: value,
+        domain: domain,
+        path: path,
+        expires: expires,
+        secure: secure,
+        http_only: http_only,
+        same_site: same_site
+    }
+}
+
+fn domain_matches_cookie(cookie_domain: string, host: string) -> bool {
+    let cd = str.lower(str.trim(cookie_domain))
+    let h = str.lower(str.trim(host))
+
+    if cd == "" or h == "" {
+        false
+    } else if cd == h {
+        true
+    } else if str.ends_with(h, "." + cd) {
+        true
+    } else {
+        false
+    }
+}
+
+fn path_matches_cookie(cookie_path: string, request_path: string) -> bool {
+    let cp = cookie_path
+    let rp = if request_path == "" { "/" } else { request_path }
+    let mut matched = false
+
+    if cp == "/" or cp == "" or rp == cp {
+        matched = true
+    } else if str.starts_with(rp, cp) {
+        if str.ends_with(cp, "/") {
+            matched = true
+        } else {
+            let next_char = str.substring(rp, str.length(cp), str.length(cp) + 1)
+            matched = (next_char == "/")
+        }
+    }
+
+    matched
+}
+
+fn cookie_matches(cookie: Cookie, host: string, path: string, is_secure: bool) -> bool {
+    let mut matched = true
+    if !domain_matches_cookie(cookie.domain, host) {
+        matched = false
+    } else if !path_matches_cookie(cookie.path, path) {
+        matched = false
+    } else if cookie.secure and !is_secure {
+        matched = false
+    }
+    matched
+}
+
+fn compute_cookie_size(c: Cookie) -> int {
+    str.length(c.name) + str.length(c.value) + str.length(c.domain) + str.length(c.path) + 32
+}
+
+fn add_cookie(jar: CookieJar, cookie: Cookie) -> CookieJar {
+    let mut new_cookies: [Cookie] = []
+    let mut replaced = false
+    let mut total_size = 0
+
+    for c in jar.cookies {
+        if c.name == cookie.name and c.domain == cookie.domain and c.path == cookie.path {
+            new_cookies = new_cookies + [cookie]
+            total_size = total_size + compute_cookie_size(cookie)
+            replaced = true
+        } else {
+            new_cookies = new_cookies + [c]
+            total_size = total_size + compute_cookie_size(c)
+        }
+    }
+
+    if !replaced {
+        // Enforce cookie count limit and size quota
+        if len(new_cookies) < jar.max_cookies and total_size + compute_cookie_size(cookie) <= jar.max_size_bytes {
+            new_cookies = new_cookies + [cookie]
+        }
+    }
+
+    {
+        cookies: new_cookies,
+        max_cookies: jar.max_cookies,
+        max_size_bytes: jar.max_size_bytes
+    }
+}
+
+fn format_cookie_header(jar: CookieJar, host: string, path: string, is_secure: bool) -> string {
+    let mut header_val = ""
+    let mut count = 0
+
+    for c in jar.cookies {
+        if cookie_matches(c, host, path, is_secure) {
+            let item = c.name + "=" + c.value
+            header_val = if count == 0 { item } else { header_val + "; " + item }
+            count = count + 1
+        }
+    }
+
+    header_val
+}
+
+fn clear_cookies_for_domain(jar: CookieJar, domain: string) -> CookieJar {
+    let mut retained: [Cookie] = []
+    let target = str.lower(domain)
+    for c in jar.cookies {
+        if c.domain != target and !str.ends_with(c.domain, "." + target) {
+            retained = retained + [c]
+        }
+    }
+
+    {
+        cookies: retained,
+        max_cookies: jar.max_cookies,
+        max_size_bytes: jar.max_size_bytes
+    }
+}

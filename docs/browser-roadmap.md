@@ -138,7 +138,7 @@
 ## Phase F4: Interaction, Forms, Cookies & Compound Primitives
 **Goal:** Enable active user simulation (clicks, typing, forms) with strict one-round-trip compound contracts.
 
-- [ ] **Task F4.1 — Cookie Jar & Profile Isolation**
+- [x] **Task F4.1 — Cookie Jar & Profile Isolation**
   - **Owner / Agent:** `agent:ndg-cookie`
   - **Files:** `prelude/web/cookie.ndg`, `prelude/web/profile.ndg`
   - **Contract:**
@@ -146,7 +146,7 @@
     - Persist cookies and header signatures in Nudge `Store` with quota protection.
   - **Acceptance Gate:** Profile-isolated cookie sessions survive reloads.
 
-- [ ] **Task F4.2 — Form State, Encoding & Submissions**
+- [x] **Task F4.2 — Form State, Encoding & Submissions**
   - **Owner / Agent:** `agent:ndg-form`
   - **Files:** `prelude/web/form.ndg`
   - **Contract:**
@@ -155,7 +155,7 @@
     - `browser.submit(page, form)` serializes fields (`application/x-www-form-urlencoded` / multipart) and executes action.
   - **Acceptance Gate:** Multi-field form submission successfully reaches test endpoint.
 
-- [ ] **Task F4.3 — Compound Actions & Wait Primitives**
+- [x] **Task F4.3 — Compound Actions & Wait Primitives**
   - **Owner / Agent:** `agent:ndg-action`
   - **Files:** `prelude/web/action.ndg`
   - **Contract:**

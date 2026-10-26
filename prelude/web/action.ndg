@@ -1,0 +1,92 @@
+// Pure .ndg Compound Actions & Wait Primitives
+// Part of Phase F4.3 (docs/browser-roadmap.md)
+
+fn make_act_result(ok: bool, outcome: string, latency_ms: int, err: string, action_sent: bool, snap: Snapshot) -> ActResult {
+    {
+        ok: ok,
+        outcome: outcome,
+        latency_ms: latency_ms,
+        error: err,
+        action_sent: action_sent,
+        snapshot: snap
+    }
+}
+
+fn make_wait_result(ok: bool, timed_out: bool, latency_ms: int, snap: Snapshot) -> WaitResult {
+    {
+        ok: ok,
+        timed_out: timed_out,
+        latency_ms: latency_ms,
+        snapshot: snap
+    }
+}
+
+fn execute_click_target(tree: DomTree, target_ref: int, snap: Snapshot) -> ActResult {
+    let elem_opt = get_element_by_ref(tree, target_ref)
+    let mut res = make_act_result(false, "Uninitialized", 0, "", false, snap)
+
+    if elem_opt == none {
+        res = make_act_result(false, "Element not found", 5, "Target ref " + str.to_string(target_ref) + " does not exist in DOM", false, snap)
+    } else {
+        let el = elem_opt
+        if !el.enabled {
+            res = make_act_result(false, "Element disabled", 5, "Target element is disabled", false, snap)
+        } else if !el.clickable {
+            res = make_act_result(false, "Element not clickable", 5, "Target element does not support click action", false, snap)
+        } else {
+            let desc = "Clicked " + el.role + " '" + el.name + "' [ref=" + str.to_string(target_ref) + "]"
+            res = make_act_result(true, desc, 12, "", true, snap)
+        }
+    }
+
+    res
+}
+
+fn execute_compound_clicks(tree: DomTree, targets: [int], max_clicks: int, snap: Snapshot) -> ActResult {
+    let limit = if max_clicks > 0 and max_clicks <= 10 { max_clicks } else { 10 }
+    let mut last_res = make_act_result(true, "No clicks executed", 0, "", false, snap)
+    let mut count = 0
+    let mut aborted = false
+
+    for target_ref in targets {
+        if count < limit and !aborted {
+            let res = execute_click_target(tree, target_ref, snap)
+            last_res = res
+            if !res.ok {
+                aborted = true
+            }
+            count = count + 1
+        }
+    }
+
+    last_res
+}
+
+fn execute_type_action(tree: DomTree, target_ref: int, text: string, epoch: int, snap: Snapshot) -> ActResult {
+    let elem_opt = get_element_by_ref(tree, target_ref)
+    let mut res = make_act_result(false, "Uninitialized", 0, "", false, snap)
+
+    if elem_opt == none {
+        res = make_act_result(false, "Element not found", 5, "Target ref " + str.to_string(target_ref) + " not found", false, snap)
+    } else {
+        let el = elem_opt
+        if !el.editable {
+            res = make_act_result(false, "Element not editable", 5, "Target element is not an editable field", false, snap)
+        } else {
+            let updated_tree = update_element_value(tree, target_ref, text)
+            let updated_snap = make_snapshot(snap.page, snap.url, snap.title, epoch, updated_tree)
+            res = make_act_result(true, "Typed '" + text + "' into [ref=" + str.to_string(target_ref) + "]", 8, "", true, updated_snap)
+        }
+    }
+
+    res
+}
+
+fn execute_wait_selector(tree: DomTree, selector: string, timeout_ms: int, snap: Snapshot) -> WaitResult {
+    let matched = query_selector_all(tree, selector)
+    let mut res = make_wait_result(false, true, timeout_ms, snap)
+    if len(matched) > 0 {
+        res = make_wait_result(true, false, 15, snap)
+    }
+    res
+}

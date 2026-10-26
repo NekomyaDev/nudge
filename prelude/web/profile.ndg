@@ -1,0 +1,96 @@
+// Pure .ndg Profile & Device Identity Isolation
+// Part of Phase F4.1 (docs/browser-roadmap.md)
+
+type DeviceIdentity = {
+    user_agent: string,
+    platform: string,
+    screen_width: int,
+    screen_height: int,
+    locale: string,
+    timezone: string
+}
+
+type Profile = {
+    name: string,
+    device: DeviceIdentity,
+    default_headers: [Header],
+    jar: CookieJar
+}
+
+fn default_device_identity() -> DeviceIdentity {
+    {
+        user_agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        platform: "Linux x86_64",
+        screen_width: 1920,
+        screen_height: 1080,
+        locale: "en-US", // Strictly neutral default, never host-inherited
+        timezone: "UTC"
+    }
+}
+
+fn new_profile(name: string) -> Profile {
+    let dev = default_device_identity()
+    let headers: [Header] = [
+        { name: "User-Agent", value: dev.user_agent },
+        { name: "Accept-Language", value: "en-US,en;q=0.9" },
+        { name: "Accept", value: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" },
+        { name: "Sec-Ch-Ua-Platform", value: "\"Linux\"" },
+        { name: "Upgrade-Insecure-Requests", value: "1" }
+    ]
+
+    {
+        name: name,
+        device: dev,
+        default_headers: headers,
+        jar: new_cookie_jar()
+    }
+}
+
+fn build_profile_headers(profile: Profile, host: string, path: string, is_secure: bool, custom_headers: [Header]) -> [Header] {
+    let mut out: [Header] = []
+
+    // 1. Add default profile headers that are not overridden by custom_headers
+    for def_h in profile.default_headers {
+        let def_lower = str.lower(def_h.name)
+        let mut overridden = false
+        for c in custom_headers {
+            if str.lower(c.name) == def_lower {
+                overridden = true
+            }
+        }
+        if !overridden {
+            out = out + [def_h]
+        }
+    }
+
+    // 2. Add custom headers
+    for c in custom_headers {
+        out = out + [c]
+    }
+
+    // 3. Attach Cookie header if cookies match host/path
+    let cookie_val = format_cookie_header(profile.jar, host, path, is_secure)
+    if cookie_val != "" {
+        out = out + [{ name: "Cookie", value: cookie_val }]
+    }
+
+    out
+}
+
+fn apply_response_headers(profile: Profile, response_headers: [Header], host: string) -> Profile {
+    let mut current_jar = profile.jar
+
+    for h in response_headers {
+        if str.lower(h.name) == "set-cookie" {
+            let parsed_c = parse_set_cookie(h.value, host)
+            current_jar = add_cookie(current_jar, parsed_c)
+        }
+    }
+
+    {
+        name: profile.name,
+        device: profile.device,
+        default_headers: profile.default_headers,
+        jar: current_jar
+    }
+}
