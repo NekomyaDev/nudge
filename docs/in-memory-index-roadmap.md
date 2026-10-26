@@ -1,10 +1,10 @@
 # RFC & Architectural Roadmap: Pure-Nudge Self-Hosted In-Memory Indexing Infrastructure
 
-> **Document ID:** RFC-NDG-2026-04  
-> **Status:** Official Architectural Specification & Implementation Roadmap  
-> **Authors:** Nudge Core Architecture Team  
-> **Default Language:** English (with formal technical terminology)  
-> **Target Version:** Nudge v2.1 – v3.0  
+> **Document ID:** RFC-NDG-2026-04
+> **Status:** Official Architectural Specification & Implementation Roadmap
+> **Authors:** Nudge Core Architecture Team
+> **Default Language:** English (with formal technical terminology)
+> **Target Version:** Nudge v2.1 – v3.0
 > **Primary Objective:** Eliminate disk I/O bottlenecks, achieve $\ge 20\times$ faster execution (targeting $100\times - 300\times$), eliminate all external language/syscall dependencies ($0$ foreign dependencies), and establish the self-hosted Nudge Virtual File System (NVFS).
 
 ---
