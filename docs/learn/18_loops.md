@@ -1,9 +1,0 @@
-# 18/60 - Collection loops
-
-Use `for item in list` to process every list element. Nudge also supports
-`for (item, index) in list` when the index is useful. `while`, `break`, and
-`continue` are not currently parsed, which intentionally keeps ordinary loops
-finite and collection-shaped.
-
-Try:
-  nudgec check loops.ndg

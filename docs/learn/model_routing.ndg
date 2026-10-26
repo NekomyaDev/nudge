@@ -1,0 +1,30 @@
+/// The `model` option names a provider and model with `provider:model`. This
+/// makes routing explicit and keeps provider decisions close to the task:
+/// `anthropic:sonnet-4.6`, `openai:gpt-4o`, and `fake:default` are typical
+/// examples.
+///
+/// Use `fake:default` for deterministic offline development and tests. Switch to
+/// a production model only when the call is ready to use real credentials and
+/// spend real budget.
+///
+/// Try:
+///   nudgec check model_routing.ndg
+///   nudgec build model_routing.ndg
+
+fn answer(question: string) -> string uses LLM {
+    llm"""Answer the question in one accurate paragraph.
+
+Question:
+{question}
+"""
+    with { model: "anthropic:sonnet-4.6", budget: 0.03 USD }
+}
+
+fn offline_answer(question: string) -> string uses LLM {
+    llm"""Answer this test question in one short sentence.
+
+Question:
+{question}
+"""
+    with { model: "fake:default", budget: 0.01 USD }
+}

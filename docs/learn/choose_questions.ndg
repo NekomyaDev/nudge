@@ -1,0 +1,32 @@
+/// A `choose` question classifies the state into one of the listed labels. Its
+/// answer includes `winner`, the selected label, plus `p`, `distribution`, and
+/// `confidence`. Read `winner` to route work, but retain the distribution for
+/// auditing and later threshold calibration.
+///
+/// Labels can be bare identifiers or quoted strings when a label has spaces.
+///
+/// Try:
+///   nudgec check choose_questions.ndg
+///   nudgec build choose_questions.ndg
+
+type Team = {
+    winner: string,
+    p: float,
+    distribution: {string: float},
+    confidence: float
+}
+
+type Routing = { team: Team }
+
+fn classify(ticket: string) -> Routing uses Decision {
+    decide {
+        team: "which team should own this ticket?" choose [billing, technical, security]
+    }
+    on ticket
+    with { model: "fake:default", deadline: 50 }
+}
+
+fn main() -> string uses Decision {
+    let result = classify("I was charged twice")
+    result.team.winner
+}

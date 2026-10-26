@@ -1,0 +1,29 @@
+/// Sampling parameters control output variability. Lower `temperature` favors
+/// repeatable, conservative wording. `top_p` limits sampling to the most likely
+/// probability mass. A `seed` requests reproducibility from providers that
+/// support deterministic sampling.
+///
+/// Use low-variance settings for extraction and classification. Use higher
+/// creativity only when variation is the point, while retaining a schema and
+/// budget for safety.
+///
+/// Try:
+///   nudgec check temperature_params.ndg
+///   nudgec build temperature_params.ndg
+
+fn extract_fact(article: string) -> string uses LLM {
+    llm"""Extract the single most important factual claim from this article.
+
+Article:
+{article}
+
+Return one concise sentence and do not add speculation.
+"""
+    with {
+        model: "fake:default",
+        budget: 0.01 USD,
+        temperature: 0.1,
+        top_p: 0.9,
+        seed: 42
+    }
+}

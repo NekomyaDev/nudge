@@ -1,0 +1,17 @@
+/// Use `model: "fake:default"` when developing and testing. The deterministic
+/// provider gives repeatable responses without API keys, network access, or spend.
+/// It is the default testing foundation for fast local and CI feedback.
+///
+/// Try:
+///   nudgec check deterministic_fakes.ndg
+///   nudgec test deterministic_fakes.ndg
+
+fn classify(ticket: string) -> string uses LLM {
+    llm"""Classify this support ticket in one word: {ticket}"""
+    with { model: "fake:default", budget: 0.00 USD }
+}
+
+test "fake provider runs offline" {
+    let answer = classify("Please reset my account password")
+    assert len(answer) >= 0
+}

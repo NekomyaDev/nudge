@@ -1,0 +1,49 @@
+/// Agents cannot live in isolation. Nudge compiles agent definitions directly into
+/// network-addressable Agent-to-Agent (A2A v2.0) protocol peers.
+///
+/// The compiler extracts an Agent Card (`agent.json`) describing the agent's identity,
+/// capabilities, and exposed skills. Running `nudgec a2a-serve` starts a high-performance
+/// native Rust HTTP and JSON-RPC 2.0 server with multi-threaded task execution,
+/// background cancellation, and security boundaries.
+///
+/// Key commands:
+///   nudgec a2a <file.ndg>                 # export Agent Card to out/<name>.agent.json
+///   nudgec a2a-serve <file.ndg> --port N  # serve native A2A peer on port N
+///
+/// Endpoints served:
+///   GET  /.well-known/agent.json          # A2A Agent Card metadata
+///   GET  /health                          # server status and peer health
+///   POST /skills/<name>                   # call an exposed skill synchronously
+///   POST /tasks                           # create a task (supports "async": true)
+///   GET  /tasks/<id>                      # query task execution status
+///   POST /rpc                             # standard A2A JSON-RPC 2.0 (agent.card, task.create, task.get, task.cancel)
+///
+/// Try:
+///   nudgec check a2a.ndg
+///   nudgec a2a a2a.ndg
+///   nudgec a2a-serve a2a.ndg --port 9000
+
+agent MathAgent {
+    state {
+        total_ops: int = 0
+    }
+
+    fn calculate(a: int, b: int) -> int {
+        state.total_ops += 1
+        a + b
+    }
+
+    fn summarize(topic: string) -> string uses LLM {
+        state.total_ops += 1
+        llm"""Summarize this topic in one concise sentence: {topic}"""
+        with { model: "fake:default" }
+    }
+}
+
+fn main() {
+}
+
+test "math agent calculates sum" {
+    assert MathAgent.calculate(15, 27) == 42
+    assert MathAgent.state.total_ops == 1
+}

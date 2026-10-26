@@ -1,0 +1,28 @@
+/// Few-shot prompts teach a format by showing representative input/output pairs
+/// inside the prompt. Choose small, diverse examples that demonstrate the rule,
+/// then clearly mark the new input. This is context conditioning, not training:
+/// the examples only affect this request.
+///
+/// Keep examples relevant and compact because they consume context and cost.
+/// Use a schema when the result must be machine-consumable.
+///
+/// Try:
+///   nudgec check few_shot.ndg
+///   nudgec build few_shot.ndg
+
+fn label_review(review: string) -> string uses LLM {
+    llm"""Label each review as positive, neutral, or negative.
+
+Example input: "The delivery was fast and the product is excellent."
+Example output: positive
+
+Example input: "The package arrived yesterday."
+Example output: neutral
+
+New input:
+{review}
+
+Return exactly one label: positive, neutral, or negative.
+"""
+    with { model: "fake:default", budget: 0.01 USD, max_tokens: 10 }
+}

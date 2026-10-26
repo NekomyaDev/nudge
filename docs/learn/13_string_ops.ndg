@@ -1,9 +1,0 @@
-fn welcome(name: string) -> string {
-    let message = "Welcome, " + name
-    let size = len(message)
-    if size > 0 { message + "!" } else { "" }
-}
-
-fn main() -> string {
-    welcome("Ada")
-}

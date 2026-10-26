@@ -1,9 +1,0 @@
-fn classify(ticket: string) -> string uses LLM {
-    llm"""Classify this support ticket in one word: {ticket}"""
-    with { model: "fake:default", budget: 0.00 USD }
-}
-
-test "fake provider runs offline" {
-    let answer = classify("Please reset my account password")
-    assert len(answer) >= 0
-}

@@ -1,0 +1,39 @@
+/// A human-in-the-loop policy makes uncertainty explicit. Let high-confidence
+/// cases proceed automatically, but return an escalation state for the remainder.
+/// The escalation can become a queue entry, UI task, or an external review tool.
+///
+/// The important invariant is that the low-confidence path remains safe and
+/// observable, rather than silently guessing.
+///
+/// Try:
+///   nudgec check human_in_the_loop.ndg
+///   nudgec build human_in_the_loop.ndg
+
+type Team = {
+    winner: string,
+    p: float,
+    distribution: {string: float},
+    confidence: float
+}
+
+type Result = { team: Team }
+
+fn classify(ticket: string) -> Result uses Decision {
+    decide {
+        team: "which team should own this ticket?" choose [billing, technical, security]
+    }
+    on ticket
+    with { model: "fake:default", deadline: 50 }
+}
+
+fn decide_or_escalate(ticket: string) -> string uses Decision {
+    let result = classify(ticket)
+    route {
+        automatic: result.team.winner when result.team.confidence >= 0.85,
+        escalate: "human_review" otherwise
+    }
+}
+
+fn main() -> string uses Decision {
+    decide_or_escalate("I need an exception to the account policy")
+}

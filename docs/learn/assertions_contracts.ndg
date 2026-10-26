@@ -1,0 +1,21 @@
+/// `assert` checks an invariant in a function or test. Use it near boundaries
+/// to document assumptions and protect important properties. Dedicated
+/// `precondition` and `postcondition` keywords are not currently in the grammar,
+/// so assertions are the portable contract mechanism.
+///
+/// Try:
+///   nudgec check assertions_contracts.ndg
+///   nudgec test assertions_contracts.ndg
+
+fn non_empty_length(value: string) -> int {
+    assert len(value) > 0
+    len(value)
+}
+
+fn main() -> int {
+    non_empty_length("Nudge")
+}
+
+test "a known label has a positive length" {
+    assert non_empty_length("Nudge") > 0
+}

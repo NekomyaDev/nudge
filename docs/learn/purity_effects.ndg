@@ -1,0 +1,20 @@
+/// A function without `uses` is pure. Add `uses LLM`, `uses Decision`, or
+/// other declared effects when it performs that operation. Effects propagate
+/// through calls, so callers must declare the effects they expose. Keep pure
+/// formatting and validation helpers separate from effectful boundaries.
+///
+/// Try:
+///   nudgec check purity_effects.ndg
+
+fn label(name: string) -> string {
+    "Hello, " + name
+}
+
+fn ask(topic: string) -> string uses LLM {
+    llm"""Reply with one concise fact about {topic}."""
+    with { model: "fake:default", budget: 0.01 USD }
+}
+
+fn main() -> string uses LLM {
+    label(ask("Nudge"))
+}

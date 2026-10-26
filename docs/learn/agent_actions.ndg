@@ -1,0 +1,28 @@
+/// An agent method is written exactly like a function, but it can read and
+/// mutate that agent's state. Its `uses` list remains part of the public contract:
+/// `UI` covers interface actions, `LLM` covers model calls, and other effects are
+/// similarly visible to the compiler and callers.
+///
+/// Try:
+///   nudgec check agent_actions.ndg
+///   nudgec build agent_actions.ndg
+
+agent DraftAgent {
+    state {
+        draft: string = "empty"
+    }
+
+    fn edit(next: string) uses UI {
+        state.draft = next
+    }
+
+    fn summarize() -> string uses LLM {
+        llm"""Summarize this draft in one short sentence: {state.draft}"""
+        with { model: "fake:default", budget: 0.01 USD }
+    }
+}
+
+fn main() -> string uses UI, LLM {
+    DraftAgent.edit("A typed agent keeps actions explicit.")
+    DraftAgent.summarize()
+}

@@ -1,0 +1,18 @@
+/// `let` creates an immutable local binding. Add `mut` only when a value
+/// must be reassigned with `=`. This keeps ordinary data flow explicit and lets
+/// the checker reject accidental mutation.
+///
+/// Try:
+///   nudgec check variables_mut.ndg
+///   nudgec build variables_mut.ndg
+
+fn count_items() -> int {
+    let mut total: int = 0
+    total = total + 1
+    total = total + 2
+    total
+}
+
+fn main() -> int {
+    count_items()
+}

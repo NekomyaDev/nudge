@@ -1,0 +1,31 @@
+/// Large stable instructions can be cached by providers that support prompt
+/// caching. For Anthropic-compatible calls, `cache_control: "ephemeral"` marks
+/// reusable prompt context. Pair it with a stable system prompt and keep changing
+/// user data in the request body.
+///
+/// Caching reduces repeated-input cost and latency, but it does not replace a
+/// per-call budget. Measure the effect with traces and static cost reports.
+///
+/// Try:
+///   nudgec check caching_cost.ndg
+///   nudgec cost caching_cost.ndg
+
+fn summarize_policy(policy_text: string, question: string) -> string uses LLM {
+    llm"""Use the policy context to answer the question accurately.
+
+Policy context:
+{policy_text}
+
+Question:
+{question}
+
+Return a concise answer and cite the relevant policy wording.
+"""
+    with {
+        system: "You answer only from the supplied policy context and say when it is insufficient.",
+        cache_control: "ephemeral",
+        model: "anthropic:sonnet-4.6",
+        budget: 0.05 USD,
+        max_tokens: 240
+    }
+}

@@ -1,8 +1,0 @@
-fn eligible(age: int, has_ticket: bool) -> bool {
-    let remaining = (age + 2) * 3 % 5
-    age >= 18 and has_ticket and !(remaining < 0)
-}
-
-fn main() -> bool {
-    eligible(21, true)
-}

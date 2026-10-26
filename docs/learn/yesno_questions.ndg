@@ -1,0 +1,24 @@
+/// Use `yes/no` for binary propositions: fraud signals, cancellation risk, or
+/// whether an action needs review. The answer has one field, `p`, the estimated
+/// probability that the answer is yes. It is a probability, not a guarantee.
+///
+/// Compare `p` with a policy threshold before automating an irreversible action.
+///
+/// Try:
+///   nudgec check yesno_questions.ndg
+///   nudgec build yesno_questions.ndg
+
+type Risk = { cancellation: { p: float } }
+
+fn assess(message: string) -> Risk uses Decision {
+    decide {
+        cancellation: "does this message indicate the customer will cancel?" yes/no
+    }
+    on message
+    with { model: "fake:default", deadline: 50 }
+}
+
+fn main() -> float uses Decision {
+    let result = assess("I am leaving unless this is fixed")
+    result.cancellation.p
+}

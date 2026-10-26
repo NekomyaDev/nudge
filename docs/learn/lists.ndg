@@ -1,0 +1,21 @@
+/// Write a list type as `[T]` and a list literal as `[value, ...]`.
+/// Access an element with `items[index]`, and iterate with `for item in items`.
+/// For concurrent transformation, Nudge also provides `par map`; a sequential
+/// `map`/`filter` builtin is not yet part of the language.
+///
+/// Try:
+///   nudgec check lists.ndg
+
+fn sum(numbers: [int]) -> int {
+    let mut total: int = 0
+    for number in numbers {
+        total = total + number
+    }
+    total
+}
+
+fn main() -> int {
+    let values: [int] = [4, 8, 15]
+    let first = values[0]
+    sum(values) + first
+}

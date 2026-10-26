@@ -1,0 +1,19 @@
+/// The current optional type syntax is `T?`, the checked equivalent of an
+/// `Option<T>`. It accepts either a value or `none`; use `if` to select a fallback.
+/// Generic `Option<T>`, `Result<T, E>`, `unwrap`, and `if let` are planned language
+/// features. Until then, model rich success or failure data with a named record.
+///
+/// Try:
+///   nudgec check options_results.ndg
+
+type Lookup = { ok: bool, value: string? }
+
+fn display(result: Lookup) -> string {
+    if result.ok { "found" } else { "missing" }
+}
+
+fn main() -> string {
+    let missing: string? = none
+    let result: Lookup = { ok: false, value: missing }
+    display(result)
+}

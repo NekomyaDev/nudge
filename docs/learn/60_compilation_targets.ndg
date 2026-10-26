@@ -1,7 +1,0 @@
-fn double(value: int) -> int {
-    value * 2
-}
-
-fn main() -> int {
-    double(21)
-}

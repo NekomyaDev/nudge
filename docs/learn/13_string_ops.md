@@ -1,9 +1,0 @@
-# 13/60 - String operations
-
-Use `+` to concatenate strings and `len(value)` to count characters.
-`llm\"\"\"...{name}...\"\"\"` prompts support interpolation holes, while ordinary
-string literals currently do not. A dedicated `substring` builtin is not yet
-implemented, so keep slicing at a host/tool boundary for now.
-
-Try:
-  nudgec check string_ops.ndg

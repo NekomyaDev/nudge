@@ -1,0 +1,26 @@
+/// Keep durable behavioral rules separate from per-request user data. The
+/// `system` option carries role and safety instructions, while the `llm` block
+/// contains the task-specific input. This separation makes reviews easier and
+/// prevents user text from silently redefining the assistant's role.
+///
+/// State boundaries positively: describe what the model should do, what format it
+/// must return, and which instructions are authoritative.
+///
+/// Try:
+///   nudgec check system_prompts.ndg
+///   nudgec build system_prompts.ndg
+
+fn support_reply(customer_message: string) -> string uses LLM {
+    llm"""Draft a reply to this customer message.
+
+Customer message:
+{customer_message}
+
+Give a concise answer and a clear next step.
+"""
+    with {
+        system: "You are a careful support assistant. Never invent account facts. Be polite and concise.",
+        model: "fake:default",
+        budget: 0.02 USD
+    }
+}

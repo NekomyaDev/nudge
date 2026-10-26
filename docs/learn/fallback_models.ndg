@@ -1,0 +1,26 @@
+/// A fallback model keeps a bounded task available when the primary provider
+/// fails or times out. Declare the primary in `model` and the secondary in
+/// `fallback`. Keep both prompts and schema-compatible expectations identical.
+///
+/// A fallback is not unlimited retrying: retain a budget, a response-size cap,
+/// and a schema so the degraded path is safe and predictable too.
+///
+/// Try:
+///   nudgec check fallback_models.ndg
+///   nudgec build fallback_models.ndg
+
+fn classify(message: string) -> string uses LLM {
+    llm"""Classify this incoming message as billing, technical, account, or other.
+
+Message:
+{message}
+
+Return exactly one category name.
+"""
+    with {
+        model: "anthropic:sonnet-4.6",
+        fallback: "fake:default",
+        budget: 0.02 USD,
+        max_tokens: 20
+    }
+}

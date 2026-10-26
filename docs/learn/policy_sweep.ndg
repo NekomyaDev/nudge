@@ -1,0 +1,40 @@
+/// Thresholds are product policy, not magic constants. First record decision
+/// traces, then use `nudgec policy-sweep` to compare candidate thresholds offline.
+/// This replays existing distributions and makes zero new model calls.
+///
+/// For example, sweep a routing question at several confidence thresholds before
+/// changing the value used by a deployed `route {}` policy.
+///
+/// Try:
+///   NUDGE_TRACE=triage.jsonl python3 out/policy_sweep.py
+///   nudgec policy-sweep triage.jsonl --question team --thresholds 0.60,0.75,0.85
+///   nudgec check policy_sweep.ndg
+
+type Team = {
+    winner: string,
+    p: float,
+    distribution: {string: float},
+    confidence: float
+}
+
+type Result = { team: Team }
+
+fn classify(ticket: string) -> Result uses Decision {
+    decide {
+        team: "which team should own this ticket?" choose [billing, technical, security]
+    }
+    on ticket
+    with { model: "fake:default", deadline: 50 }
+}
+
+fn deployed_policy(ticket: string) -> string uses Decision {
+    let result = classify(ticket)
+    route {
+        automatic: result.team.winner when result.team.confidence >= 0.75,
+        review: "manual_review" otherwise
+    }
+}
+
+fn main() -> string uses Decision {
+    deployed_policy("my subscription renewal is incorrect")
+}

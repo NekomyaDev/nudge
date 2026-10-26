@@ -1,0 +1,41 @@
+/// Decision results distinguish probability from confidence. For a `choose`
+/// answer, `p` is the selected winner's probability and `confidence` measures
+/// how decisively the model separated that answer from alternatives. A safe policy
+/// usually requires both.
+///
+/// Use ordinary expressions to filter: only automate when the selected category
+/// and confidence satisfy your policy. Otherwise return a conservative fallback.
+///
+/// Try:
+///   nudgec check confidence_thresholds.ndg
+///   nudgec build confidence_thresholds.ndg
+
+type Team = {
+    winner: string,
+    p: float,
+    distribution: {string: float},
+    confidence: float
+}
+
+type Result = { team: Team }
+
+fn classify(ticket: string) -> Result uses Decision {
+    decide {
+        team: "which team should own this ticket?" choose [billing, technical, security]
+    }
+    on ticket
+    with { model: "fake:default", deadline: 50 }
+}
+
+fn action(ticket: string) -> string uses Decision {
+    let result = classify(ticket)
+    if result.team.p >= 0.7 and result.team.confidence >= 0.8 {
+        result.team.winner
+    } else {
+        "manual_review"
+    }
+}
+
+fn main() -> string uses Decision {
+    action("unrecognized card charge")
+}

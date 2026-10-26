@@ -1,0 +1,23 @@
+/// Free-text LLM output is a bug factory. In Nudge you declare a
+/// record type and pin it with `schema:` — the runtime validates every
+/// response against the type and repairs or rejects mismatches.
+///
+/// The prompt must describe the contract in words too (the compiler checks
+/// that schema fields actually appear in the prompt — Prompt Clippy W0003).
+///
+/// Try:
+///   nudgec check types.ndg && nudgec build types.ndg
+
+type Ticket = { category: string, priority: string, summary: string }
+
+fn triage(body: string) -> Ticket uses LLM {
+    llm"""Classify this support ticket.
+
+    Ticket body:
+    {body}
+
+    category: one of "billing", "technical", "account", "other"
+    priority: one of "low", "normal", "high", "urgent"
+    summary: one sentence a support lead can act on"""
+    with { schema: Ticket, model: "anthropic:sonnet-4.6", budget: 0.02 USD }
+}

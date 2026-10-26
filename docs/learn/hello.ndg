@@ -1,0 +1,19 @@
+/// Nudge compiles typed LLM calls into plain Python/TypeScript.
+///
+/// An `llm"""..."""` block is a prompt with {interpolation} holes; `with {}`
+/// declares the contract: `schema` pins the output type, `budget` caps the
+/// cost, `model` names the provider. `uses LLM` is an *effect* — the
+/// compiler tracks it, so a function that calls a model can never hide it.
+///
+/// Best part: every program runs against a deterministic fake provider by
+/// default. No API key, no token spend, byte-reproducible tests.
+///
+/// Try:
+///   nudgec check hello.ndg      # type-check
+///   nudgec build hello.ndg      # compile to out/hello.py
+///   python3 out/hello.py        # run — fake provider, offline
+
+fn main() -> string uses LLM {
+    llm"""Say hello to the Nudge language in one short sentence."""
+    with { model: "anthropic:sonnet-4.6", budget: 0.01 USD }
+}

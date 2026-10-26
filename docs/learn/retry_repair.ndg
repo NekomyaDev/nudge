@@ -1,0 +1,26 @@
+/// Structured responses can fail validation because a provider returns malformed
+/// JSON or omits a required field. `retry: 3 with repair` gives the runtime up to
+/// three attempts and asks it to repair invalid structured output before giving
+/// up.
+///
+/// Use repair with schemas, but still make the prompt state every field and its
+/// shape. Repair is a reliability net, not a substitute for a clear contract.
+///
+/// Try:
+///   nudgec check retry_repair.ndg
+///   nudgec lint retry_repair.ndg
+
+type Todo = { title: string, priority: string, next_step: string }
+
+fn make_todo(request: string) -> Todo uses LLM {
+    llm"""Convert this request into one actionable todo item.
+
+Request:
+{request}
+
+title: a short task name
+priority: one of "low", "normal", or "high"
+next_step: the first concrete action
+"""
+    with { schema: Todo, model: "fake:default", budget: 0.02 USD, retry: 3 with repair }
+}

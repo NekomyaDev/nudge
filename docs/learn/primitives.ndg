@@ -1,0 +1,22 @@
+/// Nudge has `int`, `float`, `string`, `bool`, and `none` (the unit-like
+/// no-value type). `()` is also accepted in type position as an alias for `none`.
+/// Numeric operations widen `int` to `float` when necessary. There are no implicit
+/// string-to-number cast builtins yet, so make conversions at an input boundary.
+///
+/// Try:
+///   nudgec check primitives.ndg
+
+fn describe(enabled: bool) -> string {
+    let count: int = 3
+    let ratio: float = count / 2
+    let label: string = "items"
+    if enabled { label + ": " + "ready" } else { "disabled" }
+}
+
+fn log_complete() -> none {
+    none
+}
+
+fn main() -> string {
+    describe(true)
+}

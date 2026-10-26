@@ -1,0 +1,17 @@
+/// Use `+` to concatenate strings and `len(value)` to count characters.
+/// `llm\"\"\"...{name}...\"\"\"` prompts support interpolation holes, while ordinary
+/// string literals currently do not. A dedicated `substring` builtin is not yet
+/// implemented, so keep slicing at a host/tool boundary for now.
+///
+/// Try:
+///   nudgec check string_ops.ndg
+
+fn welcome(name: string) -> string {
+    let message = "Welcome, " + name
+    let size = len(message)
+    if size > 0 { message + "!" } else { "" }
+}
+
+fn main() -> string {
+    welcome("Ada")
+}

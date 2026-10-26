@@ -1,8 +1,0 @@
-fn answer(question: string) -> string uses LLM {
-    llm"""Answer this question briefly: {question}"""
-    with { model: "fake:default", budget: 0.00 USD }
-}
-
-fn main() -> string uses LLM {
-    answer("What does replay protect?")
-}

@@ -1,0 +1,17 @@
+/// Compare a trusted baseline trace to a candidate trace with
+/// `nudgec trace-diff baseline.ntf.jsonl candidate.ntf.jsonl --fail-on-regression`.
+/// The command turns growth in cost, token use, latency, or failures into a
+/// non-zero exit code, so CI can reject an agent regression before deployment.
+///
+/// Try:
+///   nudgec check trace_diff_ci.ndg
+///   nudgec trace-diff baseline.ntf.jsonl candidate.ntf.jsonl --fail-on-regression
+
+fn concise_summary(note: string) -> string uses LLM {
+    llm"""Summarize this note in one concise sentence: {note}"""
+    with { model: "fake:default", budget: 0.00 USD }
+}
+
+fn main() -> string uses LLM {
+    concise_summary("Trace comparison makes resource regressions visible.")
+}
