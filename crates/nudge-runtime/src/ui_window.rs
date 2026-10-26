@@ -4958,7 +4958,14 @@ pub fn layout_element_ctx(
             let mut child_y = y + padding;
             let mut max_child_w = 0;
 
-            for child in &elem.children {
+            for (child_idx, child) in elem.children.iter().enumerate() {
+                let subsequent_h: i32 = elem.children.iter().skip(child_idx + 1).map(|c| {
+                    let eh = c.props.get("height").or_else(|| c.props.get("h")).and_then(|s| s.parse::<i32>().ok()).unwrap_or(28);
+                    let pad = c.props.get("padding").and_then(|s| s.parse::<i32>().ok()).unwrap_or(0);
+                    eh + pad * 2 + gap
+                }).sum();
+                let saved_max_h = ctx.max_h;
+                ctx.max_h = (ctx.max_h - subsequent_h).max(y + padding + 60);
                 let (cw, ch) = layout_element_ctx(
                     child,
                     x + padding,
@@ -4969,6 +4976,7 @@ pub fn layout_element_ctx(
                     pan,
                     clips,
                 );
+                ctx.max_h = saved_max_h;
                 max_child_w = max_child_w.max(cw);
                 child_y += ch + gap;
             }
@@ -5193,7 +5201,7 @@ pub fn layout_element_ctx(
             let viewport_h = if let Some(eh) = explicit_h {
                 eh
             } else if expand_h {
-                (ctx.max_h - y - padding - 24).max(120)
+                (ctx.max_h - y - padding).max(120)
             } else {
                 240
             };
@@ -7456,14 +7464,14 @@ impl<D: UiDispatcher> NativeApp<D> {
                 scroll: scroll_offsets,
                 regions: scroll_regions,
                 counter: scroll_counter,
-                max_w: self.width as i32 - 20,
-                max_h: self.height as i32 - 20,
+                max_w: self.width as i32,
+                max_h: self.height as i32,
             };
             let (total_w, total_h) = layout_element_ctx(
                 root,
-                10,
-                10,
-                self.width as i32 - 20,
+                0,
+                0,
+                self.width as i32,
                 layout_boxes,
                 &mut ctx,
                 (0, 0),

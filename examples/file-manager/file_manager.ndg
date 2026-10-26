@@ -1,7 +1,7 @@
 // examples/file-manager/file_manager.ndg
-// Nudge Files — Self-Hosted Pure-Nudge Desktop File Manager
+// Nudge Files — High-Performance Pure-Nudge Desktop File Manager
 // 100% Pure Nudge Language | 0 Foreign Dependencies (GATE-01 Compliant)
-// Professional KDE Breeze Desktop HIG Aligned
+// Professional KDE Breeze Desktop HIG Aligned | Full English & Turkish Support
 
 type FileEntry = {
     name: string,
@@ -58,7 +58,7 @@ fn resolve_glyph(name: string, is_dir: bool) -> string {
         let ext = str.lower(get_extension(name))
         if ext == "ndg" {
             glyph = "⚡"
-        } else if ext == "rs" or ext == "c" or ext == "cpp" or ext == "go" {
+        } else if ext == "rs" or ext == "c" or ext == "cpp" or ext == "go" or ext == "py" {
             glyph = "⚙"
         } else if ext == "md" or ext == "txt" or ext == "doc" or ext == "json" or ext == "toml" {
             glyph = "▪"
@@ -66,6 +66,10 @@ fn resolve_glyph(name: string, is_dir: bool) -> string {
             glyph = "◇"
         } else if ext == "sh" or ext == "bash" {
             glyph = "⌨"
+        } else if ext == "mp3" or ext == "wav" or ext == "flac" {
+            glyph = "♪"
+        } else if ext == "mp4" or ext == "mkv" or ext == "avi" {
+            glyph = "▶"
         } else {
             glyph = "▫"
         }
@@ -180,6 +184,20 @@ fn filter_entries(entries: [FileEntry], query: string) -> [FileEntry] {
     matched
 }
 
+fn extract_tab_name(t: string) -> string {
+    let mut name = t
+    if t == "/" {
+        name = "/"
+    } else {
+        let parts = str.split(t, "/")
+        let count = len(parts)
+        if count > 0 {
+            name = parts[count - 1]
+        }
+    }
+    name
+}
+
 // ── In-Memory VFS Bridge & Inode Cache ───────────────────────────────
 
 agent VfsBridge {
@@ -257,28 +275,14 @@ agent VfsBridge {
 
 // ── KDE Breeze Views (Pack 3 Combinators) ───────────────────────────
 
-fn extract_tab_name(t: string) -> string {
-    let mut name = t
-    if t == "/" {
-        name = "/"
-    } else {
-        let parts = str.split(t, "/")
-        let count = len(parts)
-        if count > 0 {
-            name = parts[count - 1]
-        }
-    }
-    name
-}
-
 view TopToolbar(
     current_path: string,
-    sort_by: string,
-    sort_asc: bool,
     is_split: bool,
     show_inspector: bool,
     edit_path_mode: bool,
-    current_theme: string
+    current_theme: string,
+    current_lang: string,
+    view_mode: string
 ) -> View {
     let path_segments = str.split(current_path, "/")
     let mut crumbs = []
@@ -299,8 +303,18 @@ view TopToolbar(
         button("✏", id = "btn_toggle_path_mode", variant = "flat", w = 24, h = 22, on_click = toggle_path_edit)
     ]
 
-    row(padding = 4, gap = 4, bg = "toolbar") [
-        // 1. Navigation Icons (‹ and › and ▲)
+    let is_en = (current_lang == "en")
+    let txt_new_folder = if is_en { "+ Folder" } else { "+ Klasör" }
+    let txt_copy = if is_en { "Copy" } else { "Kopyala" }
+    let txt_paste = if is_en { "Paste" } else { "Yapıştır" }
+    let txt_delete = if is_en { "✕ Delete" } else { "✕ Sil" }
+    let txt_undo = if is_en { "↺ Undo" } else { "↺ Geri Al" }
+    let txt_reload = if is_en { "↻ Reload" } else { "↻ Yenile" }
+    let txt_split = if is_en { "◫ Split" } else { "◫ Böl" }
+    let txt_info = if is_en { "ℹ Info" } else { "ℹ Bilgi" }
+
+    row(padding = 4, gap = 4, bg = "toolbar", expand = true) [
+        // 1. Navigation Icons (‹, ›, ▲)
         button("‹", id = "btn_back", variant = "toolbar", w = 28, h = 26, on_click = nav_back),
         button("›", id = "btn_forward", variant = "toolbar", w = 28, h = 26, on_click = nav_forward),
         button("▲", id = "btn_up", variant = "toolbar", w = 28, h = 26, on_click = nav_up),
@@ -308,80 +322,86 @@ view TopToolbar(
         divider(orientation = "vertical", size = 1, h = 22),
 
         // 2. View Mode Segmented Controls (Icons, Compact, Details)
-        button("⊞", id = "view_icons", variant = "toolbar", w = 28, h = 26),
-        button("≡", id = "view_compact", variant = "toolbar", w = 28, h = 26),
-        button("☰", id = "view_details", variant = "toolbar", w = 28, h = 26, selected = true),
+        button("⊞", id = "view_icons", variant = "toolbar", w = 28, h = 26, selected = (view_mode == "icons"), on_click = set_view_icons),
+        button("≡", id = "view_compact", variant = "toolbar", w = 28, h = 26, selected = (view_mode == "compact"), on_click = set_view_compact),
+        button("☰", id = "view_details", variant = "toolbar", w = 28, h = 26, selected = (view_mode == "details"), on_click = set_view_details),
 
         divider(orientation = "vertical", size = 1, h = 22),
 
         // 3. Dynamic Breadcrumb Location Bar
         if edit_path_mode {
             row(padding = 1, gap = 2) [
-                input(value = current_path, placeholder = "Dizin yolu girin...", id = "input_path", w = 280, h = 24, on_change = on_path_input_change),
-                button("✓", id = "btn_toggle_path_mode", variant = "toolbar", w = 28, h = 24, on_click = toggle_path_edit)
+                input(value = current_path, placeholder = if is_en { "Enter path..." } else { "Yol girin..." }, id = "input_path", w = 220, h = 24, on_change = on_path_input_change),
+                button("✓", id = "btn_toggle_path_mode", variant = "toolbar", w = 26, h = 24, on_click = toggle_path_edit)
             ]
         } else {
             row(all_crumbs, padding = 2, gap = 2, bg = "input")
         },
 
-        spacer(6),
+        spacer(4),
 
         // 4. File Actions
-        button("+ Klasör", id = "btn_new_folder", variant = "toolbar", h = 26, on_click = create_new_folder),
-        button("Kopyala", id = "btn_copy", variant = "toolbar", h = 26, on_click = copy_selected),
-        button("Yapıştır", id = "btn_paste", variant = "toolbar", h = 26, on_click = paste_clipboard),
-        button("✕ Sil", id = "btn_delete", variant = "toolbar", h = 26, on_click = delete_selected),
-        button("↺ Geri Al", id = "btn_undo", variant = "toolbar", h = 26, on_click = undo_last_action),
-        button("↻ Yenile", id = "btn_reload", variant = "toolbar", h = 26, on_click = reload_current),
+        button(txt_new_folder, id = "btn_new_folder", variant = "toolbar", h = 26, on_click = create_new_folder),
+        button(txt_copy, id = "btn_copy", variant = "toolbar", h = 26, on_click = copy_selected),
+        button(txt_paste, id = "btn_paste", variant = "toolbar", h = 26, on_click = paste_clipboard),
+        button(txt_delete, id = "btn_delete", variant = "toolbar", h = 26, on_click = delete_selected),
+        button(txt_undo, id = "btn_undo", variant = "toolbar", h = 26, on_click = undo_last_action),
+        button(txt_reload, id = "btn_reload", variant = "toolbar", h = 26, on_click = reload_current),
 
         spacer(4),
 
-        // 5. Right Toolbar Controls (Böl, Bilgi, Tema)
-        button("◫ Böl", id = "btn_split_toggle", variant = "toolbar", h = 26, selected = is_split, on_click = toggle_split),
-        button("ℹ Bilgi", id = "btn_info_toggle", variant = "toolbar", h = 26, selected = show_inspector, on_click = toggle_inspector),
-        button(if current_theme == "breeze-light" { "☾ Koyu" } else { "☼ Açık" }, id = "btn_theme_toggle", variant = "toolbar", h = 26, on_click = toggle_theme)
+        // 5. Right Toolbar Controls (Böl, Bilgi, Dil, Tema)
+        button(txt_split, id = "btn_split_toggle", variant = "toolbar", h = 26, selected = is_split, on_click = toggle_split),
+        button(txt_info, id = "btn_info_toggle", variant = "toolbar", h = 26, selected = show_inspector, on_click = toggle_inspector),
+        button(if is_en { "TR" } else { "EN" }, id = "btn_lang_toggle", variant = "toolbar", w = 32, h = 26, on_click = toggle_lang),
+        button(if current_theme == "breeze-light" { "☾" } else { "☼" }, id = "btn_theme_toggle", variant = "toolbar", w = 28, h = 26, on_click = toggle_theme)
     ]
 }
 
 view TabBar(tabs: [string], active_idx: int) -> View {
-    let mut tab_buttons = []
+    let mut tab_elements = []
     for (t, idx) in tabs {
         let is_active = (idx == active_idx)
         let tab_name = extract_tab_name(t)
-        tab_buttons = tab_buttons + [
-            button("▸ " + tab_name + "  ✕", id = "tab_" + str.to_string(idx), variant = "toolbar", selected = is_active, h = 24, on_click = on_tab_click)
+        tab_elements = tab_elements + [
+            row(padding = 0, gap = 0) [
+                button("▸ " + tab_name, id = "tab_sel_" + str.to_string(idx), variant = "toolbar", selected = is_active, h = 24, on_click = on_tab_click),
+                button("✕", id = "tab_close_" + str.to_string(idx), variant = "toolbar", w = 20, h = 24, on_click = on_tab_close)
+            ]
         ]
     }
-    let all_tab_elements = tab_buttons + [
+    let all_elements = tab_elements + [
         button("+", id = "btn_new_tab", variant = "toolbar", w = 24, h = 24, on_click = on_new_tab)
     ]
 
-    row(all_tab_elements, padding = 2, gap = 4, bg = "toolbar")
+    row(all_elements, padding = 2, gap = 4, bg = "toolbar", expand = true)
 }
 
-view PlacesSidebar(current_path: string) -> View {
-    column(padding = 4, gap = 2, w = 180, expand_h = true, bg = "sidebar") [
-        // KDE Dolphin Native Turkish Sidebar ("Konumlar")
-        text("Konumlar", bold = true),
-        button("  ⌂  Ev Dizini", id = "place_home", variant = "item", align = "start", w = 172, h = 26, selected = (current_path == "/home/neko" or current_path == "." or current_path == ""), on_click = nav_home),
-        button("  ⌨  Masaüstü", id = "place_desktop", variant = "item", align = "start", w = 172, h = 26, selected = str.contains(current_path, "Masaüstü"), on_click = nav_desktop),
-        button("  ▪  Belgeler", id = "place_docs", variant = "item", align = "start", w = 172, h = 26, selected = str.contains(current_path, "Belgeler"), on_click = nav_docs),
-        button("  ⬇  İndirilenler", id = "place_downloads", variant = "item", align = "start", w = 172, h = 26, selected = str.contains(current_path, "İndirilenler"), on_click = nav_downloads),
-        button("  ♪  Müzik", id = "place_music", variant = "item", align = "start", w = 172, h = 26, selected = str.contains(current_path, "Müzik"), on_click = nav_music),
-        button("  ◇  Resimler", id = "place_pictures", variant = "item", align = "start", w = 172, h = 26, selected = str.contains(current_path, "Resimler"), on_click = nav_pictures),
-        button("  ▶  Videolar", id = "place_videos", variant = "item", align = "start", w = 172, h = 26, selected = str.contains(current_path, "Videolar"), on_click = nav_videos),
-        button("  ✕  Çöp", id = "place_trash", variant = "item", align = "start", w = 172, h = 26, selected = str.contains(current_path, "Trash"), on_click = nav_trash),
+view PlacesSidebar(current_path: string, current_lang: string) -> View {
+    let is_en = (current_lang == "en")
+    column(padding = 4, gap = 2, w = 170, expand_h = true, bg = "sidebar") [
+        // KDE Dolphin Standard Sidebar ("Places" / "Konumlar")
+        text(if is_en { "Places" } else { "Konumlar" }, bold = true),
+        button(if is_en { "  ⌂  Home" } else { "  ⌂  Ev Dizini" }, id = "place_home", variant = "item", align = "start", w = 162, h = 24, selected = (current_path == "/home/neko" or current_path == "." or current_path == ""), on_click = nav_home),
+        button(if is_en { "  ⌨  Desktop" } else { "  ⌨  Masaüstü" }, id = "place_desktop", variant = "item", align = "start", w = 162, h = 24, selected = str.contains(current_path, "Masaüstü"), on_click = nav_desktop),
+        button(if is_en { "  ▪  Documents" } else { "  ▪  Belgeler" }, id = "place_docs", variant = "item", align = "start", w = 162, h = 24, selected = str.contains(current_path, "Belgeler"), on_click = nav_docs),
+        button(if is_en { "  ⬇  Downloads" } else { "  ⬇  İndirilenler" }, id = "place_downloads", variant = "item", align = "start", w = 162, h = 24, selected = str.contains(current_path, "İndirilenler"), on_click = nav_downloads),
+        button(if is_en { "  ♪  Music" } else { "  ♪  Müzik" }, id = "place_music", variant = "item", align = "start", w = 162, h = 24, selected = str.contains(current_path, "Müzik"), on_click = nav_music),
+        button(if is_en { "  ◇  Pictures" } else { "  ◇  Resimler" }, id = "place_pictures", variant = "item", align = "start", w = 162, h = 24, selected = str.contains(current_path, "Resimler"), on_click = nav_pictures),
+        button(if is_en { "  ▶  Videos" } else { "  ▶  Videolar" }, id = "place_videos", variant = "item", align = "start", w = 162, h = 24, selected = str.contains(current_path, "Videolar"), on_click = nav_videos),
+        button(if is_en { "  ✕  Trash" } else { "  ✕  Çöp" }, id = "place_trash", variant = "item", align = "start", w = 162, h = 24, selected = str.contains(current_path, "Trash"), on_click = nav_trash),
 
         divider(size = 1),
 
-        // KDE Dolphin Native Turkish Sidebar ("Aygıtlar")
-        text("Aygıtlar", bold = true),
-        button("  💾  Kök Dizin (/)", id = "place_root", variant = "item", align = "start", w = 172, h = 26, selected = (current_path == "/"), on_click = nav_root),
-        button("  ⚡  Geçici Bellek (/tmp)", id = "place_nvfs", variant = "item", align = "start", w = 172, h = 26, selected = (current_path == "/tmp"), on_click = nav_nvfs)
+        // KDE Dolphin Standard Sidebar ("Devices" / "Aygıtlar")
+        text(if is_en { "Devices" } else { "Aygıtlar" }, bold = true),
+        button(if is_en { "  💾  Root (/)" } else { "  💾  Kök Dizin (/)" }, id = "place_root", variant = "item", align = "start", w = 162, h = 24, selected = (current_path == "/"), on_click = nav_root),
+        button(if is_en { "  ⚡  Temp (/tmp)" } else { "  ⚡  Geçici Bellek (/tmp)" }, id = "place_nvfs", variant = "item", align = "start", w = 162, h = 24, selected = (current_path == "/tmp"), on_click = nav_nvfs)
     ]
 }
 
-view FileDetailsTable(panel_title: string, entries: [FileEntry], selected_name: string) -> View {
+view FileDetailsTable(panel_title: string, entries: [FileEntry], selected_name: string, current_lang: string) -> View {
+    let is_en = (current_lang == "en")
     let mut rows = []
     for item in entries {
         let is_sel = (item.name == selected_name)
@@ -398,19 +418,17 @@ view FileDetailsTable(panel_title: string, entries: [FileEntry], selected_name: 
                     on_click = on_item_click
                 ),
                 button(item.size_str, id = "sz_" + item.name, variant = "flat", align = "end", w = 80, h = 24, on_click = on_item_click),
-                button(item.permissions, id = "perm_" + item.name, variant = "flat", align = "start", w = 110, h = 24, on_click = on_item_click),
-                button(item.cas_hash, id = "cas_" + item.name, variant = "flat", align = "start", w = 200, h = 24, on_click = on_item_click)
+                button(item.permissions, id = "perm_" + item.name, variant = "flat", align = "start", w = 100, h = 24, on_click = on_item_click)
             ]
         ]
     }
 
     column(padding = 2, gap = 2, expand = true, expand_h = true) [
-        // Column Headers (Dolphin Details View Header - Perfectly Aligned Dynamic Grid)
+        // Column Headers (Dolphin Responsive Details View Header)
         row(padding = 2, gap = 2, bg = "toolbar", expand = true) [
-            button("  İsim", id = "sort_name", variant = "flat", align = "start", expand = true, h = 22, on_click = toggle_sort),
-            button("Boyut", id = "sort_size", variant = "flat", align = "end", w = 80, h = 22, on_click = toggle_sort),
-            button("İzinler", id = "sort_perms", variant = "flat", align = "start", w = 110, h = 22),
-            button("CAS Özeti", id = "sort_cas", variant = "flat", align = "start", w = 200, h = 22)
+            button(if is_en { "  Name" } else { "  İsim" }, id = "sort_name", variant = "flat", align = "start", expand = true, h = 22, on_click = toggle_sort),
+            button(if is_en { "Size" } else { "Boyut" }, id = "sort_size", variant = "flat", align = "end", w = 80, h = 22, on_click = toggle_sort),
+            button(if is_en { "Permissions" } else { "İzinler" }, id = "sort_perms", variant = "flat", align = "start", w = 100, h = 22)
         ],
         divider(size = 1),
         // File Listing Scroll (Expands dynamically to full window height and width)
@@ -424,49 +442,55 @@ view InspectorPanel(
     selected_size: string,
     selected_perms: string,
     selected_cas: string,
-    preview_content: string
+    preview_content: string,
+    current_lang: string
 ) -> View {
-    column(padding = 4, gap = 2, w = 240, expand_h = true, bg = "sidebar") [
-        text("ℹ Bilgi Paneli (F11)", bold = true),
+    let is_en = (current_lang == "en")
+    column(padding = 4, gap = 2, w = 210, expand_h = true, bg = "sidebar") [
+        text(if is_en { "ℹ Information (F11)" } else { "ℹ Bilgi Paneli (F11)" }, bold = true),
         divider(size = 1),
         if selected_name != "" {
             column(padding = 2, gap = 2) [
                 text("▪ " + selected_name, bold = true),
-                text("Konum: " + selected_path),
-                text("Boyut: " + selected_size),
-                text("İzinler: " + selected_perms),
+                text((if is_en { "Path: " } else { "Konum: " }) + selected_path),
+                text((if is_en { "Size: " } else { "Boyut: " }) + selected_size),
+                text((if is_en { "Perms: " } else { "İzin: " }) + selected_perms),
                 row(padding = 0, gap = 2) [
                     text("CAS:"),
                     badge(selected_cas, status = "info")
                 ],
-                button("▸ Klasörü Aç", id = "btn_open_selected_dir", variant = "toolbar", h = 26, on_click = open_selected_directory),
+                button(if is_en { "▸ Open Directory" } else { "▸ Klasörü Aç" }, id = "btn_open_selected_dir", variant = "toolbar", h = 24, on_click = open_selected_directory),
                 divider(size = 1),
-                text("Önizleme:", bold = true),
+                text(if is_en { "Preview:" } else { "Önizleme:" }, bold = true),
                 if preview_content != "" {
                     code_block(preview_content, id = "inspector_preview")
                 } else {
-                    text("(Klasör veya ikili dosya)")
+                    text(if is_en { "(Folder or binary)" } else { "(Klasör veya ikili dosya)" })
                 }
             ]
         } else {
             column(padding = 2, gap = 2) [
-                text("Önizleme ve meta veri için bir öğe seçin."),
-                text("NVFS tüm dosya özniteliklerini RAM'de indeksler."),
-                button("▸ Klasörü Aç", id = "btn_open_selected_dir", variant = "toolbar", h = 26, on_click = open_selected_directory)
+                text(if is_en { "Select an item to inspect." } else { "İncelemek için bir öğe seçin." }),
+                button(if is_en { "▸ Open Directory" } else { "▸ Klasörü Aç" }, id = "btn_open_selected_dir", variant = "toolbar", h = 24, on_click = open_selected_directory)
             ]
         }
     ]
 }
 
-view BottomStatusBar(filter_query: string, total_items: int, dir_count: int, file_count: int, cache_hits: int) -> View {
-    row(padding = 2, gap = 6, bg = "toolbar", expand = true) [
-        text("Filtre:"),
-        input(value = filter_query, placeholder = "Dosya ara...", id = "input_filter", w = 180, h = 22, on_change = on_filter_change),
-        button("✕", id = "btn_clear_filter", variant = "flat", w = 24, h = 22, on_click = clear_filter),
+view BottomStatusBar(filter_query: string, total_items: int, dir_count: int, file_count: int, cache_hits: int, current_lang: string) -> View {
+    let is_en = (current_lang == "en")
+    let summary = if is_en {
+        str.to_string(total_items) + " items (" + str.to_string(dir_count) + " folders, " + str.to_string(file_count) + " files)"
+    } else {
+        str.to_string(total_items) + " öğe (" + str.to_string(dir_count) + " klasör, " + str.to_string(file_count) + " dosya)"
+    }
+
+    row(padding = 2, gap = 4, bg = "toolbar", expand = true) [
+        text(if is_en { "Filter:" } else { "Filtre:" }),
+        input(value = filter_query, placeholder = if is_en { "Filter..." } else { "Filtre..." }, id = "input_filter", w = 130, h = 22, on_change = on_filter_change),
+        button("✕", id = "btn_clear_filter", variant = "flat", w = 22, h = 22, on_click = clear_filter),
         divider(orientation = "vertical", size = 1, h = 18),
-        text(
-            str.to_string(total_items) + " öğe (" + str.to_string(dir_count) + " klasör, " + str.to_string(file_count) + " dosya)  |  NVFS Bellek İndeksi Aktif (" + str.to_string(cache_hits) + " isabet)"
-        )
+        text(summary)
     ]
 }
 
@@ -481,12 +505,12 @@ view FileManagerLayout(
     selected_cas: string,
     preview_content: string,
     filter_query: string,
-    sort_by: string,
-    sort_asc: bool,
     is_split: bool,
     show_inspector: bool,
     edit_path_mode: bool,
     current_theme: string,
+    current_lang: string,
+    view_mode: string,
     cache_hits: int,
     tabs: [string],
     active_tab_idx: int
@@ -501,30 +525,30 @@ view FileManagerLayout(
         }
     }
 
-    column(padding = 2, gap = 2, expand = true, expand_h = true) [
-        // 1. Top Navigation Toolbar
-        TopToolbar(current_path, sort_by, sort_asc, is_split, show_inspector, edit_path_mode, current_theme),
+    column(padding = 0, gap = 0, expand = true, expand_h = true) [
+        // 1. Top Navigation Toolbar (Edge to edge)
+        TopToolbar(current_path, is_split, show_inspector, edit_path_mode, current_theme, current_lang, view_mode),
 
-        // 2. Real Dynamic Tab Bar
+        // 2. Real Dynamic Tab Bar (Edge to edge)
         TabBar(tabs, active_tab_idx),
 
         // 3. Middle Main Area: Places Sidebar + File Table + Inspector (Full Responsive Width & Height)
-        row(padding = 0, gap = 2, expand = true, expand_h = true) [
-            PlacesSidebar(current_path),
+        row(padding = 0, gap = 0, expand = true, expand_h = true) [
+            PlacesSidebar(current_path, current_lang),
             divider(orientation = "vertical", size = 1, expand_h = true),
 
             if is_split {
                 row(padding = 0, gap = 2, expand = true, expand_h = true) [
-                    FileDetailsTable("Sol Panel", left_entries, selected_name),
+                    FileDetailsTable("Left", left_entries, selected_name, current_lang),
                     divider(orientation = "vertical", size = 1, expand_h = true),
-                    FileDetailsTable("Sağ Panel (F3)", right_entries, "")
+                    FileDetailsTable("Right", right_entries, "", current_lang)
                 ]
             } else {
-                FileDetailsTable("Çalışma Alanı", left_entries, selected_name)
+                FileDetailsTable("Main", left_entries, selected_name, current_lang)
             },
 
             if show_inspector {
-                row(padding = 0, gap = 2, w = 244, expand_h = true) [
+                row(padding = 0, gap = 0, w = 212, expand_h = true) [
                     divider(orientation = "vertical", size = 1, expand_h = true),
                     InspectorPanel(
                         selected_name,
@@ -532,7 +556,8 @@ view FileManagerLayout(
                         selected_size,
                         selected_perms,
                         selected_cas,
-                        preview_content
+                        preview_content,
+                        current_lang
                     )
                 ]
             } else {
@@ -540,8 +565,8 @@ view FileManagerLayout(
             }
         ],
 
-        // 4. Bottom Status Bar with Integrated Filter
-        BottomStatusBar(filter_query, dir_c + file_c, dir_c, file_c, cache_hits)
+        // 4. Bottom Status Bar with Integrated Compact Filter
+        BottomStatusBar(filter_query, dir_c + file_c, dir_c, file_c, cache_hits, current_lang)
     ]
 }
 
@@ -565,8 +590,8 @@ agent FileManagerApp {
         split_entries: [FileEntry] = []
         is_split: bool = false
 
-        // Inspector (F11) state
-        show_inspector: bool = true
+        // Inspector (F11) state (compact, toggleable)
+        show_inspector: bool = false
         selected_name: string = ""
         selected_path: string = ""
         selected_size: string = ""
@@ -574,10 +599,13 @@ agent FileManagerApp {
         selected_cas: string = ""
         preview_content: string = ""
 
-        // Filter & Sort
+        // View mode: "details" | "compact" | "icons"
+        view_mode: string = "details"
+
+        // Filter & Language
         filter_query: string = ""
-        sort_by: string = "isim"
         sort_asc: bool = true
+        current_lang: string = "en"
 
         // Breadcrumb vs raw input mode
         edit_path_mode: bool = false
@@ -588,7 +616,7 @@ agent FileManagerApp {
         clipboard_content: string = ""
         last_created_path: string = ""
 
-        // Theme: "breeze-light" (matching LO's desktop) or "breeze-dark"
+        // Theme: "breeze-light" | "breeze-dark"
         current_theme: string = "breeze-light"
     }
 
@@ -608,12 +636,12 @@ agent FileManagerApp {
         state.selected_name = ""
         state.selected_path = ""
         state.preview_content = ""
-        state.sort_by = "isim"
         state.sort_asc = true
         state.is_split = false
         state.show_inspector = true
         state.edit_path_mode = false
         state.last_created_path = ""
+        state.current_lang = "en"
         FileManagerApp.refresh()
     }
 
@@ -743,12 +771,12 @@ agent FileManagerApp {
     }
 
     fn nav_nvfs() uses UI, Workspace {
-        let target = if workspace.exists("/tmp") { "/tmp" } else { "crates/nudge-index" }
+        let target = if workspace.exists("/tmp") { "/tmp" } else { "." }
         FileManagerApp.navigate_to(target)
     }
 
     fn on_tab_click(clicked_id: string) uses UI, Workspace {
-        let idx_str = str.replace(clicked_id, "tab_", "")
+        let idx_str = str.replace(clicked_id, "tab_sel_", "")
         let target_idx = if idx_str == "0" {
             0
         } else if idx_str == "1" {
@@ -768,6 +796,35 @@ agent FileManagerApp {
         }
     }
 
+    fn on_tab_close(clicked_id: string) uses UI, Workspace {
+        let idx_str = str.replace(clicked_id, "tab_close_", "")
+        let target_idx = if idx_str == "0" {
+            0
+        } else if idx_str == "1" {
+            1
+        } else if idx_str == "2" {
+            2
+        } else if idx_str == "3" {
+            3
+        } else {
+            0
+        }
+        let total = len(state.tabs)
+        if total > 1 {
+            let mut new_tabs: [string] = []
+            for (t, idx) in state.tabs {
+                if idx != target_idx {
+                    new_tabs = new_tabs + [t]
+                }
+            }
+            state.tabs = new_tabs
+            let new_total = len(new_tabs)
+            state.active_tab_idx = if state.active_tab_idx >= new_total { new_total - 1 } else { state.active_tab_idx }
+            state.current_path = state.tabs[state.active_tab_idx]
+            FileManagerApp.refresh()
+        }
+    }
+
     fn on_new_tab() uses UI, Workspace {
         state.tabs = state.tabs + [state.current_path]
         state.active_tab_idx = len(state.tabs) - 1
@@ -778,7 +835,6 @@ agent FileManagerApp {
         let mut clean_name = str.replace(clicked_id, "entry_", "")
         clean_name = str.replace(clean_name, "sz_", "")
         clean_name = str.replace(clean_name, "perm_", "")
-        clean_name = str.replace(clean_name, "cas_", "")
 
         let mut matched_entry: FileEntry = {
             name: "", path: "", is_dir: false, size_bytes: 0, size_str: "",
@@ -793,8 +849,8 @@ agent FileManagerApp {
         }
 
         if found {
-            if state.selected_name == clean_name and matched_entry.is_dir {
-                // Second click on already selected directory -> navigate into it!
+            if matched_entry.is_dir {
+                // Instantly navigate into folder on click!
                 FileManagerApp.navigate_to(matched_entry.path)
             } else {
                 state.selected_name = matched_entry.name
@@ -802,13 +858,21 @@ agent FileManagerApp {
                 state.selected_size = matched_entry.size_str
                 state.selected_perms = matched_entry.permissions
                 state.selected_cas = matched_entry.cas_hash
-                if !matched_entry.is_dir {
-                    state.preview_content = workspace.read(matched_entry.path)
-                } else {
-                    state.preview_content = ""
-                }
+                state.preview_content = workspace.read(matched_entry.path)
             }
         }
+    }
+
+    fn set_view_icons() uses UI {
+        state.view_mode = "icons"
+    }
+
+    fn set_view_compact() uses UI {
+        state.view_mode = "compact"
+    }
+
+    fn set_view_details() uses UI {
+        state.view_mode = "details"
     }
 
     fn toggle_split() uses UI, Workspace {
@@ -832,6 +896,14 @@ agent FileManagerApp {
         }
     }
 
+    fn toggle_lang() uses UI {
+        if state.current_lang == "en" {
+            state.current_lang = "tr"
+        } else {
+            state.current_lang = "en"
+        }
+    }
+
     fn toggle_path_edit() uses UI {
         state.edit_path_mode = !state.edit_path_mode
     }
@@ -842,7 +914,6 @@ agent FileManagerApp {
     }
 
     fn toggle_sort() uses UI {
-        // Toggle sort order
         state.sort_asc = !state.sort_asc
     }
 
@@ -908,19 +979,19 @@ agent FileManagerApp {
 
     fn create_new_folder() uses UI, Workspace {
         let keep_file = if state.current_path == "." {
-            "Yeni_Klasör/.keep"
+            "New_Folder/.keep"
         } else if state.current_path == "/" {
-            "/Yeni_Klasör/.keep"
+            "/New_Folder/.keep"
         } else {
-            state.current_path + "/Yeni_Klasör/.keep"
+            state.current_path + "/New_Folder/.keep"
         }
         workspace.write(keep_file, "")
         let folder_only = if state.current_path == "." {
-            "Yeni_Klasör"
+            "New_Folder"
         } else if state.current_path == "/" {
-            "/Yeni_Klasör"
+            "/New_Folder"
         } else {
-            state.current_path + "/Yeni_Klasör"
+            state.current_path + "/New_Folder"
         }
         state.last_created_path = folder_only
         FileManagerApp.refresh()
@@ -974,12 +1045,12 @@ agent FileManagerApp {
             state.selected_cas,
             state.preview_content,
             state.filter_query,
-            state.sort_by,
-            state.sort_asc,
             state.is_split,
             state.show_inspector,
             state.edit_path_mode,
             state.current_theme,
+            state.current_lang,
+            state.view_mode,
             VfsBridge.state.cache_hits,
             state.tabs,
             state.active_tab_idx
