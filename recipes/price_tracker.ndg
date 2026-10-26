@@ -1,0 +1,31 @@
+// Ready-to-run recipe: E-commerce price tracker with drift observation
+// Part of Phase F9.2 (docs/browser-roadmap.md)
+
+type PriceReport = {
+    product_name: string,
+    current_price: float,
+    in_stock: bool,
+    price_dropped: bool
+}
+
+fn track_product_price(product_url: string, target_price: float) -> PriceReport uses Browser {
+    let resp = browser.fetch(product_url, allow = ["shop.example.com"])
+    let tokens = tokenize_html(resp.body)
+    let tree = build_dom_tree(tokens)
+
+    let title_elem = query_selector(tree, "h1.product-title")
+    let price_elem = query_selector(tree, "span.price-amount")
+    let stock_elem = query_selector(tree, ".in-stock-badge")
+
+    let prod_name = if title_elem != none { title_elem.name } else { "Unknown Product" }
+    let raw_price_str = if price_elem != none { price_elem.name } else { "0.0" }
+    let parsed_price = str.to_float(raw_price_str)
+    let in_stock = (stock_elem != none)
+
+    {
+        product_name: prod_name,
+        current_price: parsed_price,
+        in_stock: in_stock,
+        price_dropped: (parsed_price > 0.0 and parsed_price <= target_price)
+    }
+}

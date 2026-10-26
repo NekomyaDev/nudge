@@ -1,0 +1,92 @@
+// Pure .ndg HTTP/2 Framing Engine (RFC 7540)
+// Part of Phase F8.2 (docs/browser-roadmap.md)
+
+type H2FrameHeader = {
+    length: int,
+    frame_type: int,
+    flags: int,
+    stream_id: int
+}
+
+type H2Frame = {
+    header: H2FrameHeader,
+    payload: string
+}
+
+fn h2_connection_preface() -> string {
+    let crlf = str.from_char_code(13) + "\n"
+    "PRI * HTTP/2.0" + crlf + crlf + "SM" + crlf + crlf
+}
+
+fn make_h2_frame_header(length: int, frame_type: int, flags: int, stream_id: int) -> string {
+    // 9-byte header: Length(3) + Type(1) + Flags(1) + StreamID(4)
+    let b0 = str.to_int(length / 65536) % 256
+    let b1 = str.to_int(length / 256) % 256
+    let b2 = length % 256
+
+    let b_type = frame_type % 256
+    let b_flags = flags % 256
+
+    let s0 = str.to_int(stream_id / 16777216) % 128
+    let s1 = str.to_int(stream_id / 65536) % 256
+    let s2 = str.to_int(stream_id / 256) % 256
+    let s3 = stream_id % 256
+
+    let codes = [b0, b1, b2, b_type, b_flags, s0, s1, s2, s3]
+    let mut out = ""
+    for c in codes {
+        out = out + str.from_char_code(c)
+    }
+    out
+}
+
+fn parse_h2_frame_header(raw: string) -> H2FrameHeader {
+    let mut out = { length: 0, frame_type: 0, flags: 0, stream_id: 0 }
+    if str.length(raw) >= 9 {
+        let b0 = str.char_code(raw, 0)
+        let b1 = str.char_code(raw, 1)
+        let b2 = str.char_code(raw, 2)
+        let len_val = (b0 * 65536) + (b1 * 256) + b2
+
+        let f_type = str.char_code(raw, 3)
+        let flags = str.char_code(raw, 4)
+
+        let s0 = str.char_code(raw, 5) % 128
+        let s1 = str.char_code(raw, 6)
+        let s2 = str.char_code(raw, 7)
+        let s3 = str.char_code(raw, 8)
+        let sid = (s0 * 16777216) + (s1 * 65536) + (s2 * 256) + s3
+
+        out = {
+            length: len_val,
+            frame_type: f_type,
+            flags: flags,
+            stream_id: sid
+        }
+    }
+    out
+}
+
+fn make_h2_settings_frame(is_ack: bool) -> string {
+    let flags = if is_ack { 1 } else { 0 }
+    let header = make_h2_frame_header(0, 4, flags, 0)
+    header
+}
+
+fn make_h2_headers_frame(stream_id: int, headers: [{ name: string, value: string }], end_stream: bool) -> string {
+    let crlf = str.from_char_code(13) + "\n"
+    let mut payload = ""
+    for h in headers {
+        payload = payload + h.name + ": " + h.value + crlf
+    }
+
+    let flags = (if end_stream { 1 } else { 0 }) + 4 // 4 = END_HEADERS
+    let header = make_h2_frame_header(str.length(payload), 1, flags, stream_id)
+    header + payload
+}
+
+fn make_h2_data_frame(stream_id: int, data: string, end_stream: bool) -> string {
+    let flags = if end_stream { 1 } else { 0 }
+    let header = make_h2_frame_header(str.length(data), 0, flags, stream_id)
+    header + data
+}

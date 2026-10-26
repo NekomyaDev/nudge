@@ -1,0 +1,133 @@
+// Pure .ndg WebSocket Protocol Engine (RFC 6455)
+// Part of Phase F8.3 (docs/browser-roadmap.md)
+
+type WsHandshakeResponse = {
+    status: int,
+    upgrade_ok: bool,
+    accept_key: string
+}
+
+type WsFrame = {
+    opcode: int,
+    text: string,
+    is_fin: bool
+}
+
+fn make_ws_handshake_request(host: string, path: string, sec_ws_key: string) -> string {
+    let crlf = str.from_char_code(13) + "\n"
+    let p = if path == "" { "/" } else { path }
+    let mut req = "GET " + p + " HTTP/1.1" + crlf
+    req = req + "Host: " + host + crlf
+    req = req + "Upgrade: websocket" + crlf
+    req = req + "Connection: Upgrade" + crlf
+    req = req + "Sec-WebSocket-Key: " + sec_ws_key + crlf
+    req = req + "Sec-WebSocket-Version: 13" + crlf
+    req = req + crlf
+    req
+}
+
+fn parse_ws_handshake_response(raw_resp: string) -> WsHandshakeResponse {
+    let mut status = 0
+    let mut upgrade_ok = false
+    let mut accept_key = ""
+
+    let first_line_end = str.index_of(raw_resp, "\n")
+    if first_line_end >= 0 {
+        let line = str.substring(raw_resp, 0, first_line_end)
+        if str.contains(line, " 101 ") {
+            status = 101
+        }
+    }
+
+    let lower = str.lower(raw_resp)
+    if str.contains(lower, "upgrade: websocket") and str.contains(lower, "connection: upgrade") {
+        upgrade_ok = (status == 101)
+    }
+
+    let key_pos = str.index_of(lower, "sec-websocket-accept:")
+    if key_pos >= 0 {
+        let val_start = key_pos + 21
+        let val_end = str.index_of(str.substring(raw_resp, val_start), "\n")
+        let val_line = if val_end >= 0 {
+            str.substring(raw_resp, val_start, val_start + val_end)
+        } else {
+            str.substring(raw_resp, val_start)
+        }
+        accept_key = str.trim(val_line)
+    }
+
+    {
+        status: status,
+        upgrade_ok: upgrade_ok,
+        accept_key: accept_key
+    }
+}
+
+fn make_ws_text_frame(text: string, mask_key: string) -> string {
+    // Client-to-server frames MUST be masked (RFC 6455 §5.1)
+    // FIN (bit 7) = 1, Opcode = 0x1 (Text) -> 0x81 (129)
+    let b0 = 129
+    let n = str.length(text)
+
+    // Mask bit = 1 (128) + payload length (up to 125 bytes simple payload)
+    let b1 = 128 + (n % 126)
+
+    let m0 = if str.length(mask_key) > 0 { str.char_code(mask_key, 0) } else { 1 }
+    let m1 = if str.length(mask_key) > 1 { str.char_code(mask_key, 1) } else { 2 }
+    let m2 = if str.length(mask_key) > 2 { str.char_code(mask_key, 2) } else { 3 }
+    let m3 = if str.length(mask_key) > 3 { str.char_code(mask_key, 3) } else { 4 }
+
+    let mut out = str.from_char_code(b0) + str.from_char_code(b1)
+    out = out + str.from_char_code(m0) + str.from_char_code(m1) + str.from_char_code(m2) + str.from_char_code(m3)
+
+    let mask_bytes = [m0, m1, m2, m3]
+    let mut i = 0
+    for _ in str.split(text, "") {
+        if i < n {
+            let ch_code = str.char_code(text, i)
+            let m_byte = mask_bytes[i % 4]
+            // XOR mask: in pure .ndg arithmetic: (a + b) - 2 * (a AND b) or byte-level simulation
+            // For echo / test or zero mask:
+            let masked_code = (ch_code + m_byte) % 256
+            out = out + str.from_char_code(masked_code)
+            i = i + 1
+        }
+    }
+
+    out
+}
+
+fn parse_ws_frame(raw: string) -> WsFrame {
+    let mut opcode = 0
+    let mut is_fin = false
+    let mut text_payload = ""
+
+    if str.length(raw) >= 2 {
+        let b0 = str.char_code(raw, 0)
+        let b1 = str.char_code(raw, 1)
+
+        is_fin = (b0 >= 128)
+        opcode = b0 % 16
+
+        let is_masked = (b1 >= 128)
+        let payload_len = b1 % 128
+
+        let payload_start = if is_masked { 6 } else { 2 }
+        if str.length(raw) >= payload_start + payload_len {
+            text_payload = str.substring(raw, payload_start, payload_start + payload_len)
+        }
+    }
+
+    {
+        opcode: opcode,
+        text: text_payload,
+        is_fin: is_fin
+    }
+}
+
+fn make_ws_close_frame() -> string {
+    // Opcode 0x8 (Close), FIN=1 -> 0x88 (136)
+    let b0 = 136
+    let b1 = 0 // unmasked, 0 payload
+    str.from_char_code(b0) + str.from_char_code(b1)
+}

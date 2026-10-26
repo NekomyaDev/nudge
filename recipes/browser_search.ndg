@@ -1,0 +1,25 @@
+// Ready-to-run recipe: In-house browser search and extraction
+// Part of Phase F9.2 (docs/browser-roadmap.md)
+
+type SearchResult = {
+    title: string,
+    url: string
+}
+
+fn execute_search(query: string) -> [SearchResult] uses Browser {
+    let target_url = "https://example.com/search?q=" + query
+    let resp = browser.fetch(target_url, allow = ["example.com"])
+
+    let tokens = tokenize_html(resp.body)
+    let tree = build_dom_tree(tokens)
+    let results = query_selector_all(tree, "a.result-link")
+
+    let mut out: [SearchResult] = []
+    for r in results {
+        out = out + [{
+            title: r.name,
+            url: r.href
+        }]
+    }
+    out
+}

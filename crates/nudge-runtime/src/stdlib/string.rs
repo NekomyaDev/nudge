@@ -39,6 +39,10 @@ pub fn register() -> HashMap<String, Value> {
     functions.insert("str.pad_left".to_string(), Value::Native("str.pad_left"));
     functions.insert("str.pad_right".to_string(), Value::Native("str.pad_right"));
     functions.insert("str.char_code".to_string(), Value::Native("str.char_code"));
+    functions.insert(
+        "str.from_char_code".to_string(),
+        Value::Native("str.from_char_code"),
+    );
     functions.insert("str.hash".to_string(), Value::Native("str.hash"));
 
     functions
@@ -418,6 +422,18 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             }
             let code = s.chars().nth(idx as usize).map(|c| c as i64).unwrap_or(0);
             Ok(Value::Int(code))
+        }
+
+        "str.from_char_code" => {
+            if args.is_empty() {
+                return Err("str.from_char_code requires 1 argument (int)".to_string());
+            }
+            let code = match &args[0] {
+                Value::Int(c) => *c as u32,
+                _ => return Err("str.from_char_code: argument must be an integer".to_string()),
+            };
+            let ch = char::from_u32(code).unwrap_or('\0');
+            Ok(Value::String(ch.to_string()))
         }
 
         "str.hash" => {

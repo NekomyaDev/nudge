@@ -209,17 +209,21 @@ fn run_pipeline() -> bool uses LLM, Tool, Workspace, Store {
 }
 ```
 
-Nudge defines 10 known effects (`crates/nudgec/src/check.rs`):
+Nudge defines 14 known effects (`crates/nudgec/src/check.rs`):
 - `LLM`: Invokes language model completions or streaming prompts.
 - `Tool`: Invokes external MCP or registered tools.
 - `IO`: Host input/output operations (`print`, `println`).
 - `Decision`: Queries decision models via `decide{}`.
 - `Computer`: Interacts with desktop environments and accessibility trees via `computer.*`.
+- `Browser`: In-house web browser execution, DOM inspection, and automation via `browser.*`.
 - `Workspace`: Scoped read and write operations inside the sandboxed workspace.
 - `WorkspaceDelete`: Destructive file or directory deletion inside the workspace.
 - `Store`: Persistent key-value storage operations via `store.*`.
+- `MemStore`: In-memory volatile key-value storage.
 - `UI`: Creates, mounts, or dispatches events to graphical user interface elements.
 - `Auth`: Accesses authenticated provider resources (supports scoped `Auth(account)`).
+- `FsWatch`: Workspace file watching with bounded timeouts.
+- `Process`: Controlled sub-process execution governed by `NUDGE_PROCESS_GRANTS`.
 
 Functions without a `uses` clause are proven pure at compile time. Unknown effects are rejected with `E0302`.
 

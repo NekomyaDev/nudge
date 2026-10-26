@@ -1696,6 +1696,71 @@ fn test_f7_suite() -> bool {{
     }
 
     #[test]
+    fn test_prelude_web_stream_h2_ws() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let h2_src =
+            std::fs::read_to_string(root_dir.join("prelude/net/h2.ndg")).expect("read h2.ndg");
+        let ws_src =
+            std::fs::read_to_string(root_dir.join("prelude/net/ws.ndg")).expect("read ws.ndg");
+
+        let test_src = format!(
+            r##"{h2_src}
+{ws_src}
+fn test_f8_suite() -> bool uses Browser {{
+    // 1. Raw Stream Echo Channel
+    let handle = browser.connect("echo", 80)
+    let ok_conn = handle > 0
+
+    let written = browser.write(handle, "Nudge Stream Echo")
+    let ok_write = written == 17
+
+    let read_back = browser.read(handle, 1024)
+    let ok_read = read_back == "Nudge Stream Echo"
+
+    let closed = browser.close(handle)
+    let ok_close = closed
+
+    // 2. HTTP/2 Framing
+    let pref = h2_connection_preface()
+    let ok_pref = str.starts_with(pref, "PRI * HTTP/2.0")
+
+    let set_frame = make_h2_settings_frame(false)
+    let set_hdr = parse_h2_frame_header(set_frame)
+    let ok_h2_settings = set_hdr.frame_type == 4 and set_hdr.length == 0
+
+    let hdr_frame = make_h2_headers_frame(1, [{{ name: ":path", value: "/" }}], true)
+    let hdr_header = parse_h2_frame_header(hdr_frame)
+    let ok_h2_headers = hdr_header.frame_type == 1 and hdr_header.stream_id == 1 and str.contains(hdr_frame, ":path: /")
+
+    // 3. WebSocket Framing
+    let ws_req = make_ws_handshake_request("echo.websocket.org", "/ws", "dGhlIHNhbXBsZSBub25jZQ==")
+    let ok_ws_req = str.contains(ws_req, "Upgrade: websocket") and str.contains(ws_req, "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==")
+
+    let crlf = str.from_char_code(13) + "\n"
+    let mock_resp = "HTTP/1.1 101 Switching Protocols" + crlf + "Upgrade: websocket" + crlf + "Connection: Upgrade" + crlf + "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=" + crlf + crlf
+    let ws_resp = parse_ws_handshake_response(mock_resp)
+    let ok_ws_resp = ws_resp.status == 101 and ws_resp.upgrade_ok and ws_resp.accept_key == "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+
+    let text_frame = make_ws_text_frame("hello", "abcd")
+    let parsed_frame = parse_ws_frame(text_frame)
+    let ok_ws_frame = parsed_frame.opcode == 1 and parsed_frame.is_fin
+
+    let close_frame = make_ws_close_frame()
+    let parsed_close = parse_ws_frame(close_frame)
+    let ok_ws_close = parsed_close.opcode == 8 and parsed_close.is_fin
+
+    ok_conn and ok_write and ok_read and ok_close and ok_pref and ok_h2_settings and ok_h2_headers and ok_ws_req and ok_ws_resp and ok_ws_frame and ok_ws_close
+}}
+"##
+        );
+        let items = parse_src(&test_src);
+        let ok = run_program(&items, "test_f8_suite", &[]).expect("f8 suite succeeds");
+        assert_eq!(ok, NudgeVal::Bool(true));
+    }
+
+    #[test]
     fn test_eval_index_assign_list_and_map() {
         let src = r#"
             fn test_list_assign() -> [int] {

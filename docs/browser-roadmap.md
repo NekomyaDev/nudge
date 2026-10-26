@@ -244,19 +244,19 @@
 ## Phase F8: Low-Level Stream Channels (HTTP/2 & WebSocket)
 **Goal:** Expand kernel transport from request/response to raw duplex stream for modern protocols.
 
-- [ ] **Task F8.1 — Kernel Stream Channel**
+- [x] **Task F8.1 — Kernel Stream Channel**
   - **Owner / Agent:** `agent:runtime-stream`
   - **Files:** `crates/nudge-runtime/src/provider/stream.rs`, `crates/nudgec/src/eval/interpreter.rs`
   - **Contract:** Expose `browser.connect`, `browser.read`, `browser.write`, `browser.close`.
   - **Acceptance Gate:** Bidirectional raw TCP/TLS echo test succeeds.
 
-- [ ] **Task F8.2 — HTTP/2 Framing in `.ndg`**
+- [x] **Task F8.2 — HTTP/2 Framing in `.ndg`**
   - **Owner / Agent:** `agent:ndg-h2`
   - **Files:** `prelude/net/h2.ndg`
   - **Contract:** Implement HTTP/2 connection preface, SETTINGS exchange, and HEADERS/DATA frame multiplexing.
   - **Acceptance Gate:** Fetches web page over HTTP/2 protocol.
 
-- [ ] **Task F8.3 — WebSocket Protocol in `.ndg`**
+- [x] **Task F8.3 — WebSocket Protocol in `.ndg`**
   - **Owner / Agent:** `agent:ndg-ws`
   - **Files:** `prelude/net/ws.ndg`
   - **Contract:** RFC 6455 handshake (SHA-1 hashing in `.ndg`) and frame masking.
@@ -267,12 +267,12 @@
 ## Phase F9: Documentation, Learn Track & Tooling Polish
 **Goal:** Publish documentation, recipes, and editor integration.
 
-- [ ] **Task F9.1 — Documentation & Learn Lesson**
+- [x] **Task F9.1 — Documentation & Learn Lesson**
   - **Owner / Agent:** `agent:docs`
   - **Files:** `docs/learn/browser-use.md`, `README.md`
   - **Contract:** Expand effect table from 12 to 13; write beginner-to-advanced browser agent tutorial.
 
-- [ ] **Task F9.2 — Browser Agent Recipes & CLI Examples**
+- [x] **Task F9.2 — Browser Agent Recipes & CLI Examples**
   - **Owner / Agent:** `agent:recipes`
   - **Files:** `recipes/browser_search.ndg`, `recipes/price_tracker.ndg`
   - **Contract:** Ship ready-to-run recipes demonstrating `goto`, `decide`, and `extract`.

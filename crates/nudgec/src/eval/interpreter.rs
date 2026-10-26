@@ -3137,7 +3137,11 @@ impl Interpreter {
                     .map_err(|e| format!("error[E-native-0202]: {name} failed: {e}"))?;
                 value_to_nudgeval(&result).map_err(|e| format!("error[E-native-0203]: {name}: {e}"))
             }
-            "browser.fetch" => {
+            "browser.fetch"
+            | "browser.connect"
+            | "browser.read"
+            | "browser.write"
+            | "browser.close" => {
                 let mut call_args = Vec::with_capacity(args.len());
                 for a in args {
                     let converted = nudgeval_to_value(a)
@@ -3630,6 +3634,17 @@ impl Interpreter {
                 }
                 let code = s.chars().nth(idx as usize).map(|c| c as i64).unwrap_or(0);
                 Ok(NudgeVal::Int(code))
+            }
+            "str.from_char_code" => {
+                let code = args
+                    .first()
+                    .and_then(|a| match a {
+                        NudgeVal::Int(i) => Some(*i as u32),
+                        _ => None,
+                    })
+                    .ok_or("'str.from_char_code' requires 1 integer argument")?;
+                let ch = char::from_u32(code).unwrap_or('\0');
+                Ok(NudgeVal::Str(ch.to_string()))
             }
             "str.hash" => {
                 let s = args

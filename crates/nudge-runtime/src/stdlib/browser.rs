@@ -5,10 +5,39 @@
 //! forms, history, policies) live entirely in `.ndg` prelude code.
 
 use super::Value;
-use std::collections::HashMap;
-use std::time::Instant;
+use std::collections::{HashMap, VecDeque};
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
-pub const METHODS: [&str; 1] = ["browser.fetch"];
+pub const METHODS: [&str; 5] = [
+    "browser.fetch",
+    "browser.connect",
+    "browser.read",
+    "browser.write",
+    "browser.close",
+];
+
+enum StreamHandle {
+    Tcp(TcpStream),
+    Echo(VecDeque<u8>),
+}
+
+static STREAMS: Mutex<Option<HashMap<i64, StreamHandle>>> = Mutex::new(None);
+static NEXT_STREAM_ID: AtomicI64 = AtomicI64::new(1);
+
+fn with_streams<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut HashMap<i64, StreamHandle>) -> R,
+{
+    let mut guard = STREAMS.lock().unwrap();
+    if guard.is_none() {
+        *guard = Some(HashMap::new());
+    }
+    f(guard.as_mut().unwrap())
+}
 
 /// Maximum allowed response body size: 10 MB (10 * 1024 * 1024 bytes).
 /// Guard against infinite streaming and decompression bombs.
@@ -36,8 +65,132 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
 
     match name {
         "browser.fetch" => execute_fetch(args),
+        "browser.connect" => execute_connect(args),
+        "browser.read" => execute_read(args),
+        "browser.write" => execute_write(args),
+        "browser.close" => execute_close(args),
         _ => Err(format!("Unimplemented browser function: {name}")),
     }
+}
+
+fn execute_connect(args: Vec<Value>) -> Result<Value, String> {
+    let host = match args.first() {
+        Some(Value::String(s)) => s.clone(),
+        _ => return Err("browser.connect requires host (string)".into()),
+    };
+    let port = match args.get(1) {
+        Some(Value::Int(p)) => *p as u16,
+        _ => return Err("browser.connect requires port (int)".into()),
+    };
+
+    let id = NEXT_STREAM_ID.fetch_add(1, Ordering::SeqCst);
+
+    if host == "echo" || host == "mock" {
+        with_streams(|streams| {
+            streams.insert(id, StreamHandle::Echo(VecDeque::new()));
+        });
+        return Ok(Value::Int(id));
+    }
+
+    let stream = TcpStream::connect_timeout(
+        &std::net::SocketAddr::new(
+            host.parse()
+                .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+            port,
+        ),
+        Duration::from_millis(5000),
+    )
+    .map_err(|e| format!("BrowserNetworkError: cannot connect to {host}:{port}: {e}"))?;
+
+    stream
+        .set_read_timeout(Some(Duration::from_millis(5000)))
+        .ok();
+    stream
+        .set_write_timeout(Some(Duration::from_millis(5000)))
+        .ok();
+
+    with_streams(|streams| {
+        streams.insert(id, StreamHandle::Tcp(stream));
+    });
+
+    Ok(Value::Int(id))
+}
+
+fn execute_write(args: Vec<Value>) -> Result<Value, String> {
+    let id = match args.first() {
+        Some(Value::Int(i)) => *i,
+        _ => return Err("browser.write requires handle (int)".into()),
+    };
+    let data = match args.get(1) {
+        Some(Value::String(s)) => s.as_bytes().to_vec(),
+        _ => return Err("browser.write requires data (string)".into()),
+    };
+
+    with_streams(|streams| {
+        let handle = streams
+            .get_mut(&id)
+            .ok_or_else(|| format!("InvalidStreamHandle: {id}"))?;
+        match handle {
+            StreamHandle::Echo(buf) => {
+                buf.extend(data.iter().copied());
+                Ok(Value::Int(data.len() as i64))
+            }
+            StreamHandle::Tcp(s) => {
+                s.write_all(&data)
+                    .map_err(|e| format!("BrowserStreamError: write failed: {e}"))?;
+                Ok(Value::Int(data.len() as i64))
+            }
+        }
+    })
+}
+
+fn execute_read(args: Vec<Value>) -> Result<Value, String> {
+    let id = match args.first() {
+        Some(Value::Int(i)) => *i,
+        _ => return Err("browser.read requires handle (int)".into()),
+    };
+    let max_bytes = match args.get(1) {
+        Some(Value::Int(m)) => *m as usize,
+        _ => 4096,
+    };
+
+    with_streams(|streams| {
+        let handle = streams
+            .get_mut(&id)
+            .ok_or_else(|| format!("InvalidStreamHandle: {id}"))?;
+        match handle {
+            StreamHandle::Echo(buf) => {
+                let to_read = std::cmp::min(max_bytes, buf.len());
+                let bytes: Vec<u8> = buf.drain(..to_read).collect();
+                Ok(Value::String(String::from_utf8_lossy(&bytes).into_owned()))
+            }
+            StreamHandle::Tcp(s) => {
+                let mut buf = vec![0u8; max_bytes];
+                match s.read(&mut buf) {
+                    Ok(n) => Ok(Value::String(
+                        String::from_utf8_lossy(&buf[..n]).into_owned(),
+                    )),
+                    Err(e)
+                        if e.kind() == std::io::ErrorKind::WouldBlock
+                            || e.kind() == std::io::ErrorKind::TimedOut =>
+                    {
+                        Ok(Value::String(String::new()))
+                    }
+                    Err(e) => Err(format!("BrowserStreamError: read failed: {e}")),
+                }
+            }
+        }
+    })
+}
+
+fn execute_close(args: Vec<Value>) -> Result<Value, String> {
+    let id = match args.first() {
+        Some(Value::Int(i)) => *i,
+        _ => return Err("browser.close requires handle (int)".into()),
+    };
+
+    let removed = with_streams(|streams| streams.remove(&id).is_some());
+    Ok(Value::Bool(removed))
 }
 
 fn execute_fetch(args: Vec<Value>) -> Result<Value, String> {
