@@ -1285,4 +1285,22 @@ fn test_http_framing() -> bool {{
         let _ = std::fs::remove_dir_all(&temp_dir);
         assert_eq!(ok, NudgeVal::Bool(true));
     }
+
+    #[test]
+    fn test_nvfs_acceptance_suite() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let nvfs_test_path = root_dir.join("crates/nudge-index/nvfs/test_nvfs.ndg");
+
+        let nvfs_src = std::fs::read_to_string(&nvfs_test_path).expect("read test_nvfs.ndg");
+        let items = parse_src(&nvfs_src);
+        let mut interp = crate::eval::interpreter::Interpreter::new();
+        interp.load_items(&items).expect("load items succeeds");
+        interp.run_all_tests().expect("all nvfs test blocks pass");
+        let res = interp
+            .invoke_fn("main", &[])
+            .expect("nvfs main execution succeeds");
+        assert_eq!(res, NudgeVal::Int(0));
+    }
 }
