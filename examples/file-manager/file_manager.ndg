@@ -165,21 +165,24 @@ fn partition_entries(entries: [FileEntry]) -> [FileEntry] {
     dirs + files
 }
 
-fn filter_entries(entries: [FileEntry], query: string) -> [FileEntry] {
+fn filter_entries(entries: [FileEntry], query: string, show_hidden: bool) -> [FileEntry] {
     let q = str.trim(str.lower(query))
     let mut matched: [FileEntry] = []
-    if q == "" {
-        matched = entries
-    } else {
-        for e in entries {
-            let n = str.lower(e.name)
-            let ext = str.lower(e.extension)
-            if str.contains(n, q) or str.contains(ext, q) {
+    for e in entries {
+        let is_dot = str.starts_with(e.name, ".")
+        if show_hidden or (!is_dot) {
+            if q == "" {
                 matched = matched + [e]
+            } else {
+                let n = str.lower(e.name)
+                let ext = str.lower(e.extension)
+                if str.contains(n, q) or str.contains(ext, q) {
+                    matched = matched + [e]
+                }
             }
         }
     }
-    matched
+    partition_entries(matched)
 }
 
 fn extract_tab_name(t: string) -> string {
@@ -247,9 +250,9 @@ agent VfsBridge {
                 let sz = st.size
                 let ext = get_extension(name)
                 let glyph = resolve_glyph(name, is_d)
-                let sz_str = if is_d { "<DIR>" } else { format_bytes(sz) }
+                let sz_str = if is_d { "" } else { format_bytes(sz) }
                 let perms = if is_d { "drwxr-xr-x" } else { "-rw-r--r--" }
-                let cas = compute_cas_hash(full_p + ":" + str.to_string(st.mtime_ms))
+                let cas = ""
 
                 entries = entries + [{
                     name: name,
@@ -291,20 +294,20 @@ view PlacesSidebar(current_path: string, current_lang: string) -> View {
 
         // Group 2: Remote (Uzak)
         text(if is_en { "Remote" } else { "Uzak" }, bold = true),
-        button(if is_en { "  🌐  Network" } else { "  🌐  Ağ" }, id = "place_network", variant = "item", align = "start", w = 158, h = 24, on_click = nav_root),
+        button(if is_en { "  ⊚  Network" } else { "  ⊚  Ağ" }, id = "place_network", variant = "item", align = "start", w = 158, h = 24, on_click = nav_root),
 
         divider(size = 1),
 
         // Group 3: Recent (Son)
         text(if is_en { "Recent" } else { "Son" }, bold = true),
-        button(if is_en { "  ⏱  Recent Files" } else { "  ⏱  Son Dosyalar" }, id = "place_recent_files", variant = "item", align = "start", w = 158, h = 24, on_click = nav_home),
-        button(if is_en { "  📍  Recent Locations" } else { "  📍  Son Konumlar" }, id = "place_recent_loc", variant = "item", align = "start", w = 158, h = 24, on_click = nav_docs),
+        button(if is_en { "  ◷  Recent Files" } else { "  ◷  Son Dosyalar" }, id = "place_recent_files", variant = "item", align = "start", w = 158, h = 24, on_click = nav_home),
+        button(if is_en { "  ◈  Recent Locations" } else { "  ◈  Son Konumlar" }, id = "place_recent_loc", variant = "item", align = "start", w = 158, h = 24, on_click = nav_docs),
 
         divider(size = 1),
 
         // Group 4: Devices (Aygıtlar)
         text(if is_en { "Devices" } else { "Aygıtlar" }, bold = true),
-        button(if is_en { "  💾  Root (/)" } else { "  💾  Kök Dizin (/)" }, id = "place_root", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/"), on_click = nav_root),
+        button(if is_en { "  ⛁  Root (/)" } else { "  ⛁  Kök Dizin (/)" }, id = "place_root", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/"), on_click = nav_root),
         button(if is_en { "  ⚡  Temp (/tmp)" } else { "  ⚡  Geçici Bellek (/tmp)" }, id = "place_nvfs", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/tmp"), on_click = nav_nvfs)
     ]
 
@@ -358,8 +361,8 @@ view FileIconsGrid(entries: [FileEntry], selected_name: string, current_lang: st
     let mut current_row = []
     for item in entries {
         let is_sel = (item.name == selected_name)
-        let sub_text = if item.is_dir { "<DIR>" } else { item.size_str }
-        let card_label = item.name + "\n" + sub_text
+        let sub_text = if item.is_dir { "" } else { item.size_str }
+        let card_label = if sub_text == "" { item.name } else { item.name + "\n" + sub_text }
         let card = button(
             card_label,
             id = "entry_" + item.name,
@@ -431,6 +434,7 @@ view TopToolbar(
     current_path: string,
     is_split: bool,
     show_inspector: bool,
+    show_hidden: bool,
     edit_path_mode: bool,
     current_theme: string,
     current_lang: string,
@@ -440,7 +444,7 @@ view TopToolbar(
     let mut crumbs = []
     let is_abs = str.starts_with(current_path, "/")
     crumbs = crumbs + [
-        button(if is_abs { "/" } else { "⌂" }, id = "btn_path_root", variant = "flat", h = 22, on_click = nav_root)
+        button(if is_abs { "/" } else { "⌂" }, id = "btn_path_root", variant = "flat", h = 24, on_click = nav_root)
     ]
     let mut current_accum = ""
     for seg in path_segments {
@@ -449,13 +453,13 @@ view TopToolbar(
             let target_path = current_accum
             crumbs = crumbs + [
                 text("›"),
-                button(seg, id = "crumb_" + target_path, variant = "flat", h = 22, on_click = on_crumb_click)
+                button(seg, id = "crumb_" + target_path, variant = "flat", h = 24, on_click = on_crumb_click)
             ]
         }
     }
     let all_crumbs = crumbs + [
         spacer(4),
-        button("✏", id = "btn_toggle_path_mode", variant = "flat", w = 24, h = 22, on_click = toggle_path_edit)
+        button("✎", id = "btn_toggle_path_mode", variant = "flat", w = 24, h = 22, on_click = toggle_path_edit)
     ]
 
     let is_en = (current_lang == "en")
@@ -463,8 +467,6 @@ view TopToolbar(
     let txt_copy = if is_en { "Copy" } else { "Kopyala" }
     let txt_paste = if is_en { "Paste" } else { "Yapıştır" }
     let txt_delete = if is_en { "✕ Delete" } else { "✕ Sil" }
-    let txt_undo = if is_en { "↺ Undo" } else { "↺ Geri Al" }
-    let txt_reload = if is_en { "↻ Reload" } else { "↻ Yenile" }
     let txt_split = if is_en { "◫ Split" } else { "◫ Böl" }
     let txt_info = if is_en { "ℹ Info" } else { "ℹ Bilgi" }
 
@@ -476,38 +478,36 @@ view TopToolbar(
 
         divider(orientation = "vertical", size = 1, h = 22),
 
-        // 2. View Mode Segmented Controls (Icons, Compact, Details)
-        button("⊞", id = "view_icons", variant = "toolbar", w = 28, h = 26, selected = (view_mode == "icons"), on_click = set_view_icons),
-        button("≡", id = "view_compact", variant = "toolbar", w = 28, h = 26, selected = (view_mode == "compact"), on_click = set_view_compact),
-        button("☰", id = "view_details", variant = "toolbar", w = 28, h = 26, selected = (view_mode == "details"), on_click = set_view_details),
-
-        divider(orientation = "vertical", size = 1, h = 22),
-
-        // 3. Dynamic Breadcrumb Location Bar
+        // 2. Dynamic Breadcrumb Location Bar
         if edit_path_mode {
             row(padding = 1, gap = 2) [
-                input(value = current_path, placeholder = if is_en { "Enter path..." } else { "Yol girin..." }, id = "input_path", w = 220, h = 24, on_change = on_path_input_change),
+                input(value = current_path, placeholder = if is_en { "Enter path..." } else { "Yol girin..." }, id = "input_path", w = 260, h = 24, on_change = on_path_input_change),
                 button("✓", id = "btn_toggle_path_mode", variant = "toolbar", w = 26, h = 24, on_click = toggle_path_edit)
             ]
         } else {
             row(all_crumbs, padding = 2, gap = 2, bg = "input")
         },
 
-        spacer(4),
+        divider(orientation = "vertical", size = 1, h = 22),
 
-        // 4. File Actions
+        // 3. View Mode Segmented Controls (Icons, Compact, Details)
+        button("⊞", id = "view_icons", variant = "toolbar", w = 28, h = 26, selected = (view_mode == "icons"), on_click = set_view_icons),
+        button("≡", id = "view_compact", variant = "toolbar", w = 28, h = 26, selected = (view_mode == "compact"), on_click = set_view_compact),
+        button("☰", id = "view_details", variant = "toolbar", w = 28, h = 26, selected = (view_mode == "details"), on_click = set_view_details),
+
+        divider(orientation = "vertical", size = 1, h = 22),
+
+        // 4. Quick Actions (+ Folder, Undo, Reload)
         button(txt_new_folder, id = "btn_new_folder", variant = "toolbar", h = 26, on_click = create_new_folder),
-        button(txt_copy, id = "btn_copy", variant = "toolbar", h = 26, on_click = copy_selected),
-        button(txt_paste, id = "btn_paste", variant = "toolbar", h = 26, on_click = paste_clipboard),
-        button(txt_delete, id = "btn_delete", variant = "toolbar", h = 26, on_click = delete_selected),
-        button(txt_undo, id = "btn_undo", variant = "toolbar", h = 26, on_click = undo_last_action),
-        button(txt_reload, id = "btn_reload", variant = "toolbar", h = 26, on_click = reload_current),
+        button("↺", id = "btn_undo", variant = "toolbar", w = 28, h = 26, on_click = undo_last_action),
+        button("↻", id = "btn_reload", variant = "toolbar", w = 28, h = 26, on_click = reload_current),
 
-        spacer(4),
+        divider(orientation = "vertical", size = 1, h = 22),
 
-        // 5. Right Toolbar Controls (Split, Info, Lang, Theme)
+        // 5. Right Toolbar Controls (Split, Info, Hidden, Lang, Theme)
         button(txt_split, id = "btn_split_toggle", variant = "toolbar", h = 26, selected = is_split, on_click = toggle_split),
         button(txt_info, id = "btn_info_toggle", variant = "toolbar", h = 26, selected = show_inspector, on_click = toggle_inspector),
+        button(if show_hidden { "• Hidden" } else { "• Normal" }, id = "btn_toggle_hidden", variant = "toolbar", h = 26, selected = show_hidden, on_click = toggle_hidden_files),
         button(if is_en { "TR" } else { "EN" }, id = "btn_lang_toggle", variant = "toolbar", w = 32, h = 26, on_click = toggle_lang),
         button(if current_theme == "breeze-light" { "☾" } else { "☼" }, id = "btn_theme_toggle", variant = "toolbar", w = 28, h = 26, on_click = toggle_theme)
     ]
@@ -520,7 +520,7 @@ view TabBar(tabs: [string], active_idx: int) -> View {
         let tab_name = extract_tab_name(t)
         tab_elements = tab_elements + [
             row(padding = 0, gap = 0) [
-                button("▸ " + tab_name, id = "tab_sel_" + str.to_string(idx), variant = "toolbar", selected = is_active, h = 24, on_click = on_tab_click),
+                button("  " + tab_name + "  ", id = "tab_sel_" + str.to_string(idx), variant = "toolbar", selected = is_active, h = 24, on_click = on_tab_click),
                 button("✕", id = "tab_close_" + str.to_string(idx), variant = "toolbar", w = 20, h = 24, on_click = on_tab_close)
             ]
         ]
@@ -558,6 +558,11 @@ view InspectorPanel(
                     badge(selected_cas, status = "info")
                 ],
                 button(if is_en { "▸ Open Directory" } else { "▸ Klasörü Aç" }, id = "btn_open_selected_dir", variant = "toolbar", h = 24, on_click = open_selected_directory),
+                row(padding = 0, gap = 4) [
+                    button(if is_en { "Copy" } else { "Kopyala" }, id = "btn_copy", variant = "toolbar", h = 24, on_click = copy_selected),
+                    button(if is_en { "Paste" } else { "Yapıştır" }, id = "btn_paste", variant = "toolbar", h = 24, on_click = paste_clipboard),
+                    button(if is_en { "✕ Delete" } else { "✕ Sil" }, id = "btn_delete", variant = "toolbar", h = 24, on_click = delete_selected)
+                ],
                 divider(size = 1),
                 text(if is_en { "Preview:" } else { "Önizleme:" }, bold = true),
                 if preview_content != "" {
@@ -631,6 +636,7 @@ view FileManagerLayout(
     filter_query: string,
     is_split: bool,
     show_inspector: bool,
+    show_hidden: bool,
     edit_path_mode: bool,
     current_theme: string,
     current_lang: string,
@@ -650,7 +656,7 @@ view FileManagerLayout(
 
     column(padding = 0, gap = 0, expand = true, expand_h = true) [
         // 1. Top Navigation Toolbar (Edge to edge)
-        TopToolbar(current_path, is_split, show_inspector, edit_path_mode, current_theme, current_lang, view_mode),
+        TopToolbar(current_path, is_split, show_inspector, show_hidden, edit_path_mode, current_theme, current_lang, view_mode),
 
         // 2. Tab Bar (Edge to edge)
         TabBar(tabs, active_tab_idx),
@@ -662,21 +668,25 @@ view FileManagerLayout(
 
             if is_split {
                 row(padding = 0, gap = 2, expand = true, expand_h = true) [
-                    if view_mode == "icons" {
-                        FileIconsGrid(left_entries, selected_name, current_lang)
-                    } else if view_mode == "compact" {
-                        FileCompactGrid(left_entries, selected_name, current_lang)
-                    } else {
-                        FileDetailsTable("Left", left_entries, selected_name, current_lang)
-                    },
+                    column(w = 530, padding = 0, gap = 0, expand_h = true) [
+                        if view_mode == "icons" {
+                            FileIconsGrid(left_entries, selected_name, current_lang)
+                        } else if view_mode == "compact" {
+                            FileCompactGrid(left_entries, selected_name, current_lang)
+                        } else {
+                            FileDetailsTable("Left", left_entries, selected_name, current_lang)
+                        }
+                    ],
                     divider(orientation = "vertical", size = 1, expand_h = true),
-                    if view_mode == "icons" {
-                        FileIconsGrid(right_entries, "", current_lang)
-                    } else if view_mode == "compact" {
-                        FileCompactGrid(right_entries, "", current_lang)
-                    } else {
-                        FileDetailsTable("Right", right_entries, "", current_lang)
-                    }
+                    column(w = 530, padding = 0, gap = 0, expand_h = true) [
+                        if view_mode == "icons" {
+                            FileIconsGrid(right_entries, "", current_lang)
+                        } else if view_mode == "compact" {
+                            FileCompactGrid(right_entries, "", current_lang)
+                        } else {
+                            FileDetailsTable("Right", right_entries, "", current_lang)
+                        }
+                    ]
                 ]
             } else {
                 if view_mode == "icons" {
@@ -740,6 +750,7 @@ agent FileManagerApp {
 
         // Inspector (F11) state (compact, toggleable)
         show_inspector: bool = false
+        show_hidden: bool = false
         selected_name: string = ""
         selected_path: string = ""
         selected_size: string = ""
@@ -787,6 +798,7 @@ agent FileManagerApp {
         state.sort_asc = true
         state.is_split = false
         state.show_inspector = true
+        state.show_hidden = false
         state.edit_path_mode = false
         state.last_created_path = ""
         state.current_lang = "en"
@@ -795,14 +807,24 @@ agent FileManagerApp {
     }
 
     fn refresh() uses Workspace {
+        let mut updated_tabs: [string] = []
+        for (t, idx) in state.tabs {
+            if idx == state.active_tab_idx {
+                updated_tabs = updated_tabs + [state.current_path]
+            } else {
+                updated_tabs = updated_tabs + [t]
+            }
+        }
+        state.tabs = updated_tabs
+
         let loaded = VfsBridge.list_directory(state.current_path)
         state.all_entries = loaded
-        state.filtered_entries = filter_entries(loaded, state.filter_query)
+        state.filtered_entries = filter_entries(loaded, state.filter_query, state.show_hidden)
 
         if state.is_split {
             let target_split = if workspace.exists(state.split_path) { state.split_path } else { state.current_path }
             let split_loaded = VfsBridge.list_directory(target_split)
-            state.split_entries = split_loaded
+            state.split_entries = filter_entries(split_loaded, "", state.show_hidden)
         }
     }
 
@@ -1013,7 +1035,7 @@ agent FileManagerApp {
                 state.selected_path = matched_entry.path
                 state.selected_size = matched_entry.size_str
                 state.selected_perms = matched_entry.permissions
-                state.selected_cas = matched_entry.cas_hash
+                state.selected_cas = compute_cas_hash(matched_entry.path)
                 state.preview_content = workspace.read(matched_entry.path)
             }
         }
@@ -1042,6 +1064,11 @@ agent FileManagerApp {
 
     fn toggle_inspector() uses UI {
         state.show_inspector = !state.show_inspector
+    }
+
+    fn toggle_hidden_files() uses UI, Workspace {
+        state.show_hidden = !state.show_hidden
+        FileManagerApp.refresh()
     }
 
     fn toggle_theme() uses UI {
@@ -1075,12 +1102,12 @@ agent FileManagerApp {
 
     fn on_filter_change(query: string) uses UI {
         state.filter_query = query
-        state.filtered_entries = filter_entries(state.all_entries, query)
+        state.filtered_entries = filter_entries(state.all_entries, query, state.show_hidden)
     }
 
     fn clear_filter() uses UI {
         state.filter_query = ""
-        state.filtered_entries = state.all_entries
+        state.filtered_entries = filter_entries(state.all_entries, "", state.show_hidden)
     }
 
     fn select_or_open_entry() uses UI, Workspace {
@@ -1090,7 +1117,7 @@ agent FileManagerApp {
             state.selected_path = first.path
             state.selected_size = first.size_str
             state.selected_perms = first.permissions
-            state.selected_cas = first.cas_hash
+            state.selected_cas = compute_cas_hash(first.path)
             if !first.is_dir {
                 state.preview_content = workspace.read(first.path)
             } else {
@@ -1203,6 +1230,7 @@ agent FileManagerApp {
             state.filter_query,
             state.is_split,
             state.show_inspector,
+            state.show_hidden,
             state.edit_path_mode,
             state.current_theme,
             state.current_lang,
@@ -1310,8 +1338,8 @@ test "clipboard copy stores selected file in buffer" {
     FileManagerApp.select_or_open_entry()
     assert FileManagerApp.state.selected_name != ""
 
-    // Click copy
-    app.dispatch_click("btn_copy")
+    // Copy selected entry
+    FileManagerApp.copy_selected()
     assert FileManagerApp.state.clipboard_path == FileManagerApp.state.selected_path
     assert FileManagerApp.state.clipboard_name == FileManagerApp.state.selected_name
 }
@@ -1341,16 +1369,28 @@ test "view mode switching changes active layout" {
     assert FileManagerApp.state.view_mode == "icons"
 }
 
-test "open selected directory navigates into child hierarchy" {
+test "click folder card in icons grid navigates into child" {
     FileManagerApp.reset_state()
     let app = FileManagerApp.MainWindow.mount_headless()
-
-    // Select first entry if it is a directory
+    assert FileManagerApp.state.view_mode == "icons"
     let entries = FileManagerApp.state.filtered_entries
     if len(entries) > 0 and entries[0].is_dir {
-        FileManagerApp.select_or_open_entry()
-        let target_p = FileManagerApp.state.selected_path
-        app.dispatch_click("btn_open_selected_dir")
+        let target_name = entries[0].name
+        let target_p = entries[0].path
+        app.dispatch_click("entry_" + target_name)
         assert FileManagerApp.state.current_path == target_p
     }
+}
+
+test "toggle hidden files reveals dotfiles" {
+    FileManagerApp.reset_state()
+    let app = FileManagerApp.MainWindow.mount_headless()
+    assert !FileManagerApp.state.show_hidden
+    let count_normal = len(FileManagerApp.state.filtered_entries)
+    app.dispatch_click("btn_toggle_hidden")
+    assert FileManagerApp.state.show_hidden
+    let count_hidden = len(FileManagerApp.state.filtered_entries)
+    assert count_hidden >= count_normal
+    app.dispatch_click("btn_toggle_hidden")
+    assert !FileManagerApp.state.show_hidden
 }

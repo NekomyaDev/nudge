@@ -772,8 +772,15 @@ def _emit_trace(record: dict) -> None:
         if _SEQ["n"] is None or _SEQ["path"] != str(path):
             n = 0
             if path.exists():
-                with path.open("r", encoding="utf-8") as f:
-                    n = sum(1 for line in f if line.strip())
+                try:
+                    size = path.stat().st_size
+                    if size > 1024 * 1024:
+                        n = size // 80
+                    else:
+                        with path.open("r", encoding="utf-8") as f:
+                            n = sum(1 for line in f if line.strip())
+                except Exception:
+                    n = 0
             _SEQ["n"], _SEQ["path"] = n, str(path)
         _SEQ["n"] += 1
         line = {"v": 1, "seq": _SEQ["n"], **record}

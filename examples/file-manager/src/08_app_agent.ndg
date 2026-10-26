@@ -20,6 +20,7 @@ agent FileManagerApp {
 
         // Inspector (F11) state (compact, toggleable)
         show_inspector: bool = false
+        show_hidden: bool = false
         selected_name: string = ""
         selected_path: string = ""
         selected_size: string = ""
@@ -67,6 +68,7 @@ agent FileManagerApp {
         state.sort_asc = true
         state.is_split = false
         state.show_inspector = true
+        state.show_hidden = false
         state.edit_path_mode = false
         state.last_created_path = ""
         state.current_lang = "en"
@@ -75,14 +77,24 @@ agent FileManagerApp {
     }
 
     fn refresh() uses Workspace {
+        let mut updated_tabs: [string] = []
+        for (t, idx) in state.tabs {
+            if idx == state.active_tab_idx {
+                updated_tabs = updated_tabs + [state.current_path]
+            } else {
+                updated_tabs = updated_tabs + [t]
+            }
+        }
+        state.tabs = updated_tabs
+
         let loaded = VfsBridge.list_directory(state.current_path)
         state.all_entries = loaded
-        state.filtered_entries = filter_entries(loaded, state.filter_query)
+        state.filtered_entries = filter_entries(loaded, state.filter_query, state.show_hidden)
 
         if state.is_split {
             let target_split = if workspace.exists(state.split_path) { state.split_path } else { state.current_path }
             let split_loaded = VfsBridge.list_directory(target_split)
-            state.split_entries = split_loaded
+            state.split_entries = filter_entries(split_loaded, "", state.show_hidden)
         }
     }
 
@@ -293,7 +305,7 @@ agent FileManagerApp {
                 state.selected_path = matched_entry.path
                 state.selected_size = matched_entry.size_str
                 state.selected_perms = matched_entry.permissions
-                state.selected_cas = matched_entry.cas_hash
+                state.selected_cas = compute_cas_hash(matched_entry.path)
                 state.preview_content = workspace.read(matched_entry.path)
             }
         }
@@ -322,6 +334,11 @@ agent FileManagerApp {
 
     fn toggle_inspector() uses UI {
         state.show_inspector = !state.show_inspector
+    }
+
+    fn toggle_hidden_files() uses UI, Workspace {
+        state.show_hidden = !state.show_hidden
+        FileManagerApp.refresh()
     }
 
     fn toggle_theme() uses UI {
@@ -355,12 +372,12 @@ agent FileManagerApp {
 
     fn on_filter_change(query: string) uses UI {
         state.filter_query = query
-        state.filtered_entries = filter_entries(state.all_entries, query)
+        state.filtered_entries = filter_entries(state.all_entries, query, state.show_hidden)
     }
 
     fn clear_filter() uses UI {
         state.filter_query = ""
-        state.filtered_entries = state.all_entries
+        state.filtered_entries = filter_entries(state.all_entries, "", state.show_hidden)
     }
 
     fn select_or_open_entry() uses UI, Workspace {
@@ -370,7 +387,7 @@ agent FileManagerApp {
             state.selected_path = first.path
             state.selected_size = first.size_str
             state.selected_perms = first.permissions
-            state.selected_cas = first.cas_hash
+            state.selected_cas = compute_cas_hash(first.path)
             if !first.is_dir {
                 state.preview_content = workspace.read(first.path)
             } else {
@@ -483,6 +500,7 @@ agent FileManagerApp {
             state.filter_query,
             state.is_split,
             state.show_inspector,
+            state.show_hidden,
             state.edit_path_mode,
             state.current_theme,
             state.current_lang,

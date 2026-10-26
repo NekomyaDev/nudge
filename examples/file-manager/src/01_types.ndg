@@ -165,21 +165,24 @@ fn partition_entries(entries: [FileEntry]) -> [FileEntry] {
     dirs + files
 }
 
-fn filter_entries(entries: [FileEntry], query: string) -> [FileEntry] {
+fn filter_entries(entries: [FileEntry], query: string, show_hidden: bool) -> [FileEntry] {
     let q = str.trim(str.lower(query))
     let mut matched: [FileEntry] = []
-    if q == "" {
-        matched = entries
-    } else {
-        for e in entries {
-            let n = str.lower(e.name)
-            let ext = str.lower(e.extension)
-            if str.contains(n, q) or str.contains(ext, q) {
+    for e in entries {
+        let is_dot = str.starts_with(e.name, ".")
+        if show_hidden or (!is_dot) {
+            if q == "" {
                 matched = matched + [e]
+            } else {
+                let n = str.lower(e.name)
+                let ext = str.lower(e.extension)
+                if str.contains(n, q) or str.contains(ext, q) {
+                    matched = matched + [e]
+                }
             }
         }
     }
-    matched
+    partition_entries(matched)
 }
 
 fn extract_tab_name(t: string) -> string {

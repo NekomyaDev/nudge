@@ -5,6 +5,7 @@ view TopToolbar(
     current_path: string,
     is_split: bool,
     show_inspector: bool,
+    show_hidden: bool,
     edit_path_mode: bool,
     current_theme: string,
     current_lang: string,
@@ -14,7 +15,7 @@ view TopToolbar(
     let mut crumbs = []
     let is_abs = str.starts_with(current_path, "/")
     crumbs = crumbs + [
-        button(if is_abs { "/" } else { "⌂" }, id = "btn_path_root", variant = "flat", h = 22, on_click = nav_root)
+        button(if is_abs { "/" } else { "⌂" }, id = "btn_path_root", variant = "flat", h = 24, on_click = nav_root)
     ]
     let mut current_accum = ""
     for seg in path_segments {
@@ -23,13 +24,13 @@ view TopToolbar(
             let target_path = current_accum
             crumbs = crumbs + [
                 text("›"),
-                button(seg, id = "crumb_" + target_path, variant = "flat", h = 22, on_click = on_crumb_click)
+                button(seg, id = "crumb_" + target_path, variant = "flat", h = 24, on_click = on_crumb_click)
             ]
         }
     }
     let all_crumbs = crumbs + [
         spacer(4),
-        button("✏", id = "btn_toggle_path_mode", variant = "flat", w = 24, h = 22, on_click = toggle_path_edit)
+        button("✎", id = "btn_toggle_path_mode", variant = "flat", w = 24, h = 22, on_click = toggle_path_edit)
     ]
 
     let is_en = (current_lang == "en")
@@ -37,8 +38,6 @@ view TopToolbar(
     let txt_copy = if is_en { "Copy" } else { "Kopyala" }
     let txt_paste = if is_en { "Paste" } else { "Yapıştır" }
     let txt_delete = if is_en { "✕ Delete" } else { "✕ Sil" }
-    let txt_undo = if is_en { "↺ Undo" } else { "↺ Geri Al" }
-    let txt_reload = if is_en { "↻ Reload" } else { "↻ Yenile" }
     let txt_split = if is_en { "◫ Split" } else { "◫ Böl" }
     let txt_info = if is_en { "ℹ Info" } else { "ℹ Bilgi" }
 
@@ -50,38 +49,36 @@ view TopToolbar(
 
         divider(orientation = "vertical", size = 1, h = 22),
 
-        // 2. View Mode Segmented Controls (Icons, Compact, Details)
-        button("⊞", id = "view_icons", variant = "toolbar", w = 28, h = 26, selected = (view_mode == "icons"), on_click = set_view_icons),
-        button("≡", id = "view_compact", variant = "toolbar", w = 28, h = 26, selected = (view_mode == "compact"), on_click = set_view_compact),
-        button("☰", id = "view_details", variant = "toolbar", w = 28, h = 26, selected = (view_mode == "details"), on_click = set_view_details),
-
-        divider(orientation = "vertical", size = 1, h = 22),
-
-        // 3. Dynamic Breadcrumb Location Bar
+        // 2. Dynamic Breadcrumb Location Bar
         if edit_path_mode {
             row(padding = 1, gap = 2) [
-                input(value = current_path, placeholder = if is_en { "Enter path..." } else { "Yol girin..." }, id = "input_path", w = 220, h = 24, on_change = on_path_input_change),
+                input(value = current_path, placeholder = if is_en { "Enter path..." } else { "Yol girin..." }, id = "input_path", w = 260, h = 24, on_change = on_path_input_change),
                 button("✓", id = "btn_toggle_path_mode", variant = "toolbar", w = 26, h = 24, on_click = toggle_path_edit)
             ]
         } else {
             row(all_crumbs, padding = 2, gap = 2, bg = "input")
         },
 
-        spacer(4),
+        divider(orientation = "vertical", size = 1, h = 22),
 
-        // 4. File Actions
+        // 3. View Mode Segmented Controls (Icons, Compact, Details)
+        button("⊞", id = "view_icons", variant = "toolbar", w = 28, h = 26, selected = (view_mode == "icons"), on_click = set_view_icons),
+        button("≡", id = "view_compact", variant = "toolbar", w = 28, h = 26, selected = (view_mode == "compact"), on_click = set_view_compact),
+        button("☰", id = "view_details", variant = "toolbar", w = 28, h = 26, selected = (view_mode == "details"), on_click = set_view_details),
+
+        divider(orientation = "vertical", size = 1, h = 22),
+
+        // 4. Quick Actions (+ Folder, Undo, Reload)
         button(txt_new_folder, id = "btn_new_folder", variant = "toolbar", h = 26, on_click = create_new_folder),
-        button(txt_copy, id = "btn_copy", variant = "toolbar", h = 26, on_click = copy_selected),
-        button(txt_paste, id = "btn_paste", variant = "toolbar", h = 26, on_click = paste_clipboard),
-        button(txt_delete, id = "btn_delete", variant = "toolbar", h = 26, on_click = delete_selected),
-        button(txt_undo, id = "btn_undo", variant = "toolbar", h = 26, on_click = undo_last_action),
-        button(txt_reload, id = "btn_reload", variant = "toolbar", h = 26, on_click = reload_current),
+        button("↺", id = "btn_undo", variant = "toolbar", w = 28, h = 26, on_click = undo_last_action),
+        button("↻", id = "btn_reload", variant = "toolbar", w = 28, h = 26, on_click = reload_current),
 
-        spacer(4),
+        divider(orientation = "vertical", size = 1, h = 22),
 
-        // 5. Right Toolbar Controls (Split, Info, Lang, Theme)
+        // 5. Right Toolbar Controls (Split, Info, Hidden, Lang, Theme)
         button(txt_split, id = "btn_split_toggle", variant = "toolbar", h = 26, selected = is_split, on_click = toggle_split),
         button(txt_info, id = "btn_info_toggle", variant = "toolbar", h = 26, selected = show_inspector, on_click = toggle_inspector),
+        button(if show_hidden { "• Hidden" } else { "• Normal" }, id = "btn_toggle_hidden", variant = "toolbar", h = 26, selected = show_hidden, on_click = toggle_hidden_files),
         button(if is_en { "TR" } else { "EN" }, id = "btn_lang_toggle", variant = "toolbar", w = 32, h = 26, on_click = toggle_lang),
         button(if current_theme == "breeze-light" { "☾" } else { "☼" }, id = "btn_theme_toggle", variant = "toolbar", w = 28, h = 26, on_click = toggle_theme)
     ]
@@ -94,7 +91,7 @@ view TabBar(tabs: [string], active_idx: int) -> View {
         let tab_name = extract_tab_name(t)
         tab_elements = tab_elements + [
             row(padding = 0, gap = 0) [
-                button("▸ " + tab_name, id = "tab_sel_" + str.to_string(idx), variant = "toolbar", selected = is_active, h = 24, on_click = on_tab_click),
+                button("  " + tab_name + "  ", id = "tab_sel_" + str.to_string(idx), variant = "toolbar", selected = is_active, h = 24, on_click = on_tab_click),
                 button("✕", id = "tab_close_" + str.to_string(idx), variant = "toolbar", w = 20, h = 24, on_click = on_tab_close)
             ]
         ]

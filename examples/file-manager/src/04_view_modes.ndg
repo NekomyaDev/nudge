@@ -44,8 +44,8 @@ view FileIconsGrid(entries: [FileEntry], selected_name: string, current_lang: st
     let mut current_row = []
     for item in entries {
         let is_sel = (item.name == selected_name)
-        let sub_text = if item.is_dir { "<DIR>" } else { item.size_str }
-        let card_label = item.name + "\n" + sub_text
+        let sub_text = if item.is_dir { "" } else { item.size_str }
+        let card_label = if sub_text == "" { item.name } else { item.name + "\n" + sub_text }
         let card = button(
             card_label,
             id = "entry_" + item.name,

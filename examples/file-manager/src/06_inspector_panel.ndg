@@ -25,6 +25,11 @@ view InspectorPanel(
                     badge(selected_cas, status = "info")
                 ],
                 button(if is_en { "▸ Open Directory" } else { "▸ Klasörü Aç" }, id = "btn_open_selected_dir", variant = "toolbar", h = 24, on_click = open_selected_directory),
+                row(padding = 0, gap = 4) [
+                    button(if is_en { "Copy" } else { "Kopyala" }, id = "btn_copy", variant = "toolbar", h = 24, on_click = copy_selected),
+                    button(if is_en { "Paste" } else { "Yapıştır" }, id = "btn_paste", variant = "toolbar", h = 24, on_click = paste_clipboard),
+                    button(if is_en { "✕ Delete" } else { "✕ Sil" }, id = "btn_delete", variant = "toolbar", h = 24, on_click = delete_selected)
+                ],
                 divider(size = 1),
                 text(if is_en { "Preview:" } else { "Önizleme:" }, bold = true),
                 if preview_content != "" {

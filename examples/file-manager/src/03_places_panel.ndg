@@ -19,20 +19,20 @@ view PlacesSidebar(current_path: string, current_lang: string) -> View {
 
         // Group 2: Remote (Uzak)
         text(if is_en { "Remote" } else { "Uzak" }, bold = true),
-        button(if is_en { "  🌐  Network" } else { "  🌐  Ağ" }, id = "place_network", variant = "item", align = "start", w = 158, h = 24, on_click = nav_root),
+        button(if is_en { "  ⊚  Network" } else { "  ⊚  Ağ" }, id = "place_network", variant = "item", align = "start", w = 158, h = 24, on_click = nav_root),
 
         divider(size = 1),
 
         // Group 3: Recent (Son)
         text(if is_en { "Recent" } else { "Son" }, bold = true),
-        button(if is_en { "  ⏱  Recent Files" } else { "  ⏱  Son Dosyalar" }, id = "place_recent_files", variant = "item", align = "start", w = 158, h = 24, on_click = nav_home),
-        button(if is_en { "  📍  Recent Locations" } else { "  📍  Son Konumlar" }, id = "place_recent_loc", variant = "item", align = "start", w = 158, h = 24, on_click = nav_docs),
+        button(if is_en { "  ◷  Recent Files" } else { "  ◷  Son Dosyalar" }, id = "place_recent_files", variant = "item", align = "start", w = 158, h = 24, on_click = nav_home),
+        button(if is_en { "  ◈  Recent Locations" } else { "  ◈  Son Konumlar" }, id = "place_recent_loc", variant = "item", align = "start", w = 158, h = 24, on_click = nav_docs),
 
         divider(size = 1),
 
         // Group 4: Devices (Aygıtlar)
         text(if is_en { "Devices" } else { "Aygıtlar" }, bold = true),
-        button(if is_en { "  💾  Root (/)" } else { "  💾  Kök Dizin (/)" }, id = "place_root", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/"), on_click = nav_root),
+        button(if is_en { "  ⛁  Root (/)" } else { "  ⛁  Kök Dizin (/)" }, id = "place_root", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/"), on_click = nav_root),
         button(if is_en { "  ⚡  Temp (/tmp)" } else { "  ⚡  Geçici Bellek (/tmp)" }, id = "place_nvfs", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/tmp"), on_click = nav_nvfs)
     ]
 

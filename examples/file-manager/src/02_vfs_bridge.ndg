@@ -50,9 +50,9 @@ agent VfsBridge {
                 let sz = st.size
                 let ext = get_extension(name)
                 let glyph = resolve_glyph(name, is_d)
-                let sz_str = if is_d { "<DIR>" } else { format_bytes(sz) }
+                let sz_str = if is_d { "" } else { format_bytes(sz) }
                 let perms = if is_d { "drwxr-xr-x" } else { "-rw-r--r--" }
-                let cas = compute_cas_hash(full_p + ":" + str.to_string(st.mtime_ms))
+                let cas = ""
 
                 entries = entries + [{
                     name: name,

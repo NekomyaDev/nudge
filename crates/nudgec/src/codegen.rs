@@ -1465,16 +1465,16 @@ class _HeadlessApp:
             handler = elem.on_click
             if callable(handler):
                 try:
-                    handler()
+                    handler(target_id)
                 except TypeError:
-                    handler(None)
+                    handler()
             elif isinstance(handler, str):
                 fn = getattr(self.agent, handler, None) or globals().get(handler)
                 if callable(fn):
                     try:
-                        fn()
+                        fn(target_id)
                     except TypeError:
-                        fn(None)
+                        fn()
             if callable(self._render_fn):
                 self.root = self._render_fn()
 

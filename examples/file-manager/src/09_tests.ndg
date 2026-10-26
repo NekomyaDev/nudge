@@ -90,8 +90,8 @@ test "clipboard copy stores selected file in buffer" {
     FileManagerApp.select_or_open_entry()
     assert FileManagerApp.state.selected_name != ""
 
-    // Click copy
-    app.dispatch_click("btn_copy")
+    // Copy selected entry
+    FileManagerApp.copy_selected()
     assert FileManagerApp.state.clipboard_path == FileManagerApp.state.selected_path
     assert FileManagerApp.state.clipboard_name == FileManagerApp.state.selected_name
 }
@@ -121,16 +121,28 @@ test "view mode switching changes active layout" {
     assert FileManagerApp.state.view_mode == "icons"
 }
 
-test "open selected directory navigates into child hierarchy" {
+test "click folder card in icons grid navigates into child" {
     FileManagerApp.reset_state()
     let app = FileManagerApp.MainWindow.mount_headless()
-
-    // Select first entry if it is a directory
+    assert FileManagerApp.state.view_mode == "icons"
     let entries = FileManagerApp.state.filtered_entries
     if len(entries) > 0 and entries[0].is_dir {
-        FileManagerApp.select_or_open_entry()
-        let target_p = FileManagerApp.state.selected_path
-        app.dispatch_click("btn_open_selected_dir")
+        let target_name = entries[0].name
+        let target_p = entries[0].path
+        app.dispatch_click("entry_" + target_name)
         assert FileManagerApp.state.current_path == target_p
     }
+}
+
+test "toggle hidden files reveals dotfiles" {
+    FileManagerApp.reset_state()
+    let app = FileManagerApp.MainWindow.mount_headless()
+    assert !FileManagerApp.state.show_hidden
+    let count_normal = len(FileManagerApp.state.filtered_entries)
+    app.dispatch_click("btn_toggle_hidden")
+    assert FileManagerApp.state.show_hidden
+    let count_hidden = len(FileManagerApp.state.filtered_entries)
+    assert count_hidden >= count_normal
+    app.dispatch_click("btn_toggle_hidden")
+    assert !FileManagerApp.state.show_hidden
 }
