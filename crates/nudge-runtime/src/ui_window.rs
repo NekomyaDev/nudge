@@ -4199,6 +4199,84 @@ pub fn draw_tooltip(
 /// so chrome inside a scroll viewport is sliced at the viewport edge instead
 /// of bleeding over neighbouring content.
 #[allow(clippy::too_many_arguments)]
+pub fn draw_breeze_folder_icon(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    clip: Option<Rect>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+) {
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    // Breeze folder vector: tab + back plate + opening + sky blue front pocket
+    let tab_w = (w * 45) / 100;
+    let tab_h = (h * 24) / 100;
+    let back_color = 0xFF65_8BA7;
+    let back_highlight = 0xFF76_9CB7;
+
+    // Top tab of back flap
+    draw_rounded_rect_box_clipped(buf, stride, height, clip, x, y, tab_w + 6, tab_h + 4, 3, back_color, back_color);
+
+    // Back plate body
+    let body_top = y + tab_h;
+    draw_rounded_rect_box_clipped(buf, stride, height, clip, x, body_top, w, h - tab_h, 3, back_color, back_highlight);
+
+    // Subtle dark opening slit
+    draw_rect_alpha(buf, stride, height, x + 3, body_top + 2, (w - 6).max(1), 3, 0xFF00_0000, 0.4);
+
+    // Front pocket (Breeze sky blue)
+    let pocket_top = y + (h * 32) / 100;
+    let pocket_h = h - (pocket_top - y);
+    let front_color = 0xFF96_D0F2;
+    let front_top = 0xFFAC_DDF7;
+
+    draw_rounded_rect_box_clipped(buf, stride, height, clip, x, pocket_top, w, pocket_h, 4, front_color, front_top);
+    // Subtle bottom crease
+    draw_rect_alpha(buf, stride, height, x + 2, pocket_top + pocket_h - 2, (w - 4).max(1), 2, 0xFF00_0000, 0.25);
+}
+
+pub fn draw_breeze_file_icon(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    clip: Option<Rect>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    color: u32,
+) {
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    let dog_ear = 10;
+    let sheet_color = 0xFFFA_FBFC;
+    let border_color = 0xFFBD_C7D0;
+    let fold_color = 0xFFDE_E4EA;
+
+    // Main sheet
+    draw_rounded_rect_box_clipped(buf, stride, height, clip, x, y, w, h, 2, sheet_color, border_color);
+
+    // Dog ear fold at top-right
+    let ear_x = x + w - dog_ear;
+    draw_rounded_rect_box_clipped(buf, stride, height, clip, ear_x - 1, y, dog_ear + 1, dog_ear + 1, 1, fold_color, border_color);
+
+    // Accent content lines
+    let line_y_start = y + dog_ear + 5;
+    let line_w = (w - 12).max(4);
+    for i in 0..3 {
+        let ly = line_y_start + i * 6;
+        if ly + 2 < y + h - 5 {
+            let lw = if i == 2 { (line_w * 6) / 10 } else { line_w };
+            draw_rounded_rect_box_clipped(buf, stride, height, clip, x + 6, ly, lw, 3, 1, color, color);
+        }
+    }
+}
+
 pub fn draw_rounded_rect_box_clipped(
     buf: &mut [u32],
     stride: usize,
@@ -8652,7 +8730,7 @@ impl<D: UiDispatcher> NativeApp<D> {
                             theme.selection_bg,
                         );
                         text_color = 0xFFFF_FFFF;
-                    } else if variant == "flat" || variant == "ghost" || variant == "toolbar" || variant == "item" {
+                    } else if variant == "flat" || variant == "ghost" || variant == "toolbar" || variant == "item" || variant == "folder_card" || variant == "file_card" {
                         text_color = theme.text;
                         if pressed {
                             draw_rounded_rect_box_clipped(
@@ -8683,6 +8761,22 @@ impl<D: UiDispatcher> NativeApp<D> {
                                 CORNER_RADIUS,
                                 hover_bg,
                                 hover_bg,
+                            );
+                        } else if variant == "folder_card" || variant == "file_card" {
+                            // Subtle card border
+                            let card_border = if theme.is_dark() { 0xFF2A_2E32 } else { 0xFFE2_E6EA };
+                            draw_rounded_rect_box_clipped(
+                                &mut buffer,
+                                stride,
+                                h_usize,
+                                clip,
+                                rx,
+                                ry,
+                                lbox.rect.w,
+                                lbox.rect.h,
+                                CORNER_RADIUS,
+                                theme.bg,
+                                card_border,
                             );
                         }
                     } else {
@@ -8725,7 +8819,70 @@ impl<D: UiDispatcher> NativeApp<D> {
                             theme.input_border_focused,
                         );
                     }
-                    if let Some(ref text) = lbox.text {
+                    if variant == "folder_card" || variant == "file_card" {
+                        if variant == "folder_card" {
+                            let icon_w = 56;
+                            let icon_h = 40;
+                            let icon_x = rx + (lbox.rect.w - icon_w) / 2;
+                            let icon_y = ry + 8;
+                            draw_breeze_folder_icon(&mut buffer, stride, h_usize, clip, icon_x, icon_y, icon_w, icon_h);
+                        } else {
+                            let icon_w = 36;
+                            let icon_h = 44;
+                            let icon_x = rx + (lbox.rect.w - icon_w) / 2;
+                            let icon_y = ry + 8;
+                            let accent = 0xFF4A_90D9;
+                            draw_breeze_file_icon(&mut buffer, stride, h_usize, clip, icon_x, icon_y, icon_w, icon_h, accent);
+                        }
+                        if let Some(ref text) = lbox.text {
+                            let parts: Vec<&str> = text.split('\n').collect();
+                            let line1 = parts.first().copied().unwrap_or("");
+                            let line2 = parts.get(1).copied().unwrap_or("");
+                            let interior = Rect {
+                                x: rx + 4,
+                                y: ry,
+                                w: lbox.rect.w - 8,
+                                h: lbox.rect.h,
+                            };
+                            let text_clip = match clip {
+                                None => Some(interior),
+                                Some(c) => intersect(interior, c),
+                            };
+                            if let Some(tc) = text_clip {
+                                let w1 = self.fonts.measure_width(FaceKind::Ui, line1);
+                                let tx1 = rx + ((lbox.rect.w - w1) / 2).max(4);
+                                let ty1 = ry + 54;
+                                draw_text_ttf_clipped(
+                                    &self.fonts,
+                                    FaceKind::Ui,
+                                    tx1,
+                                    ty1,
+                                    line1,
+                                    tc,
+                                    |px, py, w, h, cov| {
+                                        draw_rect_alpha(&mut buffer, stride, h_usize, px, py, w, h, text_color, cov);
+                                    },
+                                );
+                                if !line2.is_empty() {
+                                    let w2 = self.fonts.measure_width(FaceKind::Ui, line2);
+                                    let tx2 = rx + ((lbox.rect.w - w2) / 2).max(4);
+                                    let ty2 = ry + 70;
+                                    let sub_color = if is_selected { 0xFFEE_F2F5 } else { theme.text_dim };
+                                    draw_text_ttf_clipped(
+                                        &self.fonts,
+                                        FaceKind::Ui,
+                                        tx2,
+                                        ty2,
+                                        line2,
+                                        tc,
+                                        |px, py, w, h, cov| {
+                                            draw_rect_alpha(&mut buffer, stride, h_usize, px, py, w, h, sub_color, cov);
+                                        },
+                                    );
+                                }
+                            }
+                        }
+                    } else if let Some(ref text) = lbox.text {
                         let text_w = self.fonts.measure_width(FaceKind::Ui, text);
                         let tx = if align == "start" || align == "left" {
                             rx + 8

@@ -9,6 +9,16 @@ type BoxStyle = {
     margin_bottom: int,
     margin_left: int,
     margin_right: int,
+    padding: int,
+    gap: int
+}
+
+type ContainerCursor = {
+    ref: int,
+    is_flex: bool,
+    cur_x: int,
+    cur_y: int,
+    gap: int,
     padding: int
 }
 
@@ -67,6 +77,10 @@ fn compute_node_style(tag: string, style_attr: string) -> BoxStyle {
     let mut display = default_display
     if str.contains(style_attr, "display: none") or str.contains(style_attr, "display:none") {
         display = "none"
+    } else if str.contains(style_attr, "display: flex") or str.contains(style_attr, "display:flex") {
+        display = "flex"
+    } else if str.contains(style_attr, "display: inline-block") or str.contains(style_attr, "display:inline-block") {
+        display = "inline-block"
     } else if str.contains(style_attr, "display: block") or str.contains(style_attr, "display:block") {
         display = "block"
     } else if str.contains(style_attr, "display: inline") or str.contains(style_attr, "display:inline") {
@@ -74,12 +88,13 @@ fn compute_node_style(tag: string, style_attr: string) -> BoxStyle {
     }
 
     let def_w = if is_block_tag { -1 } else if tag == "button" { 80 } else if tag == "input" { 160 } else { 0 }
-    let def_h = if tag == "h1" { 36 } else if tag == "h2" { 30 } else if tag == "button" { 28 } else if tag == "input" { 26 } else if is_block_tag { 20 } else { 18 }
+    let def_h = if tag == "h1" { 36 } else if tag == "h2" { 30 } else if tag == "button" { 28 } else if tag == "input" { 26 } else if is_block_tag { -1 } else { 18 }
 
     let w = parse_css_px_val(style_attr, "width", def_w)
     let h = parse_css_px_val(style_attr, "height", def_h)
     let m = parse_css_px_val(style_attr, "margin", 0)
     let p = parse_css_px_val(style_attr, "padding", 0)
+    let g = parse_css_px_val(style_attr, "gap", 0)
 
     let mt = parse_css_px_val(style_attr, "margin-top", m)
     let mb = parse_css_px_val(style_attr, "margin-bottom", m)
@@ -94,15 +109,17 @@ fn compute_node_style(tag: string, style_attr: string) -> BoxStyle {
         margin_bottom: mb,
         margin_left: ml,
         margin_right: mr,
-        padding: p
+        padding: p,
+        gap: g
     }
 }
 
 fn compute_layout(tree: DomTree, viewport_w: int, viewport_h: int) -> LayoutTree {
     let mut boxes: [LayoutBox] = []
-    let mut cur_x = 0
-    let mut cur_y = 0
+    let mut top_x = 0
+    let mut top_y = 0
     let line_height = 20
+    let mut cursors: [ContainerCursor] = []
 
     for n in tree.nodes {
         let style_attr = get_attr_value(n.attrs, "style", "")
@@ -120,20 +137,113 @@ fn compute_layout(tree: DomTree, viewport_w: int, viewport_h: int) -> LayoutTree
                 h: 0,
                 display: "none"
             }]
-        } else if style.display == "block" {
-            if cur_x > 0 {
-                cur_x = 0
-                cur_y = cur_y + line_height
+        } else {
+            // Find parent container cursor if nested
+            let mut parent_idx = -1
+            let mut c_idx = 0
+            for c in cursors {
+                if c.ref == n.parent {
+                    parent_idx = c_idx
+                }
+                c_idx = c_idx + 1
             }
-            cur_y = cur_y + style.margin_top
-            let box_x = cur_x + style.margin_left
-            let box_y = cur_y
-            let box_w = if style.width > 0 { style.width } else { viewport_w - box_x - style.margin_right }
-            let text_extra = if n.text != "" { 18 } else { 0 }
-            let box_h = if style.height > 0 { style.height } else { 24 + text_extra }
 
-            cur_y = box_y + box_h + style.margin_bottom
-            cur_x = 0
+            let is_block_like = (style.display == "block" or style.display == "flex")
+            let def_box_w = if is_block_like {
+                if parent_idx >= 0 {
+                    // Fit within parent container
+                    viewport_w - style.margin_left - style.margin_right
+                } else {
+                    viewport_w - top_x - style.margin_left - style.margin_right
+                }
+            } else if n.tag == "button" {
+                80
+            } else if n.tag == "input" {
+                160
+            } else if n.text != "" {
+                str.length(n.text) * 8 + 10
+            } else {
+                30
+            }
+
+            let box_w = if style.width > 0 { style.width } else { def_box_w }
+
+            // Multi-line text height calculation
+            let text_len = str.length(n.text)
+            let max_line_chars = if box_w > 16 { (box_w - 16) / 8 } else { 10 }
+            let line_count = if text_len == 0 { 0 } else { (text_len / max_line_chars) + 1 }
+            let text_extra = if line_count > 0 { line_count * 18 } else { 0 }
+            let box_h = if style.height > 0 {
+                style.height
+            } else if is_block_like {
+                if text_extra > 0 { text_extra } else { 24 }
+            } else {
+                24
+            }
+
+            let mut box_x = 0
+            let mut box_y = 0
+
+            if parent_idx >= 0 {
+                let p_cur = cursors[parent_idx]
+                if p_cur.is_flex {
+                    box_x = p_cur.cur_x + style.margin_left
+                    box_y = p_cur.cur_y + style.margin_top
+                    let next_cx = box_x + box_w + style.margin_right + p_cur.gap
+                    cursors[parent_idx] = {
+                        ref: p_cur.ref,
+                        is_flex: true,
+                        cur_x: next_cx,
+                        cur_y: p_cur.cur_y,
+                        gap: p_cur.gap,
+                        padding: p_cur.padding
+                    }
+                } else {
+                    box_x = p_cur.cur_x + style.margin_left
+                    box_y = p_cur.cur_y + style.margin_top
+                    let next_cy = box_y + box_h + style.margin_bottom
+                    cursors[parent_idx] = {
+                        ref: p_cur.ref,
+                        is_flex: false,
+                        cur_x: p_cur.cur_x,
+                        cur_y: next_cy,
+                        gap: p_cur.gap,
+                        padding: p_cur.padding
+                    }
+                }
+            } else {
+                // Top-level element
+                if is_block_like {
+                    if top_x > 0 {
+                        top_x = 0
+                        top_y = top_y + line_height
+                    }
+                    top_y = top_y + style.margin_top
+                    box_x = top_x + style.margin_left
+                    box_y = top_y
+                    top_y = box_y + box_h + style.margin_bottom
+                    top_x = 0
+                } else {
+                    if top_x + box_w > viewport_w and top_x > 0 {
+                        top_x = 0
+                        top_y = top_y + line_height + 4
+                    }
+                    box_x = top_x + style.margin_left
+                    box_y = top_y + style.margin_top
+                    top_x = box_x + box_w + style.margin_right
+                }
+            }
+
+            if is_block_like {
+                cursors = cursors + [{
+                    ref: n.ref,
+                    is_flex: (style.display == "flex"),
+                    cur_x: box_x + style.padding,
+                    cur_y: box_y + style.padding,
+                    gap: style.gap,
+                    padding: style.padding
+                }]
+            }
 
             boxes = boxes + [{
                 ref: n.ref,
@@ -144,41 +254,7 @@ fn compute_layout(tree: DomTree, viewport_w: int, viewport_h: int) -> LayoutTree
                 y: box_y,
                 w: box_w,
                 h: box_h,
-                display: "block"
-            }]
-        } else {
-            let elem_w = if style.width > 0 {
-                style.width
-            } else if n.tag == "button" {
-                80
-            } else if n.tag == "input" {
-                160
-            } else if n.text != "" {
-                str.length(n.text) * 8 + 10
-            } else {
-                30
-            }
-            let elem_h = if style.height > 0 { style.height } else { 24 }
-
-            if cur_x + elem_w > viewport_w and cur_x > 0 {
-                cur_x = 0
-                cur_y = cur_y + line_height + 4
-            }
-
-            let box_x = cur_x + style.margin_left
-            let box_y = cur_y + style.margin_top
-            cur_x = box_x + elem_w + style.margin_right
-
-            boxes = boxes + [{
-                ref: n.ref,
-                tag: n.tag,
-                role: n.role,
-                name: n.name,
-                x: box_x,
-                y: box_y,
-                w: elem_w,
-                h: elem_h,
-                display: "inline"
+                display: style.display
             }]
         }
     }

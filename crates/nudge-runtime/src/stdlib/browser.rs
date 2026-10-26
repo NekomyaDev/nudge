@@ -155,6 +155,8 @@ fn execute_rasterize(args: Vec<Value>) -> Result<Value, String> {
                     h,
                     x + 8,
                     y + 6,
+                    box_w.saturating_sub(16),
+                    box_h.saturating_sub(12),
                     label,
                     1,
                     [255, 255, 255, 255],
@@ -173,11 +175,47 @@ fn execute_rasterize(args: Vec<Value>) -> Result<Value, String> {
                     Some([203, 213, 225, 255]),
                 );
                 let text = if !name.is_empty() { &name } else { "" };
-                draw_text(&mut buf, stride, w, h, x + 6, y + 5, text, 1, [71, 85, 105, 255]);
+                draw_text(
+                    &mut buf,
+                    stride,
+                    w,
+                    h,
+                    x + 6,
+                    y + 5,
+                    box_w.saturating_sub(12),
+                    box_h.saturating_sub(10),
+                    text,
+                    1,
+                    [71, 85, 105, 255],
+                );
             } else if tag == "h1" {
-                draw_text(&mut buf, stride, w, h, x, y, &name, 2, [15, 23, 42, 255]);
+                draw_text(
+                    &mut buf,
+                    stride,
+                    w,
+                    h,
+                    x,
+                    y,
+                    box_w,
+                    box_h,
+                    &name,
+                    2,
+                    [15, 23, 42, 255],
+                );
             } else if tag == "h2" {
-                draw_text(&mut buf, stride, w, h, x, y, &name, 2, [30, 41, 59, 255]);
+                draw_text(
+                    &mut buf,
+                    stride,
+                    w,
+                    h,
+                    x,
+                    y,
+                    box_w,
+                    box_h,
+                    &name,
+                    2,
+                    [30, 41, 59, 255],
+                );
             } else {
                 if bw > 20 && bh > 20 && (tag == "div" || tag == "section") {
                     draw_rect(
@@ -194,7 +232,19 @@ fn execute_rasterize(args: Vec<Value>) -> Result<Value, String> {
                     );
                 }
                 if !name.is_empty() {
-                    draw_text(&mut buf, stride, w, h, x + 4, y + 4, &name, 1, [51, 65, 85, 255]);
+                    draw_text(
+                        &mut buf,
+                        stride,
+                        w,
+                        h,
+                        x + 4,
+                        y + 4,
+                        box_w.saturating_sub(8),
+                        box_h.saturating_sub(8),
+                        &name,
+                        1,
+                        [51, 65, 85, 255],
+                    );
                 }
             }
         }
@@ -258,17 +308,32 @@ fn draw_text(
     img_h: usize,
     x: usize,
     y: usize,
+    max_w: usize,
+    max_h: usize,
     text: &str,
     scale: usize,
     color: [u8; 4],
 ) {
     let mut cur_x = x;
+    let mut cur_y = y;
+    let char_step = 8 * scale + scale;
+    let line_step = 10 * scale;
+
     for ch in text.chars() {
-        if cur_x + 8 * scale > img_w {
+        if ch == '\n' {
+            cur_x = x;
+            cur_y += line_step;
+            continue;
+        }
+        if (max_w > 0 && cur_x + 8 * scale > x + max_w) || (cur_x + 8 * scale > img_w) {
+            cur_x = x;
+            cur_y += line_step;
+        }
+        if (max_h > 0 && cur_y + 8 * scale > y + max_h) || (cur_y + 8 * scale > img_h) {
             break;
         }
-        draw_char(buf, stride, img_w, img_h, cur_x, y, ch, scale, color);
-        cur_x += 8 * scale + scale;
+        draw_char(buf, stride, img_w, img_h, cur_x, cur_y, ch, scale, color);
+        cur_x += char_step;
     }
 }
 

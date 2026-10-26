@@ -1712,7 +1712,33 @@ fn test_f7_suite() -> bool uses Browser {{
     let captured = capture_page_screenshot(snap_with_layout, lt)
     let ok_captured = str.starts_with(captured.screenshot, "data:image/png;base64,")
 
-    ok_card and ok_btn and ok_hidden and ok_snap_bounds and ok_shot and ok_captured
+    // 4. Flexbox Layout Test
+    let flex_doc = "<div id=\"row\" style=\"display: flex; gap: 10px; width: 300px;\"><button id=\"b1\" style=\"width: 60px; height: 30px;\">B1</button><button id=\"b2\" style=\"width: 70px; height: 30px;\">B2</button></div>"
+    let flex_tree = build_dom_tree(tokenize_html(flex_doc))
+    let flex_lt = compute_layout(flex_tree, 1280, 800)
+    let b1 = get_box_bounds(flex_lt, 2)
+    let b2 = get_box_bounds(flex_lt, 3)
+    let ok_flex = b1[0] == 0 and b2[0] == 70 and b1[2] == 60 and b2[2] == 70
+
+    // 5. Multi-line Paragraph Wrapping Test
+    let wrap_doc = "<p style=\"width: 100px;\">This is a long line of paragraph text that must wrap into several lines.</p>"
+    let wrap_tree = build_dom_tree(tokenize_html(wrap_doc))
+    let wrap_lt = compute_layout(wrap_tree, 1280, 800)
+    let b_wrap = get_box_bounds(wrap_lt, 1)
+    let ok_wrap = b_wrap[2] == 100 and b_wrap[3] > 40
+
+    // return which one fails for debugging
+    let mut err_code = 0
+    if !ok_card {{ err_code = 1 }}
+    else if !ok_btn {{ err_code = 2 }}
+    else if !ok_hidden {{ err_code = 3 }}
+    else if !ok_snap_bounds {{ err_code = 4 }}
+    else if !ok_shot {{ err_code = 5 }}
+    else if !ok_captured {{ err_code = 6 }}
+    else if !ok_flex {{ err_code = 7 }}
+    else if !ok_wrap {{ err_code = 8 }}
+
+    ok_card and ok_btn and ok_hidden and ok_snap_bounds and ok_shot and ok_captured and ok_flex and ok_wrap
 }}
 "##
         );
