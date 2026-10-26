@@ -209,6 +209,10 @@ pub fn register() -> HashMap<String, Value> {
         "workspace.delete".to_string(),
         Value::Native("workspace.delete"),
     );
+    functions.insert(
+        "workspace.stat".to_string(),
+        Value::Native("workspace.stat"),
+    );
     functions
 }
 
@@ -503,6 +507,32 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             }
 
             Ok(Value::None)
+        }
+
+        "workspace.stat" => {
+            if args.len() != 1 {
+                return Err("workspace.stat requires 1 argument (path)".to_string());
+            }
+            let path_str = match &args[0] {
+                Value::String(s) => s.clone(),
+                _ => return Err("workspace.stat: path must be a string".to_string()),
+            };
+            let safe_path = resolve_and_validate_path(&path_str)?;
+            let md = fs::metadata(&safe_path)
+                .map_err(|e| format!("workspace.stat: cannot stat '{}': {}", path_str, e))?;
+            let size = md.len() as i64;
+            let mtime_ms = md
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            let is_dir = md.is_dir();
+            let mut map = HashMap::new();
+            map.insert("size".to_string(), Value::Int(size));
+            map.insert("mtime_ms".to_string(), Value::Int(mtime_ms));
+            map.insert("is_dir".to_string(), Value::Bool(is_dir));
+            Ok(Value::Map(map))
         }
 
         _ => Err(format!("Unknown workspace function: {}", name)),

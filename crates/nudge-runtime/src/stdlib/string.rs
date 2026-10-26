@@ -38,6 +38,8 @@ pub fn register() -> HashMap<String, Value> {
     functions.insert("str.format".to_string(), Value::Native("str.format"));
     functions.insert("str.pad_left".to_string(), Value::Native("str.pad_left"));
     functions.insert("str.pad_right".to_string(), Value::Native("str.pad_right"));
+    functions.insert("str.char_code".to_string(), Value::Native("str.char_code"));
+    functions.insert("str.hash".to_string(), Value::Native("str.hash"));
 
     functions
 }
@@ -389,6 +391,45 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 }
                 _ => Err("str.pad_right: arguments must be (string, int, string)".to_string()),
             }
+        }
+
+        "str.char_code" => {
+            if args.is_empty() {
+                return Err("str.char_code requires at least 1 argument (string, [index])".to_string());
+            }
+            let s = match &args[0] {
+                Value::String(s) => s,
+                _ => return Err("str.char_code: first argument must be a string".to_string()),
+            };
+            let idx = if args.len() > 1 {
+                match args[1] {
+                    Value::Int(i) => i,
+                    _ => return Err("str.char_code: second argument must be an integer".to_string()),
+                }
+            } else {
+                0
+            };
+            if idx < 0 {
+                return Ok(Value::Int(0));
+            }
+            let code = s.chars().nth(idx as usize).map(|c| c as i64).unwrap_or(0);
+            Ok(Value::Int(code))
+        }
+
+        "str.hash" => {
+            if args.len() != 1 {
+                return Err("str.hash requires 1 argument (string)".to_string());
+            }
+            let s = match &args[0] {
+                Value::String(s) => s,
+                _ => return Err("str.hash: argument must be a string".to_string()),
+            };
+            let mut h: u64 = 0xcbf29ce484222325;
+            for b in s.as_bytes() {
+                h ^= *b as u64;
+                h = h.wrapping_mul(0x100000001b3);
+            }
+            Ok(Value::Int(h as i64))
         }
 
         _ => Err(format!("Unknown string function: {}", name)),

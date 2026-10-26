@@ -63,6 +63,9 @@ pub fn register_all() -> HashMap<String, Value> {
     // Register LLM functions
     functions.extend(llm::register());
 
+    // Register MemStore functions
+    functions.extend(crate::mem_store::register());
+
     functions
 }
 
@@ -72,6 +75,8 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
         io::execute(name, args)
     } else if name.starts_with("workspace.") {
         workspace::execute(name, args)
+    } else if name.starts_with("mem.") {
+        crate::mem_store::execute(name, args)
     } else if name.starts_with("fs.") {
         crate::fs_watch::execute(name, args)
     } else if name.starts_with("proc.") {

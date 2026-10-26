@@ -1,0 +1,716 @@
+/// NVFS Acceptance Test Suite & In-Memory Verification Benchmarks
+/// Part of Phase 2 (v2.2) - In-Memory Indexing & Virtual File System
+/// Zero foreign dependencies - 100% Pure Nudge
+
+type Inode = {
+    id: int,
+    path: string,
+    name: string,
+    parent_id: int,
+    is_dir: bool,
+    size: int,
+    mtime: int,
+    block_hashes: [string],
+    permissions: int
+}
+
+type FileHandle = {
+    fd: int,
+    inode_id: int,
+    path: string,
+    offset: int,
+    mode: string,
+    is_open: bool
+}
+
+type InodeStat = {
+    exists: bool,
+    id: int,
+    is_dir: bool,
+    size: int,
+    mtime: int
+}
+
+type CasBlock = {
+    hash: string,
+    content: string,
+    size: int,
+    ref_count: int
+}
+
+type TxRecord = {
+    tx_id: int,
+    op_type: string,
+    path: string,
+    old_hashes: [string],
+    new_hashes: [string],
+    status: string
+}
+
+fn normalize_path(raw_path: string) -> string {
+    let raw_parts = str.split(raw_path, "/")
+    let mut stack: [string] = []
+    for p in raw_parts {
+        if p == "" or p == "." {
+            // skip
+        } else if p == ".." {
+            let stack_len = len(stack)
+            if stack_len > 0 {
+                let mut new_stack: [string] = []
+                for (item, idx) in stack {
+                    if idx < stack_len - 1 {
+                        new_stack = new_stack + [item]
+                    }
+                }
+                stack = new_stack
+            }
+        } else {
+            stack = stack + [p]
+        }
+    }
+    let total = len(stack)
+    let mut res = ""
+    if total == 0 {
+        res = "/"
+    } else {
+        for s in stack {
+            res = res + "/" + s
+        }
+    }
+    res
+}
+
+fn get_basename(path: string) -> string {
+    let parts = str.split(path, "/")
+    let mut last = ""
+    for p in parts {
+        if p != "" {
+            last = p
+        }
+    }
+    if last == "" { "/" } else { last }
+}
+
+fn get_parent_dir(path: string) -> string {
+    let norm = normalize_path(path)
+    let parts = str.split(norm, "/")
+    let mut valid_parts: [string] = []
+    for p in parts {
+        if p != "" {
+            valid_parts = valid_parts + [p]
+        }
+    }
+    let total = len(valid_parts)
+    let mut parent = ""
+    if total <= 1 {
+        parent = "/"
+    } else {
+        for (p, idx) in valid_parts {
+            if idx < total - 1 {
+                parent = parent + "/" + p
+            }
+        }
+    }
+    parent
+}
+
+fn compute_block_hash(content: string) -> string {
+    let raw_h = str.hash(content)
+    let pos_h = if raw_h < 0 { -raw_h } else { raw_h }
+    "blk_" + str.to_string(pos_h)
+}
+
+fn split_lines_into_chunks(content: string, lines_per_chunk: int) -> [string] {
+    let lines = str.split(content, "\n")
+    let total_lines = len(lines)
+    let mut chunks: [string] = []
+    let mut cur_chunk = ""
+    let mut in_chunk_count = 0
+
+    for (line, idx) in lines {
+        if in_chunk_count == 0 {
+            cur_chunk = line
+        } else {
+            cur_chunk = cur_chunk + "\n" + line
+        }
+        in_chunk_count = in_chunk_count + 1
+
+        if in_chunk_count >= lines_per_chunk or idx == total_lines - 1 {
+            chunks = chunks + [cur_chunk]
+            cur_chunk = ""
+            in_chunk_count = 0
+        }
+    }
+    chunks
+}
+
+agent InodeTable {
+    state {
+        next_id: int = 1
+        next_fd: int = 100
+        inodes: [Inode] = [
+            { id: 0, path: "/", name: "/", parent_id: -1, is_dir: true, size: 0, mtime: 0, block_hashes: [], permissions: 755 }
+        ]
+        open_handles: [FileHandle] = []
+    }
+
+    fn reset_inodes() {
+        state.next_id = 1
+        state.next_fd = 100
+        state.inodes = [
+            { id: 0, path: "/", name: "/", parent_id: -1, is_dir: true, size: 0, mtime: 0, block_hashes: [], permissions: 755 }
+        ]
+        state.open_handles = []
+    }
+
+    fn find_by_path(target_path: string) -> int {
+        let norm = normalize_path(target_path)
+        let mut found_id = -1
+        for node in state.inodes {
+            if node.path == norm {
+                found_id = node.id
+            }
+        }
+        found_id
+    }
+
+    fn stat(target_path: string) -> InodeStat {
+        let norm = normalize_path(target_path)
+        let mut res: InodeStat = { exists: false, id: -1, is_dir: false, size: 0, mtime: 0 }
+        for node in state.inodes {
+            if node.path == norm {
+                res = {
+                    exists: true,
+                    id: node.id,
+                    is_dir: node.is_dir,
+                    size: node.size,
+                    mtime: node.mtime
+                }
+            }
+        }
+        res
+    }
+
+    fn mkdir(dir_path: string, mtime: int) -> int {
+        let norm = normalize_path(dir_path)
+        let existing = InodeTable.find_by_path(norm)
+        let mut ret_id = existing
+        if existing == -1 {
+            let parent_path = get_parent_dir(norm)
+            let parent_id = InodeTable.find_by_path(parent_path)
+            let resolved_parent = if parent_id == -1 {
+                InodeTable.mkdir(parent_path, mtime)
+            } else {
+                parent_id
+            }
+            let id = state.next_id
+            state.next_id += 1
+            let name = get_basename(norm)
+            let new_node: Inode = {
+                id: id,
+                path: norm,
+                name: name,
+                parent_id: resolved_parent,
+                is_dir: true,
+                size: 0,
+                mtime: mtime,
+                block_hashes: [],
+                permissions: 755
+            }
+            state.inodes = state.inodes + [new_node]
+            ret_id = id
+        }
+        ret_id
+    }
+
+    fn create_file(file_path: string, block_hashes: [string], size: int, mtime: int) -> int {
+        let norm = normalize_path(file_path)
+        let existing = InodeTable.find_by_path(norm)
+        let mut ret_id = existing
+        if existing != -1 {
+            let mut updated: [Inode] = []
+            for node in state.inodes {
+                if node.id == existing {
+                    let mod_node: Inode = {
+                        id: node.id,
+                        path: node.path,
+                        name: node.name,
+                        parent_id: node.parent_id,
+                        is_dir: node.is_dir,
+                        size: size,
+                        mtime: mtime,
+                        block_hashes: block_hashes,
+                        permissions: node.permissions
+                    }
+                    updated = updated + [mod_node]
+                } else {
+                    updated = updated + [node]
+                }
+            }
+            state.inodes = updated
+            ret_id = existing
+        } else {
+            let parent_path = get_parent_dir(norm)
+            let parent_id = InodeTable.mkdir(parent_path, mtime)
+            let id = state.next_id
+            state.next_id += 1
+            let name = get_basename(norm)
+            let new_node: Inode = {
+                id: id,
+                path: norm,
+                name: name,
+                parent_id: parent_id,
+                is_dir: false,
+                size: size,
+                mtime: mtime,
+                block_hashes: block_hashes,
+                permissions: 644
+            }
+            state.inodes = state.inodes + [new_node]
+            ret_id = id
+        }
+        ret_id
+    }
+
+    fn get_blocks(inode_id: int) -> [string] {
+        let mut hashes: [string] = []
+        for node in state.inodes {
+            if node.id == inode_id {
+                hashes = node.block_hashes
+            }
+        }
+        hashes
+    }
+
+    fn delete_inode(target_path: string) -> bool {
+        let norm = normalize_path(target_path)
+        let existing = InodeTable.find_by_path(norm)
+        let mut deleted = false
+        if existing != -1 and existing != 0 {
+            let mut remaining: [Inode] = []
+            for node in state.inodes {
+                if node.id != existing {
+                    remaining = remaining + [node]
+                }
+            }
+            state.inodes = remaining
+            deleted = true
+        }
+        deleted
+    }
+
+    fn list_dir(dir_path: string) -> [string] {
+        let norm = normalize_path(dir_path)
+        let parent_id = InodeTable.find_by_path(norm)
+        let mut entries: [string] = []
+        if parent_id != -1 {
+            for node in state.inodes {
+                if node.parent_id == parent_id {
+                    entries = entries + [node.name]
+                }
+            }
+        }
+        entries
+    }
+
+    fn open_handle(file_path: string, mode: string) -> int {
+        let norm = normalize_path(file_path)
+        let mut target_id = InodeTable.find_by_path(norm)
+        if target_id == -1 and (mode == "w" or mode == "a") {
+            target_id = InodeTable.create_file(norm, [], 0, 1)
+        }
+        let mut ret_fd = -1
+        if target_id != -1 {
+            let fd = state.next_fd
+            state.next_fd += 1
+            let handle: FileHandle = {
+                fd: fd,
+                inode_id: target_id,
+                path: norm,
+                offset: 0,
+                mode: mode,
+                is_open: true
+            }
+            state.open_handles = state.open_handles + [handle]
+            ret_fd = fd
+        }
+        ret_fd
+    }
+
+    fn close_handle(fd: int) -> bool {
+        let mut updated: [FileHandle] = []
+        let mut found = false
+        for h in state.open_handles {
+            if h.fd == fd {
+                let closed: FileHandle = {
+                    fd: h.fd,
+                    inode_id: h.inode_id,
+                    path: h.path,
+                    offset: h.offset,
+                    mode: h.mode,
+                    is_open: false
+                }
+                updated = updated + [closed]
+                found = true
+            } else {
+                updated = updated + [h]
+            }
+        }
+        state.open_handles = updated
+        found
+    }
+
+    fn seek(fd: int, new_offset: int) -> bool {
+        let mut updated: [FileHandle] = []
+        let mut found = false
+        for h in state.open_handles {
+            if h.fd == fd and h.is_open {
+                let moved: FileHandle = {
+                    fd: h.fd,
+                    inode_id: h.inode_id,
+                    path: h.path,
+                    offset: new_offset,
+                    mode: h.mode,
+                    is_open: true
+                }
+                updated = updated + [moved]
+                found = true
+            } else {
+                updated = updated + [h]
+            }
+        }
+        state.open_handles = updated
+        found
+    }
+
+    fn tell(fd: int) -> int {
+        let mut pos = -1
+        for h in state.open_handles {
+            if h.fd == fd and h.is_open {
+                pos = h.offset
+            }
+        }
+        pos
+    }
+}
+
+agent CasStore {
+    state {
+        blocks: [CasBlock] = []
+        total_allocations: int = 0
+        dedup_count: int = 0
+        dedup_saved_bytes: int = 0
+    }
+
+    fn reset_cas() {
+        state.blocks = []
+        state.total_allocations = 0
+        state.dedup_count = 0
+        state.dedup_saved_bytes = 0
+    }
+
+    fn put_chunk(chunk: string) -> string {
+        let h = compute_block_hash(chunk)
+        let chunk_size = str.length(chunk)
+        let mut found = false
+        let mut updated: [CasBlock] = []
+
+        for b in state.blocks {
+            if b.hash == h {
+                found = true
+                let inc_b: CasBlock = {
+                    hash: b.hash,
+                    content: b.content,
+                    size: b.size,
+                    ref_count: b.ref_count + 1
+                }
+                updated = updated + [inc_b]
+            } else {
+                updated = updated + [b]
+            }
+        }
+
+        if found {
+            state.blocks = updated
+            state.dedup_count += 1
+            state.dedup_saved_bytes += chunk_size
+        } else {
+            let new_b: CasBlock = {
+                hash: h,
+                content: chunk,
+                size: chunk_size,
+                ref_count: 1
+            }
+            state.blocks = state.blocks + [new_b]
+            state.total_allocations += 1
+        }
+        h
+    }
+
+    fn get_chunk(h: string) -> string {
+        let mut res = ""
+        for b in state.blocks {
+            if b.hash == h {
+                res = b.content
+            }
+        }
+        res
+    }
+
+    fn put_content(content: string, lines_per_chunk: int) -> [string] {
+        let chunks = split_lines_into_chunks(content, lines_per_chunk)
+        let mut hashes: [string] = []
+        for chunk in chunks {
+            let h = CasStore.put_chunk(chunk)
+            hashes = hashes + [h]
+        }
+        hashes
+    }
+
+    fn get_content(hashes: [string]) -> string {
+        let mut full = ""
+        for (h, idx) in hashes {
+            let chunk = CasStore.get_chunk(h)
+            if idx == 0 {
+                full = chunk
+            } else {
+                full = full + "\n" + chunk
+            }
+        }
+        full
+    }
+}
+
+agent Journal {
+    state {
+        next_tx_id: int = 1
+        transactions: [TxRecord] = []
+        committed_count: int = 0
+        rolled_back_count: int = 0
+    }
+
+    fn reset_journal() {
+        state.next_tx_id = 1
+        state.transactions = []
+        state.committed_count = 0
+        state.rolled_back_count = 0
+    }
+
+    fn begin_tx(op_type: string, path: string, old_hashes: [string]) -> int {
+        let id = state.next_tx_id
+        state.next_tx_id += 1
+        let tx: TxRecord = {
+            tx_id: id,
+            op_type: op_type,
+            path: path,
+            old_hashes: old_hashes,
+            new_hashes: [],
+            status: "ACTIVE"
+        }
+        state.transactions = state.transactions + [tx]
+        id
+    }
+
+    fn record_new_hashes(tx_id: int, new_hashes: [string]) -> bool {
+        let mut updated: [TxRecord] = []
+        let mut found = false
+        for tx in state.transactions {
+            if tx.tx_id == tx_id {
+                let mod_tx: TxRecord = {
+                    tx_id: tx.tx_id,
+                    op_type: tx.op_type,
+                    path: tx.path,
+                    old_hashes: tx.old_hashes,
+                    new_hashes: new_hashes,
+                    status: tx.status
+                }
+                updated = updated + [mod_tx]
+                found = true
+            } else {
+                updated = updated + [tx]
+            }
+        }
+        state.transactions = updated
+        found
+    }
+
+    fn commit_tx(tx_id: int) -> bool {
+        let mut updated: [TxRecord] = []
+        let mut found = false
+        for tx in state.transactions {
+            if tx.tx_id == tx_id and tx.status == "ACTIVE" {
+                let committed: TxRecord = {
+                    tx_id: tx.tx_id,
+                    op_type: tx.op_type,
+                    path: tx.path,
+                    old_hashes: tx.old_hashes,
+                    new_hashes: tx.new_hashes,
+                    status: "COMMITTED"
+                }
+                updated = updated + [committed]
+                found = true
+            } else {
+                updated = updated + [tx]
+            }
+        }
+        if found {
+            state.transactions = updated
+            state.committed_count += 1
+        }
+        found
+    }
+
+    fn rollback_tx(tx_id: int) -> [string] {
+        let mut updated: [TxRecord] = []
+        let mut restored_hashes: [string] = []
+        for tx in state.transactions {
+            if tx.tx_id == tx_id and (tx.status == "ACTIVE" or tx.status == "COMMITTED") {
+                let rolled: TxRecord = {
+                    tx_id: tx.tx_id,
+                    op_type: tx.op_type,
+                    path: tx.path,
+                    old_hashes: tx.old_hashes,
+                    new_hashes: tx.new_hashes,
+                    status: "ROLLED_BACK"
+                }
+                updated = updated + [rolled]
+                restored_hashes = tx.old_hashes
+            } else {
+                updated = updated + [tx]
+            }
+        }
+        if len(restored_hashes) > 0 or len(updated) > 0 {
+            state.transactions = updated
+            state.rolled_back_count += 1
+        }
+        restored_hashes
+    }
+}
+
+// ── VFS High-Level Interface ─────────────────────────────────────────
+
+fn vfs_init() {
+    InodeTable.reset_inodes()
+    CasStore.reset_cas()
+    Journal.reset_journal()
+}
+
+fn vfs_write(path: string, content: string, mtime: int) -> int {
+    let norm = normalize_path(path)
+    let existing_id = InodeTable.find_by_path(norm)
+    let old_hashes = if existing_id != -1 {
+        InodeTable.get_blocks(existing_id)
+    } else {
+        []
+    }
+
+    let tx_id = Journal.begin_tx("WRITE", norm, old_hashes)
+    let new_hashes = CasStore.put_content(content, 1)
+    let _r = Journal.record_new_hashes(tx_id, new_hashes)
+
+    let _inode_id = InodeTable.create_file(norm, new_hashes, str.length(content), mtime)
+    let _c = Journal.commit_tx(tx_id)
+    tx_id
+}
+
+fn vfs_read(path: string) -> string {
+    let norm = normalize_path(path)
+    let inode_id = InodeTable.find_by_path(norm)
+    let mut content = ""
+    if inode_id != -1 {
+        let hashes = InodeTable.get_blocks(inode_id)
+        content = CasStore.get_content(hashes)
+    }
+    content
+}
+
+fn vfs_rollback(tx_id: int) -> bool {
+    let old_hashes = Journal.rollback_tx(tx_id)
+    let tx = Journal.state.transactions
+    let mut target_path = ""
+    for t in tx {
+        if t.tx_id == tx_id {
+            target_path = t.path
+        }
+    }
+    let mut restored = false
+    if target_path != "" {
+        let norm = normalize_path(target_path)
+        let inode_id = InodeTable.find_by_path(norm)
+        if inode_id != -1 {
+            let _f = InodeTable.create_file(norm, old_hashes, 0, 0)
+            restored = true
+        }
+    }
+    restored
+}
+
+fn main() -> int {
+    vfs_init()
+    let _t = vfs_write("/benchmark.ndg", "let x = 1\nlet y = 2\nx + y", 1)
+    let r = vfs_read("/benchmark.ndg")
+    if str.length(r) > 0 { 0 } else { 1 }
+}
+
+test "nvfs deep nested directory resolution" {
+    vfs_init()
+    let path = "/crates/engine/src/core/vm/dispatch.ndg"
+    let _tx = vfs_write(path, "fn dispatch() -> int { 1 }", 100)
+    let st = InodeTable.stat("/crates/engine/src/core/vm/dispatch.ndg")
+    assert st.exists
+    assert !st.is_dir
+    let vm_children = InodeTable.list_dir("/crates/engine/src/core/vm")
+    assert len(vm_children) == 1
+    assert vm_children[0] == "dispatch.ndg"
+}
+
+test "nvfs transaction rollback restores content" {
+    vfs_init()
+    let path = "/config/settings.ndg"
+    let initial_content = "version: 1\nenabled: true"
+    let _tx1 = vfs_write(path, initial_content, 1)
+    assert vfs_read(path) == initial_content
+
+    let corrupted_content = "version: 99\ncorrupted: syntax_error"
+    let tx2 = vfs_write(path, corrupted_content, 2)
+    assert vfs_read(path) == corrupted_content
+
+    assert vfs_rollback(tx2)
+    let restored = vfs_read(path)
+    assert restored == initial_content
+}
+
+test "nvfs file handles virtual seek tell" {
+    vfs_init()
+    let path = "/data/binary.dat"
+    let _tx = vfs_write(path, "0123456789abcdef", 1)
+
+    let fd = InodeTable.open_handle(path, "r")
+    assert fd >= 100
+    assert InodeTable.tell(fd) == 0
+    assert InodeTable.seek(fd, 8)
+    assert InodeTable.tell(fd) == 8
+    assert InodeTable.close_handle(fd)
+}
+
+test "nvfs in memory benchmark verification" {
+    vfs_init()
+    let template = "fn process_item(id: int) -> int {\n    id * 2\n}"
+    let files = [
+        "/bench/f1.ndg", "/bench/f2.ndg", "/bench/f3.ndg", "/bench/f4.ndg", "/bench/f5.ndg",
+        "/bench/f6.ndg", "/bench/f7.ndg", "/bench/f8.ndg", "/bench/f9.ndg", "/bench/f10.ndg"
+    ]
+    for p in files {
+        let _t = vfs_write(p, template, 1)
+    }
+
+    let mut all_match = true
+    for p in files {
+        let res = vfs_read(p)
+        if res != template {
+            all_match = false
+        }
+    }
+    assert all_match
+    assert CasStore.state.dedup_saved_bytes > 0
+}

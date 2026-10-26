@@ -1,0 +1,175 @@
+/// NVFS Transaction Journal, Write-Ahead Log (WAL) & In-Memory VFS Controller
+/// Part of Phase 2 (v2.2) - In-Memory Indexing & Virtual File System
+/// Zero foreign dependencies - 100% Pure Nudge
+
+type TxRecord = {
+    tx_id: int,
+    op_type: string,
+    path: string,
+    old_hashes: [string],
+    new_hashes: [string],
+    status: string
+}
+
+type VfsResult = {
+    ok: bool,
+    tx_id: int,
+    error: string
+}
+
+agent Journal {
+    state {
+        next_tx_id: int = 1
+        transactions: [TxRecord] = []
+        committed_count: int = 0
+        rolled_back_count: int = 0
+    }
+
+    fn reset() {
+        state.next_tx_id = 1
+        state.transactions = []
+        state.committed_count = 0
+        state.rolled_back_count = 0
+    }
+
+    fn begin_tx(op_type: string, path: string, old_hashes: [string]) -> int {
+        let id = state.next_tx_id
+        state.next_tx_id += 1
+        let tx: TxRecord = {
+            tx_id: id,
+            op_type: op_type,
+            path: path,
+            old_hashes: old_hashes,
+            new_hashes: [],
+            status: "ACTIVE"
+        }
+        state.transactions = state.transactions + [tx]
+        id
+    }
+
+    fn record_new_hashes(tx_id: int, new_hashes: [string]) -> bool {
+        let mut updated: [TxRecord] = []
+        let mut found = false
+        for tx in state.transactions {
+            if tx.tx_id == tx_id {
+                let mod_tx: TxRecord = {
+                    tx_id: tx.tx_id,
+                    op_type: tx.op_type,
+                    path: tx.path,
+                    old_hashes: tx.old_hashes,
+                    new_hashes: new_hashes,
+                    status: tx.status
+                }
+                updated = updated + [mod_tx]
+                found = true
+            } else {
+                updated = updated + [tx]
+            }
+        }
+        state.transactions = updated
+        found
+    }
+
+    fn commit_tx(tx_id: int) -> bool {
+        let mut updated: [TxRecord] = []
+        let mut found = false
+        for tx in state.transactions {
+            if tx.tx_id == tx_id and tx.status == "ACTIVE" {
+                let committed: TxRecord = {
+                    tx_id: tx.tx_id,
+                    op_type: tx.op_type,
+                    path: tx.path,
+                    old_hashes: tx.old_hashes,
+                    new_hashes: tx.new_hashes,
+                    status: "COMMITTED"
+                }
+                updated = updated + [committed]
+                found = true
+            } else {
+                updated = updated + [tx]
+            }
+        }
+        if found {
+            state.transactions = updated
+            state.committed_count += 1
+        }
+        found
+    }
+
+    fn rollback_tx(tx_id: int) -> [string] {
+        let mut updated: [TxRecord] = []
+        let mut restored_hashes: [string] = []
+        for tx in state.transactions {
+            if tx.tx_id == tx_id and (tx.status == "ACTIVE" or tx.status == "COMMITTED") {
+                let rolled: TxRecord = {
+                    tx_id: tx.tx_id,
+                    op_type: tx.op_type,
+                    path: tx.path,
+                    old_hashes: tx.old_hashes,
+                    new_hashes: tx.new_hashes,
+                    status: "ROLLED_BACK"
+                }
+                updated = updated + [rolled]
+                restored_hashes = tx.old_hashes
+            } else {
+                updated = updated + [tx]
+            }
+        }
+        if len(restored_hashes) > 0 or len(updated) > 0 {
+            state.transactions = updated
+            state.rolled_back_count += 1
+        }
+        restored_hashes
+    }
+
+    fn get_tx(tx_id: int) -> TxRecord? {
+        let mut found: TxRecord? = none
+        for tx in state.transactions {
+            if tx.tx_id == tx_id {
+                found = tx
+            }
+        }
+        found
+    }
+}
+
+fn main() -> int {
+    Journal.reset()
+    let tx1 = Journal.begin_tx("WRITE", "/test.ndg", ["old_blk"])
+    let _ = Journal.record_new_hashes(tx1, ["new_blk1", "new_blk2"])
+    let ok = Journal.commit_tx(tx1)
+
+    let tx2 = Journal.begin_tx("WRITE", "/test2.ndg", ["original_blk"])
+    let old = Journal.rollback_tx(tx2)
+
+    if ok and len(old) == 1 and Journal.state.committed_count == 1 and Journal.state.rolled_back_count == 1 {
+        0
+    } else {
+        1
+    }
+}
+
+test "journal transaction lifecycle" {
+    Journal.reset()
+    let tx = Journal.begin_tx("CREATE", "/src/lib.ndg", [])
+    assert tx >= 1
+    assert Journal.record_new_hashes(tx, ["b1", "b2"])
+    assert Journal.commit_tx(tx)
+    assert Journal.state.committed_count == 1
+
+    let t_record = Journal.get_tx(tx)
+    if t_record != none {
+        assert t_record.status == "COMMITTED"
+        assert len(t_record.new_hashes) == 2
+    }
+}
+
+test "journal rollback safety" {
+    Journal.reset()
+    let tx = Journal.begin_tx("WRITE", "/data/config.ndg", ["h_initial"])
+    assert Journal.record_new_hashes(tx, ["h_corrupted"])
+    let restored = Journal.rollback_tx(tx)
+    assert len(restored) == 1
+    assert restored[0] == "h_initial"
+    assert Journal.state.rolled_back_count == 1
+}

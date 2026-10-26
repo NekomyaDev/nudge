@@ -8,6 +8,7 @@ pub mod grants;
 pub mod host_tool;
 pub mod json;
 pub mod mcp;
+pub mod mem_store;
 pub mod proc;
 pub mod provider;
 pub mod redact;

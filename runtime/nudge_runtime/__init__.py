@@ -4238,6 +4238,87 @@ def _last_app():
     return _LAST_OBSERVED_APP.get("app", "")
 
 
+
+# ── ephemeral in-memory store (MemStore, docs/in-memory-index-roadmap.md) ─────
+_MEM_STORE = {}
+
+def mem_get(key, default=None):
+    return _MEM_STORE.get(key, default)
+
+def mem_set(key, val):
+    _MEM_STORE[key] = val
+
+def mem_has(key):
+    return key in _MEM_STORE
+
+def mem_delete(key):
+    return _MEM_STORE.pop(key, None) is not None
+
+def mem_keys():
+    return sorted(list(_MEM_STORE.keys()))
+
+def mem_clear():
+    _MEM_STORE.clear()
+
+def workspace_stat(path):
+    import os
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"workspace.stat: file not found: {path}")
+    st = os.stat(path)
+    return {
+        "size": st.st_size,
+        "mtime_ms": int(st.st_mtime * 1000),
+        "is_dir": os.path.isdir(path),
+    }
+
+# ── string operations & hashing (v2.1, docs/in-memory-index-roadmap.md) ──────
+
+def str_hash(s):
+    """64-bit FNV-1a hash matching Rust native runtime."""
+    if not isinstance(s, str):
+        return 0
+    h = 0xcbf29ce484222325
+    for b in s.encode("utf-8"):
+        h ^= b
+        h = (h * 0x100000001b3) & 0xffffffffffffffff
+    if h >= 0x8000000000000000:
+        h -= 0x10000000000000000
+    return h
+
+def str_char_code(s, idx=0):
+    """Return character code point at idx."""
+    if not isinstance(s, str) or idx < 0 or idx >= len(s):
+        return 0
+    return ord(s[idx])
+
+def str_to_string(v):
+    return str(v)
+
+def str_to_int(v):
+    try:
+        return int(v)
+    except Exception:
+        return 0
+
+def str_length(s):
+    return len(s) if isinstance(s, str) else 0
+
+def str_trim(s):
+    return s.strip() if isinstance(s, str) else ""
+
+def str_substring(s, start, end=None):
+    if not isinstance(s, str):
+        return ""
+    start = max(0, start)
+    if end is None:
+        return s[start:]
+    return s[start:max(0, end)]
+
+def str_index_of(s, sub):
+    if not isinstance(s, str) or not isinstance(sub, str):
+        return -1
+    return s.find(sub)
+
 # ── browser use (v1.6, docs/browser-use.md) ───────────────────────────
 
 def browser_fetch(url, **kwargs):

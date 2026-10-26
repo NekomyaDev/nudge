@@ -1,0 +1,228 @@
+/// NVFS Content-Addressable Storage (CAS) & Memory Deduplication Engine
+/// Part of Phase 2 (v2.2) - In-Memory Indexing & Virtual File System
+/// Zero foreign dependencies - 100% Pure Nudge
+
+type CasBlock = {
+    hash: string,
+    content: string,
+    size: int,
+    ref_count: int
+}
+
+type CasStats = {
+    total_allocations: int,
+    unique_blocks: int,
+    stored_bytes: int,
+    dedup_saved_bytes: int
+}
+
+fn compute_block_hash(content: string) -> string {
+    let raw_h = str.hash(content)
+    let pos_h = if raw_h < 0 { -raw_h } else { raw_h }
+    "blk_" + str.to_string(pos_h)
+}
+
+fn split_lines_into_chunks(content: string, lines_per_chunk: int) -> [string] {
+    let lines = str.split(content, "\n")
+    let total_lines = len(lines)
+    let mut chunks: [string] = []
+    let mut cur_chunk = ""
+    let mut in_chunk_count = 0
+
+    for (line, idx) in lines {
+        if in_chunk_count == 0 {
+            cur_chunk = line
+        } else {
+            cur_chunk = cur_chunk + "\n" + line
+        }
+        in_chunk_count = in_chunk_count + 1
+
+        if in_chunk_count >= lines_per_chunk or idx == total_lines - 1 {
+            chunks = chunks + [cur_chunk]
+            cur_chunk = ""
+            in_chunk_count = 0
+        }
+    }
+    chunks
+}
+
+agent CasStore {
+    state {
+        blocks: [CasBlock] = []
+        total_allocations: int = 0
+        dedup_count: int = 0
+        dedup_saved_bytes: int = 0
+    }
+
+    fn reset() {
+        state.blocks = []
+        state.total_allocations = 0
+        state.dedup_count = 0
+        state.dedup_saved_bytes = 0
+    }
+
+    fn put_chunk(chunk: string) -> string {
+        let h = compute_block_hash(chunk)
+        let chunk_size = str.length(chunk)
+        let mut found = false
+        let mut updated: [CasBlock] = []
+
+        for b in state.blocks {
+            if b.hash == h {
+                found = true
+                let inc_b: CasBlock = {
+                    hash: b.hash,
+                    content: b.content,
+                    size: b.size,
+                    ref_count: b.ref_count + 1
+                }
+                updated = updated + [inc_b]
+            } else {
+                updated = updated + [b]
+            }
+        }
+
+        if found {
+            state.blocks = updated
+            state.dedup_count += 1
+            state.dedup_saved_bytes += chunk_size
+        } else {
+            let new_b: CasBlock = {
+                hash: h,
+                content: chunk,
+                size: chunk_size,
+                ref_count: 1
+            }
+            state.blocks = state.blocks + [new_b]
+            state.total_allocations += 1
+        }
+        h
+    }
+
+    fn get_chunk(h: string) -> string {
+        let mut res = ""
+        for b in state.blocks {
+            if b.hash == h {
+                res = b.content
+            }
+        }
+        res
+    }
+
+    fn has_chunk(h: string) -> bool {
+        let mut exists = false
+        for b in state.blocks {
+            if b.hash == h {
+                exists = true
+            }
+        }
+        exists
+    }
+
+    fn release_chunk(h: string) -> bool {
+        let mut updated: [CasBlock] = []
+        let mut changed = false
+
+        for b in state.blocks {
+            if b.hash == h {
+                changed = true
+                if b.ref_count > 1 {
+                    let dec_b: CasBlock = {
+                        hash: b.hash,
+                        content: b.content,
+                        size: b.size,
+                        ref_count: b.ref_count - 1
+                    }
+                    updated = updated + [dec_b]
+                }
+            } else {
+                updated = updated + [b]
+            }
+        }
+        if changed {
+            state.blocks = updated
+        }
+        changed
+    }
+
+    fn put_content(content: string, lines_per_chunk: int) -> [string] {
+        let chunks = split_lines_into_chunks(content, lines_per_chunk)
+        let mut hashes: [string] = []
+        for chunk in chunks {
+            let h = CasStore.put_chunk(chunk)
+            hashes = hashes + [h]
+        }
+        hashes
+    }
+
+    fn get_content(hashes: [string]) -> string {
+        let mut full = ""
+        for (h, idx) in hashes {
+            let chunk = CasStore.get_chunk(h)
+            if idx == 0 {
+                full = chunk
+            } else {
+                full = full + "\n" + chunk
+            }
+        }
+        full
+    }
+
+    fn stats() -> CasStats {
+        let mut total_bytes = 0
+        for b in state.blocks {
+            total_bytes = total_bytes + b.size
+        }
+        {
+            total_allocations: state.total_allocations,
+            unique_blocks: len(state.blocks),
+            stored_bytes: total_bytes,
+            dedup_saved_bytes: state.dedup_saved_bytes
+        }
+    }
+}
+
+fn main() -> int {
+    CasStore.reset()
+    let code_snippet = "type User = { id: int }\nfn get_user() -> User { { id: 1 } }"
+    let hashes_1 = CasStore.put_content(code_snippet, 1)
+    let hashes_2 = CasStore.put_content(code_snippet, 1)
+    let retrieved = CasStore.get_content(hashes_1)
+    let s = CasStore.stats()
+    if retrieved == code_snippet and s.dedup_saved_bytes > 0 and len(hashes_1) == len(hashes_2) {
+        0
+    } else {
+        1
+    }
+}
+
+test "cas block hashing and deduplication" {
+    CasStore.reset()
+    let blk = "fn identical_helper() -> int { 42 }"
+    let h1 = CasStore.put_chunk(blk)
+    let h2 = CasStore.put_chunk(blk)
+    assert h1 == h2
+    assert CasStore.has_chunk(h1)
+    assert CasStore.get_chunk(h1) == blk
+
+    let s = CasStore.stats()
+    assert s.unique_blocks == 1
+    assert s.dedup_saved_bytes == str.length(blk)
+
+    assert CasStore.release_chunk(h1)
+    let s_after = CasStore.stats()
+    assert s_after.unique_blocks == 1
+
+    assert CasStore.release_chunk(h1)
+    let s_final = CasStore.stats()
+    assert s_final.unique_blocks == 0
+}
+
+test "cas multi-chunk content decomposition" {
+    CasStore.reset()
+    let doc = "line 1\nline 2\nline 3\nline 4"
+    let hashes = CasStore.put_content(doc, 2)
+    assert len(hashes) == 2
+    let reconstructed = CasStore.get_content(hashes)
+    assert reconstructed == doc
+}
