@@ -1,0 +1,28 @@
+/// # 104/140 - Dynamic light and dark theme mode switching
+///
+/// Native studio interfaces support runtime palette switching between Light and Dark
+/// themes. Colors, text contrast, and border highlights adjust with sub-millisecond latency.
+///
+/// Try:
+///   nudgec check ui_theme_switching.ndg
+///   nudgec test ui_theme_switching.ndg
+
+agent ThemeManager {
+    state {
+        is_dark: bool = false
+    }
+
+    fn toggle_theme() uses UI {
+        let next = !state.is_dark
+        state.is_dark = next
+    }
+}
+
+test "theme manager toggles dark mode state" {
+    assert ThemeManager.state.is_dark == false
+    ThemeManager.toggle_theme()
+    assert ThemeManager.state.is_dark == true
+}
+
+fn main() {
+}

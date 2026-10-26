@@ -1,0 +1,41 @@
+/// # 101/140 - Reactive UI data binding and state synchronization
+///
+/// Views in Nudge are pure declarative projections of agent state. When state
+/// properties change, bound components re-render automatically without manual DOM manipulation.
+///
+/// Try:
+///   nudgec check ui_reactive_state.ndg
+///   nudgec test ui_reactive_state.ndg
+
+view CounterDisplay(count: int) -> View {
+    column(padding = 10, gap = 5) [
+        text("Total Counter: " + count, size = 16, bold = true)
+    ]
+}
+
+agent ReactiveCounter {
+    state {
+        val: int = 0
+    }
+
+    fn increment() uses UI {
+        state.val += 1
+    }
+
+    window MainWindow {
+        title: "Counter App"
+        width: 300
+        height: 200
+        content: CounterDisplay(state.val)
+    }
+}
+
+test "counter display reflects state updates" {
+    let app = ReactiveCounter.MainWindow.mount_headless()
+    assert app.find_text("Total Counter: 0").exists()
+    ReactiveCounter.increment()
+    assert ReactiveCounter.state.val == 1
+}
+
+fn main() {
+}

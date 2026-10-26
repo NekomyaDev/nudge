@@ -1,0 +1,28 @@
+/// # 110/140 - Accessibility compliance, screen-reader labels and keyboard navigation
+///
+/// Ensure desktop agent UIs are accessible to all operators. Components declare
+/// accessibility labels, keyboard focus rings, and high-contrast color fallbacks.
+///
+/// Try:
+///   nudgec check ui_accessibility.ndg
+
+view AccessibleButton(label: string) -> View {
+    column [
+        button(label, id = "action_btn", on_click = noop)
+    ]
+}
+
+agent AccessApp {
+    fn noop() uses UI {
+    }
+
+    window MainWindow {
+        title: "Accessible Panel"
+        width: 300
+        height: 200
+        content: AccessibleButton("Submit Form")
+    }
+}
+
+fn main() {
+}

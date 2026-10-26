@@ -1,4 +1,4 @@
-/// # 10/100 - Primitive types
+/// # 10/140 - Primitive types
 ///
 /// Nudge has `int`, `float`, `string`, `bool`, and `none` (the unit-like
 /// no-value type). `()` is also accepted in type position as an alias for `none`.

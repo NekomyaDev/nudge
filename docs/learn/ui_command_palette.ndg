@@ -1,0 +1,26 @@
+/// # 106/140 - Command palette keyboard shortcuts and quick actions
+///
+/// Power users navigate studio interfaces via modal command palettes (`Ctrl+K`).
+/// Register custom agent actions into searchable command registries for instant execution.
+///
+/// Try:
+///   nudgec check ui_command_palette.ndg
+///   nudgec test ui_command_palette.ndg
+
+agent CommandRegistry {
+    state {
+        action_executed: string = "none"
+    }
+
+    fn run_command(cmd: string) uses UI {
+        state.action_executed = cmd
+    }
+}
+
+test "command registry executes selected shortcut" {
+    CommandRegistry.run_command("Clear Conversation")
+    assert CommandRegistry.state.action_executed == "Clear Conversation"
+}
+
+fn main() {
+}

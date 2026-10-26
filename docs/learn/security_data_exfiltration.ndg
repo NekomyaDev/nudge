@@ -1,0 +1,21 @@
+/// # 138/140 - Blocking outbound data exfiltration channels
+///
+/// An agent with access to sensitive state cannot forward that state to external
+/// endpoints unless explicit capability tokens are granted at build time.
+///
+/// Try:
+///   nudgec check security_data_exfiltration.ndg
+
+agent ProtectedAgent {
+    state {
+        confidential_data: string = "secret_customer_pii"
+    }
+
+    fn inspect_locally() -> int {
+        len(state.confidential_data)
+    }
+}
+
+fn main() -> int {
+    ProtectedAgent.inspect_locally()
+}

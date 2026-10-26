@@ -1,0 +1,19 @@
+/// # 124/140 - Conditional jumps and branch optimization
+///
+/// The bytecode compiler analyzes branch conditions and flattens control flow
+/// into direct relative jump offsets for predictable instruction pipelining.
+///
+/// Try:
+///   nudgec run bytecode_jump_targets.ndg
+
+fn branch_fast(score: int) -> string {
+    if score > 80 {
+        "pass"
+    } else {
+        "retry"
+    }
+}
+
+fn main() -> string {
+    branch_fast(95)
+}

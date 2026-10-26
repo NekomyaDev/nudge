@@ -1,4 +1,4 @@
-/// # 25/100 - Nested structured-output schemas
+/// # 25/140 - Nested structured-output schemas
 ///
 /// A `schema:` makes an LLM call return a typed value instead of unstructured
 /// text. Records may be nested and may contain lists of other records. Describe

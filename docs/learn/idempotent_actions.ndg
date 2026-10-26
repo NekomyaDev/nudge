@@ -1,4 +1,4 @@
-/// # 77/100 - Idempotent operations for safe retries
+/// # 77/140 - Idempotent operations for safe retries
 ///
 /// Network drops often cause duplicate delivery of requests. Idempotent action
 /// handlers check existing state before re-applying changes.

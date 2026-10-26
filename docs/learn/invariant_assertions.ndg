@@ -1,0 +1,33 @@
+/// # 116/140 - State invariant enforcement across transitions
+///
+/// Agent state invariants check that system conditions (such as balance >= 0)
+/// remain true after every single action dispatch.
+///
+/// Try:
+///   nudgec check invariant_assertions.ndg
+///   nudgec test invariant_assertions.ndg
+
+agent SafeVault {
+    state {
+        locked: bool = true
+        assets: int = 500
+    }
+
+    fn withdraw(amount: int) -> bool {
+        assert state.assets >= 0
+        let can_withdraw = !state.locked and amount <= state.assets
+        if can_withdraw {
+            state.assets -= amount
+        }
+        assert state.assets >= 0
+        can_withdraw
+    }
+}
+
+test "vault invariants remain true" {
+    assert SafeVault.withdraw(100) == false
+    assert SafeVault.state.assets == 500
+}
+
+fn main() {
+}

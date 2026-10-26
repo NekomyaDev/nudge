@@ -1,4 +1,4 @@
-/// # 31/100 - Prompt Clippy reliability warnings
+/// # 31/140 - Prompt Clippy reliability warnings
 ///
 /// `nudgec lint` runs Prompt Clippy before production does. W0001 flags a call
 /// without a budget, W0002 flags a vague prompt, W0003 flags schema fields that

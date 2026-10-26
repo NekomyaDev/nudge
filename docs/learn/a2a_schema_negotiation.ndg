@@ -1,4 +1,4 @@
-/// # 68/100 - Schema versioning and contract compatibility
+/// # 68/140 - Schema versioning and contract compatibility
 ///
 /// Autonomous agents evolve independently. Schema versioning allows agents
 /// with different software versions to negotiate common data shapes without crashing.

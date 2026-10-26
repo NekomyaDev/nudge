@@ -1,0 +1,22 @@
+/// # 107/140 - Multi-window desktop layout and popout sessions
+///
+/// Nudge desktop applications support spawning detached chat sessions, review
+/// stations, and inspection inspectors across multiple operating system windows.
+///
+/// Try:
+///   nudgec check ui_multi_window.ndg
+
+agent WindowManager {
+    state {
+        open_windows: int = 1
+    }
+
+    fn spawn_window(title: string) -> string uses UI {
+        state.open_windows += 1
+        "win_" + title
+    }
+}
+
+fn main() -> string uses UI {
+    WindowManager.spawn_window("Inspector Station")
+}

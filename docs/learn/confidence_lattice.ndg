@@ -1,0 +1,16 @@
+/// # 117/140 - Confidence thresholds and probability calibration
+///
+/// Statistical confidence operates as a mathematical order. Actions requiring
+/// higher safety thresholds reject answers from models operating below calibrated certainty.
+///
+/// Try:
+///   nudgec check confidence_lattice.ndg
+
+fn is_actionable(confidence: float, minimum: float) -> bool {
+    let passed = confidence >= minimum
+    passed
+}
+
+fn main() -> bool {
+    is_actionable(0.85, 0.80)
+}

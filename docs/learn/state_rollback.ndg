@@ -1,4 +1,4 @@
-/// # 72/100 - Transactional state rollback on failure
+/// # 72/140 - Transactional state rollback on failure
 ///
 /// If an agent action crashes midway through execution, state changes must not corrupt.
 /// Snapshot checkpoints preserve previous verified values.

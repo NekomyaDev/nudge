@@ -1,4 +1,4 @@
-/// # 83/100 - Chaining outputs across tool pipelines
+/// # 83/140 - Chaining outputs across tool pipelines
 ///
 /// Complex queries often require piping output from one tool directly as the
 /// input schema of another without intermediate LLM translation.

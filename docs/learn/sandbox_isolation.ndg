@@ -1,4 +1,4 @@
-/// # 90/100 - Security sandbox isolation and effect boundaries
+/// # 90/140 - Security sandbox isolation and effect boundaries
 ///
 /// Pure Nudge code cannot access file systems or network interfaces. Functions
 /// must explicitly declare `uses IO` or `uses Tool` before the compiler permits external I/O.

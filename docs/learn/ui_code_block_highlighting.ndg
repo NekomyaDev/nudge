@@ -1,0 +1,21 @@
+/// # 109/140 - Embedded code block rendering and syntax tokens
+///
+/// Markdown code snippets emitted by LLMs are parsed into syntax-highlighted
+/// terminal and canvas viewports with integrated copy-to-clipboard actions.
+///
+/// Try:
+///   nudgec check ui_code_block_highlighting.ndg
+
+type CodeSnippet = {
+    lang: string,
+    code: string
+}
+
+fn inspect_snippet(s: CodeSnippet) -> string {
+    "Code (" + s.lang + "): " + s.code
+}
+
+fn main() -> string {
+    let snip: CodeSnippet = { lang: "rust", code: "fn main() {}" }
+    inspect_snippet(snip)
+}

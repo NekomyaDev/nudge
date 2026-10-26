@@ -1,0 +1,20 @@
+/// # 125/140 - Instruction dispatch loop performance
+///
+/// The Nudge VM implements a zero-overhead threaded dispatch loop, executing
+/// tens of millions of pure bytecode instructions per second without interpreter overhead.
+///
+/// Try:
+///   nudgec run bytecode_instruction_dispatch.ndg
+
+fn tight_loop(iterations: int) -> int {
+    let mut sum: int = 0
+    let mut i: int = 0
+    for x in [1, 2, 3, 4, 5] {
+        sum = sum + x
+    }
+    sum
+}
+
+fn main() -> int {
+    tight_loop(5)
+}

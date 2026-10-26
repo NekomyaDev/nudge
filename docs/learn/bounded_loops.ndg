@@ -1,0 +1,23 @@
+/// # 118/140 - Bounded iterations and termination guarantees
+///
+/// Recursive agent routines must possess provable termination bounds.
+/// Collection-based `for` iterations guarantee completion in finite steps.
+///
+/// Try:
+///   nudgec check bounded_loops.ndg
+///   nudgec test bounded_loops.ndg
+
+fn process_batches(items: [int]) -> int {
+    let mut sum: int = 0
+    for x in items {
+        sum = sum + x
+    }
+    sum
+}
+
+test "bounded loop finishes predictably" {
+    assert process_batches([1, 2, 3, 4, 5]) == 15
+}
+
+fn main() {
+}

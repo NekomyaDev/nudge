@@ -1,4 +1,4 @@
-/// # 56/100 - Property fuzzing and shrinking
+/// # 56/140 - Property fuzzing and shrinking
 ///
 /// `for_all` executes a property over generated input. `gen.str(64)` supplies
 /// strings up to 64 characters, including useful edge cases. If an assertion

@@ -1,4 +1,4 @@
-/// # 18/100 - Collection loops
+/// # 18/140 - Collection loops
 ///
 /// Use `for item in list` to process every list element. Nudge also supports
 /// `for (item, index) in list` when the index is useful. `while`, `break`, and

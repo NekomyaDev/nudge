@@ -1,4 +1,4 @@
-/// # 76/100 - Ephemeral variables versus durable state
+/// # 76/140 - Ephemeral variables versus durable state
 ///
 /// In Nudge, local `let` variables exist only for the scope of a function call,
 /// while `state` fields survive process termination and network calls.

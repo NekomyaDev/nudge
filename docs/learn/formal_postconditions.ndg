@@ -1,0 +1,23 @@
+/// # 112/140 - Postcondition invariants and verified returns
+///
+/// Verify that outputs strictly satisfy expected bounds before returning to callers.
+/// Postcondition assertions ensure model output repair never generates illegal shapes.
+///
+/// Try:
+///   nudgec check formal_postconditions.ndg
+///   nudgec test formal_postconditions.ndg
+
+fn clamp_percentage(score: float) -> float {
+    let result = if score > 1.0 { 1.0 } else { if score < 0.0 { 0.0 } else { score } }
+    assert result >= 0.0
+    assert result <= 1.0
+    result
+}
+
+test "clamping strictly respects [0.0, 1.0] bounds" {
+    assert clamp_percentage(1.5) == 1.0
+    assert clamp_percentage(-0.2) == 0.0
+}
+
+fn main() {
+}

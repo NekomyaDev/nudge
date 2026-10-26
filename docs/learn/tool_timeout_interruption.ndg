@@ -1,4 +1,4 @@
-/// # 89/100 - Interrupting hanging tool calls
+/// # 89/140 - Interrupting hanging tool calls
 ///
 /// Long-running tool operations must yield execution if they exceed safe time limits.
 /// Nudge ensures tool execution threads are interruptible without memory leaks.

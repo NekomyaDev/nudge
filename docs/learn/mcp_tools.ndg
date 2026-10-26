@@ -1,4 +1,4 @@
-/// # 52/100 - Publish functions through MCP
+/// # 52/140 - Publish functions through MCP
 ///
 /// `nudgec mcp program.ndg` exposes selected Nudge functions as Model Context
 /// Protocol tools over stdio. Define a `tool` declaration for external MCP calls,

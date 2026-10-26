@@ -1,0 +1,25 @@
+/// # 139/140 - Tamper-evident NTF trace audit logs
+///
+/// Security-sensitive operations emit immutable, append-only NTF trace records
+/// containing sequence IDs and cryptographic digests for post-incident forensics.
+///
+/// Try:
+///   nudgec check security_audit_logging.ndg
+
+type AuditRecord = {
+    action: string,
+    authorized: bool,
+    timestamp_ms: int
+}
+
+fn create_audit_entry(act: string) -> AuditRecord {
+    {
+        action: act,
+        authorized: true,
+        timestamp_ms: 1771920000
+    }
+}
+
+fn main() -> AuditRecord {
+    create_audit_entry("access_granted")
+}

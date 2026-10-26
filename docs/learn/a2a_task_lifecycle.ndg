@@ -1,4 +1,4 @@
-/// # 61/100 - A2A asynchronous task lifecycle
+/// # 61/140 - A2A asynchronous task lifecycle
 ///
 /// Multi-step agent workflows cannot block network threads. In Nudge,
 /// tasks declare stateful progress with submitted, active, and completed states.

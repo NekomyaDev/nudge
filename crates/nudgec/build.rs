@@ -7,7 +7,7 @@ fn main() {
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("learn_curriculum.rs");
 
-    // Exact curriculum sequence (100 lessons)
+    // Exact curriculum sequence (140 lessons)
     let lesson_stems = [
         // Part 1: Core Essentials & Philosophy (1-8)
         "hello",
@@ -118,6 +118,50 @@ fn main() {
         "zero_trust_compiler_gates",
         "standalone_native_packaging",
         "mastery_capstone",
+        // Part 10: Reactive UI Architecture & Studio Components (101-110)
+        "ui_reactive_state",
+        "ui_input_dispatch",
+        "ui_layout_flexibility",
+        "ui_theme_switching",
+        "ui_toast_notifications",
+        "ui_command_palette",
+        "ui_multi_window",
+        "ui_chat_bubbles",
+        "ui_code_block_highlighting",
+        "ui_accessibility",
+        // Part 11: Formal Verification & Contract Invariants (111-120)
+        "formal_preconditions",
+        "formal_postconditions",
+        "lattice_subtyping",
+        "effect_lattice",
+        "fail_closed_guarantees",
+        "invariant_assertions",
+        "confidence_lattice",
+        "bounded_loops",
+        "pure_reductions",
+        "type_exhaustiveness",
+        // Part 12: Bytecode Optimization & Virtual Machine (121-130)
+        "bytecode_opcodes",
+        "bytecode_constant_pool",
+        "bytecode_stack_frames",
+        "bytecode_jump_targets",
+        "bytecode_instruction_dispatch",
+        "bytecode_exception_tables",
+        "bytecode_gc_roots",
+        "bytecode_jit_readiness",
+        "bytecode_sandbox_limits",
+        "bytecode_binary_dump",
+        // Part 13: High-Assurance AI Security & Red-Teaming (131-140)
+        "security_token_leaks",
+        "security_indirect_injection",
+        "security_jailbreak_defense",
+        "security_output_taint",
+        "security_role_spoofing",
+        "security_sandbox_boundaries",
+        "security_dos_token_caps",
+        "security_data_exfiltration",
+        "security_audit_logging",
+        "grand_master_architect",
     ];
 
     let mut generated = String::new();

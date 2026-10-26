@@ -1,4 +1,4 @@
-/// # 73/100 - Resuming interrupted runs with nudgec resume
+/// # 73/140 - Resuming interrupted runs with nudgec resume
 ///
 /// When an agent crashes due to network interruption, `nudgec resume <run_id>`
 /// inspects the execution log and continues seamlessly from the last checkpoint.

@@ -1,4 +1,4 @@
-/// # 71/100 - Durable agent state snapshots
+/// # 71/140 - Durable agent state snapshots
 ///
 /// Nudge agents automatically serialize their state block upon every mutation.
 /// Crashed processes resume from their exact state without recalculating expensive steps.

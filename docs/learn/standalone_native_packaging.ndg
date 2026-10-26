@@ -1,4 +1,4 @@
-/// # 99/100 - Packaging standalone single-binary distributions
+/// # 99/140 - Packaging standalone single-binary distributions
 ///
 /// Deploy Nudge agents to bare-metal servers or minimal scratch containers without
 /// installing Python, Node.js, or external runtimes with `nudgec build --standalone`.

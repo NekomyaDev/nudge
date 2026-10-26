@@ -1,4 +1,4 @@
-/// # 3/100 - Typed decisions (decide{})
+/// # 3/140 - Typed decisions (decide{})
 ///
 /// `decide{}` asks a *decision model* (the JEV family: Laya, Jev, Valen)
 /// typed questions about a state — one batched call, answers with

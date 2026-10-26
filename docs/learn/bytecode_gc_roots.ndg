@@ -1,0 +1,16 @@
+/// # 127/140 - Deterministic memory reclamation and GC root scanning
+///
+/// Temporary strings and list buffers are tracked deterministically. Non-escaping
+/// memory blocks are reclaimed immediately when stack frames exit.
+///
+/// Try:
+///   nudgec run bytecode_gc_roots.ndg
+
+fn build_temporary_buffer() -> int {
+    let items = [10, 20, 30, 40]
+    len(items)
+}
+
+fn main() -> int {
+    build_temporary_buffer()
+}

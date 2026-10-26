@@ -1,0 +1,42 @@
+/// # 102/140 - Text input dispatch and change event handlers
+///
+/// `input()` components capture user keystrokes and dispatch updates directly
+/// to agent handlers tracking `uses UI`. Validation occurs synchronously on input change.
+///
+/// Try:
+///   nudgec check ui_input_dispatch.ndg
+///   nudgec test ui_input_dispatch.ndg
+
+view TextInputView(current_text: string) -> View {
+    column(gap = 8) [
+        text("Search Query: " + current_text),
+        input(current_text, id = "search_box", on_change = handle_change)
+    ]
+}
+
+agent SearchApp {
+    state {
+        query: string = ""
+    }
+
+    fn handle_change(val: string) uses UI {
+        state.query = val
+    }
+
+    window MainWindow {
+        title: "Search"
+        width: 350
+        height: 250
+        content: TextInputView(state.query)
+    }
+}
+
+test "search box dispatches input updates" {
+    let app = SearchApp.MainWindow.mount_headless()
+    assert app.find("search_box").exists()
+    SearchApp.handle_change("rust language")
+    assert SearchApp.state.query == "rust language"
+}
+
+fn main() {
+}

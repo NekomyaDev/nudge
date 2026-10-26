@@ -1,4 +1,4 @@
-/// # 66/100 - Work delegation and sub-agent handoffs
+/// # 66/140 - Work delegation and sub-agent handoffs
 ///
 /// Complex objectives are solved by decomposing tasks into specialized agents.
 /// A primary coordinator passes scoped sub-problems to child agents, aggregating

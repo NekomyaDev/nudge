@@ -1,4 +1,4 @@
-/// # 98/100 - Zero-trust compiler checks and invariant guards
+/// # 98/140 - Zero-trust compiler checks and invariant guards
 ///
 /// The Nudge typechecker enforces compile-time invariants before bytecode generation.
 /// Code that calls undeclared tools or conceals model effects is rejected with clear E-codes.

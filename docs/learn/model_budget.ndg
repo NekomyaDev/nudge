@@ -1,4 +1,4 @@
-/// # 26/100 - Budgets, token caps, and hard limits
+/// # 26/140 - Budgets, token caps, and hard limits
 ///
 /// Put a hard `budget` on every production LLM call. The value is a money
 /// literal such as `0.05 USD`; it is the upper spending bound for that call.

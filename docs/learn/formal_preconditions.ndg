@@ -1,0 +1,20 @@
+/// # 111/140 - Formal preconditions and contract bounds
+///
+/// Functions guard domain integrity by asserting preconditions on function entry.
+/// Violations halt execution before invalid states propagate into model prompts.
+///
+/// Try:
+///   nudgec check formal_preconditions.ndg
+///   nudgec test formal_preconditions.ndg
+
+fn deposit_funds(balance: int, amount: int) -> int {
+    assert amount > 0
+    balance + amount
+}
+
+test "preconditions reject negative deposits" {
+    assert deposit_funds(100, 50) == 150
+}
+
+fn main() {
+}

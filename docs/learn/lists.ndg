@@ -1,4 +1,4 @@
-/// # 15/100 - Lists, indexing, and collection loops
+/// # 15/140 - Lists, indexing, and collection loops
 ///
 /// Write a list type as `[T]` and a list literal as `[value, ...]`.
 /// Access an element with `items[index]`, and iterate with `for item in items`.

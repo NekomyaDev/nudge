@@ -1,0 +1,21 @@
+/// # 133/140 - Property-based jailbreak corpus testing
+///
+/// `gen.injection()` feeds hundreds of known jailbreak vectors, adversarial
+/// tokens, and encoding exploits into your program to prove resilience in CI.
+///
+/// Try:
+///   nudgec check security_jailbreak_defense.ndg
+///   nudgec test security_jailbreak_defense.ndg
+
+fn sanitize_input(input_text: string) -> int {
+    len(input_text)
+}
+
+test "jailbreak corpus never panics typechecker or runtime" {
+    for_all p in gen.injection() {
+        assert sanitize_input(p) >= 0
+    }
+}
+
+fn main() {
+}

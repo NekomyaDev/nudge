@@ -1,4 +1,4 @@
-/// # 12/100 - Arithmetic, logical, and comparison operators
+/// # 12/140 - Arithmetic, logical, and comparison operators
 ///
 /// Use `+`, `-`, `*`, `/`, and `%` for numeric arithmetic. Comparisons such
 /// as `>=` produce booleans. Logical operators are written `and`, `or`, and `!`

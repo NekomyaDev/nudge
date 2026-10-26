@@ -1,0 +1,16 @@
+/// # 131/140 - Defending against credential and token leakage
+///
+/// Model prompts must never expose raw API keys or internal infrastructure tokens.
+/// The compiler checks that sensitive auth identifiers cannot appear inside interpolation holes.
+///
+/// Try:
+///   nudgec check security_token_leaks.ndg
+
+fn safe_user_prompt(username: string) -> string uses LLM {
+    llm"""Greet the authenticated user: {username}"""
+    with { model: "fake:default", budget: 0.01 USD }
+}
+
+fn main() -> string uses LLM {
+    safe_user_prompt("Developer")
+}

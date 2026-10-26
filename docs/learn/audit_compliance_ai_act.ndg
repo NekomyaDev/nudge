@@ -1,4 +1,4 @@
-/// # 92/100 - Compliance auditing for EU AI Act & regulatory requirements
+/// # 92/140 - Compliance auditing for EU AI Act & regulatory requirements
 ///
 /// High-risk AI applications require deterministic records of every automated decision.
 /// `nudgec audit <trace.jsonl>` verifies confidence records, probabilities, and model provenance.

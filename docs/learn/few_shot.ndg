@@ -1,4 +1,4 @@
-/// # 30/100 - Few-shot prompting and context conditioning
+/// # 30/140 - Few-shot prompting and context conditioning
 ///
 /// Few-shot prompts teach a format by showing representative input/output pairs
 /// inside the prompt. Choose small, diverse examples that demonstrate the rule,

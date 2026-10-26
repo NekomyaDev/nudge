@@ -1,4 +1,4 @@
-/// # 88/100 - Strong runtime schema validation on tool results
+/// # 88/140 - Strong runtime schema validation on tool results
 ///
 /// Tools that return unstructured JSON or strings can corrupt downstream types.
 /// Explicit record casting ensures all tool output strictly adheres to Nudge contracts.

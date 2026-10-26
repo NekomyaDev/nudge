@@ -1,4 +1,4 @@
-/// # 63/100 - Peer authentication and security boundaries
+/// # 63/140 - Peer authentication and security boundaries
 ///
 /// Network-exposed agents must enforce caller identities. The `uses Auth` effect
 /// binds authenticated bearer tokens to incoming task requests, rejecting unauthorized

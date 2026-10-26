@@ -1,0 +1,15 @@
+/// # 122/140 - Constant pool deduplication and string interning
+///
+/// Strings, schemas, and numbers defined across prompt templates are deduplicated
+/// into an indexed constant pool, dramatically reducing memory bandwidth.
+///
+/// Try:
+///   nudgec run bytecode_constant_pool.ndg
+
+fn build_label(prefix: string) -> string {
+    prefix + "::constant_suffix"
+}
+
+fn main() -> string {
+    build_label("sample")
+}

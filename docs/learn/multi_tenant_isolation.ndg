@@ -1,4 +1,4 @@
-/// # 97/100 - Multi-tenant agent boundaries
+/// # 97/140 - Multi-tenant agent boundaries
 ///
 /// SaaS applications require absolute isolation between customer workspaces.
 /// State blocks partition memory so tenant A cannot read state belonging to tenant B.

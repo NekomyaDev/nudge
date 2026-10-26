@@ -1,0 +1,22 @@
+/// # 120/140 - Exhaustive policy coverage and default fallbacks
+///
+/// `route {}` blocks mandate an `otherwise` arm to ensure total branch exhaustiveness.
+/// Unhandled edge cases cannot slip past the compiler into runtime uncaught exceptions.
+///
+/// Try:
+///   nudgec check type_exhaustiveness.ndg
+
+type DecisionInput = {
+    team: { winner: string, p: float, distribution: {string: float}, confidence: float }
+}
+
+fn route_decision(d: DecisionInput) -> string {
+    route {
+        billing: "billing_queue" when d.team.winner == "billing",
+        tech: "tech_queue" when d.team.winner == "tech",
+        general: "general_queue" otherwise
+    }
+}
+
+fn main() {
+}

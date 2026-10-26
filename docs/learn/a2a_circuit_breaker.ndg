@@ -1,4 +1,4 @@
-/// # 69/100 - Circuit breakers for failing dependencies
+/// # 69/140 - Circuit breakers for failing dependencies
 ///
 /// When an external peer or upstream provider suffers outages, repeated retries
 /// cause cascading latency. A circuit breaker fails fast until health is restored.

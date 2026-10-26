@@ -1,4 +1,4 @@
-/// # 64/100 - Agent discovery via .well-known/agent.json
+/// # 64/140 - Agent discovery via .well-known/agent.json
 ///
 /// Autonomous agents find peer capabilities using standardized discovery.
 /// When compiled, Nudge automatically publishes the agent manifest containing

@@ -1,4 +1,4 @@
-/// # 34/100 - System prompts and role management
+/// # 34/140 - System prompts and role management
 ///
 /// Keep durable behavioral rules separate from per-request user data. The
 /// `system` option carries role and safety instructions, while the `llm` block

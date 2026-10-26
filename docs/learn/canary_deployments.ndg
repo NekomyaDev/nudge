@@ -1,4 +1,4 @@
-/// # 93/100 - Canary deployments and model A/B testing
+/// # 93/140 - Canary deployments and model A/B testing
 ///
 /// When upgrading prompts or switching to a new foundation model, traffic splitting
 /// routes a percentage of calls to the candidate model to measure quality before full rollout.

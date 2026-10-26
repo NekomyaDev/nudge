@@ -1,0 +1,15 @@
+/// # 121/140 - Nudge virtual machine bytecode and opcodes
+///
+/// Nudge compiles directly to an efficient bytecode format executed by the native VM,
+/// featuring compact register opcodes for arithmetic, jumps, and object manipulation.
+///
+/// Try:
+///   nudgec run bytecode_opcodes.ndg
+
+fn add_pure(a: int, b: int) -> int {
+    a + b
+}
+
+fn main() -> int {
+    add_pure(25, 17)
+}

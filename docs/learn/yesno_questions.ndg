@@ -1,4 +1,4 @@
-/// # 38/100 - yes/no questions and probability p
+/// # 38/140 - yes/no questions and probability p
 ///
 /// Use `yes/no` for binary propositions: fraud signals, cancellation risk, or
 /// whether an action needs review. The answer has one field, `p`, the estimated

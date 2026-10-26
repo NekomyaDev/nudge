@@ -1,4 +1,4 @@
-/// # 62/100 - Native JSON-RPC 2.0 communication
+/// # 62/140 - Native JSON-RPC 2.0 communication
 ///
 /// Nudge A2A peers expose standard JSON-RPC 2.0 endpoints for language-agnostic
 /// inter-agent communication. Methods map directly to agent functions with

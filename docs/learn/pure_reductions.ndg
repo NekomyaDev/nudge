@@ -1,0 +1,20 @@
+/// # 119/140 - Pure reduction operators and state aggregation
+///
+/// Aggregate multi-agent vote distributions, scores, and embeddings using
+/// pure reduction functions that have zero side effects on environment state.
+///
+/// Try:
+///   nudgec check pure_reductions.ndg
+///   nudgec test pure_reductions.ndg
+
+fn compute_average(total: int, count: int) -> float {
+    assert count > 0
+    total / count
+}
+
+test "average calculation is pure and exact" {
+    assert compute_average(100, 4) == 25.0
+}
+
+fn main() {
+}

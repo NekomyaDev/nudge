@@ -1,4 +1,4 @@
-/// # 84/100 - Resilient fallback when tools fail
+/// # 84/140 - Resilient fallback when tools fail
 ///
 /// External API integrations fail. Nudge allows inspecting tool responses and
 /// falling back to alternative algorithms or secondary tools.

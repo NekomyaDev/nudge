@@ -1,0 +1,19 @@
+/// # 129/140 - Instruction count bounds and runaway loop mitigation
+///
+/// VM execution supports strict instruction limits (`max_instructions`), halting
+/// programs that enter accidental infinite loops before consuming host CPU cycles.
+///
+/// Try:
+///   nudgec run bytecode_sandbox_limits.ndg
+
+fn finite_iteration() -> int {
+    let mut count: int = 0
+    for x in [1, 2, 3] {
+        count = count + 1
+    }
+    count
+}
+
+fn main() -> int {
+    finite_iteration()
+}

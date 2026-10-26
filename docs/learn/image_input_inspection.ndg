@@ -1,4 +1,4 @@
-/// # 85/100 - Multi-modal prompt inputs and vision models
+/// # 85/140 - Multi-modal prompt inputs and vision models
 ///
 /// Vision-capable models accept image artifacts and visual inspection buffers
 /// directly within typed prompts for OCR, visual QA, and UI verification.

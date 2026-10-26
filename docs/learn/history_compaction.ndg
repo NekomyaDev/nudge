@@ -1,4 +1,4 @@
-/// # 75/100 - History compaction and memory management
+/// # 75/140 - History compaction and memory management
 ///
 /// Long-running agents accumulate trace events. Compaction condenses prior
 /// interactions into a unified summary to keep memory footprints minimal.

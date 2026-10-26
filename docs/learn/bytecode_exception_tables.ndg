@@ -1,0 +1,16 @@
+/// # 126/140 - Exception tables and clean stack unwinding
+///
+/// When an assertion fails, the VM references pre-compiled exception tables
+/// to unwind the call stack cleanly without corrupting parent memory or leaving open handles.
+///
+/// Try:
+///   nudgec check bytecode_exception_tables.ndg
+
+fn checked_div(a: int, b: int) -> float {
+    assert b > 0
+    a / b
+}
+
+fn main() -> float {
+    checked_div(50, 5)
+}

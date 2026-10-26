@@ -1,4 +1,4 @@
-/// # 70/100 - Distributed trace context propagation
+/// # 70/140 - Distributed trace context propagation
 ///
 /// When requests jump across multiple agents, passing the trace ID ensures
 /// the entire execution tree can be inspected in a single audit trail.

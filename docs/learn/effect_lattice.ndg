@@ -1,0 +1,20 @@
+/// # 114/140 - Effect lattices: pure, IO, LLM, Decision, UI
+///
+/// The compiler maintains an effect lattice. Functions without effect annotations
+/// are mathematically guaranteed pure: they cannot perform I/O, prompt models, or mutate global state.
+///
+/// Try:
+///   nudgec check effect_lattice.ndg
+
+fn strictly_pure(a: int, b: int) -> int {
+    a * b + 42
+}
+
+fn with_side_effect(q: string) -> string uses LLM {
+    llm"""Answer this query: {q}"""
+    with { model: "fake:default" }
+}
+
+fn main() -> int {
+    strictly_pure(10, 2)
+}

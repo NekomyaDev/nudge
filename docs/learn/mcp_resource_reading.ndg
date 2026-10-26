@@ -1,4 +1,4 @@
-/// # 81/100 - Reading external resources via MCP
+/// # 81/140 - Reading external resources via MCP
 ///
 /// Model Context Protocol allows agents to query live system resources, files,
 /// and external databases through strongly typed interfaces.

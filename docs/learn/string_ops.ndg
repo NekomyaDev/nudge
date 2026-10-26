@@ -1,4 +1,4 @@
-/// # 13/100 - String operations
+/// # 13/140 - String operations
 ///
 /// Use `+` to concatenate strings and `len(value)` to count characters.
 /// `llm\"\"\"...{name}...\"\"\"` prompts support interpolation holes, while ordinary

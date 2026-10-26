@@ -1,0 +1,23 @@
+/// # 105/140 - Floating toast alerts and transient feedback
+///
+/// Deliver non-blocking, transient feedback to users via toasts. Notifications
+/// automatically dismiss without cluttering persistent conversation trees.
+///
+/// Try:
+///   nudgec check ui_toast_notifications.ndg
+
+agent AlertAgent {
+    state {
+        last_toast: string = "none"
+        active_level: string = "info"
+    }
+
+    fn notify(msg: string, level: string) uses UI {
+        state.last_toast = msg
+        state.active_level = level
+    }
+}
+
+fn main() uses UI {
+    AlertAgent.notify("Settings saved successfully!", "success")
+}

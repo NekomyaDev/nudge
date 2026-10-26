@@ -1,4 +1,4 @@
-/// # 20/100 - Organizing modules
+/// # 20/140 - Organizing modules
 ///
 /// Today, a `.ndg` file is a compilation unit and its top-level `type`, `fn`,
 /// and `tool` declarations share one namespace. The lexer reserves `use` and

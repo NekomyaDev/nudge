@@ -1,0 +1,15 @@
+/// # 128/140 - JIT readiness and typed compilation traces
+///
+/// Because all function arguments and returns carry static types, Nudge bytecode
+/// carries complete type metadata ready for runtime hot-loop native compilation.
+///
+/// Try:
+///   nudgec check bytecode_jit_readiness.ndg
+
+fn compute_heavy(base: int, mult: int) -> int {
+    base * mult + 100
+}
+
+fn main() -> int {
+    compute_heavy(12, 8)
+}

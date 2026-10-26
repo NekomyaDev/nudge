@@ -1,0 +1,38 @@
+/// # 103/140 - Nested layout containers: column, row, padding and gap
+///
+/// Construct flexible, adaptive layouts using nested `column` and `row` primitives.
+/// Padding and gap attributes control spacing cleanly without external CSS stylesheets.
+///
+/// Try:
+///   nudgec check ui_layout_flexibility.ndg
+
+view DashboardView(user: string, status: string) -> View {
+    column(padding = 16, gap = 12) [
+        row(gap = 8) [
+            text("User: " + user, bold = true),
+            text("Status: " + status)
+        ],
+        row(gap = 10) [
+            button("Refresh", id = "btn_refresh", on_click = noop)
+        ]
+    ]
+}
+
+agent DashboardAgent {
+    state {
+        active: bool = true
+    }
+
+    fn noop() uses UI {
+    }
+
+    window MainWindow {
+        title: "Dashboard"
+        width: 400
+        height: 300
+        content: DashboardView("Alice", "Online")
+    }
+}
+
+fn main() {
+}

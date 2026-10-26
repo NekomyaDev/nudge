@@ -1,4 +1,4 @@
-/// # 47/100 - audit decisions with nudgec explain
+/// # 47/140 - audit decisions with nudgec explain
 ///
 /// Decision traces make automation inspectable. Run a program with `NUDGE_TRACE`
 /// and then ask `nudgec explain` for a human-readable report of the prompts,

@@ -1,4 +1,4 @@
-/// # 87/100 - Conditional tool exposure per execution path
+/// # 87/140 - Conditional tool exposure per execution path
 ///
 /// Exposing too many tools at once confuses LLM tool-calling routers.
 /// Restrict tool accessibility based on the verified decision state.

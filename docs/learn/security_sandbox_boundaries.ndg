@@ -1,0 +1,15 @@
+/// # 136/140 - Operating system sandbox and capability restrictions
+///
+/// Standalone native binaries drop unneeded OS capabilities upon startup.
+/// Agents without `uses IO` cannot open sockets, spawn processes, or read the filesystem.
+///
+/// Try:
+///   nudgec check security_sandbox_boundaries.ndg
+
+fn pure_computation_only(x: int) -> int {
+    x * x + 7
+}
+
+fn main() -> int {
+    pure_computation_only(12)
+}

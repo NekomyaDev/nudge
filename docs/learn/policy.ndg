@@ -1,4 +1,4 @@
-/// # 4/100 - Confidence policies (route{})
+/// # 4/140 - Confidence policies (route{})
 ///
 /// raw model output should not reach users unchecked. `route{}` is a
 /// policy switch: arms carry conditions (confidence thresholds, winner

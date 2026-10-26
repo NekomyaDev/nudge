@@ -128,15 +128,15 @@ mod tests {
     }
 
     #[test]
-    fn total_curriculum_contains_one_hundred_unique_lessons_and_helpful_titles() {
-        assert_eq!(LESSONS.len(), 100);
+    fn total_curriculum_contains_one_hundred_forty_unique_lessons_and_helpful_titles() {
+        assert_eq!(LESSONS.len(), 140);
         let mut names: Vec<_> = LESSONS.iter().map(|l| l.name).collect();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 100, "every lesson name must be unique");
+        assert_eq!(names.len(), 140, "every lesson name must be unique");
 
         for (i, l) in LESSONS.iter().enumerate() {
-            let expected_prefix = format!("{}/100 - ", i + 1);
+            let expected_prefix = format!("{}/140 - ", i + 1);
             let title = l.title();
             assert!(
                 title.starts_with(&expected_prefix),
@@ -162,6 +162,10 @@ mod tests {
         assert!(run(&["state_persistence".to_string()]).is_ok());
         assert!(run(&["mcp_resource_reading".to_string()]).is_ok());
         assert!(run(&["mastery_capstone".to_string()]).is_ok());
+        assert!(run(&["ui_reactive_state".to_string()]).is_ok());
+        assert!(run(&["formal_preconditions".to_string()]).is_ok());
+        assert!(run(&["bytecode_opcodes".to_string()]).is_ok());
+        assert!(run(&["grand_master_architect".to_string()]).is_ok());
         assert!(run(&["nope".to_string()]).is_err());
     }
 }

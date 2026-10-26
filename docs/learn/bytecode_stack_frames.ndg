@@ -1,0 +1,16 @@
+/// # 123/140 - Stack frame isolation and register allocation
+///
+/// Each function call executes in an isolated stack frame. Register allocation
+/// guarantees that local variables are freed immediately upon scope return.
+///
+/// Try:
+///   nudgec check bytecode_stack_frames.ndg
+
+fn helper_one(x: int) -> int {
+    let a = x + 5
+    a * 2
+}
+
+fn main() -> int {
+    helper_one(10)
+}

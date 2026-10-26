@@ -1,4 +1,4 @@
-/// # 67/100 - Rate limiting and concurrency throttling
+/// # 67/140 - Rate limiting and concurrency throttling
 ///
 /// Public agent endpoints require protection from token exhaustion and denial-of-service.
 /// Stateful guards track request volume and reject bursts before triggering LLM inference.

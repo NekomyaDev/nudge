@@ -1,4 +1,4 @@
-/// # 94/100 - Offline accuracy evaluation with nudgec eval
+/// # 94/140 - Offline accuracy evaluation with nudgec eval
 ///
 /// `nudgec eval` evaluates your compiled program against thousands of ground-truth
 /// examples in a JSONL dataset, calculating precision, recall, and pass rates without code changes.

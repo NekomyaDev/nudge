@@ -1,4 +1,4 @@
-/// # 54/100 - Serve an A2A peer over REST and JSON-RPC
+/// # 54/140 - Serve an A2A peer over REST and JSON-RPC
 ///
 /// Run `nudgec a2a-serve peer.ndg --port 9000` to turn an agent into an
 /// A2A peer. It serves the Agent Card at `/.well-known/agent.json`, health at

@@ -1,4 +1,4 @@
-/// # 55/100 - Deterministic fakes: offline and zero cost
+/// # 55/140 - Deterministic fakes: offline and zero cost
 ///
 /// Use `model: "fake:default"` when developing and testing. The deterministic
 /// provider gives repeatable responses without API keys, network access, or spend.

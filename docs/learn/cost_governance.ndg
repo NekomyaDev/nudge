@@ -1,4 +1,4 @@
-/// # 91/100 - Static and dynamic cost governance
+/// # 91/140 - Static and dynamic cost governance
 ///
 /// Enterprise deployments require hard caps on model spend. `nudgec cost` statically
 /// audits maximum theoretical expenses across call trees to prevent surprise billing.

@@ -1,0 +1,16 @@
+/// # 115/140 - Fail-closed security architecture
+///
+/// If any authentication, effect declaration, or schema check is ambiguous,
+/// the Nudge compiler and runtime refuse to execute by default.
+///
+/// Try:
+///   nudgec check fail_closed_guarantees.ndg
+
+fn evaluate_access(has_token: bool, is_expired: bool) -> bool {
+    let valid = has_token and !is_expired
+    valid
+}
+
+fn main() -> bool {
+    evaluate_access(true, false)
+}

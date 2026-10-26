@@ -1,4 +1,4 @@
-/// # 19/100 - Purity and tracked effects
+/// # 19/140 - Purity and tracked effects
 ///
 /// A function without `uses` is pure. Add `uses LLM`, `uses Decision`, or
 /// other declared effects when it performs that operation. Effects propagate

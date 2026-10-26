@@ -1,0 +1,23 @@
+/// # 134/140 - Taint tracking and output sanitization
+///
+/// Raw model output is considered untrusted by default. Pass model output
+/// through typed validation before rendering it in UI views or forwarding it to shells.
+///
+/// Try:
+///   nudgec check security_output_taint.ndg
+
+type SanitizedSummary = {
+    clean_text: string,
+    passed_filter: bool
+}
+
+fn validate_output(raw: string) -> SanitizedSummary {
+    {
+        clean_text: raw,
+        passed_filter: len(raw) > 0
+    }
+}
+
+fn main() -> SanitizedSummary {
+    validate_output("Validated safe response")
+}

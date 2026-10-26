@@ -1,0 +1,21 @@
+/// # 108/140 - Conversational message threads and chat bubble rendering
+///
+/// Render conversation streams with distinct visual treatment for user inputs,
+/// model answers, thinking steps, and tool execution callouts.
+///
+/// Try:
+///   nudgec check ui_chat_bubbles.ndg
+
+type ChatMsg = {
+    role: string,
+    content: string
+}
+
+fn format_message(m: ChatMsg) -> string {
+    "[" + m.role + "]: " + m.content
+}
+
+fn main() -> string {
+    let m: ChatMsg = { role: "assistant", content: "Hello! How can I assist you today?" }
+    format_message(m)
+}

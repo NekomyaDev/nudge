@@ -1,4 +1,4 @@
-/// # 95/100 - CI gating on latency and token regressions
+/// # 95/140 - CI gating on latency and token regressions
 ///
 /// Prevent bloated prompts and sluggish responses from reaching production.
 /// `nudgec trace-diff` compares CI traces against the production baseline, failing if latency rises.

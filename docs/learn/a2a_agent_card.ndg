@@ -1,4 +1,4 @@
-/// # 53/100 - A2A Agent Cards, capabilities, and skills
+/// # 53/140 - A2A Agent Cards, capabilities, and skills
 ///
 /// `nudgec a2a agent.ndg` derives an `agent.json` card from your agent
 /// structure. The card advertises identity, capabilities, stateful skills, and

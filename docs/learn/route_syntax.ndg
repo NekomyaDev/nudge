@@ -1,4 +1,4 @@
-/// # 42/100 - route { arm: expr when cond, otherwise: fallback }
+/// # 42/140 - route { arm: expr when cond, otherwise: fallback }
 ///
 /// `route {}` is a typed policy switch. Each arm has a label, a value expression,
 /// and either `when <condition>` or `otherwise`. Nudge checks that every arm

@@ -1,4 +1,4 @@
-/// # 82/100 - Auditing side-effects in tool declarations
+/// # 82/140 - Auditing side-effects in tool declarations
 ///
 /// In Nudge, tools explicitly declare whether they cause side effects (`side_effects: none`
 /// vs mutating actions). The compiler guards read-only evaluations from triggering mutations.

@@ -1,0 +1,16 @@
+/// # 137/140 - Mitigating denial-of-wallet through hard budget caps
+///
+/// Malicious inputs designed to trigger infinite generation are halted by the
+/// compiler-enforced `budget: X.XX USD` limit, terminating generation when reached.
+///
+/// Try:
+///   nudgec check security_dos_token_caps.ndg
+
+fn budget_capped_query(q: string) -> string uses LLM {
+    llm"""Respond concisely to query: {q}"""
+    with { model: "fake:default", budget: 0.005 USD }
+}
+
+fn main() -> string uses LLM {
+    budget_capped_query("Write a 50,000 word essay")
+}
