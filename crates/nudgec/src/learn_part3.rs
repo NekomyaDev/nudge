@@ -536,6 +536,8 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), LESSONS_PART3.len());
-        assert!(LESSONS_PART3.iter().all(|lesson| lesson.body.contains("Try:")));
+        assert!(LESSONS_PART3
+            .iter()
+            .all(|lesson| lesson.body.contains("Try:")));
     }
 }

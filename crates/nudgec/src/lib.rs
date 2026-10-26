@@ -35,6 +35,12 @@ pub mod learn;
 #[cfg(feature = "compiler")]
 pub mod learn_part1;
 #[cfg(feature = "compiler")]
+pub mod learn_part2;
+#[cfg(feature = "compiler")]
+pub mod learn_part3;
+#[cfg(feature = "compiler")]
+pub mod learn_part4;
+#[cfg(feature = "compiler")]
 pub mod lexer;
 #[cfg(feature = "compiler")]
 pub mod lint;

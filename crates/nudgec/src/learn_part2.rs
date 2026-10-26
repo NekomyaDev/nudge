@@ -449,8 +449,9 @@ mod tests {
             };
             let tokens = crate::lexer::lex(src)
                 .unwrap_or_else(|error| panic!("lesson '{}' does not lex: {error:?}", lesson.name));
-            let items = crate::parser::parse(tokens)
-                .unwrap_or_else(|error| panic!("lesson '{}' does not parse: {error:?}", lesson.name));
+            let items = crate::parser::parse(tokens).unwrap_or_else(|error| {
+                panic!("lesson '{}' does not parse: {error:?}", lesson.name)
+            });
             let errors = crate::check::check(&items);
             assert!(
                 errors.is_empty(),

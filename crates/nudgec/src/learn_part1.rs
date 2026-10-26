@@ -17,7 +17,8 @@ the checker reject accidental mutation.
 Try:
   nudgec check variables_mut.ndg
   nudgec build variables_mut.ndg"#,
-        program: Some(r#"fn count_items() -> int {
+        program: Some(
+            r#"fn count_items() -> int {
     let mut total: int = 0
     total = total + 1
     total = total + 2
@@ -27,7 +28,8 @@ Try:
 fn main() -> int {
     count_items()
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "primitives",
@@ -39,7 +41,8 @@ string-to-number cast builtins yet, so make conversions at an input boundary.
 
 Try:
   nudgec check primitives.ndg"#,
-        program: Some(r#"fn describe(enabled: bool) -> string {
+        program: Some(
+            r#"fn describe(enabled: bool) -> string {
     let count: int = 3
     let ratio: float = count / 2
     let label: string = "items"
@@ -53,7 +56,8 @@ fn log_complete() -> none {
 fn main() -> string {
     describe(true)
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "functions",
@@ -65,7 +69,8 @@ current Nudge grammar, so model a default with a small wrapper function.
 
 Try:
   nudgec check functions.ndg"#,
-        program: Some(r#"fn greet(name: string, prefix: string) -> string {
+        program: Some(
+            r#"fn greet(name: string, prefix: string) -> string {
     prefix + ", " + name
 }
 
@@ -76,7 +81,8 @@ fn friendly_greet(name: string) -> string {
 fn main() -> string {
     friendly_greet("Nudge")
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "operators",
@@ -88,7 +94,8 @@ two integers produces a `float`.
 
 Try:
   nudgec check operators.ndg"#,
-        program: Some(r#"fn eligible(age: int, has_ticket: bool) -> bool {
+        program: Some(
+            r#"fn eligible(age: int, has_ticket: bool) -> bool {
     let remaining = (age + 2) * 3 % 5
     age >= 18 and has_ticket and !(remaining < 0)
 }
@@ -96,7 +103,8 @@ Try:
 fn main() -> bool {
     eligible(21, true)
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "string_ops",
@@ -108,7 +116,8 @@ implemented, so keep slicing at a host/tool boundary for now.
 
 Try:
   nudgec check string_ops.ndg"#,
-        program: Some(r#"fn welcome(name: string) -> string {
+        program: Some(
+            r#"fn welcome(name: string) -> string {
     let message = "Welcome, " + name
     let size = len(message)
     if size > 0 { message + "!" } else { "" }
@@ -117,7 +126,8 @@ Try:
 fn main() -> string {
     welcome("Ada")
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "records",
@@ -128,7 +138,8 @@ read fields with dot notation. Inline record types are valid too.
 
 Try:
   nudgec check records.ndg"#,
-        program: Some(r#"type User = { name: string, age: int }
+        program: Some(
+            r#"type User = { name: string, age: int }
 
 fn birthday(user: User) -> User {
     { name: user.name, age: user.age + 1 }
@@ -138,7 +149,8 @@ fn main() -> string {
     let user: User = { name: "Ada", age: 36 }
     birthday(user).name
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "lists",
@@ -150,7 +162,8 @@ For concurrent transformation, Nudge also provides `par map`; a sequential
 
 Try:
   nudgec check lists.ndg"#,
-        program: Some(r#"fn sum(numbers: [int]) -> int {
+        program: Some(
+            r#"fn sum(numbers: [int]) -> int {
     let mut total: int = 0
     for number in numbers {
         total = total + number
@@ -163,7 +176,8 @@ fn main() -> int {
     let first = values[0]
     sum(values) + first
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "options_results",
@@ -175,7 +189,8 @@ features. Until then, model rich success or failure data with a named record.
 
 Try:
   nudgec check options_results.ndg"#,
-        program: Some(r#"type Lookup = { ok: bool, value: string? }
+        program: Some(
+            r#"type Lookup = { ok: bool, value: string? }
 
 fn display(result: Lookup) -> string {
     if result.ok { "found" } else { "missing" }
@@ -186,7 +201,8 @@ fn main() -> string {
     let result: Lookup = { ok: false, value: missing }
     display(result)
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "pattern_matching",
@@ -198,7 +214,8 @@ Keep each branch returning the same type, just as a future `match` must.
 
 Try:
   nudgec check pattern_matching.ndg"#,
-        program: Some(r#"fn status(is_admin: bool, active: bool) -> string {
+        program: Some(
+            r#"fn status(is_admin: bool, active: bool) -> string {
     if is_admin and active {
         "admin"
     } else {
@@ -209,7 +226,8 @@ Try:
 fn main() -> string {
     status(false, true)
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "loops",
@@ -221,7 +239,8 @@ finite and collection-shaped.
 
 Try:
   nudgec check loops.ndg"#,
-        program: Some(r#"fn weighted_total(numbers: [int]) -> int {
+        program: Some(
+            r#"fn weighted_total(numbers: [int]) -> int {
     let mut total: int = 0
     for (number, index) in numbers {
         total = total + number + index
@@ -232,7 +251,8 @@ Try:
 fn main() -> int {
     weighted_total([10, 20, 30])
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "purity_effects",
@@ -244,7 +264,8 @@ formatting and validation helpers separate from effectful boundaries.
 
 Try:
   nudgec check purity_effects.ndg"#,
-        program: Some(r#"fn label(name: string) -> string {
+        program: Some(
+            r#"fn label(name: string) -> string {
     "Hello, " + name
 }
 
@@ -256,7 +277,8 @@ fn ask(topic: string) -> string uses LLM {
 fn main() -> string uses LLM {
     label(ask("Nudge"))
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "modules_imports",
@@ -269,7 +291,8 @@ and separate source files until module loading lands.
 
 Try:
   nudgec check modules_imports.ndg"#,
-        program: Some(r#"type UserName = string
+        program: Some(
+            r#"type UserName = string
 
 fn format_user(name: UserName) -> string {
     "user: " + name
@@ -278,7 +301,8 @@ fn format_user(name: UserName) -> string {
 fn main() -> string {
     format_user("Ada")
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "assertions_contracts",
@@ -291,7 +315,8 @@ so assertions are the portable contract mechanism.
 Try:
   nudgec check assertions_contracts.ndg
   nudgec test assertions_contracts.ndg"#,
-        program: Some(r#"fn non_empty_length(value: string) -> int {
+        program: Some(
+            r#"fn non_empty_length(value: string) -> int {
     assert len(value) > 0
     len(value)
 }
@@ -303,7 +328,8 @@ fn main() -> int {
 test "a known label has a positive length" {
     assert non_empty_length("Nudge") > 0
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "comments_docs",
@@ -315,7 +341,8 @@ use Markdown in your repository documentation for longer guides.
 
 Try:
   nudgec check comments_docs.ndg"#,
-        program: Some(r#"/// Produce a greeting for a caller.
+        program: Some(
+            r#"/// Produce a greeting for a caller.
 // Keep the implementation pure and easily testable.
 fn greet(name: string) -> string {
     "Hello, " + name
@@ -324,7 +351,8 @@ fn greet(name: string) -> string {
 fn main() -> string {
     greet("reader")
 }
-"#),
+"#,
+        ),
     },
 ];
 
@@ -335,7 +363,9 @@ mod tests {
     #[test]
     fn part1_lesson_programs_type_check() {
         for lesson in LESSONS_PART1 {
-            let Some(source) = lesson.program else { continue };
+            let Some(source) = lesson.program else {
+                continue;
+            };
             let tokens = crate::lexer::lex(source).unwrap();
             let items = crate::parser::parse(tokens).unwrap();
             let errors = crate::check::check(&items);

@@ -18,7 +18,8 @@ state writes, so the runtime can checkpoint them for recovery and replay.
 Try:
   nudgec check agent_state.ndg
   nudgec test agent_state.ndg"#,
-        program: Some(r#"agent Counter {
+        program: Some(
+            r#"agent Counter {
     state {
         count: int = 0
         label: string = "ready"
@@ -35,7 +36,8 @@ test "agent state mutates through its methods" {
     assert Counter.state.count == 1
     assert Counter.state.label == "counted"
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "agent_actions",
@@ -48,7 +50,8 @@ similarly visible to the compiler and callers.
 Try:
   nudgec check agent_actions.ndg
   nudgec build agent_actions.ndg"#,
-        program: Some(r#"agent DraftAgent {
+        program: Some(
+            r#"agent DraftAgent {
     state {
         draft: string = "empty"
     }
@@ -67,7 +70,8 @@ fn main() -> string uses UI, LLM {
     DraftAgent.edit("A typed agent keeps actions explicit.")
     DraftAgent.summarize()
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "ui_views",
@@ -80,7 +84,8 @@ handlers share the same types as the rest of the agent.
 Try:
   nudgec check ui_views.ndg
   nudgec build ui_views.ndg"#,
-        program: Some(r#"view Greeting(name: string) -> View {
+        program: Some(
+            r#"view Greeting(name: string) -> View {
     column(padding = 16, gap = 8) [
         text("Welcome, " + name, size = 18, bold = true),
         row(gap = 6) [
@@ -114,7 +119,8 @@ agent Welcome {
 fn main() uses UI {
     Welcome.MainWindow.open()
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "ui_headless_test",
@@ -127,7 +133,8 @@ way to test UI state transitions.
 Try:
   nudgec check ui_headless_test.ndg
   nudgec test ui_headless_test.ndg"#,
-        program: Some(r#"view CounterView(count: int) -> View {
+        program: Some(
+            r#"view CounterView(count: int) -> View {
     column(gap = 8) [
         text("Count: " + count),
         button("Increment", id = "increment", on_click = increment)
@@ -155,7 +162,8 @@ test "headless mount finds and clicks controls" {
     app.dispatch_click("increment")
     assert CounterUI.state.count == 1
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "mcp_tools",
@@ -168,7 +176,8 @@ tool input schema and function results become structured tool output.
 Try:
   nudgec check mcp_tools.ndg
   nudgec mcp mcp_tools.ndg --fns add"#,
-        program: Some(r#"tool lookup_city(name: string) -> string {
+        program: Some(
+            r#"tool lookup_city(name: string) -> string {
     impl: mcp("directory").lookup(name)
     side_effects: none
 }
@@ -180,7 +189,8 @@ fn add(left: int, right: int) -> int {
 fn main() -> int {
     add(20, 22)
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "a2a_agent_card",
@@ -193,7 +203,8 @@ other agents can discover precisely what is safe to call.
 Try:
   nudgec check a2a_agent_card.ndg
   nudgec a2a a2a_agent_card.ndg"#,
-        program: Some(r#"agent WeatherPeer {
+        program: Some(
+            r#"agent WeatherPeer {
     state {
         requests: int = 0
     }
@@ -210,7 +221,8 @@ Try:
 
 fn main() {
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "a2a_peer_serving",
@@ -223,7 +235,8 @@ The same program remains unit-testable without opening a port.
 Try:
   nudgec check a2a_peer_serving.ndg
   nudgec a2a-serve a2a_peer_serving.ndg --port 9000"#,
-        program: Some(r#"agent EchoPeer {
+        program: Some(
+            r#"agent EchoPeer {
     state {
         calls: int = 0
     }
@@ -241,7 +254,8 @@ test "peer skill is callable locally" {
     assert EchoPeer.echo("hello") == "echo: hello"
     assert EchoPeer.state.calls == 1
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "deterministic_fakes",
@@ -253,7 +267,8 @@ It is the default testing foundation for fast local and CI feedback.
 Try:
   nudgec check deterministic_fakes.ndg
   nudgec test deterministic_fakes.ndg"#,
-        program: Some(r#"fn classify(ticket: string) -> string uses LLM {
+        program: Some(
+            r#"fn classify(ticket: string) -> string uses LLM {
     llm"""Classify this support ticket in one word: {ticket}"""
     with { model: "fake:default", budget: 0.00 USD }
 }
@@ -262,7 +277,8 @@ test "fake provider runs offline" {
     let answer = classify("Please reset my account password")
     assert len(answer) >= 0
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "property_fuzzing",
@@ -275,7 +291,8 @@ makes a failing case practical to add as a regression test.
 Try:
   nudgec check property_fuzzing.ndg
   nudgec test property_fuzzing.ndg"#,
-        program: Some(r#"fn normalized_length(value: string) -> int {
+        program: Some(
+            r#"fn normalized_length(value: string) -> int {
     len(value)
 }
 
@@ -285,7 +302,8 @@ test "all generated strings have a non-negative length" {
         assert normalized_length(x) <= 64
     }
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "ntf_traces",
@@ -300,7 +318,8 @@ Try:
   nudgec build ntf_traces.ndg
   NUDGE_TRACE=run.ntf.jsonl python3 out/ntf_traces.py
   nudgec trace-check run.ntf.jsonl"#,
-        program: Some(r#"fn greet(person: string) -> string uses LLM {
+        program: Some(
+            r#"fn greet(person: string) -> string uses LLM {
     llm"""Greet {person} in one short sentence."""
     with { model: "fake:default", budget: 0.00 USD }
 }
@@ -308,7 +327,8 @@ Try:
 fn main() -> string uses LLM {
     greet("trace reader")
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "trace_replay",
@@ -323,7 +343,8 @@ Try:
   nudgec build trace_replay.ndg
   NUDGE_TRACE=first.ntf.jsonl python3 out/trace_replay.py
   NUDGE_REPLAY=first.ntf.jsonl python3 out/trace_replay.py"#,
-        program: Some(r#"fn answer(question: string) -> string uses LLM {
+        program: Some(
+            r#"fn answer(question: string) -> string uses LLM {
     llm"""Answer this question briefly: {question}"""
     with { model: "fake:default", budget: 0.00 USD }
 }
@@ -331,7 +352,8 @@ Try:
 fn main() -> string uses LLM {
     answer("What does replay protect?")
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "trace_diff_ci",
@@ -344,7 +366,8 @@ non-zero exit code, so CI can reject an agent regression before deployment.
 Try:
   nudgec check trace_diff_ci.ndg
   nudgec trace-diff baseline.ntf.jsonl candidate.ntf.jsonl --fail-on-regression"#,
-        program: Some(r#"fn concise_summary(note: string) -> string uses LLM {
+        program: Some(
+            r#"fn concise_summary(note: string) -> string uses LLM {
     llm"""Summarize this note in one concise sentence: {note}"""
     with { model: "fake:default", budget: 0.00 USD }
 }
@@ -352,7 +375,8 @@ Try:
 fn main() -> string uses LLM {
     concise_summary("Trace comparison makes resource regressions visible.")
 }
-"#),
+"#,
+        ),
     },
     Lesson {
         name: "compilation_targets",
@@ -368,14 +392,16 @@ Try:
   nudgec build compilation_targets.ndg
   nudgec build-ts compilation_targets.ndg
   nudgec build compilation_targets.ndg --standalone"#,
-        program: Some(r#"fn double(value: int) -> int {
+        program: Some(
+            r#"fn double(value: int) -> int {
     value * 2
 }
 
 fn main() -> int {
     double(21)
 }
-"#),
+"#,
+        ),
     },
 ];
 
@@ -406,6 +432,8 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), LESSONS_PART4.len());
-        assert!(LESSONS_PART4.iter().all(|lesson| lesson.body.contains("Try:")));
+        assert!(LESSONS_PART4
+            .iter()
+            .all(|lesson| lesson.body.contains("Try:")));
     }
 }

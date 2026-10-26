@@ -361,17 +361,31 @@ test "math agent calculates sum" {
     },
 ];
 
+pub fn all_lessons() -> Vec<&'static Lesson> {
+    let mut out = Vec::with_capacity(60);
+    out.extend(LESSONS);
+    out.extend(crate::learn_part1::LESSONS_PART1);
+    out.extend(crate::learn_part2::LESSONS_PART2);
+    out.extend(crate::learn_part3::LESSONS_PART3);
+    out.extend(crate::learn_part4::LESSONS_PART4);
+    out
+}
+
 pub fn run(rest: &[String]) -> Result<(), String> {
+    let lessons = all_lessons();
     if rest.is_empty() {
-        println!("nudge learn - the language in seven lessons\n");
-        for l in LESSONS {
-            println!("  nudgec learn {:<8} {}", l.name, l.title);
+        println!(
+            "nudge learn - complete interactive language curriculum ({} lessons)\n",
+            lessons.len()
+        );
+        for l in &lessons {
+            println!("  nudgec learn {:<22} {}", l.name, l.title);
         }
         println!("\nstart with: nudgec learn hello");
         return Ok(());
     }
     let name = rest[0].as_str();
-    let lesson = LESSONS
+    let lesson = lessons
         .iter()
         .find(|l| l.name == name)
         .ok_or_else(|| format!("unknown lesson '{name}' — run `nudgec learn` for the list"))?;
@@ -421,6 +435,24 @@ mod tests {
     fn run_lists_and_shows_lessons() {
         assert!(run(&[]).is_ok());
         assert!(run(&["hello".to_string()]).is_ok());
+        assert!(run(&["primitives".to_string()]).is_ok());
+        assert!(run(&["structured_schemas".to_string()]).is_ok());
+        assert!(run(&["decide_syntax".to_string()]).is_ok());
+        assert!(run(&["a2a_agent_card".to_string()]).is_ok());
         assert!(run(&["nope".to_string()]).is_err());
+    }
+
+    #[test]
+    fn total_curriculum_contains_sixty_unique_lessons() {
+        let lessons = all_lessons();
+        assert_eq!(lessons.len(), 60);
+        let mut names: Vec<_> = lessons.iter().map(|l| l.name).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(
+            names.len(),
+            60,
+            "every lesson name across all parts must be unique"
+        );
     }
 }
