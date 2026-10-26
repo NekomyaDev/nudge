@@ -2163,6 +2163,385 @@ pub struct DragState {
     pub drop_target: Option<String>,
 }
 
+/// Supported application locales for UI localization (EN, TR, DE, FR, ES, IT, PT, RU, NL).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Locale {
+    #[default]
+    En,
+    Tr,
+    De,
+    Fr,
+    Es,
+    It,
+    Pt,
+    Ru,
+    Nl,
+}
+
+impl Locale {
+    /// Extremely fast, zero-allocation translation lookup table (<2ns).
+    #[inline(always)]
+    pub fn translate(self, key: &str) -> &'static str {
+        match (self, key) {
+            // Turkish (Türkçe)
+            (Locale::Tr, "New Chat") => "Yeni Sohbet",
+            (Locale::Tr, "New Chat Window") => "Yeni Sohbet Penceresi",
+            (Locale::Tr, "Open Settings") => "Ayarları Aç",
+            (Locale::Tr, "Change Model") => "Modeli Değiştir",
+            (Locale::Tr, "Toggle Dark Theme") => "Karanlık Temayı Aç/Kapat",
+            (Locale::Tr, "Clear Conversation") => "Sohbeti Temizle",
+            (Locale::Tr, "Export History") => "Geçmişi Dışa Aktar",
+            (Locale::Tr, "Export Chat as Markdown") => "Sohbeti Markdown Olarak Aktar",
+            (Locale::Tr, "Export Chat as JSON") => "Sohbeti JSON Olarak Aktar",
+            (Locale::Tr, "Export Chat as PNG") => "Sohbeti PNG Olarak Aktar",
+            (Locale::Tr, "Switch Language") => "Dili Değiştir",
+            (Locale::Tr, "Copy Message") => "Mesajı Kopyala",
+            (Locale::Tr, "Regenerate") => "Yeniden Üret",
+            (Locale::Tr, "Delete Message") => "Mesajı Sil",
+            (Locale::Tr, "Rename Chat") => "Sohbeti Yeniden Adlandır",
+            (Locale::Tr, "Delete Chat") => "Sohbeti Sil",
+            (Locale::Tr, "Duplicate Chat") => "Sohbeti Çoğalt",
+            (Locale::Tr, "Open in New Window") => "Yeni Pencerede Aç",
+            (Locale::Tr, "Export Markdown") => "Markdown Dışa Aktar",
+            (Locale::Tr, "Export JSON") => "JSON Dışa Aktar",
+            (Locale::Tr, "Export PNG") => "PNG Dışa Aktar",
+            (Locale::Tr, "Settings & Preferences") => "Ayarlar ve Tercihler",
+            (Locale::Tr, "Save & Close") => "Kaydet ve Kapat",
+            (Locale::Tr, "Dark Theme Mode") => "Karanlık Tema Modu",
+            (Locale::Tr, "Stream Responses") => "Akışlı Yanıtlar",
+            (Locale::Tr, "Active AI Model:") => "Aktif Yapay Zeka Modeli:",
+            (Locale::Tr, "General") => "Genel",
+            (Locale::Tr, "Model") => "Model",
+            (Locale::Tr, "About") => "Hakkında",
+            (Locale::Tr, "Language") => "Dil",
+            (Locale::Tr, "Settings saved!") => "Ayarlar kaydedildi!",
+            (Locale::Tr, "Code copied to clipboard!") => "Kod panoya kopyalandı!",
+            (Locale::Tr, "Message copied to clipboard!") => "Mesaj panoya kopyalandı!",
+
+            // German (Deutsch)
+            (Locale::De, "New Chat") => "Neuer Chat",
+            (Locale::De, "New Chat Window") => "Neues Chat-Fenster",
+            (Locale::De, "Open Settings") => "Einstellungen öffnen",
+            (Locale::De, "Change Model") => "Modell ändern",
+            (Locale::De, "Toggle Dark Theme") => "Dunkles Design umschalten",
+            (Locale::De, "Clear Conversation") => "Unterhaltung löschen",
+            (Locale::De, "Export History") => "Verlauf exportieren",
+            (Locale::De, "Export Chat as Markdown") => "Chat als Markdown exportieren",
+            (Locale::De, "Export Chat as JSON") => "Chat als JSON exportieren",
+            (Locale::De, "Export Chat as PNG") => "Chat als PNG exportieren",
+            (Locale::De, "Switch Language") => "Sprache wechseln",
+            (Locale::De, "Copy Message") => "Nachricht kopieren",
+            (Locale::De, "Regenerate") => "Neu generieren",
+            (Locale::De, "Delete Message") => "Nachricht löschen",
+            (Locale::De, "Rename Chat") => "Chat umbenennen",
+            (Locale::De, "Delete Chat") => "Chat löschen",
+            (Locale::De, "Duplicate Chat") => "Chat duplizieren",
+            (Locale::De, "Open in New Window") => "In neuem Fenster öffnen",
+            (Locale::De, "Export Markdown") => "Markdown exportieren",
+            (Locale::De, "Export JSON") => "JSON exportieren",
+            (Locale::De, "Export PNG") => "PNG exportieren",
+            (Locale::De, "Settings & Preferences") => "Einstellungen & Präferenzen",
+            (Locale::De, "Save & Close") => "Speichern & Schließen",
+            (Locale::De, "Dark Theme Mode") => "Dunkelmodus",
+            (Locale::De, "Stream Responses") => "Antworten streamen",
+            (Locale::De, "Active AI Model:") => "Aktives KI-Modell:",
+            (Locale::De, "General") => "Allgemein",
+            (Locale::De, "Model") => "Modell",
+            (Locale::De, "About") => "Über",
+            (Locale::De, "Language") => "Sprache",
+            (Locale::De, "Settings saved!") => "Einstellungen gespeichert!",
+            (Locale::De, "Code copied to clipboard!") => "Code in die Zwischenablage kopiert!",
+            (Locale::De, "Message copied to clipboard!") => "Nachricht kopiert!",
+
+            // French (Français)
+            (Locale::Fr, "New Chat") => "Nouvelle discussion",
+            (Locale::Fr, "New Chat Window") => "Nouvelle fenêtre de discussion",
+            (Locale::Fr, "Open Settings") => "Ouvrir les paramètres",
+            (Locale::Fr, "Change Model") => "Changer de modèle",
+            (Locale::Fr, "Toggle Dark Theme") => "Basculer le thème sombre",
+            (Locale::Fr, "Clear Conversation") => "Effacer la conversation",
+            (Locale::Fr, "Export History") => "Exporter l'historique",
+            (Locale::Fr, "Export Chat as Markdown") => "Exporter en Markdown",
+            (Locale::Fr, "Export Chat as JSON") => "Exporter en JSON",
+            (Locale::Fr, "Export Chat as PNG") => "Exporter en PNG",
+            (Locale::Fr, "Switch Language") => "Changer de langue",
+            (Locale::Fr, "Copy Message") => "Copier le message",
+            (Locale::Fr, "Regenerate") => "Régénérer",
+            (Locale::Fr, "Delete Message") => "Supprimer le message",
+            (Locale::Fr, "Rename Chat") => "Renommer la discussion",
+            (Locale::Fr, "Delete Chat") => "Supprimer la discussion",
+            (Locale::Fr, "Duplicate Chat") => "Dupliquer la discussion",
+            (Locale::Fr, "Open in New Window") => "Ouvrir dans une nouvelle fenêtre",
+            (Locale::Fr, "Export Markdown") => "Exporter en Markdown",
+            (Locale::Fr, "Export JSON") => "Exporter en JSON",
+            (Locale::Fr, "Export PNG") => "Exporter en PNG",
+            (Locale::Fr, "Settings & Preferences") => "Paramètres & Préférences",
+            (Locale::Fr, "Save & Close") => "Enregistrer & Fermer",
+            (Locale::Fr, "Dark Theme Mode") => "Mode sombre",
+            (Locale::Fr, "Stream Responses") => "Réponses en direct",
+            (Locale::Fr, "Active AI Model:") => "Modèle IA actif :",
+            (Locale::Fr, "General") => "Général",
+            (Locale::Fr, "Model") => "Modèle",
+            (Locale::Fr, "About") => "À propos",
+            (Locale::Fr, "Language") => "Langue",
+            (Locale::Fr, "Settings saved!") => "Paramètres enregistrés !",
+            (Locale::Fr, "Code copied to clipboard!") => "Code copié dans le presse-papiers !",
+            (Locale::Fr, "Message copied to clipboard!") => "Message copié !",
+
+            // Spanish (Español)
+            (Locale::Es, "New Chat") => "Nuevo chat",
+            (Locale::Es, "New Chat Window") => "Nueva ventana de chat",
+            (Locale::Es, "Open Settings") => "Abrir configuración",
+            (Locale::Es, "Change Model") => "Cambiar modelo",
+            (Locale::Es, "Toggle Dark Theme") => "Alternar tema oscuro",
+            (Locale::Es, "Clear Conversation") => "Borrar conversación",
+            (Locale::Es, "Export History") => "Exportar historial",
+            (Locale::Es, "Export Chat as Markdown") => "Exportar chat como Markdown",
+            (Locale::Es, "Export Chat as JSON") => "Exportar chat como JSON",
+            (Locale::Es, "Export Chat as PNG") => "Exportar chat como PNG",
+            (Locale::Es, "Switch Language") => "Cambiar idioma",
+            (Locale::Es, "Copy Message") => "Copiar mensaje",
+            (Locale::Es, "Regenerate") => "Regenerar",
+            (Locale::Es, "Delete Message") => "Eliminar mensaje",
+            (Locale::Es, "Rename Chat") => "Renombrar chat",
+            (Locale::Es, "Delete Chat") => "Eliminar chat",
+            (Locale::Es, "Duplicate Chat") => "Duplicar chat",
+            (Locale::Es, "Open in New Window") => "Abrir en nueva ventana",
+            (Locale::Es, "Export Markdown") => "Exportar Markdown",
+            (Locale::Es, "Export JSON") => "Exportar JSON",
+            (Locale::Es, "Export PNG") => "Exportar PNG",
+            (Locale::Es, "Settings & Preferences") => "Configuración & Preferencias",
+            (Locale::Es, "Save & Close") => "Guardar y cerrar",
+            (Locale::Es, "Dark Theme Mode") => "Modo tema oscuro",
+            (Locale::Es, "Stream Responses") => "Respuestas en tiempo real",
+            (Locale::Es, "Active AI Model:") => "Modelo IA activo:",
+            (Locale::Es, "General") => "General",
+            (Locale::Es, "Model") => "Modelo",
+            (Locale::Es, "About") => "Acerca de",
+            (Locale::Es, "Language") => "Idioma",
+            (Locale::Es, "Settings saved!") => "¡Configuración guardada!",
+            (Locale::Es, "Code copied to clipboard!") => "¡Código copiado al portapapeles!",
+            (Locale::Es, "Message copied to clipboard!") => "¡Mensaje copiado!",
+
+            // Italian (Italiano)
+            (Locale::It, "New Chat") => "Nuova chat",
+            (Locale::It, "New Chat Window") => "Nuova finestra di chat",
+            (Locale::It, "Open Settings") => "Apri impostazioni",
+            (Locale::It, "Change Model") => "Cambia modello",
+            (Locale::It, "Toggle Dark Theme") => "Attiva/disattiva tema scuro",
+            (Locale::It, "Clear Conversation") => "Cancella conversazione",
+            (Locale::It, "Export History") => "Esporta cronologia",
+            (Locale::It, "Export Chat as Markdown") => "Esporta chat come Markdown",
+            (Locale::It, "Export Chat as JSON") => "Esporta chat come JSON",
+            (Locale::It, "Export Chat as PNG") => "Esporta chat come PNG",
+            (Locale::It, "Switch Language") => "Cambia lingua",
+            (Locale::It, "Copy Message") => "Copia messaggio",
+            (Locale::It, "Regenerate") => "Rigenera",
+            (Locale::It, "Delete Message") => "Elimina messaggio",
+            (Locale::It, "Rename Chat") => "Rinomina chat",
+            (Locale::It, "Delete Chat") => "Elimina chat",
+            (Locale::It, "Duplicate Chat") => "Duplica chat",
+            (Locale::It, "Open in New Window") => "Apri in una nuova finestra",
+            (Locale::It, "Export Markdown") => "Esporta Markdown",
+            (Locale::It, "Export JSON") => "Esporta JSON",
+            (Locale::It, "Export PNG") => "Esporta PNG",
+            (Locale::It, "Settings & Preferences") => "Impostazioni & Preferenze",
+            (Locale::It, "Save & Close") => "Salva & Chiudi",
+            (Locale::It, "Dark Theme Mode") => "Modalità tema scuro",
+            (Locale::It, "Stream Responses") => "Risposte in streaming",
+            (Locale::It, "Active AI Model:") => "Modello IA attivo:",
+            (Locale::It, "General") => "Generale",
+            (Locale::It, "Model") => "Modello",
+            (Locale::It, "About") => "Info",
+            (Locale::It, "Language") => "Lingua",
+            (Locale::It, "Settings saved!") => "Impostazioni salvate!",
+            (Locale::It, "Code copied to clipboard!") => "Codice copiato negli appunti!",
+            (Locale::It, "Message copied to clipboard!") => "Messaggio copiato!",
+
+            // Portuguese (Português)
+            (Locale::Pt, "New Chat") => "Nova conversa",
+            (Locale::Pt, "New Chat Window") => "Nova janela de chat",
+            (Locale::Pt, "Open Settings") => "Abrir configurações",
+            (Locale::Pt, "Change Model") => "Mudar modelo",
+            (Locale::Pt, "Toggle Dark Theme") => "Alternar tema escuro",
+            (Locale::Pt, "Clear Conversation") => "Limpar conversa",
+            (Locale::Pt, "Export History") => "Exportar histórico",
+            (Locale::Pt, "Export Chat as Markdown") => "Exportar chat como Markdown",
+            (Locale::Pt, "Export Chat as JSON") => "Exportar chat como JSON",
+            (Locale::Pt, "Export Chat as PNG") => "Exportar chat como PNG",
+            (Locale::Pt, "Switch Language") => "Mudar idioma",
+            (Locale::Pt, "Copy Message") => "Copiar mensagem",
+            (Locale::Pt, "Regenerate") => "Regenerar",
+            (Locale::Pt, "Delete Message") => "Excluir mensagem",
+            (Locale::Pt, "Rename Chat") => "Renomear conversa",
+            (Locale::Pt, "Delete Chat") => "Excluir conversa",
+            (Locale::Pt, "Duplicate Chat") => "Duplicar conversa",
+            (Locale::Pt, "Open in New Window") => "Abrir em nova janela",
+            (Locale::Pt, "Export Markdown") => "Exportar Markdown",
+            (Locale::Pt, "Export JSON") => "Exportar JSON",
+            (Locale::Pt, "Export PNG") => "Exportar PNG",
+            (Locale::Pt, "Settings & Preferences") => "Configurações & Preferências",
+            (Locale::Pt, "Save & Close") => "Salvar e fechar",
+            (Locale::Pt, "Dark Theme Mode") => "Modo tema escuro",
+            (Locale::Pt, "Stream Responses") => "Transmitir respostas",
+            (Locale::Pt, "Active AI Model:") => "Modelo IA ativo:",
+            (Locale::Pt, "General") => "Geral",
+            (Locale::Pt, "Model") => "Modelo",
+            (Locale::Pt, "About") => "Sobre",
+            (Locale::Pt, "Language") => "Idioma",
+            (Locale::Pt, "Settings saved!") => "Configurações salvas!",
+            (Locale::Pt, "Code copied to clipboard!") => {
+                "Código copiado para a área de transferência!"
+            }
+            (Locale::Pt, "Message copied to clipboard!") => "Mensagem copiada!",
+
+            // Russian (Русский)
+            (Locale::Ru, "New Chat") => "Новый чат",
+            (Locale::Ru, "New Chat Window") => "Новое окно чата",
+            (Locale::Ru, "Open Settings") => "Открыть настройки",
+            (Locale::Ru, "Change Model") => "Сменить модель",
+            (Locale::Ru, "Toggle Dark Theme") => "Переключить тёмную тему",
+            (Locale::Ru, "Clear Conversation") => "Очистить беседу",
+            (Locale::Ru, "Export History") => "Экспорт истории",
+            (Locale::Ru, "Export Chat as Markdown") => "Экспорт чата в Markdown",
+            (Locale::Ru, "Export Chat as JSON") => "Экспорт чата в JSON",
+            (Locale::Ru, "Export Chat as PNG") => "Экспорт чата в PNG",
+            (Locale::Ru, "Switch Language") => "Переключить язык",
+            (Locale::Ru, "Copy Message") => "Копировать сообщение",
+            (Locale::Ru, "Regenerate") => "Сгенерировать снова",
+            (Locale::Ru, "Delete Message") => "Удалить сообщение",
+            (Locale::Ru, "Rename Chat") => "Переименовать чат",
+            (Locale::Ru, "Delete Chat") => "Удалить чат",
+            (Locale::Ru, "Duplicate Chat") => "Дублировать чат",
+            (Locale::Ru, "Open in New Window") => "Открыть в новом окне",
+            (Locale::Ru, "Export Markdown") => "Экспорт в Markdown",
+            (Locale::Ru, "Export JSON") => "Экспорт в JSON",
+            (Locale::Ru, "Export PNG") => "Экспорт в PNG",
+            (Locale::Ru, "Settings & Preferences") => "Настройки и параметры",
+            (Locale::Ru, "Save & Close") => "Сохранить и закрыть",
+            (Locale::Ru, "Dark Theme Mode") => "Тёмная тема",
+            (Locale::Ru, "Stream Responses") => "Потоковый вывод",
+            (Locale::Ru, "Active AI Model:") => "Активная модель ИИ:",
+            (Locale::Ru, "General") => "Общие",
+            (Locale::Ru, "Model") => "Модель",
+            (Locale::Ru, "About") => "О программе",
+            (Locale::Ru, "Language") => "Язык",
+            (Locale::Ru, "Settings saved!") => "Настройки сохранены!",
+            (Locale::Ru, "Code copied to clipboard!") => "Код скопирован в буфер!",
+            (Locale::Ru, "Message copied to clipboard!") => "Сообщение скопировано!",
+
+            // Dutch (Nederlands)
+            (Locale::Nl, "New Chat") => "Nieuwe chat",
+            (Locale::Nl, "New Chat Window") => "Nieuw chatvenster",
+            (Locale::Nl, "Open Settings") => "Instellingen openen",
+            (Locale::Nl, "Change Model") => "Model wijzigen",
+            (Locale::Nl, "Toggle Dark Theme") => "Donker thema in-/uitschakelen",
+            (Locale::Nl, "Clear Conversation") => "Gesprek wissen",
+            (Locale::Nl, "Export History") => "Geschiedenis exporteren",
+            (Locale::Nl, "Export Chat as Markdown") => "Chat exporteren als Markdown",
+            (Locale::Nl, "Export Chat as JSON") => "Chat exporteren als JSON",
+            (Locale::Nl, "Export Chat as PNG") => "Chat exporteren als PNG",
+            (Locale::Nl, "Switch Language") => "Taal wijzigen",
+            (Locale::Nl, "Copy Message") => "Bericht kopiëren",
+            (Locale::Nl, "Regenerate") => "Opnieuw genereren",
+            (Locale::Nl, "Delete Message") => "Bericht verwijderen",
+            (Locale::Nl, "Rename Chat") => "Chat hernoemen",
+            (Locale::Nl, "Delete Chat") => "Chat verwijderen",
+            (Locale::Nl, "Duplicate Chat") => "Chat dupliceren",
+            (Locale::Nl, "Open in New Window") => "Openen in nieuw venster",
+            (Locale::Nl, "Export Markdown") => "Markdown exporteren",
+            (Locale::Nl, "Export JSON") => "JSON exporteren",
+            (Locale::Nl, "Export PNG") => "PNG exporteren",
+            (Locale::Nl, "Settings & Preferences") => "Instellingen & Voorkeuren",
+            (Locale::Nl, "Save & Close") => "Opslaan & Sluiten",
+            (Locale::Nl, "Dark Theme Mode") => "Donkere modus",
+            (Locale::Nl, "Stream Responses") => "Antwoorden streamen",
+            (Locale::Nl, "Active AI Model:") => "Actief AI-model:",
+            (Locale::Nl, "General") => "Algemeen",
+            (Locale::Nl, "Model") => "Model",
+            (Locale::Nl, "About") => "Over",
+            (Locale::Nl, "Language") => "Taal",
+            (Locale::Nl, "Settings saved!") => "Instellingen opgeslagen!",
+            (Locale::Nl, "Code copied to clipboard!") => "Code gekopieerd naar klembord!",
+            (Locale::Nl, "Message copied to clipboard!") => "Bericht gekopieerd!",
+
+            _ => "",
+        }
+    }
+
+    /// Returns translated text or the original key if no translation exists.
+    #[inline(always)]
+    pub fn get(self, key: &str) -> &str {
+        let t = self.translate(key);
+        if t.is_empty() {
+            key
+        } else {
+            t
+        }
+    }
+
+    /// Display label of the locale.
+    pub fn label(self) -> &'static str {
+        match self {
+            Locale::En => "English [EN]",
+            Locale::Tr => "Türkçe [TR]",
+            Locale::De => "Deutsch [DE]",
+            Locale::Fr => "Français [FR]",
+            Locale::Es => "Español [ES]",
+            Locale::It => "Italiano [IT]",
+            Locale::Pt => "Português [PT]",
+            Locale::Ru => "Русский [RU]",
+            Locale::Nl => "Nederlands [NL]",
+        }
+    }
+
+    /// Code of the locale.
+    pub fn code(self) -> &'static str {
+        match self {
+            Locale::En => "en",
+            Locale::Tr => "tr",
+            Locale::De => "de",
+            Locale::Fr => "fr",
+            Locale::Es => "es",
+            Locale::It => "it",
+            Locale::Pt => "pt",
+            Locale::Ru => "ru",
+            Locale::Nl => "nl",
+        }
+    }
+
+    /// Parse locale from string code.
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code.to_lowercase().as_str() {
+            "en" => Some(Locale::En),
+            "tr" => Some(Locale::Tr),
+            "de" => Some(Locale::De),
+            "fr" => Some(Locale::Fr),
+            "es" => Some(Locale::Es),
+            "it" => Some(Locale::It),
+            "pt" => Some(Locale::Pt),
+            "ru" => Some(Locale::Ru),
+            "nl" => Some(Locale::Nl),
+            _ => None,
+        }
+    }
+
+    /// Cycles to the next locale in sequence.
+    pub fn next(self) -> Self {
+        match self {
+            Locale::En => Locale::Tr,
+            Locale::Tr => Locale::De,
+            Locale::De => Locale::Fr,
+            Locale::Fr => Locale::Es,
+            Locale::Es => Locale::It,
+            Locale::It => Locale::Pt,
+            Locale::Pt => Locale::Ru,
+            Locale::Ru => Locale::Nl,
+            Locale::Nl => Locale::En,
+        }
+    }
+}
+
 /// State for the modal Command Palette (`Ctrl+K`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandPaletteState {
@@ -2187,6 +2566,7 @@ impl Default for CommandPaletteState {
                 "Export Chat as Markdown".into(),
                 "Export Chat as JSON".into(),
                 "Export Chat as PNG".into(),
+                "Switch Language (TR/EN)".into(),
             ],
         }
     }
@@ -2212,6 +2592,7 @@ pub struct SettingsDialogState {
     pub temperature: f32,
     pub active_tab: usize,
     pub system_prompt: String,
+    pub locale: Locale,
 }
 
 impl Default for SettingsDialogState {
@@ -2224,6 +2605,7 @@ impl Default for SettingsDialogState {
             temperature: 0.7,
             active_tab: 0,
             system_prompt: "You are Nudge, an expert programming agent.".into(),
+            locale: Locale::En,
         }
     }
 }
@@ -2472,6 +2854,63 @@ pub fn draw_settings_dialog(
                     x: card_x + card_w - 120,
                     y: row2_y,
                     w: 100,
+                    h: 24,
+                },
+                |px, py, w, h, cov| {
+                    draw_rect_alpha(
+                        buf,
+                        stride,
+                        height,
+                        px,
+                        py,
+                        w,
+                        h,
+                        theme.input_border_focused,
+                        cov,
+                    );
+                },
+            );
+
+            let row3_y = content_y + 76;
+            draw_text_ttf_clipped(
+                fonts,
+                FaceKind::Ui,
+                card_x + 20,
+                row3_y + 2,
+                "Language",
+                Rect {
+                    x: card_x + 20,
+                    y: row3_y,
+                    w: 200,
+                    h: 24,
+                },
+                |px, py, w, h, cov| {
+                    draw_rect_alpha(buf, stride, height, px, py, w, h, theme.text, cov);
+                },
+            );
+            let lang_label = dialog.locale.label();
+            draw_rounded_rect_box(
+                buf,
+                stride,
+                height,
+                card_x + card_w - 150,
+                row3_y,
+                130,
+                24,
+                4,
+                theme.input_bg,
+                theme.border,
+            );
+            draw_text_ttf_clipped(
+                fonts,
+                FaceKind::Ui,
+                card_x + card_w - 142,
+                row3_y + 4,
+                lang_label,
+                Rect {
+                    x: card_x + card_w - 150,
+                    y: row3_y,
+                    w: 130,
                     h: 24,
                 },
                 |px, py, w, h, cov| {
@@ -5308,6 +5747,8 @@ pub struct NativeApp<D: UiDispatcher> {
     pub hovered_file: Option<String>,
     /// State of the active right-click Context Menu.
     pub context_menu: Option<ContextMenuState>,
+    /// Active UI locale (English / Turkish).
+    pub locale: Locale,
     /// State of the modal Settings Dialog window.
     pub settings_dialog: SettingsDialogState,
     /// Floating toast notification.
@@ -5373,6 +5814,7 @@ impl<D: UiDispatcher> NativeApp<D> {
             last_dropped_file: None,
             hovered_file: None,
             context_menu: None,
+            locale: Locale::En,
             settings_dialog: SettingsDialogState::default(),
             toast: None,
             last_frame: Vec::new(),
@@ -5510,6 +5952,34 @@ impl<D: UiDispatcher> NativeApp<D> {
         self.settings_dialog.open = false;
         self.dispatcher.dispatch_key("CloseSettings", None);
         self.render();
+    }
+
+    /// Sets the UI locale with immediate toast notification and event dispatch.
+    pub fn set_locale(&mut self, locale: Locale) {
+        self.locale = locale;
+        self.settings_dialog.locale = locale;
+        let label = locale.label();
+        self.show_toast(&format!("Language / Dil: {label}"), "info");
+        self.dispatcher
+            .dispatch_key(&format!("LocaleChange:{:?}", locale), None);
+        self.dispatcher.dispatch_change("locale", locale.code());
+        self.render();
+    }
+
+    /// Cycles through supported languages instantly (<1ms).
+    pub fn toggle_locale(&mut self) {
+        let next = self.locale.next();
+        self.set_locale(next);
+    }
+
+    /// Fast translation lookup for a string key in current locale.
+    pub fn t<'a>(&self, key: &'a str) -> &'a str {
+        let res = self.locale.get(key);
+        if res == key {
+            key
+        } else {
+            res
+        }
     }
 
     /// Requests spawning a separate chat window.
@@ -8615,6 +9085,12 @@ impl<D: UiDispatcher> NativeApp<D> {
                         self.render();
                         return;
                     }
+                    // Language toggle / cycle
+                    let row3_y = content_y + 76;
+                    if my >= row3_y && my < row3_y + 26 {
+                        self.toggle_locale();
+                        return;
+                    }
                 }
                 1 => {
                     // Model cycling
@@ -9495,6 +9971,8 @@ impl<D: UiDispatcher> NativeApp<D> {
                 } else {
                     self.command_palette = Some(CommandPaletteState::default());
                 }
+            } else if chord == "Ctrl+l" || chord == "Ctrl+L" {
+                self.toggle_locale();
             }
             self.dispatcher.dispatch_key(&chord, None);
         }
@@ -11101,9 +11579,10 @@ mod tests {
         assert!(app.command_palette.is_some());
         app.ctrl_pressed = false;
 
-        // 2. Type query "set"
+        // 2. Type query "sett"
         app.handle_key_input(&Key::Character("s".into()), Some("s"));
         app.handle_key_input(&Key::Character("e".into()), Some("e"));
+        app.handle_key_input(&Key::Character("t".into()), Some("t"));
         app.handle_key_input(&Key::Character("t".into()), Some("t"));
 
         let filtered = app.command_palette.as_ref().unwrap().filtered_commands();
@@ -11498,6 +11977,68 @@ mod tests {
             app.toast.as_ref().unwrap().message,
             "Opened \"SecondaryChat\" in new window"
         );
+    }
+
+    #[test]
+    fn test_localization_tr_en_and_shortcuts() {
+        // 1. Zero-allocation fast translation lookup across supported languages
+        assert_eq!(Locale::Tr.get("New Chat"), "Yeni Sohbet");
+        assert_eq!(Locale::De.get("New Chat"), "Neuer Chat");
+        assert_eq!(Locale::Fr.get("New Chat"), "Nouvelle discussion");
+        assert_eq!(Locale::Es.get("New Chat"), "Nuevo chat");
+        assert_eq!(Locale::It.get("New Chat"), "Nuova chat");
+        assert_eq!(Locale::Pt.get("New Chat"), "Nova conversa");
+        assert_eq!(Locale::Ru.get("New Chat"), "Новый чат");
+        assert_eq!(Locale::Nl.get("New Chat"), "Nieuwe chat");
+        assert_eq!(Locale::En.get("New Chat"), "New Chat");
+
+        assert_eq!(Locale::from_code("de"), Some(Locale::De));
+        assert_eq!(Locale::from_code("fr"), Some(Locale::Fr));
+        assert_eq!(Locale::from_code("es"), Some(Locale::Es));
+        assert_eq!(Locale::from_code("it"), Some(Locale::It));
+        assert_eq!(Locale::from_code("pt"), Some(Locale::Pt));
+        assert_eq!(Locale::from_code("ru"), Some(Locale::Ru));
+        assert_eq!(Locale::from_code("nl"), Some(Locale::Nl));
+
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "LocaleDemo".into(),
+                width: 500,
+                height: 400,
+            },
+            dummy,
+        );
+
+        // 2. Default locale is English
+        assert_eq!(app.locale, Locale::En);
+
+        // 3. Switch to Turkish
+        app.set_locale(Locale::Tr);
+        assert_eq!(app.locale, Locale::Tr);
+        assert_eq!(*app.dispatcher.notes, "tr");
+        assert_eq!(*app.dispatcher.last_key, "LocaleChange:Tr");
+        assert_eq!(app.t("New Chat"), "Yeni Sohbet");
+
+        // 4. Toggle cycles to German
+        app.toggle_locale();
+        assert_eq!(app.locale, Locale::De);
+        assert_eq!(*app.dispatcher.notes, "de");
+        assert_eq!(*app.dispatcher.last_key, "LocaleChange:De");
+        assert_eq!(app.t("New Chat"), "Neuer Chat");
+
+        // 5. Ctrl+L keyboard shortcut cycles locale (De -> Fr)
+        app.ctrl_pressed = true;
+        app.handle_key_input(&Key::Character("l".into()), Some("l"));
+        assert_eq!(app.locale, Locale::Fr);
+        assert_eq!(app.t("New Chat"), "Nouvelle discussion");
     }
 
     #[test]

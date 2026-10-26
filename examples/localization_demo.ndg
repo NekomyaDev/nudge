@@ -1,0 +1,112 @@
+// examples/localization_demo.ndg
+// Demonstrates ultra-fast multi-language localization (TR, EN, DE, FR, ES, IT, PT, RU, NL)
+// and unicode font character rendering.
+
+view LocaleDemo(locale_name: string, status_text: string) -> View {
+    column(padding = 24, gap = 14) [
+        text("Nudge Studio — Çoklu Dil ve Yerelleştirme / Multi-Language Localization"),
+        text("Karakter setleri: Türkçe (ç, ğ, ı, ö, ü, ş), Almanca (ä, ö, ü, ß), Fransızca (é, è, ç)"),
+        divider(),
+        status_line("Aktif Dil / Active Language: " + locale_name, status = "info"),
+        status_line("Durum / Status: " + status_text, status = "success"),
+        spacer(12),
+        text("Eylemler / Actions:"),
+        button("Dili Değiştir (Switch Language)", id = "btn_toggle_lang"),
+        bubble("Nudge Studio yerel masaüstü arayüzü doğrudan Linux framebuffer üzerine yüksek performansla çizilir.", role = "assistant", id = "tr_bubble")
+    ]
+}
+
+agent LocaleApp {
+    state {
+        lang: string = "English"
+        status: string = "Ready"
+    }
+
+    fn on_click(btn_id: string) uses UI {
+        if btn_id == "btn_toggle_lang" {
+            if state.lang == "English" {
+                state.lang = "Türkçe"
+                state.status = "Dil Türkçe olarak ayarlandı"
+            } else if state.lang == "Türkçe" {
+                state.lang = "Deutsch"
+                state.status = "Sprache auf Deutsch eingestellt"
+            } else if state.lang == "Deutsch" {
+                state.lang = "Français"
+                state.status = "Langue configurée en français"
+            } else {
+                state.lang = "English"
+                state.status = "Language set to English"
+            }
+        }
+    }
+
+    fn on_locale(key: string) uses UI {
+        if key == "LocaleChange:Tr" {
+            state.lang = "Türkçe"
+            state.status = "Dil Türkçe olarak ayarlandı"
+        } else if key == "LocaleChange:De" {
+            state.lang = "Deutsch"
+            state.status = "Sprache auf Deutsch eingestellt"
+        } else if key == "LocaleChange:Fr" {
+            state.lang = "Français"
+            state.status = "Langue configurée en français"
+        } else if key == "LocaleChange:En" {
+            state.lang = "English"
+            state.status = "Language set to English"
+        }
+    }
+
+    window MainWindow {
+        title: "Localization Demo",
+        width: 520,
+        height: 420,
+        content: LocaleDemo(state.lang, state.status)
+    }
+}
+
+fn main() uses UI {
+    LocaleApp.MainWindow.open()
+}
+
+test "ultra-fast localization and multi-language toggle" {
+    let app = LocaleApp.MainWindow.mount_headless()
+    assert LocaleApp.state.lang == "English"
+    assert app.translate("New Chat") == "New Chat"
+
+    // Switch to Turkish
+    app.set_locale("tr")
+    assert LocaleApp.state.lang == "Türkçe"
+    assert app.translate("New Chat") == "Yeni Sohbet"
+    assert app.translate("Open Settings") == "Ayarları Aç"
+    assert app.translate("Copy Message") == "Mesajı Kopyala"
+
+    // Switch to German
+    app.set_locale("de")
+    assert LocaleApp.state.lang == "Deutsch"
+    assert app.translate("New Chat") == "Neuer Chat"
+    assert app.translate("Open Settings") == "Einstellungen öffnen"
+
+    // Switch to French
+    app.set_locale("fr")
+    assert LocaleApp.state.lang == "Français"
+    assert app.translate("New Chat") == "Nouvelle discussion"
+    assert app.translate("Open Settings") == "Ouvrir les paramètres"
+
+    // Switch to Spanish
+    app.set_locale("es")
+    assert app.translate("New Chat") == "Nuevo chat"
+    assert app.translate("Open Settings") == "Abrir configuración"
+
+    // Switch to Italian
+    app.set_locale("it")
+    assert app.translate("New Chat") == "Nuova chat"
+
+    // Switch to Russian
+    app.set_locale("ru")
+    assert app.translate("New Chat") == "Новый чат"
+
+    // Switch back to English
+    app.set_locale("en")
+    assert LocaleApp.state.lang == "English"
+    assert app.translate("New Chat") == "New Chat"
+}

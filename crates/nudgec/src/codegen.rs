@@ -1299,6 +1299,7 @@ class _HeadlessApp:
         self.agent = agent
         self.root = render_fn() if callable(render_fn) else None
         self.windows = _WindowsList([self])
+        self.locale = "en"
 
     def find(self, target_id):
         if self.root:
@@ -1404,6 +1405,8 @@ class _HeadlessApp:
                 "on_settings_change",
                 "on_window",
                 "on_window_spawn",
+                "on_locale",
+                "on_locale_change",
             ):
                 fn = getattr(self.agent, fn_name, None)
                 if callable(fn):
@@ -1467,6 +1470,210 @@ class _HeadlessApp:
         self.dispatch_key(f"CloseWindow:{title}")
         self.dispatch_change("window_closed", title)
         self.windows = _WindowsList([w for w in self.windows if w.title != title])
+
+    def set_locale(self, locale_str):
+        """Simulate setting the active UI locale (default 'en', 'tr', 'de', 'fr', etc.)."""
+        self.locale = locale_str.lower()
+        loc_title = locale_str.capitalize()
+        self.dispatch_key(f"LocaleChange:{loc_title}")
+        self.dispatch_change("locale", self.locale)
+
+    def toggle_locale(self):
+        """Simulate cycling the active UI locale."""
+        locales = ["en", "tr", "de", "fr", "es", "it", "pt", "ru", "nl"]
+        curr = getattr(self, "locale", "en").lower()
+        if curr in locales:
+            idx = (locales.index(curr) + 1) % len(locales)
+            new_loc = locales[idx]
+        else:
+            new_loc = "en"
+        self.set_locale(new_loc)
+        return new_loc
+
+    def translate(self, text):
+        """Simulate fast translation lookup in current locale."""
+        loc = getattr(self, "locale", "en").lower()
+        dicts = {
+            "tr": {
+                "New Chat": "Yeni Sohbet",
+                "New Chat Window": "Yeni Sohbet Penceresi",
+                "Open Settings": "Ayarları Aç",
+                "Change Model": "Modeli Değiştir",
+                "Toggle Dark Theme": "Karanlık Temayı Aç/Kapat",
+                "Clear Conversation": "Sohbeti Temizle",
+                "Export History": "Geçmişi Dışa Aktar",
+                "Export Chat as Markdown": "Sohbeti Markdown Olarak Aktar",
+                "Export Chat as JSON": "Sohbeti JSON Olarak Aktar",
+                "Export Chat as PNG": "Sohbeti PNG Olarak Aktar",
+                "Switch Language": "Dili Değiştir",
+                "Copy Message": "Mesajı Kopyala",
+                "Regenerate": "Yeniden Üret",
+                "Delete Message": "Mesajı Sil",
+                "Settings & Preferences": "Ayarlar ve Tercihler",
+                "Save & Close": "Kaydet ve Kapat",
+                "General": "Genel",
+                "Model": "Model",
+                "About": "Hakkında",
+                "Language": "Dil",
+            },
+            "de": {
+                "New Chat": "Neuer Chat",
+                "New Chat Window": "Neues Chat-Fenster",
+                "Open Settings": "Einstellungen öffnen",
+                "Change Model": "Modell ändern",
+                "Toggle Dark Theme": "Dunkles Design umschalten",
+                "Clear Conversation": "Unterhaltung löschen",
+                "Export History": "Verlauf exportieren",
+                "Export Chat as Markdown": "Chat als Markdown exportieren",
+                "Export Chat as JSON": "Chat als JSON exportieren",
+                "Export Chat as PNG": "Chat als PNG exportieren",
+                "Switch Language": "Sprache wechseln",
+                "Copy Message": "Nachricht kopieren",
+                "Regenerate": "Neu generieren",
+                "Delete Message": "Nachricht löschen",
+                "Settings & Preferences": "Einstellungen & Präferenzen",
+                "Save & Close": "Speichern & Schließen",
+                "General": "Allgemein",
+                "Model": "Modell",
+                "About": "Über",
+                "Language": "Sprache",
+            },
+            "fr": {
+                "New Chat": "Nouvelle discussion",
+                "New Chat Window": "Nouvelle fenêtre de discussion",
+                "Open Settings": "Ouvrir les paramètres",
+                "Change Model": "Changer de modèle",
+                "Toggle Dark Theme": "Basculer le thème sombre",
+                "Clear Conversation": "Effacer la conversation",
+                "Export History": "Exporter l'historique",
+                "Export Chat as Markdown": "Exporter en Markdown",
+                "Export Chat as JSON": "Exporter en JSON",
+                "Export Chat as PNG": "Exporter en PNG",
+                "Switch Language": "Changer de langue",
+                "Copy Message": "Copier le message",
+                "Regenerate": "Régénérer",
+                "Delete Message": "Supprimer le message",
+                "Settings & Preferences": "Paramètres & Préférences",
+                "Save & Close": "Enregistrer & Fermer",
+                "General": "Général",
+                "Model": "Modèle",
+                "About": "À propos",
+                "Language": "Langue",
+            },
+            "es": {
+                "New Chat": "Nuevo chat",
+                "New Chat Window": "Nueva ventana de chat",
+                "Open Settings": "Abrir configuración",
+                "Change Model": "Cambiar modelo",
+                "Toggle Dark Theme": "Alternar tema oscuro",
+                "Clear Conversation": "Borrar conversación",
+                "Export History": "Exportar historial",
+                "Export Chat as Markdown": "Exportar chat como Markdown",
+                "Export Chat as JSON": "Exportar chat como JSON",
+                "Export Chat as PNG": "Exportar chat como PNG",
+                "Switch Language": "Cambiar idioma",
+                "Copy Message": "Copiar mensaje",
+                "Regenerate": "Regenerar",
+                "Delete Message": "Eliminar mensaje",
+                "Settings & Preferences": "Configuración & Preferencias",
+                "Save & Close": "Guardar y cerrar",
+                "General": "General",
+                "Model": "Modelo",
+                "About": "Acerca de",
+                "Language": "Idioma",
+            },
+            "it": {
+                "New Chat": "Nuova chat",
+                "New Chat Window": "Nuova finestra di chat",
+                "Open Settings": "Apri impostazioni",
+                "Change Model": "Cambia modello",
+                "Toggle Dark Theme": "Attiva/disattiva tema scuro",
+                "Clear Conversation": "Cancella conversazione",
+                "Export History": "Esporta cronologia",
+                "Export Chat as Markdown": "Esporta chat come Markdown",
+                "Export Chat as JSON": "Esporta chat come JSON",
+                "Export Chat as PNG": "Esporta chat come PNG",
+                "Switch Language": "Cambia lingua",
+                "Copy Message": "Copia messaggio",
+                "Regenerate": "Rigenera",
+                "Delete Message": "Elimina messaggio",
+                "Settings & Preferences": "Impostazioni & Preferenze",
+                "Save & Close": "Salva & Chiudi",
+                "General": "Generale",
+                "Model": "Modello",
+                "About": "Info",
+                "Language": "Lingua",
+            },
+            "pt": {
+                "New Chat": "Nova conversa",
+                "New Chat Window": "Nova janela de chat",
+                "Open Settings": "Abrir configurações",
+                "Change Model": "Mudar modelo",
+                "Toggle Dark Theme": "Alternar tema escuro",
+                "Clear Conversation": "Limpar conversa",
+                "Export History": "Exportar histórico",
+                "Export Chat as Markdown": "Exportar chat como Markdown",
+                "Export Chat as JSON": "Exportar chat como JSON",
+                "Export Chat as PNG": "Exportar chat como PNG",
+                "Switch Language": "Mudar idioma",
+                "Copy Message": "Copiar mensagem",
+                "Regenerate": "Regenerar",
+                "Delete Message": "Excluir mensagem",
+                "Settings & Preferences": "Configurações & Preferências",
+                "Save & Close": "Salvar e fechar",
+                "General": "Geral",
+                "Model": "Modelo",
+                "About": "Sobre",
+                "Language": "Idioma",
+            },
+            "ru": {
+                "New Chat": "Новый чат",
+                "New Chat Window": "Новое окно чата",
+                "Open Settings": "Открыть настройки",
+                "Change Model": "Сменить модель",
+                "Toggle Dark Theme": "Переключить тёмную тему",
+                "Clear Conversation": "Очистить беседу",
+                "Export History": "Экспорт истории",
+                "Export Chat as Markdown": "Экспорт чата в Markdown",
+                "Export Chat as JSON": "Экспорт чата в JSON",
+                "Export Chat as PNG": "Экспорт чата в PNG",
+                "Switch Language": "Переключить язык",
+                "Copy Message": "Копировать сообщение",
+                "Regenerate": "Сгенерировать снова",
+                "Delete Message": "Удалить сообщение",
+                "Settings & Preferences": "Настройки и параметры",
+                "Save & Close": "Сохранить и закрыть",
+                "General": "Общие",
+                "Model": "Модель",
+                "About": "О программе",
+                "Language": "Язык",
+            },
+            "nl": {
+                "New Chat": "Nieuwe chat",
+                "New Chat Window": "Nieuw chatvenster",
+                "Open Settings": "Instellingen openen",
+                "Change Model": "Model wijzigen",
+                "Toggle Dark Theme": "Donker thema in-/uitschakelen",
+                "Clear Conversation": "Gesprek wissen",
+                "Export History": "Geschiedenis exporteren",
+                "Export Chat as Markdown": "Chat exporteren als Markdown",
+                "Export Chat as JSON": "Chat exporteren als JSON",
+                "Export Chat as PNG": "Chat exporteren als PNG",
+                "Switch Language": "Taal wijzigen",
+                "Copy Message": "Bericht kopiëren",
+                "Regenerate": "Opnieuw genereren",
+                "Delete Message": "Bericht verwijderen",
+                "Settings & Preferences": "Instellingen & Voorkeuren",
+                "Save & Close": "Opslaan & Sluiten",
+                "General": "Algemeen",
+                "Model": "Model",
+                "About": "Over",
+                "Language": "Taal",
+            },
+        }
+        if loc in dicts:
+            return dicts[loc].get(text, text)
+        return text
 
     def paste(self, text, target_id=None):
         """Simulate pasting text, normalizing rich text and HTML into markdown."""
