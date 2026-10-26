@@ -198,3 +198,273 @@ fn extract_tab_name(t: string) -> string {
     }
     name
 }
+
+// ── Multi-Language Localization Engine (EN, TR, DE, FR, ES) ─────────
+
+fn tr_en(k: string) -> string {
+    let mut res = k
+    if k == "places" { res = "Places" }
+    if k == "home" { res = "Home" }
+    if k == "desktop" { res = "Desktop" }
+    if k == "documents" { res = "Documents" }
+    if k == "downloads" { res = "Downloads" }
+    if k == "music" { res = "Music" }
+    if k == "pictures" { res = "Pictures" }
+    if k == "videos" { res = "Videos" }
+    if k == "trash" { res = "Trash" }
+    if k == "remote" { res = "Remote" }
+    if k == "network" { res = "Network" }
+    if k == "recent" { res = "Recent" }
+    if k == "recent_files" { res = "Recent Files" }
+    if k == "recent_loc" { res = "Recent Locations" }
+    if k == "devices" { res = "Devices" }
+    if k == "root_system" { res = "Root System" }
+    if k == "icons" { res = "Icons" }
+    if k == "compact" { res = "Compact" }
+    if k == "details" { res = "Details" }
+    if k == "split" { res = "Split" }
+    if k == "close_split" { res = "Close Split" }
+    if k == "info" { res = "Info" }
+    if k == "hidden_on" { res = "• Hidden" }
+    if k == "hidden_off" { res = "• Normal" }
+    if k == "col_name" { res = "Name" }
+    if k == "col_size" { res = "Size" }
+    if k == "col_date" { res = "Modified" }
+    if k == "col_perm" { res = "Permissions" }
+    if k == "information" { res = "Information" }
+    if k == "lbl_name" { res = "Name:" }
+    if k == "lbl_type" { res = "Type:" }
+    if k == "folder" { res = "Folder" }
+    if k == "file" { res = "File" }
+    if k == "lbl_size" { res = "Size:" }
+    if k == "lbl_path" { res = "Path:" }
+    if k == "lbl_perm" { res = "Permissions:" }
+    if k == "no_item" { res = "No item selected" }
+    if k == "quick_actions" { res = "Quick Actions" }
+    if k == "act_open" { res = "Open" }
+    if k == "act_copy" { res = "Copy" }
+    if k == "act_new_folder" { res = "New Folder" }
+    if k == "act_delete" { res = "Delete" }
+    if k == "items" { res = "items" }
+    if k == "selected" { res = "selected" }
+    if k == "free" { res = "Free" }
+    res
+}
+
+fn tr_tr(k: string) -> string {
+    let mut res = k
+    if k == "places" { res = "Konumlar" }
+    if k == "home" { res = "Ev Dizini" }
+    if k == "desktop" { res = "Masaüstü" }
+    if k == "documents" { res = "Belgeler" }
+    if k == "downloads" { res = "İndirilenler" }
+    if k == "music" { res = "Müzik" }
+    if k == "pictures" { res = "Resimler" }
+    if k == "videos" { res = "Videolar" }
+    if k == "trash" { res = "Çöp Kutusu" }
+    if k == "remote" { res = "Uzak" }
+    if k == "network" { res = "Ağ" }
+    if k == "recent" { res = "Son" }
+    if k == "recent_files" { res = "Son Dosyalar" }
+    if k == "recent_loc" { res = "Son Konumlar" }
+    if k == "devices" { res = "Aygıtlar" }
+    if k == "root_system" { res = "Kök Sistem" }
+    if k == "icons" { res = "Simgeler" }
+    if k == "compact" { res = "Kompakt" }
+    if k == "details" { res = "Ayrıntılar" }
+    if k == "split" { res = "Böl" }
+    if k == "close_split" { res = "Bölmeyi Kapat" }
+    if k == "info" { res = "Bilgi" }
+    if k == "hidden_on" { res = "• Gizliler" }
+    if k == "hidden_off" { res = "• Normal" }
+    if k == "col_name" { res = "Ad" }
+    if k == "col_size" { res = "Boyut" }
+    if k == "col_date" { res = "Değiştirilme" }
+    if k == "col_perm" { res = "İzinler" }
+    if k == "information" { res = "Bilgi" }
+    if k == "lbl_name" { res = "Ad:" }
+    if k == "lbl_type" { res = "Tür:" }
+    if k == "folder" { res = "Klasör" }
+    if k == "file" { res = "Dosya" }
+    if k == "lbl_size" { res = "Boyut:" }
+    if k == "lbl_path" { res = "Konum:" }
+    if k == "lbl_perm" { res = "İzinler:" }
+    if k == "no_item" { res = "Öğe seçilmedi" }
+    if k == "quick_actions" { res = "Hızlı Eylemler" }
+    if k == "act_open" { res = "Aç" }
+    if k == "act_copy" { res = "Kopyala" }
+    if k == "act_new_folder" { res = "Yeni Klasör" }
+    if k == "act_delete" { res = "Sil" }
+    if k == "items" { res = "öğe" }
+    if k == "selected" { res = "seçildi" }
+    if k == "free" { res = "Boş" }
+    res
+}
+
+fn tr_de(k: string) -> string {
+    let mut res = k
+    if k == "places" { res = "Orte" }
+    if k == "home" { res = "Persönlicher Ordner" }
+    if k == "desktop" { res = "Schreibtisch" }
+    if k == "documents" { res = "Dokumente" }
+    if k == "downloads" { res = "Downloads" }
+    if k == "music" { res = "Musik" }
+    if k == "pictures" { res = "Bilder" }
+    if k == "videos" { res = "Videos" }
+    if k == "trash" { res = "Papierkorb" }
+    if k == "remote" { res = "Netzwerk" }
+    if k == "network" { res = "Netzwerk" }
+    if k == "recent" { res = "Zuletzt" }
+    if k == "recent_files" { res = "Zuletzt geöffnet" }
+    if k == "recent_loc" { res = "Zuletzt besuchte Orte" }
+    if k == "devices" { res = "Geräte" }
+    if k == "root_system" { res = "Wurzeldateisystem" }
+    if k == "icons" { res = "Symbole" }
+    if k == "compact" { res = "Kompakt" }
+    if k == "details" { res = "Details" }
+    if k == "split" { res = "Teilen" }
+    if k == "close_split" { res = "Schließen" }
+    if k == "info" { res = "Info" }
+    if k == "hidden_on" { res = "• Versteckt" }
+    if k == "hidden_off" { res = "• Normal" }
+    if k == "col_name" { res = "Name" }
+    if k == "col_size" { res = "Größe" }
+    if k == "col_date" { res = "Geändert" }
+    if k == "col_perm" { res = "Berechtigungen" }
+    if k == "information" { res = "Information" }
+    if k == "lbl_name" { res = "Name:" }
+    if k == "lbl_type" { res = "Typ:" }
+    if k == "folder" { res = "Ordner" }
+    if k == "file" { res = "Datei" }
+    if k == "lbl_size" { res = "Größe:" }
+    if k == "lbl_path" { res = "Pfad:" }
+    if k == "lbl_perm" { res = "Berechtigungen:" }
+    if k == "no_item" { res = "Kein Element ausgewählt" }
+    if k == "quick_actions" { res = "Aktionen" }
+    if k == "act_open" { res = "Öffnen" }
+    if k == "act_copy" { res = "Kopieren" }
+    if k == "act_new_folder" { res = "Neuer Ordner" }
+    if k == "act_delete" { res = "Löschen" }
+    if k == "items" { res = "Elemente" }
+    if k == "selected" { res = "ausgewählt" }
+    if k == "free" { res = "Frei" }
+    res
+}
+
+fn tr_fr(k: string) -> string {
+    let mut res = k
+    if k == "places" { res = "Emplacements" }
+    if k == "home" { res = "Dossier personnel" }
+    if k == "desktop" { res = "Bureau" }
+    if k == "documents" { res = "Documents" }
+    if k == "downloads" { res = "Téléchargements" }
+    if k == "music" { res = "Musique" }
+    if k == "pictures" { res = "Images" }
+    if k == "videos" { res = "Vidéos" }
+    if k == "trash" { res = "Corbeille" }
+    if k == "remote" { res = "Distant" }
+    if k == "network" { res = "Réseau" }
+    if k == "recent" { res = "Récents" }
+    if k == "recent_files" { res = "Fichiers récents" }
+    if k == "recent_loc" { res = "Emplacements récents" }
+    if k == "devices" { res = "Périphériques" }
+    if k == "root_system" { res = "Système racine" }
+    if k == "icons" { res = "Icônes" }
+    if k == "compact" { res = "Compact" }
+    if k == "details" { res = "Détails" }
+    if k == "split" { res = "Scinder" }
+    if k == "close_split" { res = "Fermer" }
+    if k == "info" { res = "Info" }
+    if k == "hidden_on" { res = "• Masqués" }
+    if k == "hidden_off" { res = "• Normal" }
+    if k == "col_name" { res = "Nom" }
+    if k == "col_size" { res = "Taille" }
+    if k == "col_date" { res = "Modifié" }
+    if k == "col_perm" { res = "Permissions" }
+    if k == "information" { res = "Informations" }
+    if k == "lbl_name" { res = "Nom :" }
+    if k == "lbl_type" { res = "Type :" }
+    if k == "folder" { res = "Dossier" }
+    if k == "file" { res = "Fichier" }
+    if k == "lbl_size" { res = "Taille :" }
+    if k == "lbl_path" { res = "Emplacement :" }
+    if k == "lbl_perm" { res = "Permissions :" }
+    if k == "no_item" { res = "Aucun élément sélectionné" }
+    if k == "quick_actions" { res = "Actions rapides" }
+    if k == "act_open" { res = "Ouvrir" }
+    if k == "act_copy" { res = "Copier" }
+    if k == "act_new_folder" { res = "Nouveau dossier" }
+    if k == "act_delete" { res = "Supprimer" }
+    if k == "items" { res = "éléments" }
+    if k == "selected" { res = "sélectionné" }
+    if k == "free" { res = "Libre" }
+    res
+}
+
+fn tr_es(k: string) -> string {
+    let mut res = k
+    if k == "places" { res = "Lugares" }
+    if k == "home" { res = "Carpeta personal" }
+    if k == "desktop" { res = "Escritorio" }
+    if k == "documents" { res = "Documentos" }
+    if k == "downloads" { res = "Descargas" }
+    if k == "music" { res = "Música" }
+    if k == "pictures" { res = "Imágenes" }
+    if k == "videos" { res = "Vídeos" }
+    if k == "trash" { res = "Papelera" }
+    if k == "remote" { res = "Remoto" }
+    if k == "network" { res = "Red" }
+    if k == "recent" { res = "Recientes" }
+    if k == "recent_files" { res = "Archivos recientes" }
+    if k == "recent_loc" { res = "Lugares recientes" }
+    if k == "devices" { res = "Dispositivos" }
+    if k == "root_system" { res = "Sistema raíz" }
+    if k == "icons" { res = "Iconos" }
+    if k == "compact" { res = "Compacto" }
+    if k == "details" { res = "Detalles" }
+    if k == "split" { res = "Dividir" }
+    if k == "close_split" { res = "Cerrar" }
+    if k == "info" { res = "Info" }
+    if k == "hidden_on" { res = "• Ocultos" }
+    if k == "hidden_off" { res = "• Normal" }
+    if k == "col_name" { res = "Nombre" }
+    if k == "col_size" { res = "Tamaño" }
+    if k == "col_date" { res = "Modificado" }
+    if k == "col_perm" { res = "Permisos" }
+    if k == "information" { res = "Información" }
+    if k == "lbl_name" { res = "Nombre:" }
+    if k == "lbl_type" { res = "Tipo:" }
+    if k == "folder" { res = "Carpeta" }
+    if k == "file" { res = "Archivo" }
+    if k == "lbl_size" { res = "Tamaño:" }
+    if k == "lbl_path" { res = "Ruta:" }
+    if k == "lbl_perm" { res = "Permisos:" }
+    if k == "no_item" { res = "Ningún elemento seleccionado" }
+    if k == "quick_actions" { res = "Acciones rápidas" }
+    if k == "act_open" { res = "Abrir" }
+    if k == "act_copy" { res = "Copiar" }
+    if k == "act_new_folder" { res = "Nueva carpeta" }
+    if k == "act_delete" { res = "Eliminar" }
+    if k == "items" { res = "elementos" }
+    if k == "selected" { res = "seleccionado" }
+    if k == "free" { res = "Libre" }
+    res
+}
+
+fn i18n(key: string, lang: string) -> string {
+    let mut out = key
+    if lang == "en" {
+        out = tr_en(key)
+    } else if lang == "tr" {
+        out = tr_tr(key)
+    } else if lang == "de" {
+        out = tr_de(key)
+    } else if lang == "fr" {
+        out = tr_fr(key)
+    } else if lang == "es" {
+        out = tr_es(key)
+    } else {
+        out = tr_en(key)
+    }
+    out
+}

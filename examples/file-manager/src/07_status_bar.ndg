@@ -10,27 +10,18 @@ view BottomStatusBar(
     selected_size: string,
     current_lang: string
 ) -> View {
-    let is_en = (current_lang == "en")
     let summary = if selected_name != "" {
-        if is_en {
-            "1 selected: " + selected_name + " (" + selected_size + ")"
-        } else {
-            "1 seçildi: " + selected_name + " (" + selected_size + ")"
-        }
+        "1 " + i18n("selected", current_lang) + ": " + selected_name + " (" + selected_size + ")"
     } else {
-        if is_en {
-            str.to_string(total_items) + " items (" + str.to_string(dir_count) + " folders, " + str.to_string(file_count) + " files)"
-        } else {
-            str.to_string(total_items) + " öğe (" + str.to_string(dir_count) + " klasör, " + str.to_string(file_count) + " dosya)"
-        }
+        str.to_string(total_items) + " " + i18n("items", current_lang) + " (" + str.to_string(dir_count) + " " + i18n("folder", current_lang) + ", " + str.to_string(file_count) + " " + i18n("file", current_lang) + ")"
     }
 
-    let zoom_text = if is_en { "Zoom: 100%" } else { "Yakınlaştırma: 100%" }
-    let free_text = if is_en { "4.0 TiB free" } else { "4,0 TiB boş" }
+    let zoom_text = "100%"
+    let free_text = "4.0 TiB " + i18n("free", current_lang)
 
     row(padding = 2, gap = 4, bg = "toolbar", expand = true) [
-        text(if is_en { "Filter:" } else { "Filtre:" }),
-        input(value = filter_query, placeholder = if is_en { "Filter..." } else { "Filtre..." }, id = "input_filter", w = 120, h = 22, on_change = on_filter_change),
+        text("Filter:"),
+        input(value = filter_query, placeholder = "Filter...", id = "input_filter", w = 120, h = 22, on_change = on_filter_change),
         button("✕", id = "btn_clear_filter", variant = "flat", w = 20, h = 22, on_click = clear_filter),
         divider(orientation = "vertical", size = 1, h = 18),
         text(summary),

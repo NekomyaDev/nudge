@@ -10,38 +10,37 @@ view InspectorPanel(
     preview_content: string,
     current_lang: string
 ) -> View {
-    let is_en = (current_lang == "en")
     column(padding = 4, gap = 2, w = 210, expand_h = true, bg = "sidebar") [
-        text(if is_en { "ℹ Information (F11)" } else { "ℹ Bilgi Paneli (F11)" }, bold = true),
+        text("ℹ " + i18n("information", current_lang) + " (F11)", bold = true),
         divider(size = 1),
         if selected_name != "" {
             column(padding = 2, gap = 2) [
                 text("▪ " + selected_name, bold = true),
-                text((if is_en { "Path: " } else { "Konum: " }) + selected_path),
-                text((if is_en { "Size: " } else { "Boyut: " }) + selected_size),
-                text((if is_en { "Perms: " } else { "İzin: " }) + selected_perms),
+                text(i18n("lbl_path", current_lang) + " " + selected_path),
+                text(i18n("lbl_size", current_lang) + " " + selected_size),
+                text(i18n("lbl_perm", current_lang) + " " + selected_perms),
                 row(padding = 0, gap = 2) [
                     text("CAS:"),
                     badge(selected_cas, status = "info")
                 ],
-                button(if is_en { "▸ Open Directory" } else { "▸ Klasörü Aç" }, id = "btn_open_selected_dir", variant = "toolbar", h = 24, on_click = open_selected_directory),
+                button("▸ " + i18n("act_open", current_lang), id = "btn_open_selected_dir", variant = "toolbar", h = 24, on_click = open_selected_directory),
                 row(padding = 0, gap = 4) [
-                    button(if is_en { "Copy" } else { "Kopyala" }, id = "btn_copy", variant = "toolbar", h = 24, on_click = copy_selected),
-                    button(if is_en { "Paste" } else { "Yapıştır" }, id = "btn_paste", variant = "toolbar", h = 24, on_click = paste_clipboard),
-                    button(if is_en { "✕ Delete" } else { "✕ Sil" }, id = "btn_delete", variant = "toolbar", h = 24, on_click = delete_selected)
+                    button(i18n("act_copy", current_lang), id = "btn_copy", variant = "toolbar", h = 24, on_click = copy_selected),
+                    button("Paste", id = "btn_paste", variant = "toolbar", h = 24, on_click = paste_clipboard),
+                    button("✕ " + i18n("act_delete", current_lang), id = "btn_delete", variant = "toolbar", h = 24, on_click = delete_selected)
                 ],
                 divider(size = 1),
-                text(if is_en { "Preview:" } else { "Önizleme:" }, bold = true),
+                text(i18n("information", current_lang) + ":", bold = true),
                 if preview_content != "" {
                     code_block(preview_content, id = "inspector_preview")
                 } else {
-                    text(if is_en { "(Folder or binary)" } else { "(Klasör veya ikili dosya)" })
+                    text("(" + i18n("folder", current_lang) + ")")
                 }
             ]
         } else {
             column(padding = 2, gap = 2) [
-                text(if is_en { "Select an item to inspect." } else { "İncelemek için bir öğe seçin." }),
-                button(if is_en { "▸ Open Directory" } else { "▸ Klasörü Aç" }, id = "btn_open_selected_dir", variant = "toolbar", h = 24, on_click = open_selected_directory)
+                text(i18n("no_item", current_lang)),
+                button("▸ " + i18n("act_open", current_lang), id = "btn_open_selected_dir", variant = "toolbar", h = 24, on_click = open_selected_directory)
             ]
         }
     ]

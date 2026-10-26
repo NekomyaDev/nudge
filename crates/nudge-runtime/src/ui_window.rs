@@ -8754,7 +8754,12 @@ impl<D: UiDispatcher> NativeApp<D> {
                             );
                             text_color = 0xFFFF_FFFF;
                         } else if hovered || hover_t > 0.05 {
-                            let hover_bg = if theme.is_dark() { 0xFF35_3B42 } else { 0xFFD8_DCDF };
+                            let (hover_bg, hover_border) = if variant == "folder_card" || variant == "file_card" {
+                                if theme.is_dark() { (0xFF35_3B42, 0xFF45_4D56) } else { (0xFFEBF3FB, 0xFFB0_D6F5) }
+                            } else {
+                                let c = if theme.is_dark() { 0xFF35_3B42 } else { 0xFFD8_DCDF };
+                                (c, c)
+                            };
                             draw_rounded_rect_box_clipped(
                                 &mut buffer,
                                 stride,
@@ -8766,23 +8771,7 @@ impl<D: UiDispatcher> NativeApp<D> {
                                 lbox.rect.h,
                                 CORNER_RADIUS,
                                 hover_bg,
-                                hover_bg,
-                            );
-                        } else if variant == "folder_card" || variant == "file_card" {
-                            // Subtle card border
-                            let card_border = if theme.is_dark() { 0xFF2A_2E32 } else { 0xFFE2_E6EA };
-                            draw_rounded_rect_box_clipped(
-                                &mut buffer,
-                                stride,
-                                h_usize,
-                                clip,
-                                rx,
-                                ry,
-                                lbox.rect.w,
-                                lbox.rect.h,
-                                CORNER_RADIUS,
-                                theme.bg,
-                                card_border,
+                                hover_border,
                             );
                         }
                     } else {

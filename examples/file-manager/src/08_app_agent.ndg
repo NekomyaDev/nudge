@@ -352,6 +352,12 @@ agent FileManagerApp {
     fn toggle_lang() uses UI {
         if state.current_lang == "en" {
             state.current_lang = "tr"
+        } else if state.current_lang == "tr" {
+            state.current_lang = "de"
+        } else if state.current_lang == "de" {
+            state.current_lang = "fr"
+        } else if state.current_lang == "fr" {
+            state.current_lang = "es"
         } else {
             state.current_lang = "en"
         }

@@ -33,13 +33,9 @@ view TopToolbar(
         button("✎", id = "btn_toggle_path_mode", variant = "flat", w = 24, h = 22, on_click = toggle_path_edit)
     ]
 
-    let is_en = (current_lang == "en")
-    let txt_new_folder = if is_en { "+ Folder" } else { "+ Klasör" }
-    let txt_copy = if is_en { "Copy" } else { "Kopyala" }
-    let txt_paste = if is_en { "Paste" } else { "Yapıştır" }
-    let txt_delete = if is_en { "✕ Delete" } else { "✕ Sil" }
-    let txt_split = if is_en { "◫ Split" } else { "◫ Böl" }
-    let txt_info = if is_en { "ℹ Info" } else { "ℹ Bilgi" }
+    let txt_new_folder = "+ " + i18n("folder", current_lang)
+    let txt_split = "◫ " + (if is_split { i18n("close_split", current_lang) } else { i18n("split", current_lang) })
+    let txt_info = "ℹ " + i18n("info", current_lang)
 
     row(padding = 4, gap = 4, bg = "toolbar", expand = true) [
         // 1. Navigation Actions (‹, ›, ▲)
@@ -52,7 +48,7 @@ view TopToolbar(
         // 2. Dynamic Breadcrumb Location Bar
         if edit_path_mode {
             row(padding = 1, gap = 2) [
-                input(value = current_path, placeholder = if is_en { "Enter path..." } else { "Yol girin..." }, id = "input_path", w = 260, h = 24, on_change = on_path_input_change),
+                input(value = current_path, placeholder = i18n("lbl_path", current_lang), id = "input_path", w = 260, h = 24, on_change = on_path_input_change),
                 button("✓", id = "btn_toggle_path_mode", variant = "toolbar", w = 26, h = 24, on_click = toggle_path_edit)
             ]
         } else {
@@ -78,8 +74,8 @@ view TopToolbar(
         // 5. Right Toolbar Controls (Split, Info, Hidden, Lang, Theme)
         button(txt_split, id = "btn_split_toggle", variant = "toolbar", h = 26, selected = is_split, on_click = toggle_split),
         button(txt_info, id = "btn_info_toggle", variant = "toolbar", h = 26, selected = show_inspector, on_click = toggle_inspector),
-        button(if show_hidden { "• Hidden" } else { "• Normal" }, id = "btn_toggle_hidden", variant = "toolbar", h = 26, selected = show_hidden, on_click = toggle_hidden_files),
-        button(if is_en { "TR" } else { "EN" }, id = "btn_lang_toggle", variant = "toolbar", w = 32, h = 26, on_click = toggle_lang),
+        button(if show_hidden { i18n("hidden_on", current_lang) } else { i18n("hidden_off", current_lang) }, id = "btn_toggle_hidden", variant = "toolbar", h = 26, selected = show_hidden, on_click = toggle_hidden_files),
+        button(str.upper(current_lang), id = "btn_lang_toggle", variant = "toolbar", w = 32, h = 26, on_click = toggle_lang),
         button(if current_theme == "breeze-light" { "☾" } else { "☼" }, id = "btn_theme_toggle", variant = "toolbar", w = 28, h = 26, on_click = toggle_theme)
     ]
 }

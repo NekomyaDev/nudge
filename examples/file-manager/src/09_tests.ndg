@@ -146,3 +146,34 @@ test "toggle hidden files reveals dotfiles" {
     app.dispatch_click("btn_toggle_hidden")
     assert !FileManagerApp.state.show_hidden
 }
+
+test "multi language localization toggles across all target locales" {
+    FileManagerApp.reset_state()
+    let app = FileManagerApp.MainWindow.mount_headless()
+    assert FileManagerApp.state.current_lang == "en"
+
+    // EN -> TR
+    app.dispatch_click("btn_lang_toggle")
+    assert FileManagerApp.state.current_lang == "tr"
+    assert i18n("home", FileManagerApp.state.current_lang) == "Ev Dizini"
+
+    // TR -> DE
+    app.dispatch_click("btn_lang_toggle")
+    assert FileManagerApp.state.current_lang == "de"
+    assert i18n("home", FileManagerApp.state.current_lang) == "Persönlicher Ordner"
+
+    // DE -> FR
+    app.dispatch_click("btn_lang_toggle")
+    assert FileManagerApp.state.current_lang == "fr"
+    assert i18n("home", FileManagerApp.state.current_lang) == "Dossier personnel"
+
+    // FR -> ES
+    app.dispatch_click("btn_lang_toggle")
+    assert FileManagerApp.state.current_lang == "es"
+    assert i18n("home", FileManagerApp.state.current_lang) == "Carpeta personal"
+
+    // ES -> EN
+    app.dispatch_click("btn_lang_toggle")
+    assert FileManagerApp.state.current_lang == "en"
+    assert i18n("home", FileManagerApp.state.current_lang) == "Home"
+}

@@ -198,6 +198,276 @@ fn extract_tab_name(t: string) -> string {
     }
     name
 }
+
+// ── Multi-Language Localization Engine (EN, TR, DE, FR, ES) ─────────
+
+fn tr_en(k: string) -> string {
+    let mut res = k
+    if k == "places" { res = "Places" }
+    if k == "home" { res = "Home" }
+    if k == "desktop" { res = "Desktop" }
+    if k == "documents" { res = "Documents" }
+    if k == "downloads" { res = "Downloads" }
+    if k == "music" { res = "Music" }
+    if k == "pictures" { res = "Pictures" }
+    if k == "videos" { res = "Videos" }
+    if k == "trash" { res = "Trash" }
+    if k == "remote" { res = "Remote" }
+    if k == "network" { res = "Network" }
+    if k == "recent" { res = "Recent" }
+    if k == "recent_files" { res = "Recent Files" }
+    if k == "recent_loc" { res = "Recent Locations" }
+    if k == "devices" { res = "Devices" }
+    if k == "root_system" { res = "Root System" }
+    if k == "icons" { res = "Icons" }
+    if k == "compact" { res = "Compact" }
+    if k == "details" { res = "Details" }
+    if k == "split" { res = "Split" }
+    if k == "close_split" { res = "Close Split" }
+    if k == "info" { res = "Info" }
+    if k == "hidden_on" { res = "• Hidden" }
+    if k == "hidden_off" { res = "• Normal" }
+    if k == "col_name" { res = "Name" }
+    if k == "col_size" { res = "Size" }
+    if k == "col_date" { res = "Modified" }
+    if k == "col_perm" { res = "Permissions" }
+    if k == "information" { res = "Information" }
+    if k == "lbl_name" { res = "Name:" }
+    if k == "lbl_type" { res = "Type:" }
+    if k == "folder" { res = "Folder" }
+    if k == "file" { res = "File" }
+    if k == "lbl_size" { res = "Size:" }
+    if k == "lbl_path" { res = "Path:" }
+    if k == "lbl_perm" { res = "Permissions:" }
+    if k == "no_item" { res = "No item selected" }
+    if k == "quick_actions" { res = "Quick Actions" }
+    if k == "act_open" { res = "Open" }
+    if k == "act_copy" { res = "Copy" }
+    if k == "act_new_folder" { res = "New Folder" }
+    if k == "act_delete" { res = "Delete" }
+    if k == "items" { res = "items" }
+    if k == "selected" { res = "selected" }
+    if k == "free" { res = "Free" }
+    res
+}
+
+fn tr_tr(k: string) -> string {
+    let mut res = k
+    if k == "places" { res = "Konumlar" }
+    if k == "home" { res = "Ev Dizini" }
+    if k == "desktop" { res = "Masaüstü" }
+    if k == "documents" { res = "Belgeler" }
+    if k == "downloads" { res = "İndirilenler" }
+    if k == "music" { res = "Müzik" }
+    if k == "pictures" { res = "Resimler" }
+    if k == "videos" { res = "Videolar" }
+    if k == "trash" { res = "Çöp Kutusu" }
+    if k == "remote" { res = "Uzak" }
+    if k == "network" { res = "Ağ" }
+    if k == "recent" { res = "Son" }
+    if k == "recent_files" { res = "Son Dosyalar" }
+    if k == "recent_loc" { res = "Son Konumlar" }
+    if k == "devices" { res = "Aygıtlar" }
+    if k == "root_system" { res = "Kök Sistem" }
+    if k == "icons" { res = "Simgeler" }
+    if k == "compact" { res = "Kompakt" }
+    if k == "details" { res = "Ayrıntılar" }
+    if k == "split" { res = "Böl" }
+    if k == "close_split" { res = "Bölmeyi Kapat" }
+    if k == "info" { res = "Bilgi" }
+    if k == "hidden_on" { res = "• Gizliler" }
+    if k == "hidden_off" { res = "• Normal" }
+    if k == "col_name" { res = "Ad" }
+    if k == "col_size" { res = "Boyut" }
+    if k == "col_date" { res = "Değiştirilme" }
+    if k == "col_perm" { res = "İzinler" }
+    if k == "information" { res = "Bilgi" }
+    if k == "lbl_name" { res = "Ad:" }
+    if k == "lbl_type" { res = "Tür:" }
+    if k == "folder" { res = "Klasör" }
+    if k == "file" { res = "Dosya" }
+    if k == "lbl_size" { res = "Boyut:" }
+    if k == "lbl_path" { res = "Konum:" }
+    if k == "lbl_perm" { res = "İzinler:" }
+    if k == "no_item" { res = "Öğe seçilmedi" }
+    if k == "quick_actions" { res = "Hızlı Eylemler" }
+    if k == "act_open" { res = "Aç" }
+    if k == "act_copy" { res = "Kopyala" }
+    if k == "act_new_folder" { res = "Yeni Klasör" }
+    if k == "act_delete" { res = "Sil" }
+    if k == "items" { res = "öğe" }
+    if k == "selected" { res = "seçildi" }
+    if k == "free" { res = "Boş" }
+    res
+}
+
+fn tr_de(k: string) -> string {
+    let mut res = k
+    if k == "places" { res = "Orte" }
+    if k == "home" { res = "Persönlicher Ordner" }
+    if k == "desktop" { res = "Schreibtisch" }
+    if k == "documents" { res = "Dokumente" }
+    if k == "downloads" { res = "Downloads" }
+    if k == "music" { res = "Musik" }
+    if k == "pictures" { res = "Bilder" }
+    if k == "videos" { res = "Videos" }
+    if k == "trash" { res = "Papierkorb" }
+    if k == "remote" { res = "Netzwerk" }
+    if k == "network" { res = "Netzwerk" }
+    if k == "recent" { res = "Zuletzt" }
+    if k == "recent_files" { res = "Zuletzt geöffnet" }
+    if k == "recent_loc" { res = "Zuletzt besuchte Orte" }
+    if k == "devices" { res = "Geräte" }
+    if k == "root_system" { res = "Wurzeldateisystem" }
+    if k == "icons" { res = "Symbole" }
+    if k == "compact" { res = "Kompakt" }
+    if k == "details" { res = "Details" }
+    if k == "split" { res = "Teilen" }
+    if k == "close_split" { res = "Schließen" }
+    if k == "info" { res = "Info" }
+    if k == "hidden_on" { res = "• Versteckt" }
+    if k == "hidden_off" { res = "• Normal" }
+    if k == "col_name" { res = "Name" }
+    if k == "col_size" { res = "Größe" }
+    if k == "col_date" { res = "Geändert" }
+    if k == "col_perm" { res = "Berechtigungen" }
+    if k == "information" { res = "Information" }
+    if k == "lbl_name" { res = "Name:" }
+    if k == "lbl_type" { res = "Typ:" }
+    if k == "folder" { res = "Ordner" }
+    if k == "file" { res = "Datei" }
+    if k == "lbl_size" { res = "Größe:" }
+    if k == "lbl_path" { res = "Pfad:" }
+    if k == "lbl_perm" { res = "Berechtigungen:" }
+    if k == "no_item" { res = "Kein Element ausgewählt" }
+    if k == "quick_actions" { res = "Aktionen" }
+    if k == "act_open" { res = "Öffnen" }
+    if k == "act_copy" { res = "Kopieren" }
+    if k == "act_new_folder" { res = "Neuer Ordner" }
+    if k == "act_delete" { res = "Löschen" }
+    if k == "items" { res = "Elemente" }
+    if k == "selected" { res = "ausgewählt" }
+    if k == "free" { res = "Frei" }
+    res
+}
+
+fn tr_fr(k: string) -> string {
+    let mut res = k
+    if k == "places" { res = "Emplacements" }
+    if k == "home" { res = "Dossier personnel" }
+    if k == "desktop" { res = "Bureau" }
+    if k == "documents" { res = "Documents" }
+    if k == "downloads" { res = "Téléchargements" }
+    if k == "music" { res = "Musique" }
+    if k == "pictures" { res = "Images" }
+    if k == "videos" { res = "Vidéos" }
+    if k == "trash" { res = "Corbeille" }
+    if k == "remote" { res = "Distant" }
+    if k == "network" { res = "Réseau" }
+    if k == "recent" { res = "Récents" }
+    if k == "recent_files" { res = "Fichiers récents" }
+    if k == "recent_loc" { res = "Emplacements récents" }
+    if k == "devices" { res = "Périphériques" }
+    if k == "root_system" { res = "Système racine" }
+    if k == "icons" { res = "Icônes" }
+    if k == "compact" { res = "Compact" }
+    if k == "details" { res = "Détails" }
+    if k == "split" { res = "Scinder" }
+    if k == "close_split" { res = "Fermer" }
+    if k == "info" { res = "Info" }
+    if k == "hidden_on" { res = "• Masqués" }
+    if k == "hidden_off" { res = "• Normal" }
+    if k == "col_name" { res = "Nom" }
+    if k == "col_size" { res = "Taille" }
+    if k == "col_date" { res = "Modifié" }
+    if k == "col_perm" { res = "Permissions" }
+    if k == "information" { res = "Informations" }
+    if k == "lbl_name" { res = "Nom :" }
+    if k == "lbl_type" { res = "Type :" }
+    if k == "folder" { res = "Dossier" }
+    if k == "file" { res = "Fichier" }
+    if k == "lbl_size" { res = "Taille :" }
+    if k == "lbl_path" { res = "Emplacement :" }
+    if k == "lbl_perm" { res = "Permissions :" }
+    if k == "no_item" { res = "Aucun élément sélectionné" }
+    if k == "quick_actions" { res = "Actions rapides" }
+    if k == "act_open" { res = "Ouvrir" }
+    if k == "act_copy" { res = "Copier" }
+    if k == "act_new_folder" { res = "Nouveau dossier" }
+    if k == "act_delete" { res = "Supprimer" }
+    if k == "items" { res = "éléments" }
+    if k == "selected" { res = "sélectionné" }
+    if k == "free" { res = "Libre" }
+    res
+}
+
+fn tr_es(k: string) -> string {
+    let mut res = k
+    if k == "places" { res = "Lugares" }
+    if k == "home" { res = "Carpeta personal" }
+    if k == "desktop" { res = "Escritorio" }
+    if k == "documents" { res = "Documentos" }
+    if k == "downloads" { res = "Descargas" }
+    if k == "music" { res = "Música" }
+    if k == "pictures" { res = "Imágenes" }
+    if k == "videos" { res = "Vídeos" }
+    if k == "trash" { res = "Papelera" }
+    if k == "remote" { res = "Remoto" }
+    if k == "network" { res = "Red" }
+    if k == "recent" { res = "Recientes" }
+    if k == "recent_files" { res = "Archivos recientes" }
+    if k == "recent_loc" { res = "Lugares recientes" }
+    if k == "devices" { res = "Dispositivos" }
+    if k == "root_system" { res = "Sistema raíz" }
+    if k == "icons" { res = "Iconos" }
+    if k == "compact" { res = "Compacto" }
+    if k == "details" { res = "Detalles" }
+    if k == "split" { res = "Dividir" }
+    if k == "close_split" { res = "Cerrar" }
+    if k == "info" { res = "Info" }
+    if k == "hidden_on" { res = "• Ocultos" }
+    if k == "hidden_off" { res = "• Normal" }
+    if k == "col_name" { res = "Nombre" }
+    if k == "col_size" { res = "Tamaño" }
+    if k == "col_date" { res = "Modificado" }
+    if k == "col_perm" { res = "Permisos" }
+    if k == "information" { res = "Información" }
+    if k == "lbl_name" { res = "Nombre:" }
+    if k == "lbl_type" { res = "Tipo:" }
+    if k == "folder" { res = "Carpeta" }
+    if k == "file" { res = "Archivo" }
+    if k == "lbl_size" { res = "Tamaño:" }
+    if k == "lbl_path" { res = "Ruta:" }
+    if k == "lbl_perm" { res = "Permisos:" }
+    if k == "no_item" { res = "Ningún elemento seleccionado" }
+    if k == "quick_actions" { res = "Acciones rápidas" }
+    if k == "act_open" { res = "Abrir" }
+    if k == "act_copy" { res = "Copiar" }
+    if k == "act_new_folder" { res = "Nueva carpeta" }
+    if k == "act_delete" { res = "Eliminar" }
+    if k == "items" { res = "elementos" }
+    if k == "selected" { res = "seleccionado" }
+    if k == "free" { res = "Libre" }
+    res
+}
+
+fn i18n(key: string, lang: string) -> string {
+    let mut out = key
+    if lang == "en" {
+        out = tr_en(key)
+    } else if lang == "tr" {
+        out = tr_tr(key)
+    } else if lang == "de" {
+        out = tr_de(key)
+    } else if lang == "fr" {
+        out = tr_fr(key)
+    } else if lang == "es" {
+        out = tr_es(key)
+    } else {
+        out = tr_en(key)
+    }
+    out
+}
 // examples/file-manager/src/02_vfs_bridge.ndg
 // In-Memory Virtual File System Bridge & Directory Inode Model
 
@@ -277,38 +547,37 @@ agent VfsBridge {
 // Places Sidebar Panel — Multi-Group Navigation (Places, Remote, Recent, Devices)
 
 view PlacesSidebar(current_path: string, current_lang: string) -> View {
-    let is_en = (current_lang == "en")
     let sidebar_items = [
-        // Group 1: Places (Konumlar)
-        text(if is_en { "Places" } else { "Konumlar" }, bold = true),
-        button(if is_en { "  ⌂  Home" } else { "  ⌂  Ev Dizini" }, id = "place_home", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/home/neko" or current_path == "." or current_path == ""), on_click = nav_home),
-        button(if is_en { "  ⌨  Desktop" } else { "  ⌨  Masaüstü" }, id = "place_desktop", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Masaüstü"), on_click = nav_desktop),
-        button(if is_en { "  ▪  Documents" } else { "  ▪  Belgeler" }, id = "place_docs", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Belgeler"), on_click = nav_docs),
-        button(if is_en { "  ⬇  Downloads" } else { "  ⬇  İndirilenler" }, id = "place_downloads", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "İndirilenler"), on_click = nav_downloads),
-        button(if is_en { "  ♪  Music" } else { "  ♪  Müzik" }, id = "place_music", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Müzik"), on_click = nav_music),
-        button(if is_en { "  ◇  Pictures" } else { "  ◇  Resimler" }, id = "place_pictures", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Resimler"), on_click = nav_pictures),
-        button(if is_en { "  ▶  Videos" } else { "  ▶  Videolar" }, id = "place_videos", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Videolar"), on_click = nav_videos),
-        button(if is_en { "  ✕  Trash" } else { "  ✕  Çöp" }, id = "place_trash", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Trash"), on_click = nav_trash),
+        // Group 1: Places
+        text(i18n("places", current_lang), bold = true),
+        button("  ⌂  " + i18n("home", current_lang), id = "place_home", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/home/neko" or current_path == "." or current_path == ""), on_click = nav_home),
+        button("  ⌨  " + i18n("desktop", current_lang), id = "place_desktop", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Masaüstü") or str.contains(current_path, "Desktop") or str.contains(current_path, "Schreibtisch"), on_click = nav_desktop),
+        button("  ▪  " + i18n("documents", current_lang), id = "place_docs", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Belgeler") or str.contains(current_path, "Documents") or str.contains(current_path, "Dokumente"), on_click = nav_docs),
+        button("  ⬇  " + i18n("downloads", current_lang), id = "place_downloads", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "İndirilenler") or str.contains(current_path, "Downloads"), on_click = nav_downloads),
+        button("  ♪  " + i18n("music", current_lang), id = "place_music", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Müzik") or str.contains(current_path, "Music") or str.contains(current_path, "Musik"), on_click = nav_music),
+        button("  ◇  " + i18n("pictures", current_lang), id = "place_pictures", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Resimler") or str.contains(current_path, "Pictures") or str.contains(current_path, "Bilder"), on_click = nav_pictures),
+        button("  ▶  " + i18n("videos", current_lang), id = "place_videos", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Videolar") or str.contains(current_path, "Videos"), on_click = nav_videos),
+        button("  ✕  " + i18n("trash", current_lang), id = "place_trash", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Trash") or str.contains(current_path, "Çöp"), on_click = nav_trash),
 
         divider(w = 158, size = 1),
 
-        // Group 2: Remote (Uzak)
-        text(if is_en { "Remote" } else { "Uzak" }, bold = true),
-        button(if is_en { "  ⊚  Network" } else { "  ⊚  Ağ" }, id = "place_network", variant = "item", align = "start", w = 158, h = 24, on_click = nav_root),
+        // Group 2: Remote
+        text(i18n("remote", current_lang), bold = true),
+        button("  ⊚  " + i18n("network", current_lang), id = "place_network", variant = "item", align = "start", w = 158, h = 24, on_click = nav_root),
 
         divider(w = 158, size = 1),
 
-        // Group 3: Recent (Son)
-        text(if is_en { "Recent" } else { "Son" }, bold = true),
-        button(if is_en { "  ◷  Recent Files" } else { "  ◷  Son Dosyalar" }, id = "place_recent_files", variant = "item", align = "start", w = 158, h = 24, on_click = nav_home),
-        button(if is_en { "  ◈  Recent Locations" } else { "  ◈  Son Konumlar" }, id = "place_recent_loc", variant = "item", align = "start", w = 158, h = 24, on_click = nav_docs),
+        // Group 3: Recent
+        text(i18n("recent", current_lang), bold = true),
+        button("  ◷  " + i18n("recent_files", current_lang), id = "place_recent_files", variant = "item", align = "start", w = 158, h = 24, on_click = nav_home),
+        button("  ◈  " + i18n("recent_loc", current_lang), id = "place_recent_loc", variant = "item", align = "start", w = 158, h = 24, on_click = nav_docs),
 
         divider(w = 158, size = 1),
 
-        // Group 4: Devices (Aygıtlar)
-        text(if is_en { "Devices" } else { "Aygıtlar" }, bold = true),
-        button(if is_en { "  ⛁  Root (/)" } else { "  ⛁  Kök Dizin (/)" }, id = "place_root", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/"), on_click = nav_root),
-        button(if is_en { "  ⚡  Temp (/tmp)" } else { "  ⚡  Geçici Bellek (/tmp)" }, id = "place_nvfs", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/tmp"), on_click = nav_nvfs)
+        // Group 4: Devices
+        text(i18n("devices", current_lang), bold = true),
+        button("  ⛁  " + i18n("root_system", current_lang), id = "place_root", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/"), on_click = nav_root),
+        button("  ⚡  Temp (/tmp)", id = "place_nvfs", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/tmp"), on_click = nav_nvfs)
     ]
 
     column(padding = 4, gap = 1, w = 170, expand_h = true, bg = "sidebar") [
@@ -321,7 +590,6 @@ view PlacesSidebar(current_path: string, current_lang: string) -> View {
 // ── View Mode 1: Details Table ──────────────────────────────────────
 
 view FileDetailsTable(panel_title: string, entries: [FileEntry], selected_name: string, current_lang: string) -> View {
-    let is_en = (current_lang == "en")
     let mut rows = []
     for item in entries {
         let is_sel = (item.name == selected_name)
@@ -345,9 +613,9 @@ view FileDetailsTable(panel_title: string, entries: [FileEntry], selected_name: 
 
     column(padding = 2, gap = 2, expand = true, expand_h = true) [
         row(padding = 2, gap = 2, bg = "toolbar", expand = true) [
-            button(if is_en { "  Name" } else { "  İsim" }, id = "sort_name", variant = "flat", align = "start", expand = true, h = 22, on_click = toggle_sort),
-            button(if is_en { "Size" } else { "Boyut" }, id = "sort_size", variant = "flat", align = "end", w = 80, h = 22, on_click = toggle_sort),
-            button(if is_en { "Permissions" } else { "İzinler" }, id = "sort_perms", variant = "flat", align = "start", w = 100, h = 22)
+            button("  " + i18n("col_name", current_lang), id = "sort_name", variant = "flat", align = "start", expand = true, h = 22, on_click = toggle_sort),
+            button(i18n("col_size", current_lang), id = "sort_size", variant = "flat", align = "end", w = 80, h = 22, on_click = toggle_sort),
+            button(i18n("col_perm", current_lang), id = "sort_perms", variant = "flat", align = "start", w = 100, h = 22)
         ],
         divider(size = 1),
         scroll(rows, id = "file_table_scroll", expand = true, padding = 1, gap = 2)
@@ -462,13 +730,9 @@ view TopToolbar(
         button("✎", id = "btn_toggle_path_mode", variant = "flat", w = 24, h = 22, on_click = toggle_path_edit)
     ]
 
-    let is_en = (current_lang == "en")
-    let txt_new_folder = if is_en { "+ Folder" } else { "+ Klasör" }
-    let txt_copy = if is_en { "Copy" } else { "Kopyala" }
-    let txt_paste = if is_en { "Paste" } else { "Yapıştır" }
-    let txt_delete = if is_en { "✕ Delete" } else { "✕ Sil" }
-    let txt_split = if is_en { "◫ Split" } else { "◫ Böl" }
-    let txt_info = if is_en { "ℹ Info" } else { "ℹ Bilgi" }
+    let txt_new_folder = "+ " + i18n("folder", current_lang)
+    let txt_split = "◫ " + (if is_split { i18n("close_split", current_lang) } else { i18n("split", current_lang) })
+    let txt_info = "ℹ " + i18n("info", current_lang)
 
     row(padding = 4, gap = 4, bg = "toolbar", expand = true) [
         // 1. Navigation Actions (‹, ›, ▲)
@@ -481,7 +745,7 @@ view TopToolbar(
         // 2. Dynamic Breadcrumb Location Bar
         if edit_path_mode {
             row(padding = 1, gap = 2) [
-                input(value = current_path, placeholder = if is_en { "Enter path..." } else { "Yol girin..." }, id = "input_path", w = 260, h = 24, on_change = on_path_input_change),
+                input(value = current_path, placeholder = i18n("lbl_path", current_lang), id = "input_path", w = 260, h = 24, on_change = on_path_input_change),
                 button("✓", id = "btn_toggle_path_mode", variant = "toolbar", w = 26, h = 24, on_click = toggle_path_edit)
             ]
         } else {
@@ -507,8 +771,8 @@ view TopToolbar(
         // 5. Right Toolbar Controls (Split, Info, Hidden, Lang, Theme)
         button(txt_split, id = "btn_split_toggle", variant = "toolbar", h = 26, selected = is_split, on_click = toggle_split),
         button(txt_info, id = "btn_info_toggle", variant = "toolbar", h = 26, selected = show_inspector, on_click = toggle_inspector),
-        button(if show_hidden { "• Hidden" } else { "• Normal" }, id = "btn_toggle_hidden", variant = "toolbar", h = 26, selected = show_hidden, on_click = toggle_hidden_files),
-        button(if is_en { "TR" } else { "EN" }, id = "btn_lang_toggle", variant = "toolbar", w = 32, h = 26, on_click = toggle_lang),
+        button(if show_hidden { i18n("hidden_on", current_lang) } else { i18n("hidden_off", current_lang) }, id = "btn_toggle_hidden", variant = "toolbar", h = 26, selected = show_hidden, on_click = toggle_hidden_files),
+        button(str.upper(current_lang), id = "btn_lang_toggle", variant = "toolbar", w = 32, h = 26, on_click = toggle_lang),
         button(if current_theme == "breeze-light" { "☾" } else { "☼" }, id = "btn_theme_toggle", variant = "toolbar", w = 28, h = 26, on_click = toggle_theme)
     ]
 }
@@ -545,38 +809,37 @@ view InspectorPanel(
     preview_content: string,
     current_lang: string
 ) -> View {
-    let is_en = (current_lang == "en")
     column(padding = 4, gap = 2, w = 210, expand_h = true, bg = "sidebar") [
-        text(if is_en { "ℹ Information (F11)" } else { "ℹ Bilgi Paneli (F11)" }, bold = true),
+        text("ℹ " + i18n("information", current_lang) + " (F11)", bold = true),
         divider(size = 1),
         if selected_name != "" {
             column(padding = 2, gap = 2) [
                 text("▪ " + selected_name, bold = true),
-                text((if is_en { "Path: " } else { "Konum: " }) + selected_path),
-                text((if is_en { "Size: " } else { "Boyut: " }) + selected_size),
-                text((if is_en { "Perms: " } else { "İzin: " }) + selected_perms),
+                text(i18n("lbl_path", current_lang) + " " + selected_path),
+                text(i18n("lbl_size", current_lang) + " " + selected_size),
+                text(i18n("lbl_perm", current_lang) + " " + selected_perms),
                 row(padding = 0, gap = 2) [
                     text("CAS:"),
                     badge(selected_cas, status = "info")
                 ],
-                button(if is_en { "▸ Open Directory" } else { "▸ Klasörü Aç" }, id = "btn_open_selected_dir", variant = "toolbar", h = 24, on_click = open_selected_directory),
+                button("▸ " + i18n("act_open", current_lang), id = "btn_open_selected_dir", variant = "toolbar", h = 24, on_click = open_selected_directory),
                 row(padding = 0, gap = 4) [
-                    button(if is_en { "Copy" } else { "Kopyala" }, id = "btn_copy", variant = "toolbar", h = 24, on_click = copy_selected),
-                    button(if is_en { "Paste" } else { "Yapıştır" }, id = "btn_paste", variant = "toolbar", h = 24, on_click = paste_clipboard),
-                    button(if is_en { "✕ Delete" } else { "✕ Sil" }, id = "btn_delete", variant = "toolbar", h = 24, on_click = delete_selected)
+                    button(i18n("act_copy", current_lang), id = "btn_copy", variant = "toolbar", h = 24, on_click = copy_selected),
+                    button("Paste", id = "btn_paste", variant = "toolbar", h = 24, on_click = paste_clipboard),
+                    button("✕ " + i18n("act_delete", current_lang), id = "btn_delete", variant = "toolbar", h = 24, on_click = delete_selected)
                 ],
                 divider(size = 1),
-                text(if is_en { "Preview:" } else { "Önizleme:" }, bold = true),
+                text(i18n("information", current_lang) + ":", bold = true),
                 if preview_content != "" {
                     code_block(preview_content, id = "inspector_preview")
                 } else {
-                    text(if is_en { "(Folder or binary)" } else { "(Klasör veya ikili dosya)" })
+                    text("(" + i18n("folder", current_lang) + ")")
                 }
             ]
         } else {
             column(padding = 2, gap = 2) [
-                text(if is_en { "Select an item to inspect." } else { "İncelemek için bir öğe seçin." }),
-                button(if is_en { "▸ Open Directory" } else { "▸ Klasörü Aç" }, id = "btn_open_selected_dir", variant = "toolbar", h = 24, on_click = open_selected_directory)
+                text(i18n("no_item", current_lang)),
+                button("▸ " + i18n("act_open", current_lang), id = "btn_open_selected_dir", variant = "toolbar", h = 24, on_click = open_selected_directory)
             ]
         }
     ]
@@ -593,27 +856,18 @@ view BottomStatusBar(
     selected_size: string,
     current_lang: string
 ) -> View {
-    let is_en = (current_lang == "en")
     let summary = if selected_name != "" {
-        if is_en {
-            "1 selected: " + selected_name + " (" + selected_size + ")"
-        } else {
-            "1 seçildi: " + selected_name + " (" + selected_size + ")"
-        }
+        "1 " + i18n("selected", current_lang) + ": " + selected_name + " (" + selected_size + ")"
     } else {
-        if is_en {
-            str.to_string(total_items) + " items (" + str.to_string(dir_count) + " folders, " + str.to_string(file_count) + " files)"
-        } else {
-            str.to_string(total_items) + " öğe (" + str.to_string(dir_count) + " klasör, " + str.to_string(file_count) + " dosya)"
-        }
+        str.to_string(total_items) + " " + i18n("items", current_lang) + " (" + str.to_string(dir_count) + " " + i18n("folder", current_lang) + ", " + str.to_string(file_count) + " " + i18n("file", current_lang) + ")"
     }
 
-    let zoom_text = if is_en { "Zoom: 100%" } else { "Yakınlaştırma: 100%" }
-    let free_text = if is_en { "4.0 TiB free" } else { "4,0 TiB boş" }
+    let zoom_text = "100%"
+    let free_text = "4.0 TiB " + i18n("free", current_lang)
 
     row(padding = 2, gap = 4, bg = "toolbar", expand = true) [
-        text(if is_en { "Filter:" } else { "Filtre:" }),
-        input(value = filter_query, placeholder = if is_en { "Filter..." } else { "Filtre..." }, id = "input_filter", w = 120, h = 22, on_change = on_filter_change),
+        text("Filter:"),
+        input(value = filter_query, placeholder = "Filter...", id = "input_filter", w = 120, h = 22, on_change = on_filter_change),
         button("✕", id = "btn_clear_filter", variant = "flat", w = 20, h = 22, on_click = clear_filter),
         divider(orientation = "vertical", size = 1, h = 18),
         text(summary),
@@ -1084,6 +1338,12 @@ agent FileManagerApp {
     fn toggle_lang() uses UI {
         if state.current_lang == "en" {
             state.current_lang = "tr"
+        } else if state.current_lang == "tr" {
+            state.current_lang = "de"
+        } else if state.current_lang == "de" {
+            state.current_lang = "fr"
+        } else if state.current_lang == "fr" {
+            state.current_lang = "es"
         } else {
             state.current_lang = "en"
         }
@@ -1395,4 +1655,35 @@ test "toggle hidden files reveals dotfiles" {
     assert count_hidden >= count_normal
     app.dispatch_click("btn_toggle_hidden")
     assert !FileManagerApp.state.show_hidden
+}
+
+test "multi language localization toggles across all target locales" {
+    FileManagerApp.reset_state()
+    let app = FileManagerApp.MainWindow.mount_headless()
+    assert FileManagerApp.state.current_lang == "en"
+
+    // EN -> TR
+    app.dispatch_click("btn_lang_toggle")
+    assert FileManagerApp.state.current_lang == "tr"
+    assert i18n("home", FileManagerApp.state.current_lang) == "Ev Dizini"
+
+    // TR -> DE
+    app.dispatch_click("btn_lang_toggle")
+    assert FileManagerApp.state.current_lang == "de"
+    assert i18n("home", FileManagerApp.state.current_lang) == "Persönlicher Ordner"
+
+    // DE -> FR
+    app.dispatch_click("btn_lang_toggle")
+    assert FileManagerApp.state.current_lang == "fr"
+    assert i18n("home", FileManagerApp.state.current_lang) == "Dossier personnel"
+
+    // FR -> ES
+    app.dispatch_click("btn_lang_toggle")
+    assert FileManagerApp.state.current_lang == "es"
+    assert i18n("home", FileManagerApp.state.current_lang) == "Carpeta personal"
+
+    // ES -> EN
+    app.dispatch_click("btn_lang_toggle")
+    assert FileManagerApp.state.current_lang == "en"
+    assert i18n("home", FileManagerApp.state.current_lang) == "Home"
 }

@@ -4,7 +4,6 @@
 // ── View Mode 1: Details Table ──────────────────────────────────────
 
 view FileDetailsTable(panel_title: string, entries: [FileEntry], selected_name: string, current_lang: string) -> View {
-    let is_en = (current_lang == "en")
     let mut rows = []
     for item in entries {
         let is_sel = (item.name == selected_name)
@@ -28,9 +27,9 @@ view FileDetailsTable(panel_title: string, entries: [FileEntry], selected_name: 
 
     column(padding = 2, gap = 2, expand = true, expand_h = true) [
         row(padding = 2, gap = 2, bg = "toolbar", expand = true) [
-            button(if is_en { "  Name" } else { "  İsim" }, id = "sort_name", variant = "flat", align = "start", expand = true, h = 22, on_click = toggle_sort),
-            button(if is_en { "Size" } else { "Boyut" }, id = "sort_size", variant = "flat", align = "end", w = 80, h = 22, on_click = toggle_sort),
-            button(if is_en { "Permissions" } else { "İzinler" }, id = "sort_perms", variant = "flat", align = "start", w = 100, h = 22)
+            button("  " + i18n("col_name", current_lang), id = "sort_name", variant = "flat", align = "start", expand = true, h = 22, on_click = toggle_sort),
+            button(i18n("col_size", current_lang), id = "sort_size", variant = "flat", align = "end", w = 80, h = 22, on_click = toggle_sort),
+            button(i18n("col_perm", current_lang), id = "sort_perms", variant = "flat", align = "start", w = 100, h = 22)
         ],
         divider(size = 1),
         scroll(rows, id = "file_table_scroll", expand = true, padding = 1, gap = 2)
