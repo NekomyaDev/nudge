@@ -185,11 +185,17 @@ agent CallGraph {
     state {
         edges: [GraphEdge] = []
         registered_callers: [string] = []
+        callees_map: Map[string, [string]] = {}
+        callers_map: Map[string, [string]] = {}
+        all_callees: [string] = []
     }
 
     fn reset_call_graph() {
         state.edges = []
         state.registered_callers = []
+        state.callees_map = {}
+        state.callers_map = {}
+        state.all_callees = []
     }
 
     fn add_edge(caller: string, callee: string, edge_kind: string, file_path: string) {
@@ -200,28 +206,34 @@ agent CallGraph {
             file_path: file_path
         }
         state.edges = state.edges + [edge]
+
+        if contains_str_item(state.registered_callers, caller) {
+            state.callees_map[caller] = state.callees_map[caller] + [callee]
+        } else {
+            state.callees_map[caller] = [callee]
+            state.registered_callers = state.registered_callers + [caller]
+        }
+
+        if contains_str_item(state.all_callees, callee) {
+            state.callers_map[callee] = state.callers_map[callee] + [caller]
+        } else {
+            state.callers_map[callee] = [caller]
+            state.all_callees = state.all_callees + [callee]
+        }
     }
 
     fn get_callers(callee: string) -> [string] {
         let mut callers: [string] = []
-        for e in state.edges {
-            if e.callee == callee {
-                if !contains_str_item(callers, e.caller) {
-                    callers = callers + [e.caller]
-                }
-            }
+        if contains_str_item(state.all_callees, callee) {
+            callers = state.callers_map[callee]
         }
         callers
     }
 
     fn get_callees(caller: string) -> [string] {
         let mut callees: [string] = []
-        for e in state.edges {
-            if e.caller == caller {
-                if !contains_str_item(callees, e.callee) {
-                    callees = callees + [e.callee]
-                }
-            }
+        if contains_str_item(state.registered_callers, caller) {
+            callees = state.callees_map[caller]
         }
         callees
     }

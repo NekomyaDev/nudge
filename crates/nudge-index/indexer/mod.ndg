@@ -71,27 +71,32 @@ agent CallGraph {
     state {
         edges: [GraphEdge] = []
         registered_callers: [string] = []
+        callees_map: Map[string, [string]] = {}
+        callers_map: Map[string, [string]] = {}
+        edge_keys: Map[string, bool] = {}
+        all_callees: [string] = []
+        all_edge_keys: [string] = []
     }
 
     fn reset_graph() {
         state.edges = []
         state.registered_callers = []
+        state.callees_map = {}
+        state.callers_map = {}
+        state.edge_keys = {}
+        state.all_callees = []
+        state.all_edge_keys = []
     }
 
     fn has_edge(caller: string, callee: string) -> bool {
-        let mut exists = false
-        for e in state.edges {
-            if e.caller == caller and e.callee == callee {
-                exists = true
-            }
-        }
-        exists
+        let k = caller + "->" + callee
+        contains_item(state.all_edge_keys, k)
     }
 
     fn add_dependency(caller: string, callee: string, edge_kind: string, file_path: string) -> bool {
-        let already = CallGraph.has_edge(caller, callee)
+        let k = caller + "->" + callee
         let mut added = false
-        if !already {
+        if !contains_item(state.all_edge_keys, k) {
             let edge: GraphEdge = {
                 caller: caller,
                 callee: callee,
@@ -99,50 +104,85 @@ agent CallGraph {
                 file_path: file_path
             }
             state.edges = state.edges + [edge]
-            if !contains_item(state.registered_callers, caller) {
+            state.edge_keys[k] = true
+            state.all_edge_keys = state.all_edge_keys + [k]
+
+            if contains_item(state.registered_callers, caller) {
+                state.callees_map[caller] = state.callees_map[caller] + [callee]
+            } else {
+                state.callees_map[caller] = [callee]
                 state.registered_callers = state.registered_callers + [caller]
             }
+
+            if contains_item(state.all_callees, callee) {
+                state.callers_map[callee] = state.callers_map[callee] + [caller]
+            } else {
+                state.callers_map[callee] = [caller]
+                state.all_callees = state.all_callees + [callee]
+            }
+
             added = true
         }
         added
     }
 
     fn remove_caller_edges(caller: string) -> int {
-        let mut remaining: [GraphEdge] = []
+        let mut remaining_edges: [GraphEdge] = []
         let mut removed = 0
+
         for e in state.edges {
             if e.caller == caller {
                 removed = removed + 1
             } else {
-                remaining = remaining + [e]
+                remaining_edges = remaining_edges + [e]
             }
         }
-        state.edges = remaining
+        state.edges = remaining_edges
+
+        state.registered_callers = []
+        state.all_callees = []
+        state.all_edge_keys = []
+        state.callees_map = {}
+        state.callers_map = {}
+        state.edge_keys = {}
+
+        for e in state.edges {
+            let k = e.caller + "->" + e.callee
+            state.edge_keys[k] = true
+            state.all_edge_keys = state.all_edge_keys + [k]
+
+            if contains_item(state.registered_callers, e.caller) {
+                state.callees_map[e.caller] = state.callees_map[e.caller] + [e.callee]
+            } else {
+                state.callees_map[e.caller] = [e.callee]
+                state.registered_callers = state.registered_callers + [e.caller]
+            }
+
+            if contains_item(state.all_callees, e.callee) {
+                state.callers_map[e.callee] = state.callers_map[e.callee] + [e.caller]
+            } else {
+                state.callers_map[e.callee] = [e.caller]
+                state.all_callees = state.all_callees + [e.callee]
+            }
+        }
+
         removed
     }
 
     fn get_callees(caller: string) -> [string] {
-        let mut callees: [string] = []
-        for e in state.edges {
-            if e.caller == caller {
-                if !contains_item(callees, e.callee) {
-                    callees = callees + [e.callee]
-                }
-            }
+        let mut res: [string] = []
+        if contains_item(state.registered_callers, caller) {
+            res = state.callees_map[caller]
         }
-        callees
+        res
     }
 
     fn get_callers(callee: string) -> [string] {
-        let mut callers: [string] = []
-        for e in state.edges {
-            if e.callee == callee {
-                if !contains_item(callers, e.caller) {
-                    callers = callers + [e.caller]
-                }
-            }
+        let mut res: [string] = []
+        if contains_item(state.all_callees, callee) {
+            res = state.callers_map[callee]
         }
-        callers
+        res
     }
 
     fn compute_blast_radius(root_symbol: string, max_depth: int) -> BlastRadiusReport {

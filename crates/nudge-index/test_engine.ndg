@@ -192,22 +192,34 @@ agent EngineSymbolTable {
 agent EngineCallGraph {
     state {
         edges: [EngineEdge] = []
+        callers_map: Map[string, [string]] = {}
+        edge_keys: Map[string, bool] = {}
+        all_callees: [string] = []
+        all_edge_keys: [string] = []
     }
 
     fn cg_clear() {
         state.edges = []
+        state.callers_map = {}
+        state.edge_keys = {}
+        state.all_callees = []
+        state.all_edge_keys = []
     }
 
     fn cg_add_edge(caller: string, callee: string, path: string) {
-        let mut exists = false
-        for e in state.edges {
-            if e.caller == caller and e.callee == callee {
-                exists = true
-            }
-        }
-        if !exists {
+        let k = caller + "->" + callee
+        if !contains_test_str(state.all_edge_keys, k) {
             let edge: EngineEdge = { caller: caller, callee: callee, file_path: path }
             state.edges = state.edges + [edge]
+            state.edge_keys[k] = true
+            state.all_edge_keys = state.all_edge_keys + [k]
+
+            if contains_test_str(state.all_callees, callee) {
+                state.callers_map[callee] = state.callers_map[callee] + [caller]
+            } else {
+                state.callers_map[callee] = [caller]
+                state.all_callees = state.all_callees + [callee]
+            }
         }
     }
 
@@ -219,16 +231,29 @@ agent EngineCallGraph {
             }
         }
         state.edges = remaining
+        state.callers_map = {}
+        state.edge_keys = {}
+        state.all_callees = []
+        state.all_edge_keys = []
+
+        for e in state.edges {
+            let k = e.caller + "->" + e.callee
+            state.edge_keys[k] = true
+            state.all_edge_keys = state.all_edge_keys + [k]
+
+            if contains_test_str(state.all_callees, e.callee) {
+                state.callers_map[e.callee] = state.callers_map[e.callee] + [e.caller]
+            } else {
+                state.callers_map[e.callee] = [e.caller]
+                state.all_callees = state.all_callees + [e.callee]
+            }
+        }
     }
 
     fn cg_get_callers(callee: string) -> [string] {
         let mut callers: [string] = []
-        for e in state.edges {
-            if e.callee == callee {
-                if !contains_test_str(callers, e.caller) {
-                    callers = callers + [e.caller]
-                }
-            }
+        if contains_test_str(state.all_callees, callee) {
+            callers = state.callers_map[callee]
         }
         callers
     }
