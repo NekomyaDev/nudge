@@ -1,0 +1,394 @@
+// Pure .ndg DOM Construction and CSS Selector Query Engine
+// Part of Phase F3.1 and F3.2 (docs/browser-roadmap.md)
+
+type DomNode = {
+    ref: int,
+    index: int,
+    tag: string,
+    id: string,
+    classes: [string],
+    role: string,
+    name: string,
+    title: string,
+    value: string,
+    href: string,
+    text: string,
+    attrs: [HtmlAttr],
+    children: [int],
+    parent: int,
+    clickable: bool,
+    editable: bool,
+    enabled: bool
+}
+
+type DomTree = {
+    nodes: [DomNode],
+    root_ref: int
+}
+
+fn get_attr_value(attrs: [HtmlAttr], key: string, fallback: string) -> string {
+    let mut res = fallback
+    for a in attrs {
+        if a.name == key {
+            res = a.value
+        }
+    }
+    res
+}
+
+fn has_attr(attrs: [HtmlAttr], key: string) -> bool {
+    let mut found = false
+    for a in attrs {
+        if a.name == key {
+            found = true
+        }
+    }
+    found
+}
+
+fn infer_role(tag: string, attrs: [HtmlAttr]) -> string {
+    let explicit_role = get_attr_value(attrs, "role", "")
+    let mut r = tag
+    if explicit_role != "" {
+        r = explicit_role
+    } else if tag == "a" and has_attr(attrs, "href") {
+        r = "link"
+    } else if tag == "button" {
+        r = "button"
+    } else if tag == "input" {
+        let t = str.lower(get_attr_value(attrs, "type", "text"))
+        if t == "button" or t == "submit" or t == "reset" {
+            r = "button"
+        } else if t == "checkbox" {
+            r = "checkbox"
+        } else if t == "radio" {
+            r = "radio"
+        } else {
+            r = "textbox"
+        }
+    } else if tag == "textarea" {
+        r = "textbox"
+    } else if tag == "select" {
+        r = "combobox"
+    } else if tag == "h1" or tag == "h2" or tag == "h3" or tag == "h4" or tag == "h5" or tag == "h6" {
+        r = "heading"
+    } else if tag == "img" {
+        r = "image"
+    } else if tag == "form" {
+        r = "form"
+    } else if tag == "ul" or tag == "ol" {
+        r = "list"
+    } else if tag == "li" {
+        r = "listitem"
+    } else if tag == "nav" {
+        r = "navigation"
+    } else if tag == "main" {
+        r = "main"
+    }
+    r
+}
+
+fn infer_clickable(tag: string, role: string, attrs: [HtmlAttr]) -> bool {
+    role == "button" or role == "link" or role == "checkbox" or role == "radio" or role == "combobox" or has_attr(attrs, "onclick") or has_attr(attrs, "href")
+}
+
+fn infer_editable(role: string) -> bool {
+    role == "textbox"
+}
+
+fn parse_classes(class_str: string) -> [string] {
+    let parts = str.split(class_str, " ")
+    let mut out: [string] = []
+    for p in parts {
+        let c = str.trim(p)
+        if c != "" {
+            out = out + [c]
+        }
+    }
+    out
+}
+
+fn build_dom_tree(tokens: [HtmlToken]) -> DomTree {
+    let mut nodes: [DomNode] = []
+    let mut parent_refs: [int] = []
+    let mut next_ref = 1
+    let mut idx = 0
+
+    for tok in tokens {
+        if tok.kind == "text" {
+            // Append text to the current parent if any
+            if len(parent_refs) > 0 {
+                let p_ref = parent_refs[len(parent_refs) - 1]
+                let mut p_idx = 0
+                for (n, i) in nodes {
+                    if n.ref == p_ref {
+                        p_idx = i
+                    }
+                }
+                let cur = nodes[p_idx]
+                let new_text = if cur.text == "" { tok.text } else { cur.text + " " + tok.text }
+                nodes[p_idx] = {
+                    ref: cur.ref,
+                    index: cur.index,
+                    tag: cur.tag,
+                    id: cur.id,
+                    classes: cur.classes,
+                    role: cur.role,
+                    name: if cur.name == "" { new_text } else { cur.name },
+                    title: cur.title,
+                    value: cur.value,
+                    href: cur.href,
+                    text: new_text,
+                    attrs: cur.attrs,
+                    children: cur.children,
+                    parent: cur.parent,
+                    clickable: cur.clickable,
+                    editable: cur.editable,
+                    enabled: cur.enabled
+                }
+            }
+        } else if tok.kind == "start" or tok.kind == "self_closing" {
+            let role = infer_role(tok.tag, tok.attrs)
+            let clickable = infer_clickable(tok.tag, role, tok.attrs)
+            let editable = infer_editable(role)
+            let id = get_attr_value(tok.attrs, "id", "")
+            let class_str = get_attr_value(tok.attrs, "class", "")
+            let classes = parse_classes(class_str)
+            let title = get_attr_value(tok.attrs, "title", "")
+            let name_attr = get_attr_value(tok.attrs, "name", "")
+            let aria_label = get_attr_value(tok.attrs, "aria-label", "")
+            let name = if aria_label != "" { aria_label } else if name_attr != "" { name_attr } else { title }
+            let val = get_attr_value(tok.attrs, "value", "")
+            let href = get_attr_value(tok.attrs, "href", "")
+            let disabled = has_attr(tok.attrs, "disabled")
+            let p_ref = if len(parent_refs) > 0 { parent_refs[len(parent_refs) - 1] } else { -1 }
+
+            let cur_ref = next_ref
+            next_ref = next_ref + 1
+
+            let node = {
+                ref: cur_ref,
+                index: idx,
+                tag: tok.tag,
+                id: id,
+                classes: classes,
+                role: role,
+                name: name,
+                title: title,
+                value: val,
+                href: href,
+                text: "",
+                attrs: tok.attrs,
+                children: [],
+                parent: p_ref,
+                clickable: clickable,
+                editable: editable,
+                enabled: !disabled
+            }
+            idx = idx + 1
+            nodes = nodes + [node]
+
+            // Link to parent
+            if p_ref >= 0 {
+                let mut p_idx = 0
+                for (n, i) in nodes {
+                    if n.ref == p_ref {
+                        p_idx = i
+                    }
+                }
+                let p = nodes[p_idx]
+                nodes[p_idx] = {
+                    ref: p.ref,
+                    index: p.index,
+                    tag: p.tag,
+                    id: p.id,
+                    classes: p.classes,
+                    role: p.role,
+                    name: p.name,
+                    title: p.title,
+                    value: p.value,
+                    href: p.href,
+                    text: p.text,
+                    attrs: p.attrs,
+                    children: p.children + [cur_ref],
+                    parent: p.parent,
+                    clickable: p.clickable,
+                    editable: p.editable,
+                    enabled: p.enabled
+                }
+            }
+
+            if tok.kind == "start" {
+                parent_refs = parent_refs + [cur_ref]
+            }
+        } else if tok.kind == "end" {
+            if len(parent_refs) > 0 {
+                // Pop the top of parent_refs
+                let mut new_stack: [int] = []
+                let target_len = len(parent_refs) - 1
+                for (item, s_idx) in parent_refs {
+                    if s_idx < target_len {
+                        new_stack = new_stack + [item]
+                    }
+                }
+                parent_refs = new_stack
+            }
+        }
+    }
+
+    {
+        nodes: nodes,
+        root_ref: if len(nodes) > 0 { nodes[0].ref } else { -1 }
+    }
+}
+
+fn node_to_element(n: DomNode) -> Element {
+    let mut acts: [string] = []
+    if n.clickable {
+        acts = acts + ["click"]
+    }
+    if n.editable {
+        acts = acts + ["type", "clear"]
+    }
+
+    {
+        index: n.index,
+        ref: n.ref,
+        role: n.role,
+        title: n.title,
+        name: n.name,
+        value: n.value,
+        tag: n.tag,
+        href: n.href,
+        pressable: n.clickable,
+        clickable: n.clickable,
+        editable: n.editable,
+        focused: false,
+        enabled: n.enabled,
+        actions: acts,
+        bounds: [0, 0, 0, 0]
+    }
+}
+
+// ----------------------------------------------------------------------------
+// CSS Selector Matching
+// ----------------------------------------------------------------------------
+
+fn matches_single_selector(node: DomNode, sel: string) -> bool {
+    let s = str.trim(sel)
+    let mut matched = false
+    if s == "*" {
+        matched = true
+    } else if str.starts_with(s, "#") {
+        let id_val = str.substring(s, 1)
+        matched = (node.id == id_val)
+    } else if str.starts_with(s, ".") {
+        let cls_val = str.substring(s, 1)
+        for c in node.classes {
+            if c == cls_val {
+                matched = true
+            }
+        }
+    } else if str.starts_with(s, "[") and str.ends_with(s, "]") {
+        let inner = str.substring(s, 1, str.length(s) - 1)
+        let eq_idx = str.index_of(inner, "=")
+        if eq_idx >= 0 {
+            let key = str.lower(str.trim(str.substring(inner, 0, eq_idx)))
+            let mut val = str.trim(str.substring(inner, eq_idx + 1))
+            if (str.starts_with(val, "\"") and str.ends_with(val, "\"")) or (str.starts_with(val, "'") and str.ends_with(val, "'")) {
+                val = str.substring(val, 1, str.length(val) - 1)
+            }
+            matched = (get_attr_value(node.attrs, key, "") == val)
+        } else {
+            matched = has_attr(node.attrs, str.lower(str.trim(inner)))
+        }
+    } else {
+        matched = (node.tag == str.lower(s))
+    }
+    matched
+}
+
+fn query_selector_all(tree: DomTree, selector: string) -> [Element] {
+    let clean_sel = str.trim(selector)
+    let parts = str.split(clean_sel, " ")
+    let mut step_parts: [string] = []
+    for p in parts {
+        let cp = str.trim(p)
+        if cp != "" {
+            step_parts = step_parts + [cp]
+        }
+    }
+
+    let mut out: [Element] = []
+    if len(step_parts) == 1 {
+        let sel = step_parts[0]
+        for n in tree.nodes {
+            if matches_single_selector(n, sel) {
+                out = out + [node_to_element(n)]
+            }
+        }
+    } else if len(step_parts) > 1 {
+        // Multi-step descendant path
+        let mut matching_nodes = tree.nodes
+        let mut step_idx = 0
+        let num_steps = len(step_parts)
+
+        for step in step_parts {
+            let mut next_matches: [DomNode] = []
+            for n in matching_nodes {
+                if matches_single_selector(n, step) {
+                    next_matches = next_matches + [n]
+                }
+            }
+
+            step_idx = step_idx + 1
+            if step_idx < num_steps {
+                // Collect all descendants of next_matches for next step
+                let mut descendant_refs: [int] = []
+                for m in next_matches {
+                    descendant_refs = descendant_refs + m.children
+                }
+
+                let mut descendants: [DomNode] = []
+                for n in tree.nodes {
+                    let mut is_desc = false
+                    for r in descendant_refs {
+                        if n.ref == r {
+                            is_desc = true
+                        }
+                    }
+                    if is_desc {
+                        descendants = descendants + [n]
+                    }
+                }
+                matching_nodes = descendants
+            } else {
+                matching_nodes = next_matches
+            }
+        }
+
+        for n in matching_nodes {
+            out = out + [node_to_element(n)]
+        }
+    }
+    out
+}
+
+fn query_selector(tree: DomTree, selector: string) -> Element? {
+    let elems = query_selector_all(tree, selector)
+    let mut res: Element? = none
+    if len(elems) > 0 {
+        res = elems[0]
+    }
+    res
+}
+
+fn get_element_by_ref(tree: DomTree, target_ref: int) -> Element? {
+    let mut res: Element? = none
+    for n in tree.nodes {
+        if n.ref == target_ref {
+            res = node_to_element(n)
+        }
+    }
+    res
+}

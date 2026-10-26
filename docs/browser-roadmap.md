@@ -101,7 +101,7 @@
 ## Phase F3: In-House DOM, Tree Construction & Policy Engine
 **Goal:** Parse HTML into a token-efficient accessibility tree and enforce strict navigation policies.
 
-- [ ] **Task F3.1 — HTML Tokenizer & DOM Builder**
+- [x] **Task F3.1 — HTML Tokenizer & DOM Builder**
   - **Owner / Agent:** `agent:ndg-html`
   - **Files:** `prelude/web/html.ndg`, `prelude/web/dom.ndg`
   - **Contract:**
@@ -109,14 +109,14 @@
     - Construct lightweight DOM tree node records with sequential integer `ref` assignment.
   - **Acceptance Gate:** Parses real-world HTML pages into DOM trees within latency limits (< 5 ms for < 100 KB).
 
-- [ ] **Task F3.2 — CSS Selector Query Engine**
+- [x] **Task F3.2 — CSS Selector Query Engine**
   - **Owner / Agent:** `agent:ndg-dom`
   - **Files:** `prelude/web/dom.ndg`
   - **Contract:**
     - Support tag names (`div`), classes (`.btn`), IDs (`#main`), attribute selectors (`[name="q"]`), and compound descendants.
   - **Acceptance Gate:** `browser.query(page, ".item")` accurately returns matching `[Element]` array.
 
-- [ ] **Task F3.3 — Security & Scope Policy Engine**
+- [x] **Task F3.3 — Security & Scope Policy Engine**
   - **Owner / Agent:** `agent:ndg-policy`
   - **Files:** `prelude/web/policy.ndg`
   - **Contract:**
@@ -125,7 +125,7 @@
     - Enforce redirect hop ceiling (max 20 hops).
   - **Acceptance Gate:** Unauthorized cross-domain fetch triggers `BrowserDenied` fail-closed.
 
-- [ ] **Task F3.4 — Snapshot & Token-Efficient Tree Formatter**
+- [x] **Task F3.4 — Snapshot & Token-Efficient Tree Formatter**
   - **Owner / Agent:** `agent:ndg-snapshot`
   - **Files:** `prelude/web/snapshot.ndg`
   - **Contract:**

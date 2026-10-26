@@ -1,0 +1,104 @@
+// Pure .ndg Snapshot & Token-Efficient Tree Formatter
+// Part of Phase F3.4 (docs/browser-roadmap.md)
+
+fn make_state_id(epoch: int) -> string {
+    "s-" + str.to_string(epoch)
+}
+
+fn get_node_depth(tree: DomTree, node: DomNode) -> int {
+    let mut depth = 0
+    let mut cur_parent = node.parent
+    for _ in tree.nodes {
+        if cur_parent >= 0 {
+            depth = depth + 1
+            for p in tree.nodes {
+                if p.ref == cur_parent {
+                    cur_parent = p.parent
+                }
+            }
+        }
+    }
+    depth
+}
+
+fn format_node_line(node: DomNode, depth: int) -> string {
+    let mut indent = ""
+    let mut i = 0
+    for _ in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] {
+        if i < depth {
+            indent = indent + "  "
+            i = i + 1
+        }
+    }
+
+    let mut line = indent + "[" + str.to_string(node.ref) + "] " + node.role
+    if node.name != "" {
+        line = line + " \"" + node.name + "\""
+    }
+    if node.value != "" {
+        line = line + " = " + node.value
+    }
+    if node.href != "" {
+        line = line + " href=" + node.href
+    }
+
+    let mut flags: [string] = []
+    if node.clickable {
+        flags = flags + ["clickable"]
+    }
+    if node.editable {
+        flags = flags + ["editable"]
+    }
+    if !node.enabled {
+        flags = flags + ["disabled"]
+    }
+
+    if len(flags) > 0 {
+        let mut flag_str = ""
+        for (f, idx) in flags {
+            flag_str = if idx == 0 { f } else { flag_str + "," + f }
+        }
+        line = line + " (" + flag_str + ")"
+    }
+
+    line
+}
+
+fn render_dom_tree(tree: DomTree) -> string {
+    let mut out = ""
+    for (node, idx) in tree.nodes {
+        let depth = get_node_depth(tree, node)
+        let line = format_node_line(node, depth)
+        out = if idx == 0 { line } else { out + "\n" + line }
+    }
+    out
+}
+
+fn empty_drift() -> Drift {
+    {
+        changed: false,
+        screenshot_changed: false,
+        added: [],
+        removed: [],
+        summary: ""
+    }
+}
+
+fn make_snapshot(page_id: string, url: string, title: string, epoch: int, tree: DomTree) -> Snapshot {
+    let mut elems: [Element] = []
+    for n in tree.nodes {
+        elems = elems + [node_to_element(n)]
+    }
+    let tree_str = render_dom_tree(tree)
+    {
+        page: page_id,
+        url: url,
+        title: title,
+        state_id: make_state_id(epoch),
+        elements: elems,
+        tree: tree_str,
+        count: len(elems),
+        screenshot: "",
+        drift: empty_drift()
+    }
+}

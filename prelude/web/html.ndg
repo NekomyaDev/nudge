@@ -1,0 +1,233 @@
+// Pure .ndg HTML5 Tokenizer and Entity Decoder
+// Part of Phase F3.1 (docs/browser-roadmap.md)
+
+type HtmlAttr = {
+    name: string,
+    value: string
+}
+
+type HtmlToken = {
+    kind: string, // "start", "end", "self_closing", "text"
+    tag: string,
+    attrs: [HtmlAttr],
+    text: string
+}
+
+fn decode_entities(s: string) -> string {
+    let mut out = s
+    out = str.replace(out, "&amp;", "&")
+    out = str.replace(out, "&lt;", "<")
+    out = str.replace(out, "&gt;", ">")
+    out = str.replace(out, "&quot;", "\"")
+    out = str.replace(out, "&#39;", "'")
+    out = str.replace(out, "&apos;", "'")
+    out = str.replace(out, "&nbsp;", " ")
+    out
+}
+
+fn is_void_tag(tag: string) -> bool {
+    let t = str.lower(tag)
+    t == "br" or t == "hr" or t == "img" or t == "input" or t == "link" or t == "meta" or t == "area" or t == "base" or t == "col" or t == "embed" or t == "param" or t == "source" or t == "track" or t == "wbr"
+}
+
+fn skip_spaces(s: string, start: int) -> int {
+    let mut i = start
+    let n = str.length(s)
+    let ws = " \t\n"
+    for _ in str.split(s, "") {
+        if i < n {
+            let ch = str.substring(s, i, i + 1)
+            if str.contains(ws, ch) {
+                i = i + 1
+            }
+        }
+    }
+    i
+}
+
+fn parse_tag_name(s: string, start: int) -> { name: string, next: int } {
+    let mut i = start
+    let n = str.length(s)
+    let term = " \t\n/>"
+    let mut name = ""
+    let mut done = false
+    for _ in str.split(s, "") {
+        if i < n and !done {
+            let ch = str.substring(s, i, i + 1)
+            if str.contains(term, ch) {
+                done = true
+            } else {
+                name = name + ch
+                i = i + 1
+            }
+        }
+    }
+    { name: str.lower(name), next: i }
+}
+
+fn parse_attrs(s: string, start: int) -> { attrs: [HtmlAttr], is_self_closing: bool, next: int } {
+    let mut i = start
+    let n = str.length(s)
+    let mut attrs: [HtmlAttr] = []
+    let mut self_closing = false
+    let mut done = false
+
+    for _ in str.split(s, "") {
+        i = skip_spaces(s, i)
+        if i >= n or done {
+            done = true
+        } else {
+            let ch = str.substring(s, i, i + 1)
+            if ch == ">" {
+                i = i + 1
+                done = true
+            } else if ch == "/" and i + 1 < n and str.substring(s, i + 1, i + 2) == ">" {
+                self_closing = true
+                i = i + 2
+                done = true
+            } else {
+                // Parse attribute name
+                let mut attr_name = ""
+                let mut name_done = false
+                let term = "= \t\n/>"
+                for _ in str.split(s, "") {
+                    if i < n and !name_done {
+                        let c = str.substring(s, i, i + 1)
+                        if str.contains(term, c) {
+                            name_done = true
+                        } else {
+                            attr_name = attr_name + c
+                            i = i + 1
+                        }
+                    }
+                }
+
+                attr_name = str.lower(attr_name)
+                i = skip_spaces(s, i)
+
+                let mut attr_val = ""
+                if i < n and str.substring(s, i, i + 1) == "=" {
+                    i = skip_spaces(s, i + 1)
+                    if i < n {
+                        let quote = str.substring(s, i, i + 1)
+                        if quote == "\"" or quote == "'" {
+                            i = i + 1
+                            let mut val_done = false
+                            for _ in str.split(s, "") {
+                                if i < n and !val_done {
+                                    let c = str.substring(s, i, i + 1)
+                                    if c == quote {
+                                        val_done = true
+                                        i = i + 1
+                                    } else {
+                                        attr_val = attr_val + c
+                                        i = i + 1
+                                    }
+                                }
+                            }
+                        } else {
+                            // Unquoted attribute value
+                            let mut val_done = false
+                            let val_term = " \t\n>"
+                            for _ in str.split(s, "") {
+                                if i < n and !val_done {
+                                    let c = str.substring(s, i, i + 1)
+                                    if str.contains(val_term, c) {
+                                        val_done = true
+                                    } else {
+                                        attr_val = attr_val + c
+                                        i = i + 1
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if attr_name != "" {
+                    attrs = attrs + [{ name: attr_name, value: decode_entities(attr_val) }]
+                }
+            }
+        }
+    }
+
+    { attrs: attrs, is_self_closing: self_closing, next: i }
+}
+
+fn tokenize_html(html: string) -> [HtmlToken] {
+    let mut tokens: [HtmlToken] = []
+    let mut i = 0
+    let n = str.length(html)
+
+    for _ in str.split(html, "") {
+        if i < n {
+            let next_tag = str.index_of(str.substring(html, i), "<")
+            if next_tag < 0 {
+                // Trailing text
+                let raw_text = str.substring(html, i)
+                let clean_text = str.trim(decode_entities(raw_text))
+                if clean_text != "" {
+                    tokens = tokens + [{ kind: "text", tag: "", attrs: [], text: clean_text }]
+                }
+                i = n
+            } else if next_tag > 0 {
+                // Leading text before '<'
+                let raw_text = str.substring(html, i, i + next_tag)
+                let clean_text = str.trim(decode_entities(raw_text))
+                if clean_text != "" {
+                    tokens = tokens + [{ kind: "text", tag: "", attrs: [], text: clean_text }]
+                }
+                i = i + next_tag
+            } else {
+                // i points to '<'
+                if str.starts_with(str.substring(html, i), "<!--") {
+                    let comment_end = str.index_of(str.substring(html, i), "-->")
+                    if comment_end >= 0 {
+                        i = i + comment_end + 3
+                    } else {
+                        i = n
+                    }
+                } else if str.starts_with(str.substring(html, i), "<!") {
+                    // Doctype or CDATA
+                    let doc_end = str.index_of(str.substring(html, i), ">")
+                    if doc_end >= 0 {
+                        i = i + doc_end + 1
+                    } else {
+                        i = n
+                    }
+                } else if str.starts_with(str.substring(html, i), "</") {
+                    // End tag
+                    let tag_res = parse_tag_name(html, i + 2)
+                    let end_bracket = str.index_of(str.substring(html, tag_res.next), ">")
+                    let next_pos = if end_bracket >= 0 { tag_res.next + end_bracket + 1 } else { n }
+                    tokens = tokens + [{ kind: "end", tag: tag_res.name, attrs: [], text: "" }]
+                    i = next_pos
+                } else {
+                    // Start or Self-closing tag
+                    let tag_res = parse_tag_name(html, i + 1)
+                    let attr_res = parse_attrs(html, tag_res.next)
+                    let is_self = attr_res.is_self_closing or is_void_tag(tag_res.name)
+                    let kind = if is_self { "self_closing" } else { "start" }
+
+                    // Skip contents of script and style tags
+                    let tag_name = tag_res.name
+                    tokens = tokens + [{ kind: kind, tag: tag_name, attrs: attr_res.attrs, text: "" }]
+                    i = attr_res.next
+
+                    if (tag_name == "script" or tag_name == "style") and !is_self {
+                        let close_pat = "</" + tag_name + ">"
+                        let close_idx = str.index_of(str.lower(str.substring(html, i)), close_pat)
+                        if close_idx >= 0 {
+                            i = i + close_idx + str.length(close_pat)
+                            tokens = tokens + [{ kind: "end", tag: tag_name, attrs: [], text: "" }]
+                        } else {
+                            i = n
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    tokens
+}

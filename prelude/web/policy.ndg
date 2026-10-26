@@ -1,0 +1,106 @@
+// Pure .ndg Security & Scope Policy Engine
+// Part of Phase F3.3 (docs/browser-roadmap.md)
+
+type PolicyConfig = {
+    allow: [string],
+    workspace_root: string,
+    max_redirects: int
+}
+
+type PolicyDecision = {
+    allowed: bool,
+    reason: string
+}
+
+fn match_domain_pattern(pattern: string, host: string) -> bool {
+    let p = str.lower(str.trim(pattern))
+    let h = str.lower(str.trim(host))
+    let mut matched = false
+
+    if p == "*" or p == h {
+        matched = true
+    } else if str.starts_with(p, "*.") {
+        let suffix = str.substring(p, 1) // e.g. ".example.com"
+        let base = str.substring(p, 2)   // e.g. "example.com"
+        matched = (str.ends_with(h, suffix) or h == base)
+    } else if str.ends_with(p, "/*") {
+        let prefix = str.substring(p, 0, str.length(p) - 2)
+        matched = str.starts_with(h, prefix)
+    }
+    matched
+}
+
+fn validate_url_policy(url_obj: ParsedUrl, policy: PolicyConfig) -> PolicyDecision {
+    let scheme = str.lower(url_obj.scheme)
+    let mut decision = {
+        allowed: false,
+        reason: "Uninitialized decision"
+    }
+
+    if scheme != "http" and scheme != "https" and scheme != "file" {
+        decision = {
+            allowed: false,
+            reason: "Scheme '" + scheme + "' is not permitted. Only http, https, and file schemes are allowed."
+        }
+    } else if scheme == "file" {
+        let path = url_obj.path
+        if str.contains(path, "..") {
+            decision = {
+                allowed: false,
+                reason: "Directory traversal detected in file URI: " + path
+            }
+        } else if policy.workspace_root != "" and !str.starts_with(path, policy.workspace_root) {
+            decision = {
+                allowed: false,
+                reason: "File path '" + path + "' escapes configured workspace root '" + policy.workspace_root + "'."
+            }
+        } else {
+            decision = {
+                allowed: true,
+                reason: "File path inside workspace bounds"
+            }
+        }
+    } else if len(policy.allow) == 0 {
+        decision = {
+            allowed: false,
+            reason: "Unscoped browser request: allow list is empty (fails closed)"
+        }
+    } else {
+        let host = url_obj.host
+        let mut matched = false
+        for pat in policy.allow {
+            if match_domain_pattern(pat, host) {
+                matched = true
+            }
+        }
+
+        if matched {
+            decision = {
+                allowed: true,
+                reason: "Host matches allowlist"
+            }
+        } else {
+            decision = {
+                allowed: false,
+                reason: "Host '" + host + "' does not match any allowed pattern in policy"
+            }
+        }
+    }
+
+    decision
+}
+
+fn validate_redirect_hop(current_hops: int, max_hops: int) -> PolicyDecision {
+    let limit = if max_hops > 0 { max_hops } else { 20 }
+    let mut res = {
+        allowed: true,
+        reason: "Hop count within threshold"
+    }
+    if current_hops >= limit {
+        res = {
+            allowed: false,
+            reason: "Exceeded maximum redirect hop limit of 20"
+        }
+    }
+    res
+}
