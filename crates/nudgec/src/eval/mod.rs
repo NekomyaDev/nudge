@@ -2153,4 +2153,76 @@ fn test_f9_recipes() -> bool uses Browser {{
             .run_all_tests()
             .expect("all file manager test blocks pass");
     }
+
+    #[test]
+    fn test_call_graph_acceptance_suite() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let cg_path = root_dir.join("crates/nudge-index/indexer/call_graph.ndg");
+
+        let cg_src = std::fs::read_to_string(&cg_path).expect("read call_graph.ndg");
+        let items = parse_src(&cg_src);
+        let mut interp = crate::eval::interpreter::Interpreter::new();
+        interp.load_items(&items).expect("load items succeeds");
+        interp.run_all_tests().expect("all call graph test blocks pass");
+        let res = interp
+            .invoke_fn("main", &[])
+            .expect("call graph main execution succeeds");
+        assert_eq!(res, NudgeVal::Int(0));
+    }
+
+    #[test]
+    fn test_diff_engine_acceptance_suite() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let diff_path = root_dir.join("crates/nudge-index/indexer/diff_engine.ndg");
+
+        let diff_src = std::fs::read_to_string(&diff_path).expect("read diff_engine.ndg");
+        let items = parse_src(&diff_src);
+        let mut interp = crate::eval::interpreter::Interpreter::new();
+        interp.load_items(&items).expect("load items succeeds");
+        interp.run_all_tests().expect("all diff engine test blocks pass");
+        let res = interp
+            .invoke_fn("main", &[])
+            .expect("diff engine main execution succeeds");
+        assert_eq!(res, NudgeVal::Int(0));
+    }
+
+    #[test]
+    fn test_debouncer_acceptance_suite() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let deb_path = root_dir.join("crates/nudge-index/events/debouncer.ndg");
+
+        let deb_src = std::fs::read_to_string(&deb_path).expect("read debouncer.ndg");
+        let items = parse_src(&deb_src);
+        let mut interp = crate::eval::interpreter::Interpreter::new();
+        interp.load_items(&items).expect("load items succeeds");
+        interp.run_all_tests().expect("all debouncer test blocks pass");
+        let res = interp
+            .invoke_fn("main", &[])
+            .expect("debouncer main execution succeeds");
+        assert_eq!(res, NudgeVal::Int(0));
+    }
+
+    #[test]
+    fn test_mcp_provider_acceptance_suite() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let mcp_path = root_dir.join("crates/nudge-index/api/mcp_provider.ndg");
+
+        let mcp_src = std::fs::read_to_string(&mcp_path).expect("read mcp_provider.ndg");
+        let items = parse_src(&mcp_src);
+        let mut interp = crate::eval::interpreter::Interpreter::new();
+        interp.load_items(&items).expect("load items succeeds");
+        interp.run_all_tests().expect("all mcp provider test blocks pass");
+        let res = interp
+            .invoke_fn("main", &[])
+            .expect("mcp provider main execution succeeds");
+        assert_eq!(res, NudgeVal::Int(0));
+    }
 }
