@@ -23,14 +23,14 @@
 ## Phase F1: Kernel Transport & Effect Registration (Active Phase)
 **Goal:** Expose raw byte transfer (`browser.fetch`), register the `Browser` effect, and add compile-time safety lints.
 
-- [ ] **Task F1.1 — Effect & AST Registration**
+- [X] **Task F1.1 — Effect & AST Registration**
   - **Owner / Agent:** `agent:compiler-core`
   - **Files:** `crates/nudgec/src/check.rs`, `crates/nudgec/src/ast.rs`, `docs/ntf-spec.md`
   - **Contract:**
     - Expand `KNOWN_EFFECTS` from 12 to 13 (`"Browser"`).
     - Register `"browser"` in `RESERVED_BINDINGS` so user variables cannot shadow the namespace.
     - Add NTF trace record specifications for `browser.snapshot` and `browser.act`.
-  - **Acceptance Gate:** `cargo test -p nudgec test_known_effects` passes.
+  - **Acceptance Gate:** `cargo test -p nudgec test_known_effects` passes. (PASSED: 580/580 tests green)
 
 - [ ] **Task F1.2 — VM Runtime Kernel Primitive (`browser.fetch`)**
   - **Owner / Agent:** `agent:runtime-vm`

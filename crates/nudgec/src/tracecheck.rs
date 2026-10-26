@@ -415,7 +415,7 @@ mod tests {
     #[test]
     fn strict_frozen_v1_field_validation_edge_cases() {
         let text = format!(
-            "{}\n{}\n{}\n{}\n",
+            "{}\n{}\n{}\n{}\n{}\n{}\n",
             r#"{"v": 1, "seq": 1, "kind": "tool.call", "input": "missing tool field", "output": "ok"}"#,
             r#"{"v": 1, "seq": 2, "kind": "fn.return", "output": "missing fn field"}"#,
             r#"{"v": 1, "seq": 3, "kind": "decision.call", "model": "m", "provider": "p", "questions": {}, "answers": {}, "outcome": "ok"}"#,
