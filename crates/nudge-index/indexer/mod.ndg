@@ -224,38 +224,42 @@ agent DiffEngine {
     state {
         snapshots: [EntitySnapshot] = []
         recent_events: [DiffEvent] = []
+        snapshot_map: Map[string, EntitySnapshot] = {}
+        all_symbols: [string] = []
     }
 
     fn reset_engine() {
         state.snapshots = []
         state.recent_events = []
+        state.snapshot_map = {}
+        state.all_symbols = []
     }
 
     fn get_snapshot(symbol: string) -> EntitySnapshot? {
         let mut found: EntitySnapshot? = none
-        for s in state.snapshots {
-            if s.symbol == symbol {
-                found = s
-            }
+        if contains_item(state.all_symbols, symbol) {
+            found = state.snapshot_map[symbol]
         }
         found
     }
 
     fn register_or_update(snap: EntitySnapshot) {
-        let mut updated: [EntitySnapshot] = []
-        let mut exists = false
-        for s in state.snapshots {
-            if s.symbol == snap.symbol {
-                updated = updated + [snap]
-                exists = true
-            } else {
-                updated = updated + [s]
+        if contains_item(state.all_symbols, snap.symbol) {
+            state.snapshot_map[snap.symbol] = snap
+            let mut updated: [EntitySnapshot] = []
+            for s in state.snapshots {
+                if s.symbol == snap.symbol {
+                    updated = updated + [snap]
+                } else {
+                    updated = updated + [s]
+                }
             }
+            state.snapshots = updated
+        } else {
+            state.snapshot_map[snap.symbol] = snap
+            state.all_symbols = state.all_symbols + [snap.symbol]
+            state.snapshots = state.snapshots + [snap]
         }
-        if !exists {
-            updated = updated + [snap]
-        }
-        state.snapshots = updated
     }
 
     fn compare(new_snap: EntitySnapshot, blast_callers: [string]) -> DiffEvent {
@@ -334,6 +338,8 @@ agent DiffEngine {
         let mut old_sig = ""
         let mut file_p = ""
         let mut remaining: [EntitySnapshot] = []
+        let mut remaining_symbols: [string] = []
+        let mut new_map: Map[string, EntitySnapshot] = {}
 
         for s in state.snapshots {
             if s.symbol == symbol {
@@ -341,9 +347,13 @@ agent DiffEngine {
                 file_p = s.file_path
             } else {
                 remaining = remaining + [s]
+                remaining_symbols = remaining_symbols + [s.symbol]
+                new_map[s.symbol] = s
             }
         }
         state.snapshots = remaining
+        state.all_symbols = remaining_symbols
+        state.snapshot_map = new_map
 
         let event: DiffEvent = {
             symbol: symbol,

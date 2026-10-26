@@ -33,17 +33,31 @@ fn is_ephemeral_path(path: string) -> bool {
     ignored
 }
 
+fn contains_debouncer_str(xs: [string], target: string) -> bool {
+    let mut found = false
+    for x in xs {
+        if x == target {
+            found = true
+        }
+    }
+    found
+}
+
 agent EventDebouncer {
     state {
         pending_events: [CoalescedEvent] = []
         debounce_window_ms: int = 50
         total_coalesced: int = 0
+        event_map: Map[string, CoalescedEvent] = {}
+        all_event_paths: [string] = []
     }
 
     fn reset_debouncer() {
         state.pending_events = []
         state.debounce_window_ms = 50
         state.total_coalesced = 0
+        state.event_map = {}
+        state.all_event_paths = []
     }
 
     fn set_window(window_ms: int) {
@@ -53,38 +67,37 @@ agent EventDebouncer {
     fn push_raw_event(path: string, event_kind: string, timestamp_ms: int) -> bool {
         let mut accepted = false
         if !is_ephemeral_path(path) {
-            let mut updated: [CoalescedEvent] = []
-            let mut found = false
-
-            for ev in state.pending_events {
-                if ev.file_path == path {
-                    let mut resolved_action = ev.action
-                    if ev.action == "CREATE" and event_kind == "WRITE" {
-                        resolved_action = "FILE_CREATED"
-                    } else if ev.action == "DELETE" and (event_kind == "CREATE" or event_kind == "WRITE") {
-                        // Atomic save swap pattern (delete old target, rename new temp)
-                        resolved_action = "FILE_MUTATED"
-                    } else if event_kind == "DELETE" {
-                        resolved_action = "FILE_DELETED"
-                    } else {
-                        resolved_action = "FILE_MUTATED"
-                    }
-
-                    let merged: CoalescedEvent = {
-                        file_path: path,
-                        action: resolved_action,
-                        burst_count: ev.burst_count + 1,
-                        first_seen_ms: ev.first_seen_ms,
-                        last_seen_ms: timestamp_ms
-                    }
-                    updated = updated + [merged]
-                    found = true
+            if contains_debouncer_str(state.all_event_paths, path) {
+                let ev = state.event_map[path]
+                let mut resolved_action = ev.action
+                if ev.action == "CREATE" and event_kind == "WRITE" {
+                    resolved_action = "FILE_CREATED"
+                } else if ev.action == "DELETE" and (event_kind == "CREATE" or event_kind == "WRITE") {
+                    resolved_action = "FILE_MUTATED"
+                } else if event_kind == "DELETE" {
+                    resolved_action = "FILE_DELETED"
                 } else {
-                    updated = updated + [ev]
+                    resolved_action = "FILE_MUTATED"
                 }
-            }
 
-            if !found {
+                let merged: CoalescedEvent = {
+                    file_path: path,
+                    action: resolved_action,
+                    burst_count: ev.burst_count + 1,
+                    first_seen_ms: ev.first_seen_ms,
+                    last_seen_ms: timestamp_ms
+                }
+                state.event_map[path] = merged
+                let mut updated: [CoalescedEvent] = []
+                for e in state.pending_events {
+                    if e.file_path == path {
+                        updated = updated + [merged]
+                    } else {
+                        updated = updated + [e]
+                    }
+                }
+                state.pending_events = updated
+            } else {
                 let initial_action = if event_kind == "CREATE" {
                     "FILE_CREATED"
                 } else if event_kind == "DELETE" {
@@ -100,10 +113,11 @@ agent EventDebouncer {
                     first_seen_ms: timestamp_ms,
                     last_seen_ms: timestamp_ms
                 }
-                updated = updated + [new_ev]
+                state.event_map[path] = new_ev
+                state.all_event_paths = state.all_event_paths + [path]
+                state.pending_events = state.pending_events + [new_ev]
             }
 
-            state.pending_events = updated
             state.total_coalesced = state.total_coalesced + 1
             accepted = true
         }
@@ -113,6 +127,8 @@ agent EventDebouncer {
     fn flush_ready_events(current_time_ms: int) -> [CoalescedEvent] {
         let mut ready: [CoalescedEvent] = []
         let mut remaining: [CoalescedEvent] = []
+        let mut remaining_paths: [string] = []
+        let mut new_map: Map[string, CoalescedEvent] = {}
 
         for ev in state.pending_events {
             let elapsed = current_time_ms - ev.last_seen_ms
@@ -120,16 +136,22 @@ agent EventDebouncer {
                 ready = ready + [ev]
             } else {
                 remaining = remaining + [ev]
+                remaining_paths = remaining_paths + [ev.file_path]
+                new_map[ev.file_path] = ev
             }
         }
 
         state.pending_events = remaining
+        state.all_event_paths = remaining_paths
+        state.event_map = new_map
         ready
     }
 
     fn drain_all() -> [CoalescedEvent] {
         let all_events = state.pending_events
         state.pending_events = []
+        state.all_event_paths = []
+        state.event_map = {}
         all_events
     }
 

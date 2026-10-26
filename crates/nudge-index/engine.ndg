@@ -64,65 +64,60 @@ agent EngineVfs {
     state {
         files: [string] = []
         file_contents: [string] = []
+        content_map: Map[string, string] = {}
     }
 
     fn vfs_clear() {
         state.files = []
         state.file_contents = []
+        state.content_map = {}
     }
 
     fn vfs_write_file(path: string, content: string) {
-        let mut new_files: [string] = []
-        let mut new_contents: [string] = []
-        let mut replaced = false
-
-        for (f, idx) in state.files {
-            if f == path {
-                new_files = new_files + [path]
-                new_contents = new_contents + [content]
-                replaced = true
-            } else {
-                new_files = new_files + [f]
-                new_contents = new_contents + [state.file_contents[idx]]
+        if contains_engine_str(state.files, path) {
+            state.content_map[path] = content
+            let mut new_contents: [string] = []
+            for (f, idx) in state.files {
+                if f == path {
+                    new_contents = new_contents + [content]
+                } else {
+                    new_contents = new_contents + [state.file_contents[idx]]
+                }
             }
+            state.file_contents = new_contents
+        } else {
+            state.files = state.files + [path]
+            state.file_contents = state.file_contents + [content]
+            state.content_map[path] = content
         }
-
-        if !replaced {
-            new_files = new_files + [path]
-            new_contents = new_contents + [content]
-        }
-
-        state.files = new_files
-        state.file_contents = new_contents
     }
 
     fn vfs_read_file(path: string) -> string? {
         let mut found: string? = none
-        for (f, idx) in state.files {
-            if f == path {
-                found = state.file_contents[idx]
-            }
+        if contains_engine_str(state.files, path) {
+            found = state.content_map[path]
         }
         found
     }
 
     fn vfs_delete_file(path: string) -> bool {
-        let mut new_files: [string] = []
-        let mut new_contents: [string] = []
         let mut removed = false
+        if contains_engine_str(state.files, path) {
+            let mut new_files: [string] = []
+            let mut new_contents: [string] = []
+            let mut new_map: Map[string, string] = {}
 
-        for (f, idx) in state.files {
-            if f == path {
-                removed = true
-            } else {
-                new_files = new_files + [f]
-                new_contents = new_contents + [state.file_contents[idx]]
+            for (f, idx) in state.files {
+                if f != path {
+                    new_files = new_files + [f]
+                    new_contents = new_contents + [state.file_contents[idx]]
+                    new_map[f] = state.content_map[f]
+                }
             }
-        }
-
-        if removed {
             state.files = new_files
             state.file_contents = new_contents
+            state.content_map = new_map
+            removed = true
         }
         removed
     }

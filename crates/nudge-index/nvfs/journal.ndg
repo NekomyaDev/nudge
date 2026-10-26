@@ -17,12 +17,24 @@ type VfsResult = {
     error: string
 }
 
+fn contains_journal_str(xs: [string], target: string) -> bool {
+    let mut found = false
+    for x in xs {
+        if x == target {
+            found = true
+        }
+    }
+    found
+}
+
 agent Journal {
     state {
         next_tx_id: int = 1
         transactions: [TxRecord] = []
         committed_count: int = 0
         rolled_back_count: int = 0
+        tx_map: Map[string, TxRecord] = {}
+        all_tx_ids: [string] = []
     }
 
     fn reset() {
@@ -30,11 +42,14 @@ agent Journal {
         state.transactions = []
         state.committed_count = 0
         state.rolled_back_count = 0
+        state.tx_map = {}
+        state.all_tx_ids = []
     }
 
     fn begin_tx(op_type: string, path: string, old_hashes: [string]) -> int {
         let id = state.next_tx_id
         state.next_tx_id += 1
+        let key = str.to_string(id)
         let tx: TxRecord = {
             tx_id: id,
             op_type: op_type,
@@ -44,37 +59,45 @@ agent Journal {
             status: "ACTIVE"
         }
         state.transactions = state.transactions + [tx]
+        state.tx_map[key] = tx
+        state.all_tx_ids = state.all_tx_ids + [key]
         id
     }
 
     fn record_new_hashes(tx_id: int, new_hashes: [string]) -> bool {
-        let mut updated: [TxRecord] = []
+        let key = str.to_string(tx_id)
         let mut found = false
-        for tx in state.transactions {
-            if tx.tx_id == tx_id {
-                let mod_tx: TxRecord = {
-                    tx_id: tx.tx_id,
-                    op_type: tx.op_type,
-                    path: tx.path,
-                    old_hashes: tx.old_hashes,
-                    new_hashes: new_hashes,
-                    status: tx.status
-                }
-                updated = updated + [mod_tx]
-                found = true
-            } else {
-                updated = updated + [tx]
+        if contains_journal_str(state.all_tx_ids, key) {
+            let tx = state.tx_map[key]
+            let mod_tx: TxRecord = {
+                tx_id: tx.tx_id,
+                op_type: tx.op_type,
+                path: tx.path,
+                old_hashes: tx.old_hashes,
+                new_hashes: new_hashes,
+                status: tx.status
             }
+            state.tx_map[key] = mod_tx
+            let mut updated: [TxRecord] = []
+            for t in state.transactions {
+                if t.tx_id == tx_id {
+                    updated = updated + [mod_tx]
+                } else {
+                    updated = updated + [t]
+                }
+            }
+            state.transactions = updated
+            found = true
         }
-        state.transactions = updated
         found
     }
 
     fn commit_tx(tx_id: int) -> bool {
-        let mut updated: [TxRecord] = []
+        let key = str.to_string(tx_id)
         let mut found = false
-        for tx in state.transactions {
-            if tx.tx_id == tx_id and tx.status == "ACTIVE" {
+        if contains_journal_str(state.all_tx_ids, key) {
+            let tx = state.tx_map[key]
+            if tx.status == "ACTIVE" {
                 let committed: TxRecord = {
                     tx_id: tx.tx_id,
                     op_type: tx.op_type,
@@ -83,24 +106,29 @@ agent Journal {
                     new_hashes: tx.new_hashes,
                     status: "COMMITTED"
                 }
-                updated = updated + [committed]
+                state.tx_map[key] = committed
+                let mut updated: [TxRecord] = []
+                for t in state.transactions {
+                    if t.tx_id == tx_id {
+                        updated = updated + [committed]
+                    } else {
+                        updated = updated + [t]
+                    }
+                }
+                state.transactions = updated
+                state.committed_count += 1
                 found = true
-            } else {
-                updated = updated + [tx]
             }
-        }
-        if found {
-            state.transactions = updated
-            state.committed_count += 1
         }
         found
     }
 
     fn rollback_tx(tx_id: int) -> [string] {
-        let mut updated: [TxRecord] = []
+        let key = str.to_string(tx_id)
         let mut restored_hashes: [string] = []
-        for tx in state.transactions {
-            if tx.tx_id == tx_id and (tx.status == "ACTIVE" or tx.status == "COMMITTED") {
+        if contains_journal_str(state.all_tx_ids, key) {
+            let tx = state.tx_map[key]
+            if tx.status == "ACTIVE" or tx.status == "COMMITTED" {
                 let rolled: TxRecord = {
                     tx_id: tx.tx_id,
                     op_type: tx.op_type,
@@ -109,25 +137,28 @@ agent Journal {
                     new_hashes: tx.new_hashes,
                     status: "ROLLED_BACK"
                 }
-                updated = updated + [rolled]
+                state.tx_map[key] = rolled
+                let mut updated: [TxRecord] = []
+                for t in state.transactions {
+                    if t.tx_id == tx_id {
+                        updated = updated + [rolled]
+                    } else {
+                        updated = updated + [t]
+                    }
+                }
+                state.transactions = updated
+                state.rolled_back_count += 1
                 restored_hashes = tx.old_hashes
-            } else {
-                updated = updated + [tx]
             }
-        }
-        if len(restored_hashes) > 0 or len(updated) > 0 {
-            state.transactions = updated
-            state.rolled_back_count += 1
         }
         restored_hashes
     }
 
     fn get_tx(tx_id: int) -> TxRecord? {
+        let key = str.to_string(tx_id)
         let mut found: TxRecord? = none
-        for tx in state.transactions {
-            if tx.tx_id == tx_id {
-                found = tx
-            }
+        if contains_journal_str(state.all_tx_ids, key) {
+            found = state.tx_map[key]
         }
         found
     }

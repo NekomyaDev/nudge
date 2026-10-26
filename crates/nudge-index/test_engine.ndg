@@ -85,44 +85,38 @@ agent EngineVfs {
     state {
         files: [string] = []
         file_contents: [string] = []
+        content_map: Map[string, string] = {}
     }
 
     fn vfs_clear() {
         state.files = []
         state.file_contents = []
+        state.content_map = {}
     }
 
     fn vfs_write_file(path: string, content: string) {
-        let mut new_files: [string] = []
-        let mut new_contents: [string] = []
-        let mut replaced = false
-
-        for (f, idx) in state.files {
-            if f == path {
-                new_files = new_files + [path]
-                new_contents = new_contents + [content]
-                replaced = true
-            } else {
-                new_files = new_files + [f]
-                new_contents = new_contents + [state.file_contents[idx]]
+        if contains_test_str(state.files, path) {
+            state.content_map[path] = content
+            let mut new_contents: [string] = []
+            for (f, idx) in state.files {
+                if f == path {
+                    new_contents = new_contents + [content]
+                } else {
+                    new_contents = new_contents + [state.file_contents[idx]]
+                }
             }
+            state.file_contents = new_contents
+        } else {
+            state.files = state.files + [path]
+            state.file_contents = state.file_contents + [content]
+            state.content_map[path] = content
         }
-
-        if !replaced {
-            new_files = new_files + [path]
-            new_contents = new_contents + [content]
-        }
-
-        state.files = new_files
-        state.file_contents = new_contents
     }
 
     fn vfs_read_file(path: string) -> string? {
         let mut found: string? = none
-        for (f, idx) in state.files {
-            if f == path {
-                found = state.file_contents[idx]
-            }
+        if contains_test_str(state.files, path) {
+            found = state.content_map[path]
         }
         found
     }
@@ -324,44 +318,48 @@ agent EventDebouncer {
     state {
         pending_events: [CoalescedEvent] = []
         debounce_window_ms: int = 50
+        event_map: Map[string, CoalescedEvent] = {}
+        all_event_paths: [string] = []
     }
 
     fn reset_debouncer() {
         state.pending_events = []
+        state.event_map = {}
+        state.all_event_paths = []
     }
 
     fn push_raw_event(path: string, event_kind: string, timestamp_ms: int) -> bool {
         let mut accepted = false
         if !is_ephemeral_file(path) {
-            let mut updated: [CoalescedEvent] = []
-            let mut found = false
-
-            for ev in state.pending_events {
-                if ev.file_path == path {
-                    let mut resolved = ev.action
-                    if ev.action == "DELETE" and event_kind == "WRITE" {
-                        resolved = "FILE_MUTATED"
-                    } else if event_kind == "DELETE" {
-                        resolved = "FILE_DELETED"
-                    } else {
-                        resolved = "FILE_MUTATED"
-                    }
-
-                    let merged: CoalescedEvent = {
-                        file_path: path,
-                        action: resolved,
-                        burst_count: ev.burst_count + 1,
-                        first_seen_ms: ev.first_seen_ms,
-                        last_seen_ms: timestamp_ms
-                    }
-                    updated = updated + [merged]
-                    found = true
+            if contains_test_str(state.all_event_paths, path) {
+                let ev = state.event_map[path]
+                let mut resolved = ev.action
+                if ev.action == "DELETE" and event_kind == "WRITE" {
+                    resolved = "FILE_MUTATED"
+                } else if event_kind == "DELETE" {
+                    resolved = "FILE_DELETED"
                 } else {
-                    updated = updated + [ev]
+                    resolved = "FILE_MUTATED"
                 }
-            }
 
-            if !found {
+                let merged: CoalescedEvent = {
+                    file_path: path,
+                    action: resolved,
+                    burst_count: ev.burst_count + 1,
+                    first_seen_ms: ev.first_seen_ms,
+                    last_seen_ms: timestamp_ms
+                }
+                state.event_map[path] = merged
+                let mut updated: [CoalescedEvent] = []
+                for e in state.pending_events {
+                    if e.file_path == path {
+                        updated = updated + [merged]
+                    } else {
+                        updated = updated + [e]
+                    }
+                }
+                state.pending_events = updated
+            } else {
                 let act = if event_kind == "DELETE" { "FILE_DELETED" } else { "FILE_MUTATED" }
                 let new_ev: CoalescedEvent = {
                     file_path: path,
@@ -370,10 +368,11 @@ agent EventDebouncer {
                     first_seen_ms: timestamp_ms,
                     last_seen_ms: timestamp_ms
                 }
-                updated = updated + [new_ev]
+                state.event_map[path] = new_ev
+                state.all_event_paths = state.all_event_paths + [path]
+                state.pending_events = state.pending_events + [new_ev]
             }
 
-            state.pending_events = updated
             accepted = true
         }
         accepted
@@ -382,6 +381,8 @@ agent EventDebouncer {
     fn drain_events() -> [CoalescedEvent] {
         let all_events = state.pending_events
         state.pending_events = []
+        state.event_map = {}
+        state.all_event_paths = []
         all_events
     }
 }
