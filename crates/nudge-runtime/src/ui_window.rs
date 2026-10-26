@@ -4239,6 +4239,7 @@ pub fn draw_breeze_folder_icon(
     draw_rect_alpha(buf, stride, height, x + 2, pocket_top + pocket_h - 2, (w - 4).max(1), 2, 0xFF00_0000, 0.25);
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_breeze_file_icon(
     buf: &mut [u32],
     stride: usize,
@@ -4277,6 +4278,7 @@ pub fn draw_breeze_file_icon(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_rounded_rect_box_clipped(
     buf: &mut [u32],
     stride: usize,
