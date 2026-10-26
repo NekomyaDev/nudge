@@ -412,6 +412,19 @@ pub fn audit_trace(trace_src: &str, _file_name: Option<&str>) -> ComplianceRepor
                     ));
                 }
             }
+            "browser.snapshot" | "browser.act" => {
+                effects_used.insert("Browser".to_string());
+                let outcome = parsed
+                    .get("outcome")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("ok");
+                if outcome != "ok" {
+                    review_checkpoints += 1;
+                    review_details.push(format!(
+                        "Record #{line_no}: {kind} failed/denied: outcome={outcome}"
+                    ));
+                }
+            }
             "fn.return" => {
                 // Function boundary - may signal effect usage or completion
             }

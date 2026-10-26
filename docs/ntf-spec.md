@@ -25,7 +25,7 @@ for LLM calls (prompts, schemas, token counts, USD).
 |:---|:---|:---|
 | `v` | number | Record schema version. Must be `1` — validators raise **E0601** on any other value |
 | `seq` | number | 1-based, gapless record counter across the trace |
-| `kind` | string | One of `llm.call`, `tool.call`, `fn.return`, `decision.call`, `computer.observe`, `computer.act` |
+| `kind` | string | One of `llm.call`, `tool.call`, `fn.return`, `decision.call`, `computer.observe`, `computer.act`, `browser.snapshot`, `browser.act` |
 
 ## Record kinds
 
@@ -140,6 +140,38 @@ live one. Replay is also signature-verified: the recorded action name,
 app and target must match the program's call (targets compared in
 canonical form — index or `{x, y}`) or replay raises `ReplayMismatch`
 instead of replaying a decision that was never made.
+
+### `browser.snapshot` — one browser accessibility/DOM snapshot (v1.6, docs/browser-use.md)
+
+| Field | Type | Meaning |
+|:---|:---|:---|
+| `url` | string | Current URL of the page |
+| `state_id` | string | Monotonic observation epoch (`s-1`, `s-2`) bound to `(url, content_hash)` |
+| `element_count` | number | Number of elements in the snapshot tree |
+| `outcome` | string | `"ok"` or an error tag (`denied`, `deadline_missed`, `unreachable`) |
+| `latency_ms` | number | Measured wall time |
+
+Additive: `page` (page session handle), `title` (document title), `tree`
+(rendered token-efficient text tree), `elements` (full element table),
+`screenshot_hash` (sha256 of PNG when `screenshot = true`),
+`screenshot_asset` (sidecar file `<trace>.assets/<hash>.png` — pixels NEVER
+inline in JSONL), `drift` (`{changed, added, removed, summary}`),
+`deadline_ms`, `branch`, `replay_check: true`.
+
+### `browser.act` — one executed (or dry-run) browser action
+
+| Field | Type | Meaning |
+|:---|:---|:---|
+| `action` | string | `click`, `type`, `key`, `submit`, `fill`, `back`, `forward`, `refresh`, `close` |
+| `page` | string | Page session handle (`p-1`, …) |
+| `target` | number \| string \| object | Element ref (`int`), selector (`string`), or target descriptor |
+| `outcome` | string | Outcome tag: `"ok"`, `stale_state`, `denied`, `error`, `dry_run`, … |
+| `latency_ms` | number | Measured wall time |
+
+Additive: `ok` (boolean success), `action_sent` (dispatch receipt),
+`deadline_missed: true`, `error` (error message), `value` (typed text payload),
+`dry_run: true` (replay mode — action not re-executed on wire),
+`deadline_ms`, `branch`.
 
 ## Additive fields (already shipping in v1, all optional)
 

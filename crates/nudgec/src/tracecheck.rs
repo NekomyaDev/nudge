@@ -35,6 +35,10 @@ fn required(kind: &str) -> Option<&'static [&'static str]> {
         // (docs/computer-use.md, docs/ntf-spec.md)
         "computer.observe" => Some(&["app", "state_id", "element_count", "outcome", "latency_ms"]),
         "computer.act" => Some(&["action", "app", "target", "outcome", "latency_ms"]),
+        // v1.6 browser-use: one snapshot / one action per record
+        // (docs/browser-use.md, docs/ntf-spec.md)
+        "browser.snapshot" => Some(&["url", "state_id", "element_count", "outcome", "latency_ms"]),
+        "browser.act" => Some(&["action", "page", "target", "outcome", "latency_ms"]),
         _ => None,
     }
 }
@@ -72,12 +76,21 @@ fn field_type(kind: &str, field: &str) -> Option<Ty> {
         ("decision.call", "questions") | ("decision.call", "answers") => Some(Ty::Obj),
         ("computer.observe", "app")
         | ("computer.observe", "state_id")
-        | ("computer.observe", "outcome") => Some(Ty::Str),
-        ("computer.observe", "element_count") | ("computer.observe", "latency_ms") => Some(Ty::Num),
-        ("computer.act", "action") | ("computer.act", "app") | ("computer.act", "outcome") => {
-            Some(Ty::Str)
-        }
-        ("computer.act", "latency_ms") => Some(Ty::Num),
+        | ("computer.observe", "outcome")
+        | ("browser.snapshot", "url")
+        | ("browser.snapshot", "state_id")
+        | ("browser.snapshot", "outcome") => Some(Ty::Str),
+        ("computer.observe", "element_count")
+        | ("computer.observe", "latency_ms")
+        | ("browser.snapshot", "element_count")
+        | ("browser.snapshot", "latency_ms") => Some(Ty::Num),
+        ("computer.act", "action")
+        | ("computer.act", "app")
+        | ("computer.act", "outcome")
+        | ("browser.act", "action")
+        | ("browser.act", "page")
+        | ("browser.act", "outcome") => Some(Ty::Str),
+        ("computer.act", "latency_ms") | ("browser.act", "latency_ms") => Some(Ty::Num),
         // dotted paths check nested fields — tokens.in must be a NUMBER,
         // so a hostile `<img onerror=...>` string is rejected at check time
         ("llm.call", "tokens.in") | ("llm.call", "tokens.out") => Some(Ty::Num),
@@ -407,6 +420,8 @@ mod tests {
             r#"{"v": 1, "seq": 2, "kind": "fn.return", "output": "missing fn field"}"#,
             r#"{"v": 1, "seq": 3, "kind": "decision.call", "model": "m", "provider": "p", "questions": {}, "answers": {}, "outcome": "ok"}"#,
             r#"{"v": 1, "seq": 4, "kind": "computer.observe", "app": "a", "state_id": "s1", "element_count": "not-a-number", "outcome": "ok", "latency_ms": 10}"#,
+            r#"{"v": 1, "seq": 5, "kind": "browser.snapshot", "url": "https://example.com", "state_id": "s1", "element_count": 5, "outcome": "ok", "latency_ms": 15}"#,
+            r#"{"v": 1, "seq": 6, "kind": "browser.act", "action": "click", "page": "p-1", "target": 3, "outcome": "ok", "latency_ms": 2}"#,
         );
         let errs = validate(&text);
         assert!(

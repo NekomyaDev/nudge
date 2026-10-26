@@ -1,8 +1,8 @@
 # Nudge Browser Engine — Multi-Agent Execution Roadmap
 
-**Target Version:** Nudge v1.6 (Flagship Track)  
-**Parent Specification:** [`docs/browser-use.md`](browser-use.md)  
-**Coordination Model:** Modular, Swarm-Friendly, Agent-Isolated Work Units  
+**Target Version:** Nudge v1.6 (Flagship Track)
+**Parent Specification:** [`docs/browser-use.md`](browser-use.md)
+**Coordination Model:** Modular, Swarm-Friendly, Agent-Isolated Work Units
 **Global Invariant:** Zero external dependencies; 100% first-party engine logic written in `.ndg` over a minimal kernel.
 
 ---

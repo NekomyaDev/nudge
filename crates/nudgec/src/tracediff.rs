@@ -84,11 +84,11 @@ fn totals(recs: &[Json]) -> Totals {
             }
             // v1.5: computer steps price in milliseconds too — observes and
             // acts are the loop's step count, latency is the wall-clock bill
-            "computer.observe" => {
+            "computer.observe" | "browser.snapshot" => {
                 t.observes += 1;
                 t.computer_latency += num(r, "latency_ms");
             }
-            "computer.act" => {
+            "computer.act" | "browser.act" => {
                 t.acts += 1;
                 t.computer_latency += num(r, "latency_ms");
             }
@@ -254,6 +254,10 @@ pub fn diff(a_text: &str, b_text: &str) -> String {
                     "computer.observe" => format!("computer.observe {}", s(ra, "app")),
                     "computer.act" => {
                         format!("computer.act {} ({})", s(ra, "action"), s(ra, "app"))
+                    }
+                    "browser.snapshot" => format!("browser.snapshot {}", s(ra, "url")),
+                    "browser.act" => {
+                        format!("browser.act {} ({})", s(ra, "action"), s(ra, "page"))
                     }
                     "fn.return" => format!("fn.return {}", s(ra, "fn")),
                     _ => {

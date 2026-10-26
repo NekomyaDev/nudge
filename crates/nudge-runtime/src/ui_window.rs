@@ -7097,7 +7097,9 @@ impl<D: UiDispatcher> NativeApp<D> {
                 .map(|d| d.as_secs())
                 .unwrap_or(0),
         };
-        let path = format!("/tmp/opencode/draft_{input_id}.json");
+        let dir = std::env::temp_dir().join("nudge_drafts");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join(format!("draft_{input_id}.json"));
         if let Ok(js) = serde_json::to_string_pretty(&record) {
             let _ = std::fs::write(path, js);
         }
@@ -7105,7 +7107,9 @@ impl<D: UiDispatcher> NativeApp<D> {
 
     /// Restores a saved input draft record if one exists.
     pub fn load_draft_recovery(&self, input_id: &str) -> Option<String> {
-        let path = format!("/tmp/opencode/draft_{input_id}.json");
+        let path = std::env::temp_dir()
+            .join("nudge_drafts")
+            .join(format!("draft_{input_id}.json"));
         let content = std::fs::read_to_string(path).ok()?;
         let record: DraftRecoveryRecord = serde_json::from_str(&content).ok()?;
         Some(record.draft)
@@ -18738,7 +18742,11 @@ mod tests {
         assert_eq!(loaded.as_deref(), Some(draft_text));
 
         // Clean up
-        let _ = std::fs::remove_file(format!("/tmp/opencode/draft_{input_id}.json"));
+        let _ = std::fs::remove_file(
+            std::env::temp_dir()
+                .join("nudge_drafts")
+                .join(format!("draft_{input_id}.json")),
+        );
     }
 
     #[test]
@@ -18810,8 +18818,11 @@ mod tests {
         assert_eq!(*app.dispatcher.last_key, "SidebarToggled:false");
 
         // Save window state
-        let path = "/tmp/opencode/test_window_state.json";
-        app.save_window_state(path).expect("save state");
+        let dir = std::env::temp_dir().join("nudge_state_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test_window_state.json");
+        let path_str = path.to_str().unwrap();
+        app.save_window_state(path_str).expect("save state");
 
         // Modify app state
         app.width = 300;
@@ -18819,7 +18830,7 @@ mod tests {
         app.sidebar_open = true;
 
         // Load window state back
-        let loaded = app.load_window_state(path).expect("load state");
+        let loaded = app.load_window_state(path_str).expect("load state");
         assert_eq!(loaded.width, 640);
         assert_eq!(loaded.height, 480);
         assert!(!loaded.sidebar_open);
@@ -18828,7 +18839,7 @@ mod tests {
         assert!(!app.sidebar_open);
 
         // Clean up
-        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

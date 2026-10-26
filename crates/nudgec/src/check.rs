@@ -422,12 +422,13 @@ fn elem_of(t: &Ty) -> Ty {
 
 // ── effect inference (design §3.2, v1.4) ──────────────────────────
 
-const KNOWN_EFFECTS: [&str; 12] = [
+const KNOWN_EFFECTS: [&str; 13] = [
     "LLM",
     "Tool",
     "IO",
     "Decision",
     "Computer",
+    "Browser",
     "Workspace",
     "WorkspaceDelete",
     "Store",
@@ -482,12 +483,64 @@ fn builtin_record_ty(name: &str) -> Option<Ty> {
             ("screenshot", Ty::Str),
             ("drift", builtin_record_ty("Drift")?),
         ]),
+        "Snapshot" => r(vec![
+            ("page", Ty::Str),
+            ("url", Ty::Str),
+            ("title", Ty::Str),
+            ("state_id", Ty::Str),
+            (
+                "elements",
+                Ty::List(Box::new(builtin_record_ty("Element")?)),
+            ),
+            ("tree", Ty::Str),
+            ("count", Ty::Int),
+            ("screenshot", Ty::Str),
+            ("drift", builtin_record_ty("Drift")?),
+        ]),
+        "Header" => r(vec![("name", Ty::Str), ("value", Ty::Str)]),
+        "Response" => r(vec![
+            ("status", Ty::Int),
+            ("headers", Ty::List(Box::new(builtin_record_ty("Header")?))),
+            ("body", Ty::Str),
+            ("url", Ty::Str),
+            ("latency_ms", Ty::Int),
+        ]),
+        "ActResult" => r(vec![
+            ("ok", Ty::Bool),
+            ("outcome", Ty::Str),
+            ("latency_ms", Ty::Int),
+            ("error", Ty::Str),
+            ("action_sent", Ty::Bool),
+            ("snapshot", builtin_record_ty("Snapshot")?),
+        ]),
+        "WaitResult" => r(vec![
+            ("ok", Ty::Bool),
+            ("timed_out", Ty::Bool),
+            ("latency_ms", Ty::Int),
+            ("snapshot", builtin_record_ty("Snapshot")?),
+        ]),
+        "Link" => r(vec![
+            ("href", Ty::Str),
+            ("text", Ty::Str),
+            ("download", Ty::Bool),
+        ]),
+        "Page" => r(vec![
+            ("page", Ty::Str),
+            ("url", Ty::Str),
+            ("title", Ty::Str),
+            ("depth", Ty::Int),
+        ]),
         "Element" => r(vec![
             ("index", Ty::Int),
+            ("ref", Ty::Int),
             ("role", Ty::Str),
             ("title", Ty::Str),
+            ("name", Ty::Str),
             ("value", Ty::Str),
+            ("tag", Ty::Str),
+            ("href", Ty::Str),
             ("pressable", Ty::Bool),
+            ("clickable", Ty::Bool),
             ("editable", Ty::Bool),
             ("focused", Ty::Bool),
             ("enabled", Ty::Bool),
@@ -625,6 +678,8 @@ fn direct_effects(
                     _ => {
                         if name.starts_with("io.") {
                             effects.insert("IO".into());
+                        } else if name.starts_with("browser.") {
+                            effects.insert("Browser".into());
                         } else if name.starts_with("workspace.") {
                             // workspace.delete requires both Workspace AND WorkspaceDelete
                             effects.insert("Workspace".into());
@@ -1425,8 +1480,9 @@ fn check_fn_body(
 
 /// Bindings users must never take: `rt`/`nudge_runtime` collide with the
 /// generated Python/TS, `state` is the agent-state receiver, `computer`
-/// would hijack the native computer-use surface (`computer.observe(...)`).
-const RESERVED_BINDINGS: [&str; 4] = ["rt", "nudge_runtime", "state", "computer"];
+/// would hijack the native computer-use surface (`computer.observe(...)`),
+/// and `browser` would hijack the browser-use surface (`browser.goto(...)`).
+const RESERVED_BINDINGS: [&str; 5] = ["rt", "nudge_runtime", "state", "computer", "browser"];
 
 fn check_reserved_binding(name: &str, errs: &mut Vec<CheckError>) {
     if RESERVED_BINDINGS.contains(&name) {
@@ -2842,8 +2898,9 @@ pub fn check(items: &[Item]) -> Vec<CheckError> {
     // names silently breaks the emitted Python/TS (`rt.llm_call` resolving
     // to a user fn, `_state_A` shadowing a checkpoint object). `computer`
     // is reserved the same way — `computer.observe(...)` is the native
-    // computer-use surface (v1.5), and a user binding would hijack it.
-    const RESERVED: [&str; 4] = ["rt", "nudge_runtime", "state", "computer"];
+    // computer-use surface (v1.5), and `browser` is the browser surface,
+    // where a user binding would hijack it.
+    const RESERVED: [&str; 5] = ["rt", "nudge_runtime", "state", "computer", "browser"];
     for item in items {
         let fn_name = match item {
             Item::Fn { name, .. } => Some(name),
@@ -3800,6 +3857,32 @@ fn run(app: string) -> bool uses Computer {
     fn computer_is_a_reserved_name() {
         let errs = check_src("fn f() -> int { let computer = 3\n    computer }");
         assert!(errs.iter().any(|e| e.code == "E0103"), "{errs:?}");
+    }
+
+    #[test]
+    fn browser_is_a_reserved_name() {
+        let errs = check_src("fn f() -> int { let browser = 3\n    browser }");
+        assert!(errs.iter().any(|e| e.code == "E0103"), "{errs:?}");
+    }
+
+    #[test]
+    fn browser_infers_the_browser_effect() {
+        let missing = check_src("fn f(url: string) -> int {\n    let r = browser.fetch(url)\n    r.status\n}");
+        assert!(missing.iter().any(|e| e.code == "E0301" && e.msg.contains("Browser")), "{missing:?}");
+
+        let ok = check_src("fn f(url: string) -> int uses Browser {\n    let r = browser.fetch(url)\n    r.status\n}");
+        assert!(ok.is_empty(), "{ok:?}");
+    }
+
+    #[test]
+    fn browser_builtin_types_are_typed() {
+        let src = r#"
+fn inspect(s: Snapshot) -> bool uses Browser {
+    s.count > 0 and s.drift.changed and len(s.elements) >= 0 and s.title != ""
+}
+"#;
+        let ok = check_src(src);
+        assert!(ok.is_empty(), "{ok:?}");
     }
 
     #[test]
