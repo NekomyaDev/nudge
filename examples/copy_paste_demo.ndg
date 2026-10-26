@@ -1,0 +1,54 @@
+// examples/copy_paste_demo.ndg
+// Demonstrates rich text paste normalization and copy-code notification toast.
+
+view CopyPasteDemo(input_val: string, last_status: string) -> View {
+    column(padding = 24, gap = 14) [
+        text("Nudge Studio — Copy & Paste Enhancement Demo"),
+        text("Click on the code block to copy code with floating toast notification:"),
+        divider(),
+        code_block("fn render_frame(buf: &mut [u32]) {\n    // Draw softbuffer pixels\n}", id = "rust_code"),
+        spacer(8),
+        status_line("Status: " + last_status, status = "info"),
+        spacer(8),
+        text("Composer Input (supports normalized rich text paste):"),
+        input(value = input_val, placeholder = "Paste formatted text here...", id = "composer", on_change = on_composer)
+    ]
+}
+
+agent CopyPasteApp {
+    state {
+        composer_text: string = ""
+        status_msg: string = "Ready"
+    }
+
+    fn on_copy_code(key: string) uses UI {
+        state.status_msg = "Copied " + key
+    }
+
+    fn on_composer(val: string) uses UI {
+        state.composer_text = val
+        state.status_msg = "Pasted: " + val
+    }
+
+    window MainWindow {
+        title: "Copy Paste Demo",
+        width: 500,
+        height: 400,
+        content: CopyPasteDemo(state.composer_text, state.status_msg)
+    }
+}
+
+fn main() uses UI {
+    CopyPasteApp.MainWindow.open()
+}
+
+test "copy code block and normalize rich text paste" {
+    let app = CopyPasteApp.MainWindow.mount_headless()
+    assert CopyPasteApp.state.status_msg == "Ready"
+
+    app.dispatch_copy_code("rust_code")
+    assert CopyPasteApp.state.status_msg == "Copied CopyCode:rust_code"
+
+    app.paste("<b>Fast</b> and <code>clean</code>", "composer")
+    assert CopyPasteApp.state.composer_text == "**Fast** and `clean`"
+}

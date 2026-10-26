@@ -1105,8 +1105,26 @@ across items and buttons:
   All 19 demo suites pass `nudgec test`.
 
 
-### 4.6 Copy / paste enhancement  (0.5 day)
-- [ ] Rich text paste, copy-code notification
+### 4.6 Copy / paste enhancement  (0.5 day) — DONE
+- [x] Rich text paste, copy-code notification
+
+**Copy/paste enhancements & copy-code toast.** Native copy/paste and clipboard feedback:
+- **`ToastNotification` & floating overlay**: `draw_toast_notification` renders floating notification
+  pill at top-right with accent status bar (Emerald-500 `0x10, 0xB9, 0x81` for success, Red-500
+  for error, Blue-500 for info).
+- **Code block copy button & notification**: code blocks render a top-right "Copy" pill badge;
+  clicking the code block or copy badge copies the code text to clipboard, triggers floating
+  toast notification ("Code copied to clipboard!"), and dispatches `CopyCode:<id>`.
+- **Rich text paste normalization**: `normalize_rich_text_paste` strips HTML tags (`<b>`, `<strong>`,
+  `<code>`, `<i>`, `<em>`, `<p>`, `<br>`) and converts them to standard Markdown formatting,
+  filtering out control characters before pasting into active inputs and composers.
+- **Python front end helpers**: added `dispatch_copy_code` and `paste` on `_HeadlessApp`.
+- **Verified**: fmt OK, clippy -D warnings clean, **975 passed / 0 failed / 1 ignored**
+  (new unit test `test_rich_text_paste_and_copy_code_toast`). Verified live on X11 with
+  `examples/copy_paste_demo.ndg` (window WID 67108866, 500x400): clicking the code block
+  triggered floating toast with 562 Emerald-500 (`0x10, 0xB9, 0x81`) pixels and 2,678 bright text
+  pixels on screen. All 20 demo suites pass `nudgec test`.
+
 
 ---
 
