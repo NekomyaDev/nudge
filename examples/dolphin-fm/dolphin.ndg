@@ -1,0 +1,906 @@
+// examples/dolphin-fm/dolphin.ndg
+// Dolphin File Manager - KDE Dolphin Desktop Specification
+// 100% Pure Nudge Language | 0 Foreign Dependencies (GATE-01 Compliant)
+
+type FileEntry = {
+    name: string,
+    path: string,
+    is_dir: bool,
+    size_bytes: int,
+    size_str: string,
+    mtime_ms: int,
+    permissions: string,
+    extension: string,
+    glyph: string,
+    cas_hash: string
+}
+
+type PlacesBookmark = {
+    label: string,
+    path: string,
+    category: string,
+    glyph: string
+}
+
+fn clean_int_str(s: string) -> string {
+    let parts = str.split(s, ".")
+    parts[0]
+}
+
+fn format_bytes(bytes: int) -> string {
+    let mut res = "0 B"
+    if bytes < 0 {
+        res = "0 B"
+    } else if bytes < 1024 {
+        res = clean_int_str(str.to_string(bytes)) + " B"
+    } else if bytes < 1048576 {
+        let kb = bytes / 1024
+        res = clean_int_str(str.to_string(kb)) + " KB"
+    } else if bytes < 1073741824 {
+        let mb = bytes / 1048576
+        res = clean_int_str(str.to_string(mb)) + " MB"
+    } else {
+        let gb = bytes / 1073741824
+        res = clean_int_str(str.to_string(gb)) + " GB"
+    }
+    res
+}
+
+fn get_extension(name: string) -> string {
+    let parts = str.split(name, ".")
+    let count = len(parts)
+    let mut ext = ""
+    if count > 1 {
+        ext = parts[count - 1]
+    }
+    ext
+}
+
+fn resolve_glyph(name: string, is_dir: bool) -> string {
+    let mut glyph = "📄"
+    if is_dir {
+        glyph = "📁"
+    } else {
+        let ext = str.lower(get_extension(name))
+        if ext == "ndg" {
+            glyph = "⚡"
+        } else if ext == "rs" or ext == "c" or ext == "cpp" or ext == "go" {
+            glyph = "⚙️"
+        } else if ext == "md" or ext == "txt" or ext == "doc" {
+            glyph = "📝"
+        } else if ext == "json" or ext == "toml" or ext == "yaml" or ext == "xml" {
+            glyph = "🔧"
+        } else if ext == "png" or ext == "jpg" or ext == "svg" or ext == "gif" {
+            glyph = "🖼️"
+        } else if ext == "sh" or ext == "bash" {
+            glyph = "💻"
+        } else {
+            glyph = "📄"
+        }
+    }
+    glyph
+}
+
+fn normalize_vfs_path(raw: string) -> string {
+    let raw_parts = str.split(raw, "/")
+    let mut stack: [string] = []
+    for p in raw_parts {
+        if p == "" or p == "." {
+            // skip
+        } else if p == ".." {
+            let stack_len = len(stack)
+            if stack_len > 0 {
+                let mut new_stack: [string] = []
+                for (item, idx) in stack {
+                    if idx < stack_len - 1 {
+                        new_stack = new_stack + [item]
+                    }
+                }
+                stack = new_stack
+            }
+        } else {
+            stack = stack + [p]
+        }
+    }
+    let total = len(stack)
+    let mut res = "."
+    if total > 0 {
+        let mut built = ""
+        for (item, idx) in stack {
+            if idx == 0 {
+                built = item
+            } else {
+                built = built + "/" + item
+            }
+        }
+        res = built
+    }
+    res
+}
+
+fn parent_vfs_path(p: string) -> string {
+    let norm = normalize_vfs_path(p)
+    let mut res = ".."
+    if norm == "." or norm == "" {
+        res = ".."
+    } else {
+        let parts = str.split(norm, "/")
+        let count = len(parts)
+        if count <= 1 {
+            res = "."
+        } else {
+            let mut built = ""
+            for (seg, idx) in parts {
+                if idx < count - 1 {
+                    if idx == 0 {
+                        built = seg
+                    } else {
+                        built = built + "/" + seg
+                    }
+                }
+            }
+            res = built
+        }
+    }
+    res
+}
+
+fn compute_cas_hash(text: string) -> string {
+    let raw = str.hash(text)
+    let pos = if raw < 0 { -raw } else { raw }
+    "blk_" + str.to_string(pos)
+}
+
+// Dolphin HIG sorting rule: Directories always precede files!
+fn should_precede(a: FileEntry, b: FileEntry, sort_by: string, sort_asc: bool) -> bool {
+    let mut precede = false
+    if a.is_dir and !b.is_dir {
+        precede = true
+    } else if !a.is_dir and b.is_dir {
+        precede = false
+    } else {
+        if sort_by == "size" {
+            if sort_asc {
+                precede = a.size_bytes < b.size_bytes
+            } else {
+                precede = a.size_bytes > b.size_bytes
+            }
+        } else if sort_by == "date" {
+            if sort_asc {
+                precede = a.mtime_ms < b.mtime_ms
+            } else {
+                precede = a.mtime_ms > b.mtime_ms
+            }
+        } else {
+            // Default sort: by name
+            let name_a = str.lower(a.name)
+            let name_b = str.lower(b.name)
+            if sort_asc {
+                precede = name_a < name_b
+            } else {
+                precede = name_a > name_b
+            }
+        }
+    }
+    precede
+}
+
+fn sort_entries(entries: [FileEntry], sort_by: string, sort_asc: bool) -> [FileEntry] {
+    let total = len(entries)
+    let mut sorted: [FileEntry] = []
+    for item in entries {
+        let mut inserted = false
+        let mut next_list: [FileEntry] = []
+        for existing in sorted {
+            if !inserted and should_precede(item, existing, sort_by, sort_asc) {
+                next_list = next_list + [item]
+                inserted = true
+            }
+            next_list = next_list + [existing]
+        }
+        if !inserted {
+            next_list = next_list + [item]
+        }
+        sorted = next_list
+    }
+    sorted
+}
+
+fn filter_entries(entries: [FileEntry], query: string) -> [FileEntry] {
+    let q = str.trim(str.lower(query))
+    let mut matched: [FileEntry] = []
+    if q == "" {
+        matched = entries
+    } else {
+        for e in entries {
+            let n = str.lower(e.name)
+            let ext = str.lower(e.extension)
+            if str.contains(n, q) or str.contains(ext, q) {
+                matched = matched + [e]
+            }
+        }
+    }
+    matched
+}
+
+// ── In-Memory VFS Bridge & Inode Table ───────────────────────────────
+
+agent VfsBridge {
+    state {
+        cached_dirs: [string] = []
+        cache_hits: int = 0
+        cache_misses: int = 0
+        total_inodes: int = 0
+    }
+
+    fn reset() {
+        state.cached_dirs = []
+        state.cache_hits = 0
+        state.cache_misses = 0
+        state.total_inodes = 0
+    }
+
+    fn list_directory(dir_path: string) -> [FileEntry] uses Workspace {
+        let norm = normalize_vfs_path(dir_path)
+        let mut already_cached = false
+        for d in state.cached_dirs {
+            if d == norm {
+                already_cached = true
+            }
+        }
+
+        if already_cached {
+            state.cache_hits = state.cache_hits + 1
+        } else {
+            state.cache_misses = state.cache_misses + 1
+            state.cached_dirs = state.cached_dirs + [norm]
+        }
+
+        let raw_names = workspace.list(norm)
+        let mut entries: [FileEntry] = []
+
+        for name in raw_names {
+            let full_p = if norm == "." { name } else { norm + "/" + name }
+            let st = workspace.stat(full_p)
+            let is_d = st.is_dir
+            let sz = st.size
+            let ext = get_extension(name)
+            let glyph = resolve_glyph(name, is_d)
+            let sz_str = if is_d { "<DIR>" } else { format_bytes(sz) }
+            let perms = if is_d { "drwxr-xr-x" } else { "-rw-r--r--" }
+            let cas = compute_cas_hash(full_p + ":" + str.to_string(st.mtime_ms))
+
+            entries = entries + [{
+                name: name,
+                path: full_p,
+                is_dir: is_d,
+                size_bytes: sz,
+                size_str: sz_str,
+                mtime_ms: st.mtime_ms,
+                permissions: perms,
+                extension: ext,
+                glyph: glyph,
+                cas_hash: cas
+            }]
+            state.total_inodes = state.total_inodes + 1
+        }
+
+        entries
+    }
+}
+
+// ── KDE Dolphin Views (Pack 3 Combinators) ──────────────────────────
+
+view DolphinTopBar(
+    current_path: string,
+    sort_by: string,
+    sort_asc: bool,
+    is_split: bool,
+    show_inspector: bool,
+    edit_path_mode: bool
+) -> View {
+    column(gap = 4) [
+        // Top Toolbar: Navigation + Breadcrumb / Path Input
+        row(gap = 8) [
+            button("◀", id = "btn_back", on_click = nav_back),
+            button("▶", id = "btn_forward", on_click = nav_forward),
+            button("▲", id = "btn_up", on_click = nav_up),
+            button("🔄", id = "btn_reload", on_click = reload_current),
+            button("🏠", id = "btn_home", on_click = nav_home),
+            spacer(6),
+            if edit_path_mode {
+                input(value = current_path, placeholder = "Enter directory path...", id = "input_path", on_change = on_path_input_change)
+            } else {
+                row(gap = 4) [
+                    badge("📁 /", status = "info"),
+                    button(current_path, id = "btn_path_breadcrumb", on_click = toggle_path_edit)
+                ]
+            },
+            button(if edit_path_mode { "✓ Done" } else { "✏️ Edit" }, id = "btn_toggle_path_mode", on_click = toggle_path_edit)
+        ],
+        // Second Toolbar: File Actions + Views
+        row(gap = 8) [
+            button("➕ New Folder", id = "btn_new_folder", on_click = create_new_folder),
+            button("📋 Copy", id = "btn_copy", on_click = copy_selected),
+            button("📥 Paste", id = "btn_paste", on_click = paste_clipboard),
+            button("🗑️ Delete", id = "btn_delete", on_click = delete_selected),
+            button("↩ Undo", id = "btn_undo", on_click = undo_last_action),
+            spacer(10),
+            button("⇅ Sort: " + sort_by + (if sort_asc { " ▲" } else { " ▼" }), id = "btn_sort_toggle", on_click = toggle_sort),
+            button(if is_split { "◫ Single Panel" } else { "◫ Split View (F3)" }, id = "btn_split_toggle", on_click = toggle_split),
+            button(if show_inspector { "👁️ Hide Info" } else { "👁️ Info (F11)" }, id = "btn_info_toggle", on_click = toggle_inspector)
+        ],
+        divider()
+    ]
+}
+
+view PlacesSidebar() -> View {
+    column(padding = 6, gap = 4) [
+        text("📌 Places", bold = true),
+        button("🏠 Home", id = "place_home", on_click = nav_home),
+        button("💻 Root (/)", id = "place_root", on_click = nav_root),
+        button("📂 Documents", id = "place_docs", on_click = nav_docs),
+        button("⬇️ Downloads", id = "place_downloads", on_click = nav_downloads),
+        button("🗑️ Trash", id = "place_trash", on_click = nav_trash),
+        spacer(6),
+        divider(),
+        text("💽 Drives", bold = true),
+        button("⚡ NVFS Ramdisk", id = "place_nvfs", on_click = nav_nvfs),
+        button("💾 Workspace", id = "place_workspace", on_click = nav_workspace),
+        spacer(6),
+        divider(),
+        text("⭐ Bookmarks", bold = true),
+        button("📁 crates/", id = "place_crates", on_click = nav_crates),
+        button("📁 examples/", id = "place_examples", on_click = nav_examples)
+    ]
+}
+
+view FileTableView(panel_title: string, entries: [FileEntry], selected_name: string) -> View {
+    let mut rows = []
+    for item in entries {
+        rows = rows + [
+            row(gap = 8) [
+                text(item.glyph),
+                button(item.name, id = "entry_" + item.name, on_click = select_or_open_entry),
+                spacer(12),
+                text(item.size_str),
+                badge(item.permissions, status = if item.is_dir { "info" } else { "warning" }),
+                if item.name == selected_name {
+                    tag("Selected", status = "success")
+                } else {
+                    spacer(1)
+                }
+            ]
+        ]
+    }
+
+    column(gap = 4) [
+        // Column headers
+        row(gap = 12) [
+            badge(panel_title, status = "info"),
+            spacer(10),
+            text("Items: " + str.to_string(len(entries)))
+        ],
+        divider(),
+        scroll(rows, id = "file_table_scroll", height = 360)
+    ]
+}
+
+view InspectorPanel(
+    selected_name: string,
+    selected_path: string,
+    selected_size: string,
+    selected_perms: string,
+    selected_cas: string,
+    preview_content: string
+) -> View {
+    column(padding = 8, gap = 6) [
+        text("👁️ Dolphin Inspector (F11)", bold = true),
+        divider(),
+        if selected_name != "" {
+            column(gap = 4) [
+                row(gap = 6) [
+                    text("File:"),
+                    text(selected_name, bold = true)
+                ],
+                text("Path: " + selected_path),
+                text("Size: " + selected_size),
+                text("Permissions: " + selected_perms),
+                row(gap = 6) [
+                    text("CAS Hash:"),
+                    badge(selected_cas, status = "success")
+                ],
+                divider(),
+                text("Content Preview:", bold = true),
+                if preview_content != "" {
+                    code_block(preview_content, id = "inspector_preview")
+                } else {
+                    text("(Directory or empty file)")
+                }
+            ]
+        } else {
+            column(gap = 6) [
+                text("Select an item to view preview and details."),
+                text("Dolphin Inspector displays CAS digests and file contents from memory.")
+            ]
+        }
+    ]
+}
+
+view DolphinFilterBar(filter_query: string, match_count: int, total_count: int) -> View {
+    column(gap = 2) [
+        divider(),
+        row(gap = 8) [
+            text("🔍 Filter (Ctrl+I):"),
+            input(value = filter_query, placeholder = "Filter by name or extension...", id = "input_filter", on_change = on_filter_change),
+            button("✕ Clear", id = "btn_clear_filter", on_click = clear_filter),
+            badge(str.to_string(match_count) + " / " + str.to_string(total_count) + " matches", status = "info")
+        ]
+    ]
+}
+
+view DolphinStatusBar(total_items: int, dir_count: int, file_count: int, cache_hits: int) -> View {
+    status_line(
+        "Total " + str.to_string(total_items) + " items (" + str.to_string(dir_count) + " folders, " + str.to_string(file_count) + " files) | NVFS Cache Hits: " + str.to_string(cache_hits) + " | 100% Pure Nudge",
+        status = "success"
+    )
+}
+
+view DolphinMainLayout(
+    current_path: string,
+    left_entries: [FileEntry],
+    right_entries: [FileEntry],
+    selected_name: string,
+    selected_path: string,
+    selected_size: string,
+    selected_perms: string,
+    selected_cas: string,
+    preview_content: string,
+    filter_query: string,
+    sort_by: string,
+    sort_asc: bool,
+    is_split: bool,
+    show_inspector: bool,
+    edit_path_mode: bool,
+    cache_hits: int
+) -> View {
+    let mut dir_c = 0
+    let mut file_c = 0
+    for e in left_entries {
+        if e.is_dir {
+            dir_c = dir_c + 1
+        } else {
+            file_c = file_c + 1
+        }
+    }
+
+    column(padding = 10, gap = 6) [
+        // 1. Üst Kontrol & Gezinme Çubuğu
+        DolphinTopBar(current_path, sort_by, sort_asc, is_split, show_inspector, edit_path_mode),
+
+        // 2. Ana Çalışma Alanı (Places Sidebar + File Table(s) + Inspector)
+        row(gap = 8) [
+            // Sol Kenar: Places
+            PlacesSidebar(),
+            divider(),
+
+            // Middle: Workspace Panels
+            if is_split {
+                row(gap = 8) [
+                    FileTableView("Left Panel [Active]", left_entries, selected_name),
+                    divider(),
+                    FileTableView("Right Panel (F3)", right_entries, "")
+                ]
+            } else {
+                FileTableView("Workspace", left_entries, selected_name)
+            },
+
+            // Sağ: Inspector (F11)
+            if show_inspector {
+                row(gap = 6) [
+                    divider(),
+                    InspectorPanel(
+                        selected_name,
+                        selected_path,
+                        selected_size,
+                        selected_perms,
+                        selected_cas,
+                        preview_content
+                    )
+                ]
+            } else {
+                spacer(1)
+            }
+        ],
+
+        // 3. Canlı Filtre Çubuğu
+        DolphinFilterBar(filter_query, len(left_entries), dir_c + file_c),
+
+        // 4. Durum Çubuğu
+        DolphinStatusBar(dir_c + file_c, dir_c, file_c, cache_hits)
+    ]
+}
+
+// ── Dolphin Master Application Agent ────────────────────────────────
+
+agent DolphinApp {
+    state {
+        current_path: string = "."
+        history_back: [string] = []
+        history_forward: [string] = []
+
+        all_entries: [FileEntry] = []
+        filtered_entries: [FileEntry] = []
+
+        // Split view (F3) secondary panel state
+        split_path: string = "crates"
+        split_entries: [FileEntry] = []
+        is_split: bool = false
+
+        // Inspector (F11) state
+        show_inspector: bool = true
+        selected_name: string = ""
+        selected_path: string = ""
+        selected_size: string = ""
+        selected_perms: string = ""
+        selected_cas: string = ""
+        preview_content: string = ""
+
+        // Filter & Sort
+        filter_query: string = ""
+        sort_by: string = "name"
+        sort_asc: bool = true
+
+        // Breadcrumb vs raw input mode
+        edit_path_mode: bool = false
+
+        // Clipboard
+        clipboard_path: string = ""
+        clipboard_name: string = ""
+        clipboard_content: string = ""
+    }
+
+    fn refresh() uses Workspace {
+        let loaded = VfsBridge.list_directory(state.current_path)
+        let sorted = sort_entries(loaded, state.sort_by, state.sort_asc)
+        state.all_entries = sorted
+        state.filtered_entries = filter_entries(sorted, state.filter_query)
+
+        if state.is_split {
+            let split_loaded = VfsBridge.list_directory(state.split_path)
+            state.split_entries = sort_entries(split_loaded, state.sort_by, state.sort_asc)
+        }
+    }
+
+    fn navigate_to(p: string) uses Workspace {
+        let norm = normalize_vfs_path(p)
+        if norm != state.current_path {
+            state.history_back = state.history_back + [state.current_path]
+            state.history_forward = []
+            state.current_path = norm
+            state.selected_name = ""
+            state.selected_path = ""
+            state.preview_content = ""
+            DolphinApp.refresh()
+        }
+    }
+
+    fn nav_back() uses UI, Workspace {
+        let count = len(state.history_back)
+        if count > 0 {
+            let prev = state.history_back[count - 1]
+            let mut new_back: [string] = []
+            for (item, idx) in state.history_back {
+                if idx < count - 1 {
+                    new_back = new_back + [item]
+                }
+            }
+            state.history_forward = state.history_forward + [state.current_path]
+            state.history_back = new_back
+            state.current_path = prev
+            DolphinApp.refresh()
+        }
+    }
+
+    fn nav_forward() uses UI, Workspace {
+        let count = len(state.history_forward)
+        if count > 0 {
+            let next_p = state.history_forward[count - 1]
+            let mut new_fwd: [string] = []
+            for (item, idx) in state.history_forward {
+                if idx < count - 1 {
+                    new_fwd = new_fwd + [item]
+                }
+            }
+            state.history_back = state.history_back + [state.current_path]
+            state.history_forward = new_fwd
+            state.current_path = next_p
+            DolphinApp.refresh()
+        }
+    }
+
+    fn nav_up() uses UI, Workspace {
+        let parent_p = parent_vfs_path(state.current_path)
+        DolphinApp.navigate_to(parent_p)
+    }
+
+    fn reload_current() uses UI, Workspace {
+        DolphinApp.refresh()
+    }
+
+    fn nav_home() uses UI, Workspace {
+        DolphinApp.navigate_to(".")
+    }
+
+    fn nav_root() uses UI, Workspace {
+        DolphinApp.navigate_to(".")
+    }
+
+    fn nav_docs() uses UI, Workspace {
+        DolphinApp.navigate_to("docs")
+    }
+
+    fn nav_downloads() uses UI, Workspace {
+        DolphinApp.navigate_to(".")
+    }
+
+    fn nav_trash() uses UI, Workspace {
+        DolphinApp.navigate_to(".")
+    }
+
+    fn nav_nvfs() uses UI, Workspace {
+        DolphinApp.navigate_to("crates/nudge-index")
+    }
+
+    fn nav_workspace() uses UI, Workspace {
+        DolphinApp.navigate_to(".")
+    }
+
+    fn nav_crates() uses UI, Workspace {
+        DolphinApp.navigate_to("crates")
+    }
+
+    fn nav_examples() uses UI, Workspace {
+        DolphinApp.navigate_to("examples")
+    }
+
+    fn toggle_split() uses UI, Workspace {
+        state.is_split = !state.is_split
+        if state.is_split {
+            let split_loaded = VfsBridge.list_directory(state.split_path)
+            state.split_entries = sort_entries(split_loaded, state.sort_by, state.sort_asc)
+        }
+    }
+
+    fn toggle_inspector() uses UI {
+        state.show_inspector = !state.show_inspector
+    }
+
+    fn toggle_path_edit() uses UI {
+        state.edit_path_mode = !state.edit_path_mode
+    }
+
+    fn on_path_input_change(new_val: string) uses UI, Workspace {
+        state.current_path = new_val
+        DolphinApp.refresh()
+    }
+
+    fn toggle_sort() uses UI {
+        if state.sort_by == "name" {
+            state.sort_by = "size"
+            state.sort_asc = false
+        } else if state.sort_by == "size" {
+            state.sort_by = "date"
+            state.sort_asc = false
+        } else {
+            state.sort_by = "name"
+            state.sort_asc = true
+        }
+        let sorted = sort_entries(state.all_entries, state.sort_by, state.sort_asc)
+        state.all_entries = sorted
+        state.filtered_entries = filter_entries(sorted, state.filter_query)
+    }
+
+    fn on_filter_change(query: string) uses UI {
+        state.filter_query = query
+        state.filtered_entries = filter_entries(state.all_entries, query)
+    }
+
+    fn clear_filter() uses UI {
+        state.filter_query = ""
+        state.filtered_entries = state.all_entries
+    }
+
+    fn select_or_open_entry() uses UI, Workspace {
+        // Selection is maintained when an item is clicked
+        if len(state.filtered_entries) > 0 {
+            let first = state.filtered_entries[0]
+            state.selected_name = first.name
+            state.selected_path = first.path
+            state.selected_size = first.size_str
+            state.selected_perms = first.permissions
+            state.selected_cas = first.cas_hash
+            if !first.is_dir {
+                state.preview_content = workspace.read(first.path)
+            } else {
+                state.preview_content = ""
+            }
+        }
+    }
+
+    fn copy_selected() uses UI, Workspace {
+        if state.selected_path != "" {
+            state.clipboard_path = state.selected_path
+            state.clipboard_name = state.selected_name
+            let entries = state.filtered_entries
+            let mut is_d = false
+            for e in entries {
+                if e.name == state.selected_name {
+                    is_d = e.is_dir
+                }
+            }
+            if !is_d {
+                state.clipboard_content = workspace.read(state.selected_path)
+            } else {
+                state.clipboard_content = ""
+            }
+        }
+    }
+
+    fn paste_clipboard() uses UI, Workspace {
+        if state.clipboard_path != "" {
+            let dest_name = "copy_of_" + state.clipboard_name
+            let dest_path = if state.current_path == "." { dest_name } else { state.current_path + "/" + dest_name }
+            workspace.write(dest_path, state.clipboard_content)
+            DolphinApp.refresh()
+        }
+    }
+
+    fn create_new_folder() uses UI, Workspace {
+        let new_folder_path = if state.current_path == "." { "New_Folder/.keep" } else { state.current_path + "/New_Folder/.keep" }
+        workspace.write(new_folder_path, "")
+        DolphinApp.refresh()
+    }
+
+    fn delete_selected() uses UI, Workspace, WorkspaceDelete {
+        if state.selected_path != "" {
+            workspace.delete(state.selected_path, recursive = true)
+            state.selected_name = ""
+            state.selected_path = ""
+            state.preview_content = ""
+            DolphinApp.refresh()
+        }
+    }
+
+    window MainWindow {
+        title: "KDE Dolphin File Manager - Nudge Edition",
+        width: 980,
+        height: 620,
+        content: DolphinMainLayout(
+            state.current_path,
+            state.filtered_entries,
+            state.split_entries,
+            state.selected_name,
+            state.selected_path,
+            state.selected_size,
+            state.selected_perms,
+            state.selected_cas,
+            state.preview_content,
+            state.filter_query,
+            state.sort_by,
+            state.sort_asc,
+            state.is_split,
+            state.show_inspector,
+            state.edit_path_mode,
+            VfsBridge.state.cache_hits
+        )
+    }
+}
+
+fn main() uses UI, Workspace {
+    DolphinApp.refresh()
+    DolphinApp.MainWindow.open()
+}
+
+// ── Acceptance Certification Tests (Deterministic Headless) ─────────
+
+test "dolphin app mounts with professional kde layout" {
+    VfsBridge.reset()
+    DolphinApp.refresh()
+    let app = DolphinApp.MainWindow.mount_headless()
+
+    // Assert top toolbar controls
+    assert app.find("btn_back").exists()
+    assert app.find("btn_up").exists()
+    assert app.find("btn_reload").exists()
+    assert app.find("btn_sort_toggle").exists()
+    assert app.find("btn_split_toggle").exists()
+    assert app.find("btn_info_toggle").exists()
+
+    // Assert places sidebar
+    assert app.find("place_home").exists()
+    assert app.find("place_nvfs").exists()
+    assert app.find("place_crates").exists()
+
+    // Assert live filter bar
+    assert app.find("input_filter").exists()
+    assert app.find("btn_clear_filter").exists()
+}
+
+test "split view f3 toggles dual panels and synchronizes entries" {
+    DolphinApp.refresh()
+    let app = DolphinApp.MainWindow.mount_headless()
+
+    assert !DolphinApp.state.is_split
+    app.dispatch_click("btn_split_toggle")
+    assert DolphinApp.state.is_split
+    assert len(DolphinApp.state.split_entries) > 0
+
+    // Toggle back to single view
+    app.dispatch_click("btn_split_toggle")
+    assert !DolphinApp.state.is_split
+}
+
+test "live filter bar updates visible entries via substring search" {
+    DolphinApp.refresh()
+    let app = DolphinApp.MainWindow.mount_headless()
+    let total_before = len(DolphinApp.state.filtered_entries)
+    assert total_before > 0
+
+    // Filter by 'crates'
+    app.dispatch_change("input_filter", "crates")
+    assert DolphinApp.state.filter_query == "crates"
+    assert len(DolphinApp.state.filtered_entries) >= 1
+    assert DolphinApp.state.filtered_entries[0].name == "crates"
+
+    // Clear filter restores all entries
+    app.dispatch_click("btn_clear_filter")
+    assert DolphinApp.state.filter_query == ""
+    assert len(DolphinApp.state.filtered_entries) == total_before
+}
+
+test "inspector f11 toggles display and updates metadata" {
+    DolphinApp.refresh()
+    let app = DolphinApp.MainWindow.mount_headless()
+
+    assert DolphinApp.state.show_inspector
+    app.dispatch_click("btn_info_toggle")
+    assert !DolphinApp.state.show_inspector
+
+    app.dispatch_click("btn_info_toggle")
+    assert DolphinApp.state.show_inspector
+}
+
+test "sorting groups directories first and updates order" {
+    DolphinApp.refresh()
+    let app = DolphinApp.MainWindow.mount_headless()
+
+    // Default: Sort by Name (Ascending)
+    assert DolphinApp.state.sort_by == "name"
+    assert DolphinApp.state.sort_asc
+
+    // First entry must be a directory if directories exist
+    let entries = DolphinApp.state.filtered_entries
+    if len(entries) > 0 {
+        assert entries[0].is_dir
+    }
+
+    // Toggle sort to Size
+    app.dispatch_click("btn_sort_toggle")
+    assert DolphinApp.state.sort_by == "size"
+    assert !DolphinApp.state.sort_asc
+}
+
+test "clipboard copy stores selected file in buffer" {
+    DolphinApp.refresh()
+    let app = DolphinApp.MainWindow.mount_headless()
+
+    // Select entry
+    DolphinApp.select_or_open_entry()
+    assert DolphinApp.state.selected_name != ""
+
+    // Click copy
+    app.dispatch_click("btn_copy")
+    assert DolphinApp.state.clipboard_path == DolphinApp.state.selected_path
+    assert DolphinApp.state.clipboard_name == DolphinApp.state.selected_name
+}

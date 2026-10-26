@@ -1,0 +1,15 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Nudge App Installer
+Name[tr]=Nudge Uygulama Yükleyicisi
+Comment=Install and launch .ndg Nudge applications
+Comment[tr]=.ndg Nudge uygulamalarını sisteme kurun veya doğrudan başlatın
+Exec=nudge-app-installer %f
+Icon=nudge
+Terminal=false
+Categories=System;Utility;PackageManager;
+MimeType=application/x-nudge;text/x-nudge;
+StartupNotify=true
+NoDisplay=false
+Keywords=nudge;agent;ndg;installer;runner;

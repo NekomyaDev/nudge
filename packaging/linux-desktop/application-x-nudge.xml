@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+    <mime-type type="application/x-nudge">
+        <comment>Nudge Agent Application</comment>
+        <comment xml:lang="tr">Nudge Ajan Uygulaması</comment>
+        <comment xml:lang="de">Nudge Agent-Anwendung</comment>
+        <comment xml:lang="fr">Application Agent Nudge</comment>
+        <icon name="application-x-nudge"/>
+        <generic-icon name="application-x-executable"/>
+        <glob pattern="*.ndg"/>
+        <sub-class-of type="text/plain"/>
+    </mime-type>
+</mime-info>

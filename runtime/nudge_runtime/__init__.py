@@ -4265,11 +4265,43 @@ def workspace_stat(path):
     if not os.path.exists(path):
         raise FileNotFoundError(f"workspace.stat: file not found: {path}")
     st = os.stat(path)
-    return {
+    return AttrDict({
         "size": st.st_size,
         "mtime_ms": int(st.st_mtime * 1000),
         "is_dir": os.path.isdir(path),
-    }
+    })
+
+def workspace_list(path="."):
+    import os
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"workspace.list: directory not found: {path}")
+    return sorted(os.listdir(path))
+
+def workspace_read(path):
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
+def workspace_write(path, content):
+    import os
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+
+def workspace_delete(path, recursive=False):
+    import os, shutil
+    if os.path.isdir(path):
+        if recursive:
+            shutil.rmtree(path)
+        else:
+            os.rmdir(path)
+    else:
+        os.remove(path)
+
+def workspace_exists(path):
+    import os
+    return os.path.exists(path)
 
 # ── string operations & hashing (v2.1, docs/in-memory-index-roadmap.md) ──────
 

@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# nudge-runner — Intelligent launcher for Nudge (.ndg) applications
+# Part of the Nudge Project (https://github.com/NekomyaDev/nudge)
+
+set -e
+
+# Find nudgec binary
+if command -v nudgec &>/dev/null; then
+    NUDGEC_BIN="nudgec"
+elif [ -x "$HOME/.local/bin/nudgec" ]; then
+    NUDGEC_BIN="$HOME/.local/bin/nudgec"
+elif [ -x "/usr/local/bin/nudgec" ]; then
+    NUDGEC_BIN="/usr/local/bin/nudgec"
+elif [ -x "/usr/bin/nudgec" ]; then
+    NUDGEC_BIN="/usr/bin/nudgec"
+else
+    echo "Hata: 'nudgec' derleyicisi sistemde bulunamadı!" >&2
+    echo "Lütfen önce Nudge'ı kurun: https://github.com/NekomyaDev/nudge" >&2
+    exit 1
+fi
+
+MODE="dialog"
+TARGET_FILE=""
+APP_ARGS=()
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --exec)
+            MODE="exec"
+            shift
+            ;;
+        --dialog)
+            MODE="dialog"
+            shift
+            ;;
+        --help|-h)
+            echo "Nudge Runner — Linux .ndg Uygulama Çalıştırıcısı"
+            echo "Kullanım:"
+            echo "  nudge-runner <dosya.ndg>          # Kurulum / Başlatma penceresini açar"
+            echo "  nudge-runner <dosya.ndg> --exec   # Doğrudan uygulamayı başlatır"
+            exit 0
+            ;;
+        *)
+            if [ -z "$TARGET_FILE" ]; then
+                TARGET_FILE="$1"
+            else
+                APP_ARGS+=("$1")
+            fi
+            shift
+            ;;
+    esac
+done
+
+if [ -z "$TARGET_FILE" ]; then
+    echo "Hata: Bir .ndg dosyası belirtilmedi!" >&2
+    echo "Kullanım: nudge-runner <uygulama.ndg> [--exec]" >&2
+    exit 1
+fi
+
+if [ ! -f "$TARGET_FILE" ]; then
+    echo "Hata: Belirtilen dosya bulunamadı: $TARGET_FILE" >&2
+    exit 1
+fi
+
+# Resolve absolute path
+TARGET_FILE="$(realpath "$TARGET_FILE")"
+APP_DIR="$(dirname "$TARGET_FILE")"
+APP_BASENAME="$(basename "$TARGET_FILE")"
+APP_TITLE="${APP_BASENAME%.ndg}"
+
+# If MODE is dialog, pass to GUI installer/manager
+if [ "$MODE" = "dialog" ]; then
+    if command -v nudge-app-installer &>/dev/null; then
+        exec nudge-app-installer "$TARGET_FILE" "${APP_ARGS[@]}"
+    elif [ -x "$HOME/.local/bin/nudge-app-installer" ]; then
+        exec "$HOME/.local/bin/nudge-app-installer" "$TARGET_FILE" "${APP_ARGS[@]}"
+    elif [ -x "/usr/local/bin/nudge-app-installer" ]; then
+        exec "/usr/local/bin/nudge-app-installer" "$TARGET_FILE" "${APP_ARGS[@]}"
+    fi
+    # If no installer GUI available, fall through to direct exec
+fi
+
+# Check if application uses UI / Graphics
+IS_GUI=0
+if grep -q -E "(uses[[:space:]]+UI|window[[:space:]]+[A-Za-z0-9_]+|view[[:space:]]+[A-Za-z0-9_]+.*->[[:space:]]*View|\.open\(\))" "$TARGET_FILE"; then
+    IS_GUI=1
+fi
+
+cd "$APP_DIR"
+
+if [ "$IS_GUI" -eq 1 ]; then
+    # GUI Application: Run directly in foreground window
+    exec "$NUDGEC_BIN" run "$TARGET_FILE" "${APP_ARGS[@]}"
+else
+    # Terminal / CLI / Agent Application:
+    # Asla arka planda gizlice çalıştırılmaz!
+    # Sistem terminalini etkileşimli ve görünür bir pencere olarak açar.
+    
+    # If already running inside an interactive terminal, run directly
+    if [ -t 0 ] && [ -t 1 ]; then
+        echo "=========================================================="
+        echo "  Nudge Ajanı Başlatılıyor: $APP_TITLE"
+        echo "  Dosya: $TARGET_FILE"
+        echo "=========================================================="
+        echo ""
+        "$NUDGEC_BIN" run "$TARGET_FILE" "${APP_ARGS[@]}"
+        EXIT_CODE=$?
+        echo ""
+        echo "----------------------------------------------------------"
+        if [ $EXIT_CODE -eq 0 ]; then
+            echo "✓ Tamamlandı (Çıkış kodu: 0)"
+        else
+            echo "✗ Hata ile sonlandı (Çıkış kodu: $EXIT_CODE)"
+        fi
+        exit $EXIT_CODE
+    fi
+
+    # Find terminal emulator
+    TERM_EMU=""
+    if [ -n "$TERMINAL" ] && command -v "$TERMINAL" &>/dev/null; then
+        TERM_EMU="$TERMINAL"
+    elif command -v konsole &>/dev/null; then
+        TERM_EMU="konsole"
+    elif command -v gnome-terminal &>/dev/null; then
+        TERM_EMU="gnome-terminal"
+    elif command -v x-terminal-emulator &>/dev/null; then
+        TERM_EMU="x-terminal-emulator"
+    elif command -v kitty &>/dev/null; then
+        TERM_EMU="kitty"
+    elif command -v alacritty &>/dev/null; then
+        TERM_EMU="alacritty"
+    elif command -v xfce4-terminal &>/dev/null; then
+        TERM_EMU="xfce4-terminal"
+    elif command -v xterm &>/dev/null; then
+        TERM_EMU="xterm"
+    fi
+
+    # Create temporary runner script that holds the window open
+    RUN_TMP="$(mktemp /tmp/nudge-exec-XXXXXX.sh)"
+    cat <<EOF > "$RUN_TMP"
+#!/usr/bin/env bash
+cd "$APP_DIR"
+echo -e "\033[1;34m╔══════════════════════════════════════════════════════════════╗\033[0m"
+echo -e "\033[1;34m║\033[0m  \033[1;37mNudge Ajan / Terminal Uygulaması: $APP_TITLE\033[0m"
+echo -e "\033[1;34m║\033[0m  \033[0;36mKaynak:\033[0m $TARGET_FILE"
+echo -e "\033[1;34m╚══════════════════════════════════════════════════════════════╝\033[0m"
+echo ""
+
+"$NUDGEC_BIN" run "$TARGET_FILE" ${APP_ARGS[@]+"\${@}"}
+EXIT_CODE=\$?
+
+echo ""
+echo -e "\033[1;30m────────────────────────────────────────────────────────────────\033[0m"
+if [ \$EXIT_CODE -eq 0 ]; then
+    echo -e "\033[1;32m✓ Uygulama başarıyla tamamlandı (Çıkış kodu: 0)\033[0m"
+else
+    echo -e "\033[1;31m✗ Uygulama hata ile sonlandı (Çıkış kodu: \$EXIT_CODE)\033[0m"
+fi
+echo ""
+read -p "Pencereyi kapatmak için Enter tuşuna basın..." _unused
+rm -f "$RUN_TMP"
+EOF
+    chmod +x "$RUN_TMP"
+
+    case "$TERM_EMU" in
+        konsole)
+            exec konsole --caption "$APP_TITLE (Nudge)" -e "$RUN_TMP"
+            ;;
+        gnome-terminal)
+            exec gnome-terminal --title="$APP_TITLE (Nudge)" -- "$RUN_TMP"
+            ;;
+        kitty)
+            exec kitty --title "$APP_TITLE (Nudge)" "$RUN_TMP"
+            ;;
+        alacritty)
+            exec alacritty --title "$APP_TITLE (Nudge)" -e "$RUN_TMP"
+            ;;
+        xfce4-terminal)
+            exec xfce4-terminal --title="$APP_TITLE (Nudge)" -x "$RUN_TMP"
+            ;;
+        x-terminal-emulator)
+            exec x-terminal-emulator -T "$APP_TITLE (Nudge)" -e "$RUN_TMP"
+            ;;
+        xterm)
+            exec xterm -title "$APP_TITLE (Nudge)" -e "$RUN_TMP"
+            ;;
+        *)
+            # Fallback if no terminal found
+            /bin/bash "$RUN_TMP"
+            ;;
+    esac
+fi

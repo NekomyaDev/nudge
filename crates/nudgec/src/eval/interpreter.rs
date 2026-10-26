@@ -3137,10 +3137,7 @@ impl Interpreter {
                     .map_err(|e| format!("error[E-native-0202]: {name} failed: {e}"))?;
                 value_to_nudgeval(&result).map_err(|e| format!("error[E-native-0203]: {name}: {e}"))
             }
-            "browser.fetch"
-            | "browser.connect"
-            | "browser.read"
-            | "browser.write"
+            "browser.fetch" | "browser.connect" | "browser.read" | "browser.write"
             | "browser.close" => {
                 let mut call_args = Vec::with_capacity(args.len());
                 for a in args {

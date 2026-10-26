@@ -2298,9 +2298,7 @@ fn check_expr_pos(
                             "length" | "to_int" | "char_code" | "hash" => return Ty::Int,
                             "to_float" => return Ty::Float,
                             "upper" | "lower" | "trim" | "replace" | "substring" | "to_string"
-                            | "from_char_code" => {
-                                return Ty::Str
-                            }
+                            | "from_char_code" => return Ty::Str,
                             "contains" | "starts_with" | "ends_with" => return Ty::Bool,
                             "split" => return Ty::List(Box::new(Ty::Str)),
                             "index_of" => return Ty::Int,

@@ -994,8 +994,17 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
                             format!("rt.browser_{name}")
                         } else if prefix == "mem" {
                             format!("rt.mem_{name}")
-                        } else if prefix == "workspace" && name == "stat" {
-                            "rt.workspace_stat".to_string()
+                        } else if prefix == "workspace" {
+                            match name.as_str() {
+                                "stat" => "rt.workspace_stat".to_string(),
+                                "list" => "rt.workspace_list".to_string(),
+                                "read" => "rt.workspace_read".to_string(),
+                                "write" => "rt.workspace_write".to_string(),
+                                "delete" => "rt.workspace_delete".to_string(),
+                                "exists" => "rt.workspace_exists".to_string(),
+                                "append" => "rt.workspace_append".to_string(),
+                                _ => format!("{prefix}.{name}"),
+                            }
                         } else if prefix == "str"
                             && matches!(
                                 name.as_str(),

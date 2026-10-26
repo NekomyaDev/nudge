@@ -34,8 +34,9 @@ fn tokenize_js(src: string) -> [JsToken] {
     let mut tokens: [JsToken] = []
     let mut i = 0
     let n = str.length(src)
+    let chars = str.split(src, "")
 
-    for _ in str.split(src, "") {
+    for _ in chars {
         if i < n {
             let ch = str.substring(src, i, i + 1)
             if is_js_space(ch) {
@@ -61,58 +62,42 @@ fn tokenize_js(src: string) -> [JsToken] {
                 let quote = ch
                 let start_pos = i
                 i = i + 1
-                let mut s_val = ""
-                let mut closed = false
-                for _ in str.split(src, "") {
-                    if i < n and !closed {
-                        let c = str.substring(src, i, i + 1)
-                        if c == quote {
-                            closed = true
-                            i = i + 1
-                        } else if c == "\\" and i + 1 < n {
-                            let next_c = str.substring(src, i + 1, i + 2)
-                            s_val = s_val + next_c
-                            i = i + 2
-                        } else {
-                            s_val = s_val + c
-                            i = i + 1
-                        }
-                    }
-                }
+                let next_q = str.index_of(str.substring(src, i), quote)
+                let s_val = if next_q >= 0 { str.substring(src, i, i + next_q) } else { str.substring(src, i) }
+                let adv = if next_q >= 0 { next_q + 1 } else { n - i }
+                i = i + adv
                 tokens = tokens + [{ kind: "string", val: s_val, pos: start_pos }]
             } else if is_js_digit(ch) {
                 // Number literal
                 let start_pos = i
-                let mut num_str = ""
                 let mut num_done = false
-                for _ in str.split(src, "") {
+                for _ in chars {
                     if i < n and !num_done {
                         let c = str.substring(src, i, i + 1)
                         if is_js_digit(c) or c == "." {
-                            num_str = num_str + c
                             i = i + 1
                         } else {
                             num_done = true
                         }
                     }
                 }
+                let num_str = str.substring(src, start_pos, i)
                 tokens = tokens + [{ kind: "number", val: num_str, pos: start_pos }]
             } else if is_js_ident_start(ch) {
                 // Identifier or keyword
                 let start_pos = i
-                let mut word = ""
                 let mut word_done = false
-                for _ in str.split(src, "") {
+                for _ in chars {
                     if i < n and !word_done {
                         let c = str.substring(src, i, i + 1)
                         if is_js_ident_part(c) {
-                            word = word + c
                             i = i + 1
                         } else {
                             word_done = true
                         }
                     }
                 }
+                let word = str.substring(src, start_pos, i)
                 let k = if is_js_keyword(word) { "keyword" } else { "ident" }
                 tokens = tokens + [{ kind: k, val: word, pos: start_pos }]
             } else {

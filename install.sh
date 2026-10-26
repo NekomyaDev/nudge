@@ -200,6 +200,15 @@ else
     sudo chmod +x /usr/local/bin/$BINARY
 fi
 
+# Optional Linux Desktop Integration
+if [ "$PLATFORM" = "linux" ]; then
+    SCRIPT_DIR_LOC="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+    if [ -n "$SCRIPT_DIR_LOC" ] && [ -x "$SCRIPT_DIR_LOC/packaging/linux-desktop/setup-desktop.sh" ]; then
+        echo "Configuring Linux desktop integration (.ndg associations & launcher)..."
+        "$SCRIPT_DIR_LOC/packaging/linux-desktop/setup-desktop.sh" || true
+    fi
+fi
+
 echo ""
 echo "Nudge ${VERSION} installed successfully!"
 echo ""
