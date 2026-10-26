@@ -1108,7 +1108,14 @@ fn test_round_trip() -> bool {{
     let n_ver = get_int_field(fields, "version", 0)
     let b_en = get_bool_field(fields, "enabled", false)
     let back = stringify_fields(fields)
-    s_name == "nudge" and n_ver == 1 and b_en and back == raw
+
+    // Array stringify and parse test
+    let arr = ["alpha", "beta", "gamma"]
+    let arr_json = stringify_string_array(arr)
+    let parsed_arr = parse_json_string_array(arr_json)
+    let ok_arr = len(parsed_arr) == 3 and parsed_arr[0] == "alpha" and parsed_arr[1] == "beta" and parsed_arr[2] == "gamma"
+
+    s_name == "nudge" and n_ver == 1 and b_en and back == raw and ok_arr
 }}
 "#
         );
@@ -1143,7 +1150,14 @@ fn test_url_resolve() -> bool {{
     let r4 = resolve_relative(base, "//cdn.example.org/lib.js")
     let r4_ok = r4 == "https://cdn.example.org/lib.js"
 
-    b_ok and r1_ok and r2_ok and r3_ok and r4_ok
+    // Query parameter decoding test
+    let params = parse_query_params("?q=nudge%20lang&filter=active%2Bready&empty=&user=alice%40corp.org")
+    let q_val = get_query_param(params, "q", "")
+    let f_val = get_query_param(params, "filter", "")
+    let u_val = get_query_param(params, "user", "")
+    let ok_params = q_val == "nudge lang" and f_val == "active+ready" and u_val == "alice@corp.org"
+
+    b_ok and r1_ok and r2_ok and r3_ok and r4_ok and ok_params
 }}
 "#
         );

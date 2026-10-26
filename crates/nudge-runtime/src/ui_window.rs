@@ -5031,6 +5031,11 @@ pub fn layout_element_ctx(
                 .map(|s| s.as_str())
                 .unwrap_or("start");
             let expand = elem.props.get("expand").is_some_and(|v| v == "true");
+            let explicit_w = elem
+                .props
+                .get("width")
+                .or_else(|| elem.props.get("w"))
+                .and_then(|s| s.parse::<i32>().ok());
 
             let start_box_idx = boxes.len();
             let mut child_y = y + padding;
@@ -5044,11 +5049,12 @@ pub fn layout_element_ctx(
                 }).sum();
                 let saved_max_h = ctx.max_h;
                 ctx.max_h = (ctx.max_h - subsequent_h).max(y + padding + 60);
+                let col_avail_w = explicit_w.unwrap_or(max_w) - 2 * padding;
                 let (cw, ch) = layout_element_ctx(
                     child,
                     x + padding,
                     child_y,
-                    max_w - 2 * padding,
+                    col_avail_w,
                     boxes,
                     ctx,
                     pan,

@@ -223,3 +223,44 @@ fn get_bool_field(fields: [JsonField], key: string, fallback: bool) -> bool {
     }
     res
 }
+
+fn stringify_string_array(xs: [string]) -> string {
+    let mut parts: [string] = []
+    for x in xs {
+        parts = parts + [stringify_string(x)]
+    }
+    "[" + str.join(parts, ",") + "]"
+}
+
+fn parse_json_string_array(s: string) -> [string] {
+    let mut i = skip_whitespace(s, 0)
+    let n = str.length(s)
+    let mut items: [string] = []
+    let mut closed = false
+
+    if i < n and str.substring(s, i, i + 1) == "[" {
+        i = i + 1 // skip '['
+
+        for _ in str.split(s, "") {
+            i = skip_whitespace(s, i)
+            if i >= n or str.substring(s, i, i + 1) == "]" {
+                closed = true
+            }
+
+            if !closed {
+                if str.substring(s, i, i + 1) == "\"" {
+                    let str_res = parse_json_string(s, i)
+                    items = items + [str_res.val]
+                    i = skip_whitespace(s, str_res.next)
+
+                    if i < n and str.substring(s, i, i + 1) == "," {
+                        i = i + 1
+                    }
+                } else {
+                    closed = true
+                }
+            }
+        }
+    }
+    items
+}

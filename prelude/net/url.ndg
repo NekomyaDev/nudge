@@ -129,3 +129,82 @@ fn resolve_relative(base: ParsedUrl, rel: string) -> string {
     }
     out
 }
+
+fn url_decode_component(s: string) -> string {
+    let mut out = str.replace(s, "+", " ")
+    out = str.replace(out, "%20", " ")
+    out = str.replace(out, "%21", "!")
+    out = str.replace(out, "%22", "\"")
+    out = str.replace(out, "%23", "#")
+    out = str.replace(out, "%24", "$")
+    out = str.replace(out, "%26", "&")
+    out = str.replace(out, "%27", "'")
+    out = str.replace(out, "%28", "(")
+    out = str.replace(out, "%29", ")")
+    out = str.replace(out, "%2B", "+")
+    out = str.replace(out, "%2b", "+")
+    out = str.replace(out, "%2C", ",")
+    out = str.replace(out, "%2c", ",")
+    out = str.replace(out, "%2F", "/")
+    out = str.replace(out, "%2f", "/")
+    out = str.replace(out, "%3A", ":")
+    out = str.replace(out, "%3a", ":")
+    out = str.replace(out, "%3B", ";")
+    out = str.replace(out, "%3b", ";")
+    out = str.replace(out, "%3C", "<")
+    out = str.replace(out, "%3c", "<")
+    out = str.replace(out, "%3D", "=")
+    out = str.replace(out, "%3d", "=")
+    out = str.replace(out, "%3E", ">")
+    out = str.replace(out, "%3e", ">")
+    out = str.replace(out, "%3F", "?")
+    out = str.replace(out, "%3f", "?")
+    out = str.replace(out, "%40", "@")
+    out = str.replace(out, "%5B", "[")
+    out = str.replace(out, "%5b", "[")
+    out = str.replace(out, "%5D", "]")
+    out = str.replace(out, "%5d", "]")
+    out = str.replace(out, "%7B", "{")
+    out = str.replace(out, "%7b", "{")
+    out = str.replace(out, "%7D", "}")
+    out = str.replace(out, "%7d", "}")
+    out = str.replace(out, "%0D%0A", "\n")
+    out = str.replace(out, "%0d%0a", "\n")
+    out = str.replace(out, "%0A", "\n")
+    out = str.replace(out, "%0a", "\n")
+    out = str.replace(out, "%25", "%")
+    out
+}
+
+fn parse_query_params(raw_query: string) -> [{ name: string, value: string }] {
+    let mut q = raw_query
+    if str.starts_with(q, "?") {
+        q = str.substring(q, 1)
+    }
+    let pairs = str.split(q, "&")
+    let mut out: [{ name: string, value: string }] = []
+    for p in pairs {
+        if p != "" {
+            let eq_idx = str.index_of(p, "=")
+            if eq_idx >= 0 {
+                let k = url_decode_component(str.substring(p, 0, eq_idx))
+                let v = url_decode_component(str.substring(p, eq_idx + 1))
+                out = out + [{ name: k, value: v }]
+            } else {
+                let k = url_decode_component(p)
+                out = out + [{ name: k, value: "" }]
+            }
+        }
+    }
+    out
+}
+
+fn get_query_param(params: [{ name: string, value: string }], name: string, fallback: string) -> string {
+    let mut res = fallback
+    for p in params {
+        if p.name == name {
+            res = p.value
+        }
+    }
+    res
+}
