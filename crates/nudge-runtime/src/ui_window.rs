@@ -5490,17 +5490,24 @@ impl<D: UiDispatcher> NativeApp<D> {
                     // than on box identity, so the box that lit up when the
                     // button went down is exactly the box that fires on release.
                     let key = button_key(lbox, box_index);
+                    let is_focused = self.focused_id.as_deref() == lbox.id.as_deref();
                     let pressed = hovered && self.pressed_id.as_deref() == Some(key.as_str());
                     // How far this button has travelled toward its hovered
                     // tone. Read by the same key, so an unlabelled button
                     // ramps too and one already fading out after the pointer
                     // left keeps drawing the blend it has reached instead of
                     // snapping back to rest the moment it stops being hovered.
-                    let hover_t = self.hover_ramps.get(&key).copied().unwrap_or(0.0);
+                    let hover_t = if is_focused {
+                        1.0
+                    } else {
+                        self.hover_ramps.get(&key).copied().unwrap_or(0.0)
+                    };
                     let (grad_top, grad_bottom) =
                         button_tones(&theme, hover_t, pressed, lbox.disabled);
                     let border_color = if lbox.disabled {
                         theme.border
+                    } else if is_focused {
+                        theme.input_border_focused
                     } else {
                         theme.button_border
                     };
@@ -6863,6 +6870,9 @@ impl<D: UiDispatcher> NativeApp<D> {
                     // up is the one that fires. A button with neither never
                     // dispatches — it is decoration.
                     clicked_button = lbox.id.clone().or_else(|| lbox.on_click.clone());
+                    if let Some(ref id) = lbox.id {
+                        self.focused_id = Some(id.clone());
+                    }
                 }
                 // Either way the press stops here: a disabled control absorbs
                 // the click instead of letting it fall through to a control
@@ -7116,6 +7126,68 @@ impl<D: UiDispatcher> NativeApp<D> {
                 .find(|b| b.id.as_deref() == Some(focused_id))
                 .cloned();
 
+            let tag = lbox.as_ref().map(|b| b.tag.as_str()).unwrap_or("");
+            if tag == "button" {
+                let focusable_ids: Vec<String> = self
+                    .layout_boxes
+                    .iter()
+                    .filter(|b| {
+                        !b.disabled && (b.tag == "button" || b.tag == "input") && b.id.is_some()
+                    })
+                    .filter_map(|b| b.id.clone())
+                    .collect();
+
+                match logical_key {
+                    Key::Named(NamedKey::ArrowDown) | Key::Named(NamedKey::Tab) => {
+                        if !focusable_ids.is_empty() {
+                            let curr_pos = focusable_ids.iter().position(|id| id == focused_id);
+                            let next_idx = match curr_pos {
+                                Some(pos) => (pos + 1) % focusable_ids.len(),
+                                None => 0,
+                            };
+                            self.focused_id = Some(focusable_ids[next_idx].clone());
+                            self.render();
+                            return;
+                        }
+                    }
+                    Key::Named(NamedKey::ArrowUp) => {
+                        if !focusable_ids.is_empty() {
+                            let curr_pos = focusable_ids.iter().position(|id| id == focused_id);
+                            let prev_idx = match curr_pos {
+                                Some(pos) => {
+                                    if pos == 0 {
+                                        focusable_ids.len().saturating_sub(1)
+                                    } else {
+                                        pos - 1
+                                    }
+                                }
+                                None => 0,
+                            };
+                            self.focused_id = Some(focusable_ids[prev_idx].clone());
+                            self.render();
+                            return;
+                        }
+                    }
+                    Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space) => {
+                        if let Some(target_b) = lbox {
+                            let click_target =
+                                target_b.id.clone().or_else(|| target_b.on_click.clone());
+                            if let Some(target) = click_target {
+                                self.dispatcher.dispatch_click(&target);
+                            }
+                        }
+                        self.render();
+                        return;
+                    }
+                    Key::Named(NamedKey::Escape) => {
+                        self.focused_id = None;
+                        self.render();
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+
             let initial = lbox
                 .as_ref()
                 .and_then(|b| b.text.as_deref())
@@ -7267,19 +7339,23 @@ impl<D: UiDispatcher> NativeApp<D> {
                     }
                     Key::Named(NamedKey::Tab) => {
                         key_name = "Tab".to_string();
-                        let input_ids: Vec<String> = self
+                        let focusable_ids: Vec<String> = self
                             .layout_boxes
                             .iter()
-                            .filter(|b| b.tag == "input" && b.id.is_some())
+                            .filter(|b| {
+                                !b.disabled
+                                    && (b.tag == "input" || b.tag == "button")
+                                    && b.id.is_some()
+                            })
                             .filter_map(|b| b.id.clone())
                             .collect();
-                        if !input_ids.is_empty() {
-                            let curr_pos = input_ids.iter().position(|id| id == focused_id);
+                        if !focusable_ids.is_empty() {
+                            let curr_pos = focusable_ids.iter().position(|id| id == focused_id);
                             let next_idx = match curr_pos {
-                                Some(pos) => (pos + 1) % input_ids.len(),
+                                Some(pos) => (pos + 1) % focusable_ids.len(),
                                 None => 0,
                             };
-                            self.focused_id = Some(input_ids[next_idx].clone());
+                            self.focused_id = Some(focusable_ids[next_idx].clone());
                         }
                     }
                     _ => {
@@ -7374,14 +7450,61 @@ impl<D: UiDispatcher> NativeApp<D> {
                 Some((key, _)) => {
                     self.scroll_region_by(key, -20);
                 }
-                None => self.scroll_by(0, -20),
+                None => {
+                    let focusable_ids: Vec<String> = self
+                        .layout_boxes
+                        .iter()
+                        .filter(|b| {
+                            !b.disabled && (b.tag == "button" || b.tag == "input") && b.id.is_some()
+                        })
+                        .filter_map(|b| b.id.clone())
+                        .collect();
+                    if let Some(last) = focusable_ids.last() {
+                        self.focused_id = Some(last.clone());
+                        self.render();
+                        return;
+                    } else {
+                        self.scroll_by(0, -20);
+                    }
+                }
             },
             Key::Named(NamedKey::ArrowDown) => match &region_target {
                 Some((key, _)) => {
                     self.scroll_region_by(key, 20);
                 }
-                None => self.scroll_by(0, 20),
+                None => {
+                    let focusable_ids: Vec<String> = self
+                        .layout_boxes
+                        .iter()
+                        .filter(|b| {
+                            !b.disabled && (b.tag == "button" || b.tag == "input") && b.id.is_some()
+                        })
+                        .filter_map(|b| b.id.clone())
+                        .collect();
+                    if let Some(first) = focusable_ids.first() {
+                        self.focused_id = Some(first.clone());
+                        self.render();
+                        return;
+                    } else {
+                        self.scroll_by(0, 20);
+                    }
+                }
             },
+            Key::Named(NamedKey::Tab) => {
+                let focusable_ids: Vec<String> = self
+                    .layout_boxes
+                    .iter()
+                    .filter(|b| {
+                        !b.disabled && (b.tag == "button" || b.tag == "input") && b.id.is_some()
+                    })
+                    .filter_map(|b| b.id.clone())
+                    .collect();
+                if let Some(first) = focusable_ids.first() {
+                    self.focused_id = Some(first.clone());
+                    self.render();
+                    return;
+                }
+            }
             Key::Named(NamedKey::Enter) => key_name = "Enter".to_string(),
             Key::Named(NamedKey::Escape) => key_name = "Escape".to_string(),
             Key::Character(s) => key_name = s.to_string(),
@@ -8920,6 +9043,54 @@ mod tests {
         assert!(
             app.command_palette.is_none(),
             "Enter commits and closes palette"
+        );
+    }
+
+    #[test]
+    fn test_keyboard_list_navigation_up_down_enter() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "List Nav".into(),
+                width: 400,
+                height: 400,
+            },
+            dummy,
+        );
+
+        let chat1 = test_box("button", "chat_item_1", 40, false);
+        let chat2 = test_box("button", "chat_item_2", 90, false);
+        let chat3 = test_box("button", "chat_item_3", 140, false);
+        app.layout_boxes = vec![chat1, chat2, chat3];
+
+        // 1. Initial ArrowDown focuses the first list item
+        assert!(app.focused_id.is_none());
+        app.handle_key_input(&Key::Named(NamedKey::ArrowDown), None);
+        assert_eq!(app.focused_id.as_deref(), Some("chat_item_1"));
+
+        // 2. Next ArrowDown moves focus to second item
+        app.handle_key_input(&Key::Named(NamedKey::ArrowDown), None);
+        assert_eq!(app.focused_id.as_deref(), Some("chat_item_2"));
+
+        // 3. ArrowUp moves back to first item
+        app.handle_key_input(&Key::Named(NamedKey::ArrowUp), None);
+        assert_eq!(app.focused_id.as_deref(), Some("chat_item_1"));
+
+        // 4. ArrowDown to second item and press Enter to activate
+        app.handle_key_input(&Key::Named(NamedKey::ArrowDown), None);
+        assert_eq!(app.focused_id.as_deref(), Some("chat_item_2"));
+
+        app.handle_key_input(&Key::Named(NamedKey::Enter), None);
+        assert_eq!(
+            *app.dispatcher.val, 1,
+            "Enter on focused button dispatches click"
         );
     }
 

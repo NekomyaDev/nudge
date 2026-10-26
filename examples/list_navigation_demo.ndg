@@ -1,0 +1,60 @@
+// examples/list_navigation_demo.ndg
+// Demonstrates keyboard list navigation (Up/Down arrows to highlight, Enter to open chat).
+
+view ListNavDemo(active_chat: string) -> View {
+    column(padding = 24, gap = 14) [
+        text("Nudge Studio — Keyboard List Navigation"),
+        text("Use ArrowUp and ArrowDown to navigate chat list, press Enter to open:"),
+        divider(),
+        status_line("Active Chat: " + active_chat, status = "info"),
+        spacer(12),
+        button("Chat #1 — Project Roadmap & Tasks", id = "chat_1", on_click = select_chat_1),
+        button("Chat #2 — Memory & Allocator Design", id = "chat_2", on_click = select_chat_2),
+        button("Chat #3 — LLM Provider Routing", id = "chat_3", on_click = select_chat_3),
+        button("Chat #4 — Desktop Rendering Engine", id = "chat_4", on_click = select_chat_4)
+    ]
+}
+
+agent ChatListApp {
+    state {
+        current: string = "None"
+    }
+
+    fn select_chat_1() uses UI {
+        state.current = "Project Roadmap & Tasks"
+    }
+
+    fn select_chat_2() uses UI {
+        state.current = "Memory & Allocator Design"
+    }
+
+    fn select_chat_3() uses UI {
+        state.current = "LLM Provider Routing"
+    }
+
+    fn select_chat_4() uses UI {
+        state.current = "Desktop Rendering Engine"
+    }
+
+    window MainWindow {
+        title: "List Navigation Demo",
+        width: 480,
+        height: 380,
+        content: ListNavDemo(state.current)
+    }
+}
+
+fn main() uses UI {
+    ChatListApp.MainWindow.open()
+}
+
+test "list navigation activates chats via click" {
+    let app = ChatListApp.MainWindow.mount_headless()
+    assert ChatListApp.state.current == "None"
+
+    app.dispatch_click("chat_1")
+    assert ChatListApp.state.current == "Project Roadmap & Tasks"
+
+    app.dispatch_click("chat_3")
+    assert ChatListApp.state.current == "LLM Provider Routing"
+}

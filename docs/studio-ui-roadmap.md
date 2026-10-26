@@ -1047,8 +1047,24 @@ flexible alignment and distribution options:
   All 16 demo suites pass `nudgec test`.
 
 
-### 4.3 Keyboard list navigation  (0.5 day)
-- [ ] Up/down in the chat list + Enter to open
+### 4.3 Keyboard list navigation  (0.5 day) — DONE
+- [x] Up/down in the chat list + Enter to open
+
+**Keyboard list navigation for chat lists & interactive items.** Native keyboard navigation
+across items and buttons:
+- **ArrowUp / ArrowDown navigation**: moves focus across focusable items (`button`, `input`)
+  in layout order, cycling gracefully without losing position.
+- **Active focus indicator ring**: focused buttons render with `theme.input_border_focused`
+  (Blue-500 accent outline) and active hover tone (`hover_t = 1.0`).
+- **Enter / Space activation**: activates the focused list item / button, triggering its
+  `dispatch_click` handler.
+- **Escape**: dismisses focus (`focused_id = None`).
+- **Verified**: fmt OK, clippy -D warnings clean, **970 passed / 0 failed / 1 ignored**
+  (new unit test `test_keyboard_list_navigation_up_down_enter`). Verified live on X11
+  with `examples/list_navigation_demo.ndg` (window WID 90177538, 480x380): ArrowDown
+  focused chat item with 1,892 Blue-500 outline pixels, and Enter opened the chat with
+  3,429 bright text pixels rendered. All 17 demo suites pass `nudgec test`.
+
 
 ### 4.4 Drag & drop  (1 day)
 - [ ] Message reorder, chat sorting, file drop
