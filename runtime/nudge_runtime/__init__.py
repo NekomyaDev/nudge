@@ -743,6 +743,12 @@ def _jsonable(value):
     return str(value)
 
 
+def get_index(collection, key):
+    if isinstance(collection, dict):
+        return collection.get(key, None)
+    return collection[key]
+
+
 # ── trace ────────────────────────────────────────────────────────────
 
 def _trace_path() -> Path:

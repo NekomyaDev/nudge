@@ -1229,7 +1229,19 @@ fn test_dom_suite() -> bool {{
         false
     }}
 
-    cnt_ok and h1_ok and main_ok and btn_ok and input_ok and desc_ok and ref_ok
+    // Compound selector tests
+    let compound_btns = query_selector_all(tree, "button.btn")
+    let ok_compound_btn = len(compound_btns) == 1 and compound_btns[0].tag == "button"
+
+    // Direct child selector test
+    let child_inputs = query_selector_all(tree, "form > input")
+    let ok_child = len(child_inputs) == 1 and child_inputs[0].tag == "input"
+
+    // Pseudo-class test
+    let first_elems = query_selector_all(tree, ":first-child")
+    let ok_first = len(first_elems) >= 1
+
+    cnt_ok and h1_ok and main_ok and btn_ok and input_ok and desc_ok and ref_ok and ok_compound_btn and ok_child and ok_first
 }}
 "##
         );
@@ -1659,7 +1671,7 @@ fn test_f6_suite() -> bool {{
 {snapshot_src}
 {layout_src}
 {compositor_src}
-fn test_f7_suite() -> bool {{
+fn test_f7_suite() -> bool uses Browser {{
     // 1. Box Model & Layout
     let doc = "<div id=\"card\" style=\"width: 400px; height: 200px; margin: 20px;\"><button id=\"btn\" style=\"width: 100px; height: 30px;\">Click</button><span style=\"display: none;\">Hidden</span></div>"
     let tree = build_dom_tree(tokenize_html(doc))

@@ -86,9 +86,8 @@ fn make_ws_text_frame(text: string, mask_key: string) -> string {
         if i < n {
             let ch_code = str.char_code(text, i)
             let m_byte = mask_bytes[i % 4]
-            // XOR mask: in pure .ndg arithmetic: (a + b) - 2 * (a AND b) or byte-level simulation
-            // For echo / test or zero mask:
-            let masked_code = (ch_code + m_byte) % 256
+            // RFC 6455 §5.3: exact bitwise XOR masking
+            let masked_code = math.bitwise_xor(ch_code, m_byte)
             out = out + str.from_char_code(masked_code)
             i = i + 1
         }
@@ -114,7 +113,26 @@ fn parse_ws_frame(raw: string) -> WsFrame {
 
         let payload_start = if is_masked { 6 } else { 2 }
         if str.length(raw) >= payload_start + payload_len {
-            text_payload = str.substring(raw, payload_start, payload_start + payload_len)
+            if is_masked {
+                let m0 = str.char_code(raw, 2)
+                let m1 = str.char_code(raw, 3)
+                let m2 = str.char_code(raw, 4)
+                let m3 = str.char_code(raw, 5)
+                let mask_keys = [m0, m1, m2, m3]
+                let mut decoded = ""
+                let mut idx = 0
+                for _ in str.split(raw, "") {
+                    if idx < payload_len {
+                        let c = str.char_code(raw, payload_start + idx)
+                        let unmasked = math.bitwise_xor(c, mask_keys[idx % 4])
+                        decoded = decoded + str.from_char_code(unmasked)
+                        idx = idx + 1
+                    }
+                }
+                text_payload = decoded
+            } else {
+                text_payload = str.substring(raw, payload_start, payload_start + payload_len)
+            }
         }
     }
 

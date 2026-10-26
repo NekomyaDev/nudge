@@ -105,6 +105,58 @@ pub fn register() -> HashMap<String, Value> {
     functions.insert("math.std_dev".to_string(), Value::Native("math.std_dev"));
     functions.insert("math.sum".to_string(), Value::Native("math.sum"));
 
+    // Bitwise operations
+    functions.insert(
+        "math.bitwise_xor".to_string(),
+        Value::Native("math.bitwise_xor"),
+    );
+    functions.insert(
+        "math.bitwise_and".to_string(),
+        Value::Native("math.bitwise_and"),
+    );
+    functions.insert(
+        "math.bitwise_or".to_string(),
+        Value::Native("math.bitwise_or"),
+    );
+    functions.insert(
+        "math.bitwise_not".to_string(),
+        Value::Native("math.bitwise_not"),
+    );
+    functions.insert(
+        "math.shift_left".to_string(),
+        Value::Native("math.shift_left"),
+    );
+    functions.insert(
+        "math.shift_right".to_string(),
+        Value::Native("math.shift_right"),
+    );
+
+    // int.* aliases
+    functions.insert(
+        "int.bitwise_xor".to_string(),
+        Value::Native("math.bitwise_xor"),
+    );
+    functions.insert(
+        "int.bitwise_and".to_string(),
+        Value::Native("math.bitwise_and"),
+    );
+    functions.insert(
+        "int.bitwise_or".to_string(),
+        Value::Native("math.bitwise_or"),
+    );
+    functions.insert(
+        "int.bitwise_not".to_string(),
+        Value::Native("math.bitwise_not"),
+    );
+    functions.insert(
+        "int.shift_left".to_string(),
+        Value::Native("math.shift_left"),
+    );
+    functions.insert(
+        "int.shift_right".to_string(),
+        Value::Native("math.shift_right"),
+    );
+
     // Constants
     functions.insert("math.PI".to_string(), Value::Float(std::f64::consts::PI));
     functions.insert("math.E".to_string(), Value::Float(std::f64::consts::E));
@@ -464,6 +516,72 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                     Ok(Value::Float(sum))
                 }
                 _ => Err("math.sum: argument must be a list".to_string()),
+            }
+        }
+
+        "math.bitwise_xor" | "int.bitwise_xor" => {
+            if args.len() != 2 {
+                return Err("bitwise_xor requires 2 arguments (int, int)".to_string());
+            }
+            match (&args[0], &args[1]) {
+                (Value::Int(a), Value::Int(b)) => Ok(Value::Int(*a ^ *b)),
+                _ => Err("bitwise_xor: arguments must be integers".to_string()),
+            }
+        }
+
+        "math.bitwise_and" | "int.bitwise_and" => {
+            if args.len() != 2 {
+                return Err("bitwise_and requires 2 arguments (int, int)".to_string());
+            }
+            match (&args[0], &args[1]) {
+                (Value::Int(a), Value::Int(b)) => Ok(Value::Int(*a & *b)),
+                _ => Err("bitwise_and: arguments must be integers".to_string()),
+            }
+        }
+
+        "math.bitwise_or" | "int.bitwise_or" => {
+            if args.len() != 2 {
+                return Err("bitwise_or requires 2 arguments (int, int)".to_string());
+            }
+            match (&args[0], &args[1]) {
+                (Value::Int(a), Value::Int(b)) => Ok(Value::Int(*a | *b)),
+                _ => Err("bitwise_or: arguments must be integers".to_string()),
+            }
+        }
+
+        "math.bitwise_not" | "int.bitwise_not" => {
+            if args.len() != 1 {
+                return Err("bitwise_not requires 1 argument (int)".to_string());
+            }
+            match &args[0] {
+                Value::Int(a) => Ok(Value::Int(!*a)),
+                _ => Err("bitwise_not: argument must be an integer".to_string()),
+            }
+        }
+
+        "math.shift_left" | "int.shift_left" => {
+            if args.len() != 2 {
+                return Err("shift_left requires 2 arguments (int, int)".to_string());
+            }
+            match (&args[0], &args[1]) {
+                (Value::Int(a), Value::Int(b)) => {
+                    let shift = (*b).clamp(0, 63) as u32;
+                    Ok(Value::Int(*a << shift))
+                }
+                _ => Err("shift_left: arguments must be integers".to_string()),
+            }
+        }
+
+        "math.shift_right" | "int.shift_right" => {
+            if args.len() != 2 {
+                return Err("shift_right requires 2 arguments (int, int)".to_string());
+            }
+            match (&args[0], &args[1]) {
+                (Value::Int(a), Value::Int(b)) => {
+                    let shift = (*b).clamp(0, 63) as u32;
+                    Ok(Value::Int(*a >> shift))
+                }
+                _ => Err("shift_right: arguments must be integers".to_string()),
             }
         }
 

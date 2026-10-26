@@ -12,12 +12,13 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-pub const METHODS: [&str; 5] = [
+pub const METHODS: [&str; 6] = [
     "browser.fetch",
     "browser.connect",
     "browser.read",
     "browser.write",
     "browser.close",
+    "browser.rasterize",
 ];
 
 enum StreamHandle {
@@ -69,8 +70,257 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
         "browser.read" => execute_read(args),
         "browser.write" => execute_write(args),
         "browser.close" => execute_close(args),
+        "browser.rasterize" => execute_rasterize(args),
         _ => Err(format!("Unimplemented browser function: {name}")),
     }
+}
+
+fn execute_rasterize(args: Vec<Value>) -> Result<Value, String> {
+    let boxes = match args.first() {
+        Some(Value::List(l)) => l.clone(),
+        _ => return Err("browser.rasterize requires boxes (list)".into()),
+    };
+    let w = match args.get(1) {
+        Some(Value::Int(w)) => (*w).clamp(100, 3840) as usize,
+        _ => 1280,
+    };
+    let h = match args.get(2) {
+        Some(Value::Int(h)) => (*h).clamp(100, 3840) as usize,
+        _ => 800,
+    };
+
+    let mut buf = vec![255u8; w * h * 4]; // white background
+    let stride = w;
+
+    for b in boxes {
+        if let Value::Map(m) = b {
+            let x = match m.get("x") {
+                Some(Value::Int(v)) => (*v).max(0) as usize,
+                _ => 0,
+            };
+            let y = match m.get("y") {
+                Some(Value::Int(v)) => (*v).max(0) as usize,
+                _ => 0,
+            };
+            let bw = match m.get("w") {
+                Some(Value::Int(v)) => (*v).max(0) as usize,
+                _ => 0,
+            };
+            let bh = match m.get("h") {
+                Some(Value::Int(v)) => (*v).max(0) as usize,
+                _ => 0,
+            };
+            let display = match m.get("display") {
+                Some(Value::String(s)) => s.as_str(),
+                _ => "block",
+            };
+            let tag = match m.get("tag") {
+                Some(Value::String(s)) => s.as_str(),
+                _ => "",
+            };
+            let name = match m.get("name") {
+                Some(Value::String(s)) => s.clone(),
+                _ => String::new(),
+            };
+
+            if display == "none" || bw == 0 || bh == 0 || x >= w || y >= h {
+                continue;
+            }
+
+            let box_w = std::cmp::min(bw, w - x);
+            let box_h = std::cmp::min(bh, h - y);
+
+            if tag == "button" {
+                draw_rect(
+                    &mut buf,
+                    stride,
+                    w,
+                    h,
+                    x,
+                    y,
+                    box_w,
+                    box_h,
+                    [79, 70, 229, 255],
+                    Some([67, 56, 202, 255]),
+                );
+                let label = if !name.is_empty() {
+                    &name
+                } else {
+                    "Button"
+                };
+                draw_text(
+                    &mut buf,
+                    stride,
+                    w,
+                    h,
+                    x + 8,
+                    y + 6,
+                    label,
+                    1,
+                    [255, 255, 255, 255],
+                );
+            } else if tag == "input" {
+                draw_rect(
+                    &mut buf,
+                    stride,
+                    w,
+                    h,
+                    x,
+                    y,
+                    box_w,
+                    box_h,
+                    [255, 255, 255, 255],
+                    Some([203, 213, 225, 255]),
+                );
+                let text = if !name.is_empty() { &name } else { "" };
+                draw_text(&mut buf, stride, w, h, x + 6, y + 5, text, 1, [71, 85, 105, 255]);
+            } else if tag == "h1" {
+                draw_text(&mut buf, stride, w, h, x, y, &name, 2, [15, 23, 42, 255]);
+            } else if tag == "h2" {
+                draw_text(&mut buf, stride, w, h, x, y, &name, 2, [30, 41, 59, 255]);
+            } else {
+                if bw > 20 && bh > 20 && (tag == "div" || tag == "section") {
+                    draw_rect(
+                        &mut buf,
+                        stride,
+                        w,
+                        h,
+                        x,
+                        y,
+                        box_w,
+                        box_h,
+                        [248, 250, 252, 255],
+                        Some([226, 232, 240, 255]),
+                    );
+                }
+                if !name.is_empty() {
+                    draw_text(&mut buf, stride, w, h, x + 4, y + 4, &name, 1, [51, 65, 85, 255]);
+                }
+            }
+        }
+    }
+
+    let mut png_bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut png_bytes, w as u32, h as u32);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder
+            .write_header()
+            .map_err(|e| format!("PngError: {e}"))?;
+        writer
+            .write_image_data(&buf)
+            .map_err(|e| format!("PngError: {e}"))?;
+    }
+
+    let b64 = base64_encode(&png_bytes);
+    Ok(Value::String(format!("data:image/png;base64,{b64}")))
+}
+
+fn draw_char(
+    buf: &mut [u8],
+    stride: usize,
+    img_w: usize,
+    img_h: usize,
+    x: usize,
+    y: usize,
+    ch: char,
+    scale: usize,
+    color: [u8; 4],
+) {
+    let idx = ch as usize;
+    if idx >= 128 {
+        return;
+    }
+    let glyph = crate::font8x8::FONT_8X8_BASIC[idx];
+    for (row, &byte) in glyph.iter().enumerate() {
+        for col in 0..8 {
+            if (byte & (1 << col)) != 0 {
+                for sy in 0..scale {
+                    for sx in 0..scale {
+                        let px = x + col * scale + sx;
+                        let py = y + row * scale + sy;
+                        if px < img_w && py < img_h {
+                            let off = (py * stride + px) * 4;
+                            buf[off..off + 4].copy_from_slice(&color);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn draw_text(
+    buf: &mut [u8],
+    stride: usize,
+    img_w: usize,
+    img_h: usize,
+    x: usize,
+    y: usize,
+    text: &str,
+    scale: usize,
+    color: [u8; 4],
+) {
+    let mut cur_x = x;
+    for ch in text.chars() {
+        if cur_x + 8 * scale > img_w {
+            break;
+        }
+        draw_char(buf, stride, img_w, img_h, cur_x, y, ch, scale, color);
+        cur_x += 8 * scale + scale;
+    }
+}
+
+fn draw_rect(
+    buf: &mut [u8],
+    stride: usize,
+    img_w: usize,
+    img_h: usize,
+    x: usize,
+    y: usize,
+    w: usize,
+    h: usize,
+    fill: [u8; 4],
+    border: Option<[u8; 4]>,
+) {
+    for py in y..std::cmp::min(y + h, img_h) {
+        for px in x..std::cmp::min(x + w, img_w) {
+            let is_border = border.is_some()
+                && (py == y || py == y + h - 1 || px == x || px == x + w - 1);
+            let col = if is_border {
+                border.unwrap()
+            } else {
+                fill
+            };
+            let off = (py * stride + px) * 4;
+            buf[off..off + 4].copy_from_slice(&col);
+        }
+    }
+}
+
+fn base64_encode(data: &[u8]) -> String {
+    const B64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = if chunk.len() > 1 { chunk[1] } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] } else { 0 };
+
+        out.push(B64[(b0 >> 2) as usize] as char);
+        out.push(B64[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(B64[(((b1 & 0x0f) << 2) | (b2 >> 6)) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(B64[(b2 & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
 }
 
 fn execute_connect(args: Vec<Value>) -> Result<Value, String> {
@@ -420,4 +670,67 @@ fn execute_network_fetch(
     res.insert("latency_ms".to_string(), Value::Int(latency_ms));
     res.insert("headers".to_string(), Value::List(vec![]));
     Ok(Value::Map(res))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_browser_rasterize_produces_valid_png() {
+        let mut btn = HashMap::new();
+        btn.insert("x".into(), Value::Int(10));
+        btn.insert("y".into(), Value::Int(20));
+        btn.insert("w".into(), Value::Int(120));
+        btn.insert("h".into(), Value::Int(36));
+        btn.insert("tag".into(), Value::String("button".into()));
+        btn.insert("name".into(), Value::String("Click Me".into()));
+        btn.insert("display".into(), Value::String("inline".into()));
+
+        let boxes = vec![Value::Map(btn)];
+        let res = execute_rasterize(vec![Value::List(boxes), Value::Int(300), Value::Int(200)])
+            .expect("rasterize succeeds");
+
+        if let Value::String(data_url) = res {
+            assert!(data_url.starts_with("data:image/png;base64,"));
+            let b64 = data_url.strip_prefix("data:image/png;base64,").unwrap();
+            let raw_bytes = base64_decode(b64).expect("base64 decode succeeds");
+            let cursor = std::io::Cursor::new(raw_bytes);
+            let decoder = png::Decoder::new(cursor);
+            let mut reader = decoder.read_info().expect("read PNG info");
+            assert_eq!(reader.info().width, 300);
+            assert_eq!(reader.info().height, 200);
+            let mut img_data = vec![0u8; reader.output_buffer_size()];
+            reader.next_frame(&mut img_data).expect("read frame");
+            assert!(!img_data.is_empty());
+        } else {
+            panic!("expected data URL string");
+        }
+    }
+
+    fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
+        let mut out = Vec::new();
+        let mut buf = 0u32;
+        let mut bits = 0;
+        for &b in s.as_bytes() {
+            if b == b'=' {
+                break;
+            }
+            let val = match b {
+                b'A'..=b'Z' => b - b'A',
+                b'a'..=b'z' => b - b'a' + 26,
+                b'0'..=b'9' => b - b'0' + 52,
+                b'+' => 62,
+                b'/' => 63,
+                _ => continue,
+            };
+            buf = (buf << 6) | (val as u32);
+            bits += 6;
+            if bits >= 8 {
+                bits -= 8;
+                out.push((buf >> bits) as u8);
+            }
+        }
+        Ok(out)
+    }
 }

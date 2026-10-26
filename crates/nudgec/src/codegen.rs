@@ -1196,7 +1196,7 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
             format!("rt.AttrDict({{{f_strs}}})")
         }
         ExprKind::Index { obj, idx } => {
-            format!("{}[{}]", py(obj, aliases), py(idx, aliases))
+            format!("rt.get_index({}, {})", py(obj, aliases), py(idx, aliases))
         }
         ExprKind::Spawn(e) => format!("rt.wait(lambda: {})", py(e, aliases)),
         ExprKind::Block(_) => "None".to_string(),

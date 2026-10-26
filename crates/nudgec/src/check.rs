@@ -375,6 +375,15 @@ fn assignable(src: &Ty, dst: &Ty) -> bool {
         (Ty::Int, Ty::Float) => true, // numeric widening
         (Ty::List(a), Ty::List(b)) => assignable(a, b),
         (Ty::Map(k1, v1), Ty::Map(k2, v2)) => assignable(k1, k2) && assignable(v1, v2),
+        (Ty::Record(fields), Ty::Map(k, v)) => {
+            if fields.is_empty() {
+                true
+            } else if assignable(&Ty::Str, k) {
+                fields.iter().all(|(_, f_ty)| assignable(f_ty, v))
+            } else {
+                false
+            }
+        },
         (Ty::Task(a), Ty::Task(b)) => assignable(a, b),
         (Ty::Record(a), Ty::Record(b)) => {
             a.len() == b.len()
@@ -2289,8 +2298,24 @@ fn check_expr_pos(
                             "pow" | "log" | "min" | "max" => {
                                 return arg_tys.first().cloned().unwrap_or(Ty::Float);
                             }
-                            "random_int" => return Ty::Int,
+                            "random_int"
+                            | "bitwise_xor"
+                            | "bitwise_and"
+                            | "bitwise_or"
+                            | "bitwise_not"
+                            | "shift_left"
+                            | "shift_right" => return Ty::Int,
                             "random_float" | "mean" => return Ty::Float,
+                            _ => {}
+                        }
+                    } else if prefix == "int" {
+                        match name.as_str() {
+                            "bitwise_xor"
+                            | "bitwise_and"
+                            | "bitwise_or"
+                            | "bitwise_not"
+                            | "shift_left"
+                            | "shift_right" => return Ty::Int,
                             _ => {}
                         }
                     } else if prefix == "str" {

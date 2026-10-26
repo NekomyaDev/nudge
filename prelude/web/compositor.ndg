@@ -53,18 +53,28 @@ type RasterizedScreenshot = {
     element_count: int
 }
 
-fn rasterize_layout_tree(lt: LayoutTree) -> RasterizedScreenshot {
+fn rasterize_layout_tree(lt: LayoutTree) -> RasterizedScreenshot uses Browser {
     let mut sig = "viewport:" + str.to_string(lt.viewport_width) + "x" + str.to_string(lt.viewport_height)
+    let mut raw_boxes: [{ x: int, y: int, w: int, h: int, tag: string, name: string, display: string }] = []
+
     for b in lt.boxes {
         sig = sig + "|" + b.tag + "[" + str.to_string(b.ref) + "]:" + str.to_string(b.x) + "," + str.to_string(b.y) + "," + str.to_string(b.w) + "," + str.to_string(b.h)
+        raw_boxes = raw_boxes + [{
+            x: b.x,
+            y: b.y,
+            w: b.w,
+            h: b.h,
+            tag: b.tag,
+            name: b.name,
+            display: b.display
+        }]
     }
 
     let h_val = str.hash(sig)
     let hex_part = str.to_string(if h_val < 0 { -h_val } else { h_val })
     let asset_name = "shot-" + hex_part + ".png"
 
-    let raw_bytes = get_canonical_png_bytes()
-    let data_url = "data:image/png;base64," + base64_encode_bytes(raw_bytes)
+    let data_url = browser.rasterize(raw_boxes, lt.viewport_width, lt.viewport_height)
 
     {
         asset_name: asset_name,
@@ -75,7 +85,7 @@ fn rasterize_layout_tree(lt: LayoutTree) -> RasterizedScreenshot {
     }
 }
 
-fn capture_page_screenshot(snap: Snapshot, lt: LayoutTree) -> Snapshot {
+fn capture_page_screenshot(snap: Snapshot, lt: LayoutTree) -> Snapshot uses Browser {
     let shot = rasterize_layout_tree(lt)
     {
         page: snap.page,

@@ -1,4 +1,4 @@
-/// Pure-Nudge Partitioned In-Memory Symbol Table with Hash Buckets
+/// Pure-Nudge High-Performance In-Memory Symbol Table with O(1) Map Lookups
 /// Part of Phase 5 (v2.5) - Query Engine & Benchmarking
 /// Zero foreign dependencies - 100% Pure Nudge
 
@@ -9,17 +9,6 @@ type SymbolEntry = {
     line: int,
     signature: string,
     effects: [string]
-}
-
-type SymbolBucket = {
-    bucket_id: int,
-    entries: [SymbolEntry]
-}
-
-fn compute_bucket_id(name: string, num_buckets: int) -> int {
-    let raw_h = str.hash(name)
-    let pos_h = if raw_h < 0 { -raw_h } else { raw_h }
-    pos_h % num_buckets
 }
 
 fn list_has_string(xs: [string], target: string) -> bool {
@@ -34,19 +23,14 @@ fn list_has_string(xs: [string], target: string) -> bool {
 
 agent SymbolTable {
     state {
-        buckets: [SymbolBucket] = []
-        num_buckets: int = 16
+        symbols: Map[string, SymbolEntry?] = {}
+        all_symbols: [SymbolEntry] = []
         total_count: int = 0
     }
 
     fn reset_symbol_table() {
-        let mut initial_buckets: [SymbolBucket] = []
-        for i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] {
-            let b: SymbolBucket = { bucket_id: i, entries: [] }
-            initial_buckets = initial_buckets + [b]
-        }
-        state.buckets = initial_buckets
-        state.num_buckets = 16
+        state.symbols = {}
+        state.all_symbols = []
         state.total_count = 0
     }
 
@@ -55,103 +39,53 @@ agent SymbolTable {
     }
 
     fn insert(entry: SymbolEntry) {
-        if len(state.buckets) == 0 {
-            SymbolTable.reset_symbol_table()
-        }
-
-        let b_id = compute_bucket_id(entry.name, state.num_buckets)
-        let mut new_buckets: [SymbolBucket] = []
-        let mut inserted_new = false
-
-        for b in state.buckets {
-            if b.bucket_id == b_id {
-                let mut updated_entries: [SymbolEntry] = []
-                let mut replaced = false
-                for e in b.entries {
-                    if e.name == entry.name {
-                        updated_entries = updated_entries + [entry]
-                        replaced = true
-                    } else {
-                        updated_entries = updated_entries + [e]
-                    }
-                }
-                if !replaced {
-                    updated_entries = updated_entries + [entry]
-                    inserted_new = true
-                }
-                new_buckets = new_buckets + [{
-                    bucket_id: b.bucket_id,
-                    entries: updated_entries
-                }]
+        state.symbols[entry.name] = entry
+        let mut updated: [SymbolEntry] = []
+        let mut replaced = false
+        for e in state.all_symbols {
+            if e.name == entry.name {
+                updated = updated + [entry]
+                replaced = true
             } else {
-                new_buckets = new_buckets + [b]
+                updated = updated + [e]
             }
         }
-
-        state.buckets = new_buckets
-        if inserted_new {
+        if !replaced {
+            updated = updated + [entry]
             state.total_count = state.total_count + 1
         }
+        state.all_symbols = updated
     }
 
     fn lookup(name: string) -> SymbolEntry? {
-        let b_id = compute_bucket_id(name, state.num_buckets)
-        let mut found: SymbolEntry? = none
-
-        for b in state.buckets {
-            if b.bucket_id == b_id {
-                for e in b.entries {
-                    if e.name == name {
-                        found = e
-                    }
-                }
-            }
-        }
-        found
+        state.symbols[name]
     }
 
     fn remove(name: string) -> bool {
+        let existing = state.symbols[name]
         let mut did_remove = false
-        if len(state.buckets) > 0 {
-            let b_id = compute_bucket_id(name, state.num_buckets)
-            let mut new_buckets: [SymbolBucket] = []
-            let mut removed = false
-
-            for b in state.buckets {
-                if b.bucket_id == b_id {
-                    let mut updated_entries: [SymbolEntry] = []
-                    for e in b.entries {
-                        if e.name == name {
-                            removed = true
-                        } else {
-                            updated_entries = updated_entries + [e]
-                        }
-                    }
-                    new_buckets = new_buckets + [{
-                        bucket_id: b.bucket_id,
-                        entries: updated_entries
-                    }]
-                } else {
-                    new_buckets = new_buckets + [b]
+        if existing != none {
+            let mut updated: [SymbolEntry] = []
+            let mut new_map: Map[string, SymbolEntry?] = {}
+            for e in state.all_symbols {
+                if e.name != name {
+                    updated = updated + [e]
+                    new_map[e.name] = e
                 }
             }
-
-            if removed {
-                state.buckets = new_buckets
-                state.total_count = state.total_count - 1
-            }
-            did_remove = removed
+            state.symbols = new_map
+            state.all_symbols = updated
+            state.total_count = state.total_count - 1
+            did_remove = true
         }
         did_remove
     }
 
     fn find_by_file(path: string) -> [SymbolEntry] {
         let mut res: [SymbolEntry] = []
-        for b in state.buckets {
-            for e in b.entries {
-                if e.file_path == path {
-                    res = res + [e]
-                }
+        for e in state.all_symbols {
+            if e.file_path == path {
+                res = res + [e]
             }
         }
         res
@@ -159,11 +93,9 @@ agent SymbolTable {
 
     fn find_by_kind(kind: string) -> [SymbolEntry] {
         let mut res: [SymbolEntry] = []
-        for b in state.buckets {
-            for e in b.entries {
-                if e.kind == kind {
-                    res = res + [e]
-                }
+        for e in state.all_symbols {
+            if e.kind == kind {
+                res = res + [e]
             }
         }
         res
@@ -171,11 +103,9 @@ agent SymbolTable {
 
     fn find_by_effect(effect: string) -> [SymbolEntry] {
         let mut res: [SymbolEntry] = []
-        for b in state.buckets {
-            for e in b.entries {
-                if list_has_string(e.effects, effect) {
-                    res = res + [e]
-                }
+        for e in state.all_symbols {
+            if list_has_string(e.effects, effect) {
+                res = res + [e]
             }
         }
         res
@@ -201,7 +131,7 @@ fn main() -> int {
     }
 }
 
-test "symbol table partitioned bucket insertion and lookup" {
+test "symbol table map O(1) insertion, lookup and remove" {
     SymbolTable.reset_symbol_table()
     let s1: SymbolEntry = {
         name: "compute",
@@ -262,4 +192,5 @@ test "symbol table partitioned bucket insertion and lookup" {
     assert SymbolTable.remove("compute")
     assert SymbolTable.count() == 2
     assert SymbolTable.lookup("compute") == none
+    assert SymbolTable.lookup("OrderAgent") != none
 }

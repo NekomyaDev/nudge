@@ -34,7 +34,32 @@ fn execute_click_target(tree: DomTree, target_ref: int, snap: Snapshot) -> ActRe
         } else if !el.clickable {
             res = make_act_result(false, "Element not clickable", 5, "Target element does not support click action", false, snap)
         } else {
-            let desc = "Clicked " + el.role + " '" + el.name + "' [ref=" + str.to_string(target_ref) + "]"
+            let mut desc = "Clicked " + el.role + " '" + el.name + "' [ref=" + str.to_string(target_ref) + "]"
+            if el.tag == "a" and el.href != "" {
+                desc = desc + " [navigate=" + el.href + "]"
+            } else if el.tag == "button" {
+                let mut cur_p = -1
+                for n in tree.nodes {
+                    if n.ref == el.ref {
+                        cur_p = n.parent
+                    }
+                }
+                for _ in [1, 2, 3, 4, 5, 6, 7, 8] {
+                    if cur_p >= 0 {
+                        for p in tree.nodes {
+                            if p.ref == cur_p {
+                                if p.tag == "form" {
+                                    let act = get_attr_value(p.attrs, "action", "")
+                                    desc = desc + " [submit_form=" + act + "]"
+                                    cur_p = -1
+                                } else {
+                                    cur_p = p.parent
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             res = make_act_result(true, desc, 12, "", true, snap)
         }
     }

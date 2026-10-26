@@ -3151,7 +3151,7 @@ impl Interpreter {
                 value_to_nudgeval(&result).map_err(|e| format!("error[E-native-0203]: {name}: {e}"))
             }
             "browser.fetch" | "browser.connect" | "browser.read" | "browser.write"
-            | "browser.close" => {
+            | "browser.close" | "browser.rasterize" => {
                 let mut call_args = Vec::with_capacity(args.len());
                 for a in args {
                     let converted = nudgeval_to_value(a)
@@ -3775,6 +3775,36 @@ impl Interpreter {
                 Some(NudgeVal::Float(f)) => Ok(NudgeVal::Float(f.sqrt())),
                 Some(NudgeVal::Int(i)) => Ok(NudgeVal::Float((*i as f64).sqrt())),
                 _ => Err("'math.sqrt' requires 1 numeric argument".into()),
+            },
+            "math.bitwise_xor" | "int.bitwise_xor" => match (args.first(), args.get(1)) {
+                (Some(NudgeVal::Int(a)), Some(NudgeVal::Int(b))) => Ok(NudgeVal::Int(*a ^ *b)),
+                _ => Err("'bitwise_xor' requires 2 integer arguments".into()),
+            },
+            "math.bitwise_and" | "int.bitwise_and" => match (args.first(), args.get(1)) {
+                (Some(NudgeVal::Int(a)), Some(NudgeVal::Int(b))) => Ok(NudgeVal::Int(*a & *b)),
+                _ => Err("'bitwise_and' requires 2 integer arguments".into()),
+            },
+            "math.bitwise_or" | "int.bitwise_or" => match (args.first(), args.get(1)) {
+                (Some(NudgeVal::Int(a)), Some(NudgeVal::Int(b))) => Ok(NudgeVal::Int(*a | *b)),
+                _ => Err("'bitwise_or' requires 2 integer arguments".into()),
+            },
+            "math.bitwise_not" | "int.bitwise_not" => match args.first() {
+                Some(NudgeVal::Int(a)) => Ok(NudgeVal::Int(!*a)),
+                _ => Err("'bitwise_not' requires 1 integer argument".into()),
+            },
+            "math.shift_left" | "int.shift_left" => match (args.first(), args.get(1)) {
+                (Some(NudgeVal::Int(a)), Some(NudgeVal::Int(b))) => {
+                    let s = (*b).clamp(0, 63) as u32;
+                    Ok(NudgeVal::Int(*a << s))
+                }
+                _ => Err("'shift_left' requires 2 integer arguments".into()),
+            },
+            "math.shift_right" | "int.shift_right" => match (args.first(), args.get(1)) {
+                (Some(NudgeVal::Int(a)), Some(NudgeVal::Int(b))) => {
+                    let s = (*b).clamp(0, 63) as u32;
+                    Ok(NudgeVal::Int(*a >> s))
+                }
+                _ => Err("'shift_right' requires 2 integer arguments".into()),
             },
             other => Err(format!("unknown standard library function '{other}'")),
         }

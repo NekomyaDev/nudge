@@ -63,16 +63,19 @@ fn contains_str_item(xs: [string], target: string) -> bool {
 
 agent SymbolTable {
     state {
+        symbols: Map[string, SymbolEntry?] = {}
         entries: [SymbolEntry] = []
         total_count: int = 0
     }
 
     fn reset_symbol_table() {
+        state.symbols = {}
         state.entries = []
         state.total_count = 0
     }
 
     fn insert(entry: SymbolEntry) {
+        state.symbols[entry.name] = entry
         let mut updated: [SymbolEntry] = []
         let mut replaced = false
         for e in state.entries {
@@ -91,13 +94,7 @@ agent SymbolTable {
     }
 
     fn lookup(name: string) -> SymbolEntry? {
-        let mut found: SymbolEntry? = none
-        for e in state.entries {
-            if e.name == name {
-                found = e
-            }
-        }
-        found
+        state.symbols[name]
     }
 
     fn find_by_file(path: string) -> [SymbolEntry] {

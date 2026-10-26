@@ -279,6 +279,13 @@ fn matches_single_selector(node: DomNode, sel: string) -> bool {
     let mut matched = false
     if s == "*" {
         matched = true
+    } else if s == ":disabled" {
+        matched = !node.enabled
+    } else if s == ":enabled" {
+        matched = node.enabled
+    } else if str.ends_with(s, ":first-child") {
+        let base = str.substring(s, 0, str.length(s) - 12)
+        matched = (node.index == 0) and (base == "" or matches_single_selector(node, base))
     } else if str.starts_with(s, "#") {
         let id_val = str.substring(s, 1)
         matched = (node.id == id_val)
@@ -289,6 +296,24 @@ fn matches_single_selector(node: DomNode, sel: string) -> bool {
                 matched = true
             }
         }
+    } else if !str.starts_with(s, ".") and str.contains(s, ".") {
+        // Compound tag.class: e.g. button.btn-primary
+        let dot_pos = str.index_of(s, ".")
+        let tag_part = str.substring(s, 0, dot_pos)
+        let cls_val = str.substring(s, dot_pos + 1)
+        let mut has_c = false
+        for c in node.classes {
+            if c == cls_val {
+                has_c = true
+            }
+        }
+        matched = (node.tag == str.lower(tag_part) and has_c)
+    } else if !str.starts_with(s, "#") and str.contains(s, "#") {
+        // Compound tag#id: e.g. input#username
+        let hash_pos = str.index_of(s, "#")
+        let tag_part = str.substring(s, 0, hash_pos)
+        let id_val = str.substring(s, hash_pos + 1)
+        matched = (node.tag == str.lower(tag_part) and node.id == id_val)
     } else if str.starts_with(s, "[") and str.ends_with(s, "]") {
         let inner = str.substring(s, 1, str.length(s) - 1)
         let eq_idx = str.index_of(inner, "=")
@@ -328,42 +353,66 @@ fn query_selector_all(tree: DomTree, selector: string) -> [Element] {
             }
         }
     } else if len(step_parts) > 1 {
-        // Multi-step descendant path
         let mut matching_nodes = tree.nodes
-        let mut step_idx = 0
-        let num_steps = len(step_parts)
+        let mut i = 0
+        let n_steps = len(step_parts)
 
-        for step in step_parts {
-            let mut next_matches: [DomNode] = []
-            for n in matching_nodes {
-                if matches_single_selector(n, step) {
-                    next_matches = next_matches + [n]
-                }
-            }
-
-            step_idx = step_idx + 1
-            if step_idx < num_steps {
-                // Collect all descendants of next_matches for next step
-                let mut descendant_refs: [int] = []
-                for m in next_matches {
-                    descendant_refs = descendant_refs + m.children
-                }
-
-                let mut descendants: [DomNode] = []
-                for n in tree.nodes {
-                    let mut is_desc = false
-                    for r in descendant_refs {
-                        if n.ref == r {
-                            is_desc = true
+        for _ in step_parts {
+            if i < n_steps {
+                let step = step_parts[i]
+                if step == ">" {
+                    i = i + 1
+                    let target_step = if i < n_steps { step_parts[i] } else { "" }
+                    let mut children: [DomNode] = []
+                    for parent_node in matching_nodes {
+                        for cand in tree.nodes {
+                            if cand.parent == parent_node.ref and (target_step == "" or matches_single_selector(cand, target_step)) {
+                                children = children + [cand]
+                            }
                         }
                     }
-                    if is_desc {
-                        descendants = descendants + [n]
+                    matching_nodes = children
+                    i = i + 1
+                } else {
+                    let mut current_matches: [DomNode] = []
+                    for n in matching_nodes {
+                        if matches_single_selector(n, step) {
+                            current_matches = current_matches + [n]
+                        }
+                    }
+
+                    i = i + 1
+                    if i < n_steps and step_parts[i] != ">" {
+                        let mut descendants: [DomNode] = []
+                        for parent_node in current_matches {
+                            for cand in tree.nodes {
+                                let mut is_desc = false
+                                let mut cur_p = cand.parent
+                                for _ in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] {
+                                    if cur_p >= 0 and !is_desc {
+                                        if cur_p == parent_node.ref {
+                                            is_desc = true
+                                        } else {
+                                            let mut np = -1
+                                            for p in tree.nodes {
+                                                if p.ref == cur_p {
+                                                    np = p.parent
+                                                }
+                                            }
+                                            cur_p = np
+                                        }
+                                    }
+                                }
+                                if is_desc {
+                                    descendants = descendants + [cand]
+                                }
+                            }
+                        }
+                        matching_nodes = descendants
+                    } else {
+                        matching_nodes = current_matches
                     }
                 }
-                matching_nodes = descendants
-            } else {
-                matching_nodes = next_matches
             }
         }
 
