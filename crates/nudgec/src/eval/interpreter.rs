@@ -665,6 +665,23 @@ impl Interpreter {
                         r.on_key.clone()
                     }
                 })
+            })
+            .or_else(|| {
+                if let Some(ref ag_name) = app.agent {
+                    for candidate in &[
+                        "on_key",
+                        "on_shortcut",
+                        "on_cmd",
+                        "on_context",
+                        "on_context_menu",
+                    ] {
+                        let full = format!("{ag_name}.{candidate}");
+                        if self.fns.contains_key(&full) {
+                            return Some(full);
+                        }
+                    }
+                }
+                None
             });
 
         if let Some(hname) = on_key {
@@ -1056,6 +1073,22 @@ impl Interpreter {
                 (Some(tid), key_str)
             };
             self.dispatch_key_headless(app_id, target_id.as_deref(), &key, env)?;
+            return Ok(NudgeVal::Unit);
+        }
+        if method_name == "dispatch_context_menu" {
+            if args.len() < 2 {
+                return Err("'dispatch_context_menu' takes (action_id, target_id)".into());
+            }
+            let action_id = match self.eval_expr(&args[0], env)? {
+                NudgeVal::Str(s) => s,
+                other => other.to_string(),
+            };
+            let target_id = match self.eval_expr(&args[1], env)? {
+                NudgeVal::Str(s) => s,
+                other => other.to_string(),
+            };
+            let key = format!("ContextMenu:{action_id}:{target_id}");
+            self.dispatch_key_headless(app_id, Some(&target_id), &key, env)?;
             return Ok(NudgeVal::Unit);
         }
         if method_name == "scroll" {

@@ -48,7 +48,22 @@ agent VfsBridge {
             } else {
                 let p_mtime = store.get("idx_mtime_" + norm, 0)
                 if p_mtime == cur_mtime and p_mtime > 0 {
-                    // Persistent index valid
+                    let records = store.get("idx_records_" + norm, [""])
+                    let mut restored: [FileEntry] = []
+                    for r in records {
+                        if r != "" {
+                            let e = deserialize_entry(r)
+                            if e.name != "" {
+                                restored = restored + [e]
+                            }
+                        }
+                    }
+                    if len(restored) > 0 {
+                        state.cached_entries[norm] = restored
+                        state.cached_mtimes[norm] = cur_mtime
+                        state.cached_dirs = state.cached_dirs + [norm]
+                        is_hit = true
+                    }
                 }
             }
 
@@ -105,7 +120,13 @@ agent VfsBridge {
                 state.total_inodes = state.total_inodes + len(entries)
                 state.cached_entries[norm] = sorted
                 state.cached_mtimes[norm] = cur_mtime
+
+                let mut serialized_list: [string] = []
+                for e in sorted {
+                    serialized_list = serialized_list + [serialize_entry(e)]
+                }
                 store.set("idx_mtime_" + norm, cur_mtime)
+                store.set("idx_records_" + norm, serialized_list)
                 store.set("idx_count_" + norm, len(entries))
                 res_entries = sorted
             }

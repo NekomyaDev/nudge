@@ -8,7 +8,8 @@ view BottomStatusBar(
     file_count: int,
     selected_name: string,
     selected_size: string,
-    current_lang: string
+    current_lang: string,
+    zoom_pct: int
 ) -> View {
     let summary = if selected_name != "" {
         "1 " + i18n("selected", current_lang) + ": " + selected_name + " (" + selected_size + ")"
@@ -16,7 +17,7 @@ view BottomStatusBar(
         str.to_string(total_items) + " " + i18n("items", current_lang) + " (" + str.to_string(dir_count) + " " + i18n("folder", current_lang) + ", " + str.to_string(file_count) + " " + i18n("file", current_lang) + ")"
     }
 
-    let zoom_text = "100%"
+    let zoom_text = str.to_string(zoom_pct) + "%"
     let free_text = "4.0 TiB " + i18n("free", current_lang)
 
     row(padding = 2, gap = 4, bg = "toolbar", expand = true) [
@@ -27,16 +28,16 @@ view BottomStatusBar(
         text(summary),
         spacer(1),
         divider(orientation = "vertical", size = 1, h = 18),
-        button("−", id = "btn_zoom_out", variant = "flat", w = 18, h = 20),
+        button("−", id = "btn_zoom_out", variant = "flat", w = 20, h = 20, on_click = zoom_out),
         text(zoom_text),
-        button("+", id = "btn_zoom_in", variant = "flat", w = 18, h = 20),
+        button("+", id = "btn_zoom_in", variant = "flat", w = 20, h = 20, on_click = zoom_in),
         divider(orientation = "vertical", size = 1, h = 18),
         text(free_text)
     ]
 }
 
 view TerminalPanel(current_path: string, history: [string], input_val: string) -> View {
-    column(padding = 4, gap = 2, h = 130, bg = "sidebar", expand = true) [
+    column(padding = 4, gap = 2, h = 160, bg = "sidebar", expand = true) [
         row(padding = 2, gap = 4, bg = "toolbar", expand = true) [
             text(" >_ Terminal — neko@desktop:" + current_path, bold = true),
             spacer(1),
@@ -73,7 +74,8 @@ view FileManagerLayout(
     active_tab_idx: int,
     show_terminal: bool,
     terminal_history: [string],
-    terminal_input: string
+    terminal_input: string,
+    zoom_pct: int
 ) -> View {
     let mut dir_c = 0
     let mut file_c = 0
@@ -99,21 +101,21 @@ view FileManagerLayout(
 
             if is_split {
                 row(padding = 0, gap = 2, expand = true, expand_h = true) [
-                    column(w = 530, padding = 0, gap = 0, expand_h = true) [
+                    column(padding = 0, gap = 0, expand = true, expand_h = true) [
                         if view_mode == "icons" {
-                            FileIconsGrid(left_entries, selected_name, current_lang)
+                            FileIconsGrid(left_entries, selected_name, current_lang, zoom_pct)
                         } else if view_mode == "compact" {
-                            FileCompactGrid(left_entries, selected_name, current_lang)
+                            FileCompactGrid(left_entries, selected_name, current_lang, zoom_pct)
                         } else {
                             FileDetailsTable("Left", left_entries, selected_name, current_lang)
                         }
                     ],
                     divider(orientation = "vertical", size = 1, expand_h = true),
-                    column(w = 530, padding = 0, gap = 0, expand_h = true) [
+                    column(padding = 0, gap = 0, expand = true, expand_h = true) [
                         if view_mode == "icons" {
-                            FileIconsGrid(right_entries, "", current_lang)
+                            FileIconsGrid(right_entries, "", current_lang, zoom_pct)
                         } else if view_mode == "compact" {
-                            FileCompactGrid(right_entries, "", current_lang)
+                            FileCompactGrid(right_entries, "", current_lang, zoom_pct)
                         } else {
                             FileDetailsTable("Right", right_entries, "", current_lang)
                         }
@@ -121,9 +123,9 @@ view FileManagerLayout(
                 ]
             } else {
                 if view_mode == "icons" {
-                    FileIconsGrid(left_entries, selected_name, current_lang)
+                    FileIconsGrid(left_entries, selected_name, current_lang, zoom_pct)
                 } else if view_mode == "compact" {
-                    FileCompactGrid(left_entries, selected_name, current_lang)
+                    FileCompactGrid(left_entries, selected_name, current_lang, zoom_pct)
                 } else {
                     FileDetailsTable("Main", left_entries, selected_name, current_lang)
                 }
@@ -165,7 +167,8 @@ view FileManagerLayout(
             file_c,
             selected_name,
             selected_size,
-            current_lang
+            current_lang,
+            zoom_pct
         )
     ]
 }

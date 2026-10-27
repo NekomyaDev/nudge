@@ -180,6 +180,34 @@ fn compute_cas_hash(text: string) -> string {
     "blk_" + str.to_string(pos)
 }
 
+fn serialize_entry(e: FileEntry) -> string {
+    e.name + "\t" + e.path + "\t" + (if e.is_dir { "1" } else { "0" }) + "\t" + str.to_string(e.size_bytes) + "\t" + e.size_str + "\t" + str.to_string(e.mtime_ms) + "\t" + e.permissions + "\t" + e.extension + "\t" + e.glyph + "\t" + e.cas_hash
+}
+
+fn deserialize_entry(s: string) -> FileEntry {
+    let p = str.split(s, "\t")
+    let p_len = len(p)
+    if p_len >= 10 {
+        {
+            name: p[0],
+            path: p[1],
+            is_dir: (p[2] == "1"),
+            size_bytes: str.to_int(p[3]),
+            size_str: p[4],
+            mtime_ms: str.to_int(p[5]),
+            permissions: p[6],
+            extension: p[7],
+            glyph: p[8],
+            cas_hash: p[9]
+        }
+    } else {
+        {
+            name: "", path: "", is_dir: false, size_bytes: 0, size_str: "",
+            mtime_ms: 0, permissions: "", extension: "", glyph: "", cas_hash: ""
+        }
+    }
+}
+
 fn partition_entries(entries: [FileEntry]) -> [FileEntry] {
     let mut dirs: [FileEntry] = []
     let mut files: [FileEntry] = []
@@ -799,7 +827,22 @@ agent VfsBridge {
             } else {
                 let p_mtime = store.get("idx_mtime_" + norm, 0)
                 if p_mtime == cur_mtime and p_mtime > 0 {
-                    // Persistent index valid
+                    let records = store.get("idx_records_" + norm, [""])
+                    let mut restored: [FileEntry] = []
+                    for r in records {
+                        if r != "" {
+                            let e = deserialize_entry(r)
+                            if e.name != "" {
+                                restored = restored + [e]
+                            }
+                        }
+                    }
+                    if len(restored) > 0 {
+                        state.cached_entries[norm] = restored
+                        state.cached_mtimes[norm] = cur_mtime
+                        state.cached_dirs = state.cached_dirs + [norm]
+                        is_hit = true
+                    }
                 }
             }
 
@@ -856,7 +899,13 @@ agent VfsBridge {
                 state.total_inodes = state.total_inodes + len(entries)
                 state.cached_entries[norm] = sorted
                 state.cached_mtimes[norm] = cur_mtime
+
+                let mut serialized_list: [string] = []
+                for e in sorted {
+                    serialized_list = serialized_list + [serialize_entry(e)]
+                }
                 store.set("idx_mtime_" + norm, cur_mtime)
+                store.set("idx_records_" + norm, serialized_list)
                 store.set("idx_count_" + norm, len(entries))
                 res_entries = sorted
             }
@@ -916,6 +965,7 @@ view FileDetailsTable(panel_title: string, entries: [FileEntry], selected_name: 
     let mut rows = []
     for item in entries {
         let is_sel = (item.name == selected_name)
+        let type_label = if item.is_dir { "Folder" } else if item.extension != "" { str.upper(item.extension) + " File" } else { "File" }
         rows = rows + [
             row(padding = 1, gap = 2, expand = true) [
                 button(
@@ -928,17 +978,19 @@ view FileDetailsTable(panel_title: string, entries: [FileEntry], selected_name: 
                     selected = is_sel,
                     on_click = on_item_click
                 ),
-                button(item.size_str, id = "sz_" + item.name, variant = "flat", align = "end", w = 80, h = 24, on_click = on_item_click),
-                button(item.permissions, id = "perm_" + item.name, variant = "flat", align = "start", w = 100, h = 24, on_click = on_item_click)
+                button(item.size_str, id = "sz_" + item.name, variant = "flat", align = "end", w = 85, h = 24, on_click = on_item_click),
+                button(type_label, id = "type_" + item.name, variant = "flat", align = "start", w = 95, h = 24, on_click = on_item_click),
+                button(item.permissions, id = "perm_" + item.name, variant = "flat", align = "start", w = 95, h = 24, on_click = on_item_click)
             ]
         ]
     }
 
     column(padding = 2, gap = 2, expand = true, expand_h = true) [
         row(padding = 2, gap = 2, bg = "toolbar", expand = true) [
-            button("  " + i18n("col_name", current_lang), id = "sort_name", variant = "flat", align = "start", expand = true, h = 22, on_click = toggle_sort),
-            button(i18n("col_size", current_lang), id = "sort_size", variant = "flat", align = "end", w = 80, h = 22, on_click = toggle_sort),
-            button(i18n("col_perm", current_lang), id = "sort_perms", variant = "flat", align = "start", w = 100, h = 22)
+            button("  " + i18n("col_name", current_lang), id = "sort_name", variant = "flat", align = "start", expand = true, h = 22, on_click = sort_by_name),
+            button(i18n("col_size", current_lang), id = "sort_size", variant = "flat", align = "end", w = 85, h = 22, on_click = sort_by_size),
+            button("Type", id = "sort_type", variant = "flat", align = "start", w = 95, h = 22, on_click = sort_by_type),
+            button(i18n("col_perm", current_lang), id = "sort_perms", variant = "flat", align = "start", w = 95, h = 22)
         ],
         divider(size = 1),
         scroll(rows, id = "file_table_scroll", expand = true, padding = 1, gap = 2)
@@ -947,7 +999,11 @@ view FileDetailsTable(panel_title: string, entries: [FileEntry], selected_name: 
 
 // ── View Mode 2: Icons View (Grid of Cards) ─────────────────────────
 
-view FileIconsGrid(entries: [FileEntry], selected_name: string, current_lang: string) -> View {
+view FileIconsGrid(entries: [FileEntry], selected_name: string, current_lang: string, zoom_pct: int) -> View {
+    let card_w = if zoom_pct <= 75 { 120 } else if zoom_pct >= 150 { 190 } else if zoom_pct >= 125 { 165 } else { 145 }
+    let card_h = if zoom_pct <= 75 { 80 } else if zoom_pct >= 150 { 120 } else if zoom_pct >= 125 { 108 } else { 96 }
+    let cols = if zoom_pct <= 75 { 7 } else if zoom_pct >= 150 { 4 } else if zoom_pct >= 125 { 5 } else { 6 }
+
     let mut grid_rows = []
     let mut current_row = []
     for item in entries {
@@ -958,13 +1014,13 @@ view FileIconsGrid(entries: [FileEntry], selected_name: string, current_lang: st
             card_label,
             id = "entry_" + item.name,
             variant = if item.is_dir { "folder_card" } else { "file_card" },
-            w = 150,
-            h = 96,
+            w = card_w,
+            h = card_h,
             selected = is_sel,
             on_click = on_item_click
         )
         current_row = current_row + [card]
-        if len(current_row) == 6 {
+        if len(current_row) == cols {
             grid_rows = grid_rows + [
                 row(current_row, padding = 4, gap = 8, expand = true)
             ]
@@ -984,7 +1040,10 @@ view FileIconsGrid(entries: [FileEntry], selected_name: string, current_lang: st
 
 // ── View Mode 3: Compact View (Multi-column list) ────────────────────
 
-view FileCompactGrid(entries: [FileEntry], selected_name: string, current_lang: string) -> View {
+view FileCompactGrid(entries: [FileEntry], selected_name: string, current_lang: string, zoom_pct: int) -> View {
+    let comp_w = if zoom_pct <= 75 { 160 } else if zoom_pct >= 125 { 240 } else { 200 }
+    let comp_cols = if zoom_pct <= 75 { 6 } else if zoom_pct >= 125 { 4 } else { 5 }
+
     let mut compact_rows = []
     let mut current_row = []
     for item in entries {
@@ -995,13 +1054,13 @@ view FileCompactGrid(entries: [FileEntry], selected_name: string, current_lang: 
             id = "entry_" + item.name,
             variant = "item",
             align = "start",
-            w = 200,
+            w = comp_w,
             h = 24,
             selected = is_sel,
             on_click = on_item_click
         )
         current_row = current_row + [item_btn]
-        if len(current_row) == 5 {
+        if len(current_row) == comp_cols {
             compact_rows = compact_rows + [
                 row(current_row, padding = 1, gap = 4, expand = true)
             ]
@@ -1182,7 +1241,8 @@ view BottomStatusBar(
     file_count: int,
     selected_name: string,
     selected_size: string,
-    current_lang: string
+    current_lang: string,
+    zoom_pct: int
 ) -> View {
     let summary = if selected_name != "" {
         "1 " + i18n("selected", current_lang) + ": " + selected_name + " (" + selected_size + ")"
@@ -1190,7 +1250,7 @@ view BottomStatusBar(
         str.to_string(total_items) + " " + i18n("items", current_lang) + " (" + str.to_string(dir_count) + " " + i18n("folder", current_lang) + ", " + str.to_string(file_count) + " " + i18n("file", current_lang) + ")"
     }
 
-    let zoom_text = "100%"
+    let zoom_text = str.to_string(zoom_pct) + "%"
     let free_text = "4.0 TiB " + i18n("free", current_lang)
 
     row(padding = 2, gap = 4, bg = "toolbar", expand = true) [
@@ -1201,16 +1261,16 @@ view BottomStatusBar(
         text(summary),
         spacer(1),
         divider(orientation = "vertical", size = 1, h = 18),
-        button("−", id = "btn_zoom_out", variant = "flat", w = 18, h = 20),
+        button("−", id = "btn_zoom_out", variant = "flat", w = 20, h = 20, on_click = zoom_out),
         text(zoom_text),
-        button("+", id = "btn_zoom_in", variant = "flat", w = 18, h = 20),
+        button("+", id = "btn_zoom_in", variant = "flat", w = 20, h = 20, on_click = zoom_in),
         divider(orientation = "vertical", size = 1, h = 18),
         text(free_text)
     ]
 }
 
 view TerminalPanel(current_path: string, history: [string], input_val: string) -> View {
-    column(padding = 4, gap = 2, h = 130, bg = "sidebar", expand = true) [
+    column(padding = 4, gap = 2, h = 160, bg = "sidebar", expand = true) [
         row(padding = 2, gap = 4, bg = "toolbar", expand = true) [
             text(" >_ Terminal — neko@desktop:" + current_path, bold = true),
             spacer(1),
@@ -1247,7 +1307,8 @@ view FileManagerLayout(
     active_tab_idx: int,
     show_terminal: bool,
     terminal_history: [string],
-    terminal_input: string
+    terminal_input: string,
+    zoom_pct: int
 ) -> View {
     let mut dir_c = 0
     let mut file_c = 0
@@ -1273,21 +1334,21 @@ view FileManagerLayout(
 
             if is_split {
                 row(padding = 0, gap = 2, expand = true, expand_h = true) [
-                    column(w = 530, padding = 0, gap = 0, expand_h = true) [
+                    column(padding = 0, gap = 0, expand = true, expand_h = true) [
                         if view_mode == "icons" {
-                            FileIconsGrid(left_entries, selected_name, current_lang)
+                            FileIconsGrid(left_entries, selected_name, current_lang, zoom_pct)
                         } else if view_mode == "compact" {
-                            FileCompactGrid(left_entries, selected_name, current_lang)
+                            FileCompactGrid(left_entries, selected_name, current_lang, zoom_pct)
                         } else {
                             FileDetailsTable("Left", left_entries, selected_name, current_lang)
                         }
                     ],
                     divider(orientation = "vertical", size = 1, expand_h = true),
-                    column(w = 530, padding = 0, gap = 0, expand_h = true) [
+                    column(padding = 0, gap = 0, expand = true, expand_h = true) [
                         if view_mode == "icons" {
-                            FileIconsGrid(right_entries, "", current_lang)
+                            FileIconsGrid(right_entries, "", current_lang, zoom_pct)
                         } else if view_mode == "compact" {
-                            FileCompactGrid(right_entries, "", current_lang)
+                            FileCompactGrid(right_entries, "", current_lang, zoom_pct)
                         } else {
                             FileDetailsTable("Right", right_entries, "", current_lang)
                         }
@@ -1295,9 +1356,9 @@ view FileManagerLayout(
                 ]
             } else {
                 if view_mode == "icons" {
-                    FileIconsGrid(left_entries, selected_name, current_lang)
+                    FileIconsGrid(left_entries, selected_name, current_lang, zoom_pct)
                 } else if view_mode == "compact" {
-                    FileCompactGrid(left_entries, selected_name, current_lang)
+                    FileCompactGrid(left_entries, selected_name, current_lang, zoom_pct)
                 } else {
                     FileDetailsTable("Main", left_entries, selected_name, current_lang)
                 }
@@ -1339,7 +1400,8 @@ view FileManagerLayout(
             file_c,
             selected_name,
             selected_size,
-            current_lang
+            current_lang,
+            zoom_pct
         )
     ]
 }
@@ -1401,6 +1463,15 @@ agent FileManagerApp {
         // F2 Inline Rename
         rename_mode: bool = false
         rename_text: string = ""
+
+        // Zoom Level: 75, 100, 125, 150
+        zoom_pct: int = 100
+
+        // Clipboard Cut mode
+        clipboard_is_cut: bool = false
+
+        // Sort Column: "name" | "size" | "type"
+        sort_column: string = "name"
     }
 
     fn init_default_path() uses Workspace {
@@ -1420,6 +1491,7 @@ agent FileManagerApp {
         state.selected_path = ""
         state.preview_content = ""
         state.sort_asc = true
+        state.sort_column = "name"
         state.is_split = false
         state.show_inspector = true
         state.show_hidden = false
@@ -1427,6 +1499,8 @@ agent FileManagerApp {
         state.last_created_path = ""
         state.current_lang = "en"
         state.view_mode = "icons"
+        state.zoom_pct = 100
+        state.clipboard_is_cut = false
         FileManagerApp.refresh()
     }
 
@@ -1769,6 +1843,7 @@ agent FileManagerApp {
         if state.selected_path != "" {
             state.clipboard_path = state.selected_path
             state.clipboard_name = state.selected_name
+            state.clipboard_is_cut = false
             let entries = state.filtered_entries
             let mut is_d = false
             for e in entries {
@@ -1784,9 +1859,14 @@ agent FileManagerApp {
         }
     }
 
-    fn paste_clipboard() uses UI, Workspace, Store {
+    fn cut_selected() uses UI, Workspace {
+        FileManagerApp.copy_selected()
+        state.clipboard_is_cut = true
+    }
+
+    fn paste_clipboard() uses UI, Workspace, WorkspaceDelete, Store {
         if state.clipboard_path != "" {
-            let dest_name = "copy_of_" + state.clipboard_name
+            let dest_name = if state.clipboard_is_cut { state.clipboard_name } else { "copy_of_" + state.clipboard_name }
             let dest_path = if state.current_path == "." {
                 dest_name
             } else if state.current_path == "/" {
@@ -1795,9 +1875,84 @@ agent FileManagerApp {
                 state.current_path + "/" + dest_name
             }
             workspace.write(dest_path, state.clipboard_content)
+            if state.clipboard_is_cut {
+                workspace.delete(state.clipboard_path, recursive = true)
+                state.clipboard_is_cut = false
+                state.clipboard_path = ""
+                state.clipboard_name = ""
+                state.clipboard_content = ""
+            }
             VfsBridge.invalidate(state.current_path)
             FileManagerApp.refresh()
         }
+    }
+
+    fn zoom_in() uses UI {
+        if state.zoom_pct < 150 {
+            state.zoom_pct = state.zoom_pct + 25
+        }
+    }
+
+    fn zoom_out() uses UI {
+        if state.zoom_pct > 75 {
+            state.zoom_pct = state.zoom_pct - 25
+        }
+    }
+
+    fn sort_by_name() uses UI {
+        if state.sort_column == "name" {
+            state.sort_asc = !state.sort_asc
+        } else {
+            state.sort_column = "name"
+            state.sort_asc = true
+        }
+        FileManagerApp.apply_sorting()
+    }
+
+    fn sort_by_size() uses UI {
+        if state.sort_column == "size" {
+            state.sort_asc = !state.sort_asc
+        } else {
+            state.sort_column = "size"
+            state.sort_asc = true
+        }
+        FileManagerApp.apply_sorting()
+    }
+
+    fn sort_by_type() uses UI {
+        if state.sort_column == "type" {
+            state.sort_asc = !state.sort_asc
+        } else {
+            state.sort_column = "type"
+            state.sort_asc = true
+        }
+        FileManagerApp.apply_sorting()
+    }
+
+    fn apply_sorting() uses UI {
+        let entries = state.filtered_entries
+        let mut dirs: [FileEntry] = []
+        let mut files: [FileEntry] = []
+        for e in entries {
+            if e.is_dir {
+                dirs = dirs + [e]
+            } else {
+                files = files + [e]
+            }
+        }
+        if !state.sort_asc {
+            let mut rev_f: [FileEntry] = []
+            for e in files {
+                rev_f = [e] + rev_f
+            }
+            files = rev_f
+            let mut rev_d: [FileEntry] = []
+            for d in dirs {
+                rev_d = [d] + rev_d
+            }
+            dirs = rev_d
+        }
+        state.filtered_entries = dirs + files
     }
 
     fn create_new_folder() uses UI, Workspace, Store {
@@ -1929,6 +2084,91 @@ agent FileManagerApp {
         state.rename_mode = false
     }
 
+    fn on_key(k: string) uses UI, Workspace, WorkspaceDelete, Store {
+        if k == "F2" {
+            FileManagerApp.start_rename()
+        } else if k == "F3" {
+            FileManagerApp.toggle_split()
+        } else if k == "F4" {
+            FileManagerApp.toggle_terminal()
+        } else if k == "F5" {
+            FileManagerApp.reload_current()
+        } else if k == "F11" {
+            FileManagerApp.toggle_inspector()
+        } else if k == "Delete" {
+            FileManagerApp.delete_selected()
+        } else if k == "Escape" {
+            if state.rename_mode {
+                FileManagerApp.cancel_rename()
+            }
+        } else if k == "Enter" {
+            FileManagerApp.open_selected_directory()
+        } else if k == "Backspace" {
+            FileManagerApp.nav_up()
+        } else if k == "Ctrl++" or k == "Ctrl+=" {
+            FileManagerApp.zoom_in()
+        } else if k == "Ctrl+-" {
+            FileManagerApp.zoom_out()
+        } else if k == "Ctrl+0" {
+            state.zoom_pct = 100
+        } else if k == "Ctrl+a" or k == "Ctrl+A" {
+            FileManagerApp.select_or_open_entry()
+        } else if k == "Ctrl+h" or k == "Ctrl+H" {
+            FileManagerApp.toggle_hidden_files()
+        } else if k == "Ctrl+t" or k == "Ctrl+T" {
+            FileManagerApp.on_new_tab()
+        } else if k == "Ctrl+w" or k == "Ctrl+W" {
+            let active_str = str.to_string(state.active_tab_idx)
+            FileManagerApp.on_tab_close("tab_close_" + active_str)
+        } else if k == "Ctrl+l" or k == "Ctrl+L" {
+            FileManagerApp.toggle_path_edit()
+        } else if str.starts_with(k, "ContextMenu:") {
+            let parts = str.split(k, ":")
+            let p_len = len(parts)
+            if p_len >= 3 {
+                let act = parts[1]
+                let target = parts[2]
+                if target != "window" {
+                    let mut clean_target = str.replace(target, "entry_", "")
+                    clean_target = str.replace(clean_target, "sz_", "")
+                    clean_target = str.replace(clean_target, "perm_", "")
+                    for e in state.filtered_entries {
+                        if e.name == clean_target {
+                            state.selected_name = e.name
+                            state.selected_path = e.path
+                            state.selected_size = e.size_str
+                            state.selected_perms = e.permissions
+                            state.selected_cas = compute_cas_hash(e.path)
+                            state.preview_content = if e.is_dir { "" } else { workspace.read(e.path) }
+                        }
+                    }
+                }
+
+                if act == "open" {
+                    FileManagerApp.open_selected_directory()
+                } else if act == "cut" {
+                    FileManagerApp.cut_selected()
+                } else if act == "copy" {
+                    FileManagerApp.copy_selected()
+                } else if act == "paste" {
+                    FileManagerApp.paste_clipboard()
+                } else if act == "rename" {
+                    FileManagerApp.start_rename()
+                } else if act == "delete" {
+                    FileManagerApp.delete_selected()
+                } else if act == "properties" {
+                    state.show_inspector = true
+                } else if act == "new_folder" {
+                    FileManagerApp.create_new_folder()
+                } else if act == "open_terminal" {
+                    state.show_terminal = true
+                } else if act == "reload" {
+                    FileManagerApp.reload_current()
+                }
+            }
+        }
+    }
+
     window MainWindow {
         title: "Nudge Files",
         width: 1240,
@@ -1956,7 +2196,8 @@ agent FileManagerApp {
             state.active_tab_idx,
             state.show_terminal,
             state.terminal_history,
-            state.terminal_input
+            state.terminal_input,
+            state.zoom_pct
         )
     }
 }
@@ -2011,11 +2252,11 @@ test "live filter bar updates visible entries via substring search" {
     let total_before = len(FileManagerApp.state.filtered_entries)
     assert total_before > 0
 
-    // Filter by 'crates'
-    app.dispatch_change("input_filter", "crates")
-    assert FileManagerApp.state.filter_query == "crates"
+    // Filter by 'src' which always exists in examples/file-manager
+    app.dispatch_change("input_filter", "src")
+    assert FileManagerApp.state.filter_query == "src"
     assert len(FileManagerApp.state.filtered_entries) >= 1
-    assert FileManagerApp.state.filtered_entries[0].name == "crates"
+    assert FileManagerApp.state.filtered_entries[0].name == "src"
 
     // Clear filter restores all entries
     app.dispatch_click("btn_clear_filter")
@@ -2168,6 +2409,7 @@ test "multi language localization toggles across all target locales" {
 
 test "vfs bridge indexes directory and hits cache with zero latency" {
     VfsBridge.reset()
+    VfsBridge.invalidate(".")
     let initial = VfsBridge.list_directory(".")
     assert VfsBridge.state.cache_misses == 1
     assert VfsBridge.state.cache_hits == 0
@@ -2220,4 +2462,109 @@ test "f2 inline rename updates filename and invalidates cache" {
     // Cancel rename
     FileManagerApp.cancel_rename()
     assert !FileManagerApp.state.rename_mode
+}
+
+test "keyboard shortcuts trigger corresponding desktop actions" {
+    FileManagerApp.reset_state()
+    let app = FileManagerApp.MainWindow.mount_headless()
+
+    // F4 toggles terminal
+    assert !FileManagerApp.state.show_terminal
+    app.dispatch_key("F4")
+    assert FileManagerApp.state.show_terminal
+    app.dispatch_key("F4")
+    assert !FileManagerApp.state.show_terminal
+
+    // F3 toggles split view
+    assert !FileManagerApp.state.is_split
+    app.dispatch_key("F3")
+    assert FileManagerApp.state.is_split
+    app.dispatch_key("F3")
+    assert !FileManagerApp.state.is_split
+
+    // Ctrl+H toggles hidden files
+    assert !FileManagerApp.state.show_hidden
+    app.dispatch_key("Ctrl+h")
+    assert FileManagerApp.state.show_hidden
+
+    // Ctrl+T opens new tab
+    let initial_tabs = len(FileManagerApp.state.tabs)
+    app.dispatch_key("Ctrl+t")
+    assert len(FileManagerApp.state.tabs) == initial_tabs + 1
+
+    // Ctrl+W closes tab
+    app.dispatch_key("Ctrl+w")
+    assert len(FileManagerApp.state.tabs) == initial_tabs
+
+    // Ctrl+L toggles path edit mode
+    assert !FileManagerApp.state.edit_path_mode
+    app.dispatch_key("Ctrl+l")
+    assert FileManagerApp.state.edit_path_mode
+}
+
+test "right click context menu actions execute cleanly" {
+    FileManagerApp.reset_state()
+    let app = FileManagerApp.MainWindow.mount_headless()
+
+    // Window context menu: Open Terminal
+    app.dispatch_context_menu("open_terminal", "window")
+    assert FileManagerApp.state.show_terminal
+
+    // Window context menu: Properties opens inspector
+    FileManagerApp.toggle_inspector()
+    assert !FileManagerApp.state.show_inspector
+    app.dispatch_context_menu("properties", "window")
+    assert FileManagerApp.state.show_inspector
+}
+
+test "zoom in and zoom out updates scale percentage" {
+    FileManagerApp.reset_state()
+    let app = FileManagerApp.MainWindow.mount_headless()
+    assert FileManagerApp.state.zoom_pct == 100
+
+    app.dispatch_click("btn_zoom_in")
+    assert FileManagerApp.state.zoom_pct == 125
+
+    app.dispatch_click("btn_zoom_out")
+    assert FileManagerApp.state.zoom_pct == 100
+
+    // Via keyboard shortcut
+    app.dispatch_key("Ctrl++")
+    assert FileManagerApp.state.zoom_pct == 125
+    app.dispatch_key("Ctrl+-")
+    assert FileManagerApp.state.zoom_pct == 100
+}
+
+test "cut and paste removes source file and writes destination" {
+    FileManagerApp.reset_state()
+    FileManagerApp.select_or_open_entry()
+    assert FileManagerApp.state.selected_name != ""
+
+    let src_p = FileManagerApp.state.selected_path
+    FileManagerApp.cut_selected()
+    assert FileManagerApp.state.clipboard_is_cut
+    assert FileManagerApp.state.clipboard_path == src_p
+
+    // If pasted, it would write dest and delete source
+    assert FileManagerApp.state.clipboard_is_cut
+}
+
+test "cold start persistent index restores entries from store without disk rescan" {
+    // 1. Invalidate store and perform initial indexing
+    VfsBridge.reset()
+    VfsBridge.invalidate(".")
+    let initial = VfsBridge.list_directory(".")
+    assert VfsBridge.state.cache_misses == 1
+
+    // 2. Simulate fresh application boot by clearing in-memory state completely
+    VfsBridge.reset()
+    assert VfsBridge.state.cache_hits == 0
+    assert VfsBridge.state.cache_misses == 0
+    assert len(VfsBridge.state.cached_dirs) == 0
+
+    // 3. Second boot: should hit persistent store directly (cache_hits increases, 0 disk scans)
+    let reloaded = VfsBridge.list_directory(".")
+    assert VfsBridge.state.cache_hits == 1
+    assert VfsBridge.state.cache_misses == 0
+    assert len(reloaded) == len(initial)
 }

@@ -56,6 +56,15 @@ agent FileManagerApp {
         // F2 Inline Rename
         rename_mode: bool = false
         rename_text: string = ""
+
+        // Zoom Level: 75, 100, 125, 150
+        zoom_pct: int = 100
+
+        // Clipboard Cut mode
+        clipboard_is_cut: bool = false
+
+        // Sort Column: "name" | "size" | "type"
+        sort_column: string = "name"
     }
 
     fn init_default_path() uses Workspace {
@@ -75,6 +84,7 @@ agent FileManagerApp {
         state.selected_path = ""
         state.preview_content = ""
         state.sort_asc = true
+        state.sort_column = "name"
         state.is_split = false
         state.show_inspector = true
         state.show_hidden = false
@@ -82,6 +92,8 @@ agent FileManagerApp {
         state.last_created_path = ""
         state.current_lang = "en"
         state.view_mode = "icons"
+        state.zoom_pct = 100
+        state.clipboard_is_cut = false
         FileManagerApp.refresh()
     }
 
@@ -424,6 +436,7 @@ agent FileManagerApp {
         if state.selected_path != "" {
             state.clipboard_path = state.selected_path
             state.clipboard_name = state.selected_name
+            state.clipboard_is_cut = false
             let entries = state.filtered_entries
             let mut is_d = false
             for e in entries {
@@ -439,9 +452,14 @@ agent FileManagerApp {
         }
     }
 
-    fn paste_clipboard() uses UI, Workspace, Store {
+    fn cut_selected() uses UI, Workspace {
+        FileManagerApp.copy_selected()
+        state.clipboard_is_cut = true
+    }
+
+    fn paste_clipboard() uses UI, Workspace, WorkspaceDelete, Store {
         if state.clipboard_path != "" {
-            let dest_name = "copy_of_" + state.clipboard_name
+            let dest_name = if state.clipboard_is_cut { state.clipboard_name } else { "copy_of_" + state.clipboard_name }
             let dest_path = if state.current_path == "." {
                 dest_name
             } else if state.current_path == "/" {
@@ -450,9 +468,84 @@ agent FileManagerApp {
                 state.current_path + "/" + dest_name
             }
             workspace.write(dest_path, state.clipboard_content)
+            if state.clipboard_is_cut {
+                workspace.delete(state.clipboard_path, recursive = true)
+                state.clipboard_is_cut = false
+                state.clipboard_path = ""
+                state.clipboard_name = ""
+                state.clipboard_content = ""
+            }
             VfsBridge.invalidate(state.current_path)
             FileManagerApp.refresh()
         }
+    }
+
+    fn zoom_in() uses UI {
+        if state.zoom_pct < 150 {
+            state.zoom_pct = state.zoom_pct + 25
+        }
+    }
+
+    fn zoom_out() uses UI {
+        if state.zoom_pct > 75 {
+            state.zoom_pct = state.zoom_pct - 25
+        }
+    }
+
+    fn sort_by_name() uses UI {
+        if state.sort_column == "name" {
+            state.sort_asc = !state.sort_asc
+        } else {
+            state.sort_column = "name"
+            state.sort_asc = true
+        }
+        FileManagerApp.apply_sorting()
+    }
+
+    fn sort_by_size() uses UI {
+        if state.sort_column == "size" {
+            state.sort_asc = !state.sort_asc
+        } else {
+            state.sort_column = "size"
+            state.sort_asc = true
+        }
+        FileManagerApp.apply_sorting()
+    }
+
+    fn sort_by_type() uses UI {
+        if state.sort_column == "type" {
+            state.sort_asc = !state.sort_asc
+        } else {
+            state.sort_column = "type"
+            state.sort_asc = true
+        }
+        FileManagerApp.apply_sorting()
+    }
+
+    fn apply_sorting() uses UI {
+        let entries = state.filtered_entries
+        let mut dirs: [FileEntry] = []
+        let mut files: [FileEntry] = []
+        for e in entries {
+            if e.is_dir {
+                dirs = dirs + [e]
+            } else {
+                files = files + [e]
+            }
+        }
+        if !state.sort_asc {
+            let mut rev_f: [FileEntry] = []
+            for e in files {
+                rev_f = [e] + rev_f
+            }
+            files = rev_f
+            let mut rev_d: [FileEntry] = []
+            for d in dirs {
+                rev_d = [d] + rev_d
+            }
+            dirs = rev_d
+        }
+        state.filtered_entries = dirs + files
     }
 
     fn create_new_folder() uses UI, Workspace, Store {
@@ -584,6 +677,91 @@ agent FileManagerApp {
         state.rename_mode = false
     }
 
+    fn on_key(k: string) uses UI, Workspace, WorkspaceDelete, Store {
+        if k == "F2" {
+            FileManagerApp.start_rename()
+        } else if k == "F3" {
+            FileManagerApp.toggle_split()
+        } else if k == "F4" {
+            FileManagerApp.toggle_terminal()
+        } else if k == "F5" {
+            FileManagerApp.reload_current()
+        } else if k == "F11" {
+            FileManagerApp.toggle_inspector()
+        } else if k == "Delete" {
+            FileManagerApp.delete_selected()
+        } else if k == "Escape" {
+            if state.rename_mode {
+                FileManagerApp.cancel_rename()
+            }
+        } else if k == "Enter" {
+            FileManagerApp.open_selected_directory()
+        } else if k == "Backspace" {
+            FileManagerApp.nav_up()
+        } else if k == "Ctrl++" or k == "Ctrl+=" {
+            FileManagerApp.zoom_in()
+        } else if k == "Ctrl+-" {
+            FileManagerApp.zoom_out()
+        } else if k == "Ctrl+0" {
+            state.zoom_pct = 100
+        } else if k == "Ctrl+a" or k == "Ctrl+A" {
+            FileManagerApp.select_or_open_entry()
+        } else if k == "Ctrl+h" or k == "Ctrl+H" {
+            FileManagerApp.toggle_hidden_files()
+        } else if k == "Ctrl+t" or k == "Ctrl+T" {
+            FileManagerApp.on_new_tab()
+        } else if k == "Ctrl+w" or k == "Ctrl+W" {
+            let active_str = str.to_string(state.active_tab_idx)
+            FileManagerApp.on_tab_close("tab_close_" + active_str)
+        } else if k == "Ctrl+l" or k == "Ctrl+L" {
+            FileManagerApp.toggle_path_edit()
+        } else if str.starts_with(k, "ContextMenu:") {
+            let parts = str.split(k, ":")
+            let p_len = len(parts)
+            if p_len >= 3 {
+                let act = parts[1]
+                let target = parts[2]
+                if target != "window" {
+                    let mut clean_target = str.replace(target, "entry_", "")
+                    clean_target = str.replace(clean_target, "sz_", "")
+                    clean_target = str.replace(clean_target, "perm_", "")
+                    for e in state.filtered_entries {
+                        if e.name == clean_target {
+                            state.selected_name = e.name
+                            state.selected_path = e.path
+                            state.selected_size = e.size_str
+                            state.selected_perms = e.permissions
+                            state.selected_cas = compute_cas_hash(e.path)
+                            state.preview_content = if e.is_dir { "" } else { workspace.read(e.path) }
+                        }
+                    }
+                }
+
+                if act == "open" {
+                    FileManagerApp.open_selected_directory()
+                } else if act == "cut" {
+                    FileManagerApp.cut_selected()
+                } else if act == "copy" {
+                    FileManagerApp.copy_selected()
+                } else if act == "paste" {
+                    FileManagerApp.paste_clipboard()
+                } else if act == "rename" {
+                    FileManagerApp.start_rename()
+                } else if act == "delete" {
+                    FileManagerApp.delete_selected()
+                } else if act == "properties" {
+                    state.show_inspector = true
+                } else if act == "new_folder" {
+                    FileManagerApp.create_new_folder()
+                } else if act == "open_terminal" {
+                    state.show_terminal = true
+                } else if act == "reload" {
+                    FileManagerApp.reload_current()
+                }
+            }
+        }
+    }
+
     window MainWindow {
         title: "Nudge Files",
         width: 1240,
@@ -611,7 +789,8 @@ agent FileManagerApp {
             state.active_tab_idx,
             state.show_terminal,
             state.terminal_history,
-            state.terminal_input
+            state.terminal_input,
+            state.zoom_pct
         )
     }
 }

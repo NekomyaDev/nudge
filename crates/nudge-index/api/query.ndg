@@ -67,6 +67,12 @@ agent SymbolTable {
         symbol_names: [string] = []
         entries: [SymbolEntry] = []
         total_count: int = 0
+        file_symbols: Map[string, [SymbolEntry]] = {}
+        all_files: [string] = []
+        kind_symbols: Map[string, [SymbolEntry]] = {}
+        all_kinds: [string] = []
+        effect_symbols: Map[string, [SymbolEntry]] = {}
+        all_effects: [string] = []
     }
 
     fn reset_symbol_table() {
@@ -74,6 +80,12 @@ agent SymbolTable {
         state.symbol_names = []
         state.entries = []
         state.total_count = 0
+        state.file_symbols = {}
+        state.all_files = []
+        state.kind_symbols = {}
+        state.all_kinds = []
+        state.effect_symbols = {}
+        state.all_effects = []
     }
 
     fn insert(entry: SymbolEntry) {
@@ -94,6 +106,71 @@ agent SymbolTable {
             state.total_count = state.total_count + 1
         }
         state.entries = updated
+
+        // Index by file
+        if contains_str_item(state.all_files, entry.file_path) {
+            let mut file_updated: [SymbolEntry] = []
+            let mut file_replaced = false
+            for fe in state.file_symbols[entry.file_path] {
+                if fe.name == entry.name {
+                    file_updated = file_updated + [entry]
+                    file_replaced = true
+                } else {
+                    file_updated = file_updated + [fe]
+                }
+            }
+            if !file_replaced {
+                file_updated = file_updated + [entry]
+            }
+            state.file_symbols[entry.file_path] = file_updated
+        } else {
+            state.file_symbols[entry.file_path] = [entry]
+            state.all_files = state.all_files + [entry.file_path]
+        }
+
+        // Index by kind
+        if contains_str_item(state.all_kinds, entry.kind) {
+            let mut kind_updated: [SymbolEntry] = []
+            let mut kind_replaced = false
+            for ke in state.kind_symbols[entry.kind] {
+                if ke.name == entry.name {
+                    kind_updated = kind_updated + [entry]
+                    kind_replaced = true
+                } else {
+                    kind_updated = kind_updated + [ke]
+                }
+            }
+            if !kind_replaced {
+                kind_updated = kind_updated + [entry]
+            }
+            state.kind_symbols[entry.kind] = kind_updated
+        } else {
+            state.kind_symbols[entry.kind] = [entry]
+            state.all_kinds = state.all_kinds + [entry.kind]
+        }
+
+        // Index by effect
+        for eff in entry.effects {
+            if contains_str_item(state.all_effects, eff) {
+                let mut eff_updated: [SymbolEntry] = []
+                let mut eff_replaced = false
+                for ee in state.effect_symbols[eff] {
+                    if ee.name == entry.name {
+                        eff_updated = eff_updated + [entry]
+                        eff_replaced = true
+                    } else {
+                        eff_updated = eff_updated + [ee]
+                    }
+                }
+                if !eff_replaced {
+                    eff_updated = eff_updated + [entry]
+                }
+                state.effect_symbols[eff] = eff_updated
+            } else {
+                state.effect_symbols[eff] = [entry]
+                state.all_effects = state.all_effects + [eff]
+            }
+        }
     }
 
     fn lookup(name: string) -> SymbolEntry? {
@@ -106,30 +183,24 @@ agent SymbolTable {
 
     fn find_by_file(path: string) -> [SymbolEntry] {
         let mut res: [SymbolEntry] = []
-        for e in state.entries {
-            if e.file_path == path {
-                res = res + [e]
-            }
+        if contains_str_item(state.all_files, path) {
+            res = state.file_symbols[path]
         }
         res
     }
 
     fn find_by_kind(kind: string) -> [SymbolEntry] {
         let mut res: [SymbolEntry] = []
-        for e in state.entries {
-            if e.kind == kind {
-                res = res + [e]
-            }
+        if contains_str_item(state.all_kinds, kind) {
+            res = state.kind_symbols[kind]
         }
         res
     }
 
     fn find_by_effect(effect: string) -> [SymbolEntry] {
         let mut res: [SymbolEntry] = []
-        for e in state.entries {
-            if contains_str_item(e.effects, effect) {
-                res = res + [e]
-            }
+        if contains_str_item(state.all_effects, effect) {
+            res = state.effect_symbols[effect]
         }
         res
     }

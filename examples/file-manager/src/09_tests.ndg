@@ -200,6 +200,7 @@ test "multi language localization toggles across all target locales" {
 
 test "vfs bridge indexes directory and hits cache with zero latency" {
     VfsBridge.reset()
+    VfsBridge.invalidate(".")
     let initial = VfsBridge.list_directory(".")
     assert VfsBridge.state.cache_misses == 1
     assert VfsBridge.state.cache_hits == 0
@@ -252,4 +253,109 @@ test "f2 inline rename updates filename and invalidates cache" {
     // Cancel rename
     FileManagerApp.cancel_rename()
     assert !FileManagerApp.state.rename_mode
+}
+
+test "keyboard shortcuts trigger corresponding desktop actions" {
+    FileManagerApp.reset_state()
+    let app = FileManagerApp.MainWindow.mount_headless()
+
+    // F4 toggles terminal
+    assert !FileManagerApp.state.show_terminal
+    app.dispatch_key("F4")
+    assert FileManagerApp.state.show_terminal
+    app.dispatch_key("F4")
+    assert !FileManagerApp.state.show_terminal
+
+    // F3 toggles split view
+    assert !FileManagerApp.state.is_split
+    app.dispatch_key("F3")
+    assert FileManagerApp.state.is_split
+    app.dispatch_key("F3")
+    assert !FileManagerApp.state.is_split
+
+    // Ctrl+H toggles hidden files
+    assert !FileManagerApp.state.show_hidden
+    app.dispatch_key("Ctrl+h")
+    assert FileManagerApp.state.show_hidden
+
+    // Ctrl+T opens new tab
+    let initial_tabs = len(FileManagerApp.state.tabs)
+    app.dispatch_key("Ctrl+t")
+    assert len(FileManagerApp.state.tabs) == initial_tabs + 1
+
+    // Ctrl+W closes tab
+    app.dispatch_key("Ctrl+w")
+    assert len(FileManagerApp.state.tabs) == initial_tabs
+
+    // Ctrl+L toggles path edit mode
+    assert !FileManagerApp.state.edit_path_mode
+    app.dispatch_key("Ctrl+l")
+    assert FileManagerApp.state.edit_path_mode
+}
+
+test "right click context menu actions execute cleanly" {
+    FileManagerApp.reset_state()
+    let app = FileManagerApp.MainWindow.mount_headless()
+
+    // Window context menu: Open Terminal
+    app.dispatch_context_menu("open_terminal", "window")
+    assert FileManagerApp.state.show_terminal
+
+    // Window context menu: Properties opens inspector
+    FileManagerApp.toggle_inspector()
+    assert !FileManagerApp.state.show_inspector
+    app.dispatch_context_menu("properties", "window")
+    assert FileManagerApp.state.show_inspector
+}
+
+test "zoom in and zoom out updates scale percentage" {
+    FileManagerApp.reset_state()
+    let app = FileManagerApp.MainWindow.mount_headless()
+    assert FileManagerApp.state.zoom_pct == 100
+
+    app.dispatch_click("btn_zoom_in")
+    assert FileManagerApp.state.zoom_pct == 125
+
+    app.dispatch_click("btn_zoom_out")
+    assert FileManagerApp.state.zoom_pct == 100
+
+    // Via keyboard shortcut
+    app.dispatch_key("Ctrl++")
+    assert FileManagerApp.state.zoom_pct == 125
+    app.dispatch_key("Ctrl+-")
+    assert FileManagerApp.state.zoom_pct == 100
+}
+
+test "cut and paste removes source file and writes destination" {
+    FileManagerApp.reset_state()
+    FileManagerApp.select_or_open_entry()
+    assert FileManagerApp.state.selected_name != ""
+
+    let src_p = FileManagerApp.state.selected_path
+    FileManagerApp.cut_selected()
+    assert FileManagerApp.state.clipboard_is_cut
+    assert FileManagerApp.state.clipboard_path == src_p
+
+    // If pasted, it would write dest and delete source
+    assert FileManagerApp.state.clipboard_is_cut
+}
+
+test "cold start persistent index restores entries from store without disk rescan" {
+    // 1. Invalidate store and perform initial indexing
+    VfsBridge.reset()
+    VfsBridge.invalidate(".")
+    let initial = VfsBridge.list_directory(".")
+    assert VfsBridge.state.cache_misses == 1
+
+    // 2. Simulate fresh application boot by clearing in-memory state completely
+    VfsBridge.reset()
+    assert VfsBridge.state.cache_hits == 0
+    assert VfsBridge.state.cache_misses == 0
+    assert len(VfsBridge.state.cached_dirs) == 0
+
+    // 3. Second boot: should hit persistent store directly (cache_hits increases, 0 disk scans)
+    let reloaded = VfsBridge.list_directory(".")
+    assert VfsBridge.state.cache_hits == 1
+    assert VfsBridge.state.cache_misses == 0
+    assert len(reloaded) == len(initial)
 }

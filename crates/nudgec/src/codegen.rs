@@ -1536,9 +1536,11 @@ class _HeadlessApp:
             handler = elem.on_key
         elif self.root:
             def _find_key(node):
+                if not hasattr(node, "on_key"):
+                    return None
                 if node.on_key:
                     return node.on_key
-                for c in node.children:
+                for c in getattr(node, "children", []):
                     h = _find_key(c)
                     if h:
                         return h

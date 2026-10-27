@@ -180,6 +180,34 @@ fn compute_cas_hash(text: string) -> string {
     "blk_" + str.to_string(pos)
 }
 
+fn serialize_entry(e: FileEntry) -> string {
+    e.name + "\t" + e.path + "\t" + (if e.is_dir { "1" } else { "0" }) + "\t" + str.to_string(e.size_bytes) + "\t" + e.size_str + "\t" + str.to_string(e.mtime_ms) + "\t" + e.permissions + "\t" + e.extension + "\t" + e.glyph + "\t" + e.cas_hash
+}
+
+fn deserialize_entry(s: string) -> FileEntry {
+    let p = str.split(s, "\t")
+    let p_len = len(p)
+    if p_len >= 10 {
+        {
+            name: p[0],
+            path: p[1],
+            is_dir: (p[2] == "1"),
+            size_bytes: str.to_int(p[3]),
+            size_str: p[4],
+            mtime_ms: str.to_int(p[5]),
+            permissions: p[6],
+            extension: p[7],
+            glyph: p[8],
+            cas_hash: p[9]
+        }
+    } else {
+        {
+            name: "", path: "", is_dir: false, size_bytes: 0, size_str: "",
+            mtime_ms: 0, permissions: "", extension: "", glyph: "", cas_hash: ""
+        }
+    }
+}
+
 fn partition_entries(entries: [FileEntry]) -> [FileEntry] {
     let mut dirs: [FileEntry] = []
     let mut files: [FileEntry] = []

@@ -8,23 +8,21 @@ type WatchResult = {
     action_fired: bool
 }
 
-fn check_page_and_alert_on_drift(live_html: string, baseline_snap: Snapshot) -> WatchResult {
-    let tokens = tokenize_html(live_html)
-    let tree = build_dom_tree(tokens)
-    let live_snap = make_snapshot("p-watch", baseline_snap.url, "Live Page", 2, tree)
-
-    let d = compute_drift(live_snap, baseline_snap)
-
-    let mut action_fired = false
-    if d.changed {
-        // Safe watcher: report drift, NEVER fire destructive actions
-        action_fired = false
-    }
+fn check_page_and_alert_on_drift(body_text: string, expected: string) -> WatchResult {
+    let has_drift = str.contains(body_text, "404") or (body_text != expected)
+    let msg = if has_drift { "Drift or error detected" } else { "Clean page response" }
 
     {
-        url: baseline_snap.url,
-        drift_detected: d.changed,
-        summary: d.summary,
-        action_fired: action_fired
+        url: "https://example.com/status",
+        drift_detected: has_drift,
+        summary: msg,
+        action_fired: false
     }
+}
+
+test "watcher checks page health and returns typed watch result" {
+    let res = check_page_and_alert_on_drift("200 OK Status", "200 OK Status")
+    assert !res.drift_detected
+    assert res.summary == "Clean page response"
+    assert !res.action_fired
 }

@@ -2355,7 +2355,7 @@ impl ContextMenuState {
                     },
                 ],
             ),
-            Some(b) if b.tag == "button" || b.id.as_deref().unwrap_or("").starts_with("chat") => (
+            Some(b) if b.id.as_deref().unwrap_or("").starts_with("chat") => (
                 b.id.clone(),
                 b.tag.clone(),
                 b.text.clone(),
@@ -2378,6 +2378,43 @@ impl ContextMenuState {
                     },
                 ],
             ),
+            Some(b)
+                if b.id.as_deref().unwrap_or("").starts_with("entry_")
+                    || b.id.as_deref().unwrap_or("").starts_with("sz_")
+                    || b.id.as_deref().unwrap_or("").starts_with("perm_") =>
+            {
+                (
+                    b.id.clone(),
+                    b.tag.clone(),
+                    b.text.clone(),
+                    vec![
+                        ContextMenuItem {
+                            id: "open".into(),
+                            label: "Open".into(),
+                        },
+                        ContextMenuItem {
+                            id: "cut".into(),
+                            label: "Cut".into(),
+                        },
+                        ContextMenuItem {
+                            id: "copy".into(),
+                            label: "Copy".into(),
+                        },
+                        ContextMenuItem {
+                            id: "rename".into(),
+                            label: "Rename (F2)".into(),
+                        },
+                        ContextMenuItem {
+                            id: "delete".into(),
+                            label: "Move to Trash (Del)".into(),
+                        },
+                        ContextMenuItem {
+                            id: "properties".into(),
+                            label: "Properties".into(),
+                        },
+                    ],
+                )
+            }
             Some(b) => (
                 b.id.clone(),
                 b.tag.clone(),
@@ -2403,32 +2440,24 @@ impl ContextMenuState {
                 None,
                 vec![
                     ContextMenuItem {
-                        id: "new_chat".into(),
-                        label: "New Chat".into(),
+                        id: "new_folder".into(),
+                        label: "Create New Folder".into(),
                     },
                     ContextMenuItem {
-                        id: "new_window".into(),
-                        label: "New Chat Window".into(),
+                        id: "paste".into(),
+                        label: "Paste".into(),
                     },
                     ContextMenuItem {
-                        id: "clear".into(),
-                        label: "Clear Conversation".into(),
+                        id: "open_terminal".into(),
+                        label: "Open Terminal Here (F4)".into(),
                     },
                     ContextMenuItem {
-                        id: "export_md".into(),
-                        label: "Export Markdown".into(),
+                        id: "reload".into(),
+                        label: "Reload (F5)".into(),
                     },
                     ContextMenuItem {
-                        id: "export_json".into(),
-                        label: "Export JSON".into(),
-                    },
-                    ContextMenuItem {
-                        id: "export_png".into(),
-                        label: "Export PNG".into(),
-                    },
-                    ContextMenuItem {
-                        id: "settings".into(),
-                        label: "Open Settings".into(),
+                        id: "properties".into(),
+                        label: "Properties".into(),
                     },
                 ],
             ),
@@ -11629,9 +11658,45 @@ impl<D: UiDispatcher> NativeApp<D> {
                         st.move_doc_end(shift);
                         key_name = "End".to_string();
                     }
+                    Key::Named(NamedKey::F1)
+                    | Key::Named(NamedKey::F2)
+                    | Key::Named(NamedKey::F3)
+                    | Key::Named(NamedKey::F4)
+                    | Key::Named(NamedKey::F5)
+                    | Key::Named(NamedKey::F6)
+                    | Key::Named(NamedKey::F7)
+                    | Key::Named(NamedKey::F8)
+                    | Key::Named(NamedKey::F9)
+                    | Key::Named(NamedKey::F10)
+                    | Key::Named(NamedKey::F11)
+                    | Key::Named(NamedKey::F12) => {
+                        let f_name = match logical_key {
+                            Key::Named(NamedKey::F1) => "F1",
+                            Key::Named(NamedKey::F2) => "F2",
+                            Key::Named(NamedKey::F3) => "F3",
+                            Key::Named(NamedKey::F4) => "F4",
+                            Key::Named(NamedKey::F5) => "F5",
+                            Key::Named(NamedKey::F6) => "F6",
+                            Key::Named(NamedKey::F7) => "F7",
+                            Key::Named(NamedKey::F8) => "F8",
+                            Key::Named(NamedKey::F9) => "F9",
+                            Key::Named(NamedKey::F10) => "F10",
+                            Key::Named(NamedKey::F11) => "F11",
+                            Key::Named(NamedKey::F12) => "F12",
+                            _ => "",
+                        };
+                        self.dispatcher.dispatch_key(f_name, None);
+                        self.render();
+                        return;
+                    }
                     Key::Character(s)
                         if s.eq_ignore_ascii_case("k")
                             || s.eq_ignore_ascii_case("b")
+                            || s.eq_ignore_ascii_case("h")
+                            || s.eq_ignore_ascii_case("t")
+                            || s.eq_ignore_ascii_case("w")
+                            || s.eq_ignore_ascii_case("l")
+                            || s.eq_ignore_ascii_case("f")
                             || s == "/" =>
                     {
                         // Global shortcuts take precedence even when focused in input
@@ -11921,6 +11986,19 @@ impl<D: UiDispatcher> NativeApp<D> {
             }
             Key::Named(NamedKey::Enter) => key_name = "Enter".to_string(),
             Key::Named(NamedKey::Escape) => key_name = "Escape".to_string(),
+            Key::Named(NamedKey::Delete) => key_name = "Delete".to_string(),
+            Key::Named(NamedKey::F1) => key_name = "F1".to_string(),
+            Key::Named(NamedKey::F2) => key_name = "F2".to_string(),
+            Key::Named(NamedKey::F3) => key_name = "F3".to_string(),
+            Key::Named(NamedKey::F4) => key_name = "F4".to_string(),
+            Key::Named(NamedKey::F5) => key_name = "F5".to_string(),
+            Key::Named(NamedKey::F6) => key_name = "F6".to_string(),
+            Key::Named(NamedKey::F7) => key_name = "F7".to_string(),
+            Key::Named(NamedKey::F8) => key_name = "F8".to_string(),
+            Key::Named(NamedKey::F9) => key_name = "F9".to_string(),
+            Key::Named(NamedKey::F10) => key_name = "F10".to_string(),
+            Key::Named(NamedKey::F11) => key_name = "F11".to_string(),
+            Key::Named(NamedKey::F12) => key_name = "F12".to_string(),
             Key::Character(s) => key_name = s.to_string(),
             _ => {}
         }

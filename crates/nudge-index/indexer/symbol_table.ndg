@@ -27,6 +27,12 @@ agent SymbolTable {
         symbol_names: [string] = []
         all_symbols: [SymbolEntry] = []
         total_count: int = 0
+        file_symbols: Map[string, [SymbolEntry]] = {}
+        all_files: [string] = []
+        kind_symbols: Map[string, [SymbolEntry]] = {}
+        all_kinds: [string] = []
+        effect_symbols: Map[string, [SymbolEntry]] = {}
+        all_effects: [string] = []
     }
 
     fn reset_symbol_table() {
@@ -34,6 +40,12 @@ agent SymbolTable {
         state.symbol_names = []
         state.all_symbols = []
         state.total_count = 0
+        state.file_symbols = {}
+        state.all_files = []
+        state.kind_symbols = {}
+        state.all_kinds = []
+        state.effect_symbols = {}
+        state.all_effects = []
     }
 
     fn count() -> int {
@@ -58,6 +70,71 @@ agent SymbolTable {
             state.total_count = state.total_count + 1
         }
         state.all_symbols = updated
+
+        // Index by file
+        if list_has_string(state.all_files, entry.file_path) {
+            let mut file_updated: [SymbolEntry] = []
+            let mut file_replaced = false
+            for fe in state.file_symbols[entry.file_path] {
+                if fe.name == entry.name {
+                    file_updated = file_updated + [entry]
+                    file_replaced = true
+                } else {
+                    file_updated = file_updated + [fe]
+                }
+            }
+            if !file_replaced {
+                file_updated = file_updated + [entry]
+            }
+            state.file_symbols[entry.file_path] = file_updated
+        } else {
+            state.file_symbols[entry.file_path] = [entry]
+            state.all_files = state.all_files + [entry.file_path]
+        }
+
+        // Index by kind
+        if list_has_string(state.all_kinds, entry.kind) {
+            let mut kind_updated: [SymbolEntry] = []
+            let mut kind_replaced = false
+            for ke in state.kind_symbols[entry.kind] {
+                if ke.name == entry.name {
+                    kind_updated = kind_updated + [entry]
+                    kind_replaced = true
+                } else {
+                    kind_updated = kind_updated + [ke]
+                }
+            }
+            if !kind_replaced {
+                kind_updated = kind_updated + [entry]
+            }
+            state.kind_symbols[entry.kind] = kind_updated
+        } else {
+            state.kind_symbols[entry.kind] = [entry]
+            state.all_kinds = state.all_kinds + [entry.kind]
+        }
+
+        // Index by effect
+        for eff in entry.effects {
+            if list_has_string(state.all_effects, eff) {
+                let mut eff_updated: [SymbolEntry] = []
+                let mut eff_replaced = false
+                for ee in state.effect_symbols[eff] {
+                    if ee.name == entry.name {
+                        eff_updated = eff_updated + [entry]
+                        eff_replaced = true
+                    } else {
+                        eff_updated = eff_updated + [ee]
+                    }
+                }
+                if !eff_replaced {
+                    eff_updated = eff_updated + [entry]
+                }
+                state.effect_symbols[eff] = eff_updated
+            } else {
+                state.effect_symbols[eff] = [entry]
+                state.all_effects = state.all_effects + [eff]
+            }
+        }
     }
 
     fn lookup(name: string) -> SymbolEntry? {
@@ -74,16 +151,51 @@ agent SymbolTable {
             let mut updated_syms: [SymbolEntry] = []
             let mut updated_names: [string] = []
             let mut new_map: Map[string, SymbolEntry] = {}
+            let mut new_file_map: Map[string, [SymbolEntry]] = {}
+            let mut new_all_files: [string] = []
+            let mut new_kind_map: Map[string, [SymbolEntry]] = {}
+            let mut new_all_kinds: [string] = []
+            let mut new_eff_map: Map[string, [SymbolEntry]] = {}
+            let mut new_all_effs: [string] = []
             for e in state.all_symbols {
                 if e.name != name {
                     updated_syms = updated_syms + [e]
                     updated_names = updated_names + [e.name]
                     new_map[e.name] = e
+
+                    if list_has_string(new_all_files, e.file_path) {
+                        new_file_map[e.file_path] = new_file_map[e.file_path] + [e]
+                    } else {
+                        new_file_map[e.file_path] = [e]
+                        new_all_files = new_all_files + [e.file_path]
+                    }
+
+                    if list_has_string(new_all_kinds, e.kind) {
+                        new_kind_map[e.kind] = new_kind_map[e.kind] + [e]
+                    } else {
+                        new_kind_map[e.kind] = [e]
+                        new_all_kinds = new_all_kinds + [e.kind]
+                    }
+
+                    for eff in e.effects {
+                        if list_has_string(new_all_effs, eff) {
+                            new_eff_map[eff] = new_eff_map[eff] + [e]
+                        } else {
+                            new_eff_map[eff] = [e]
+                            new_all_effs = new_all_effs + [eff]
+                        }
+                    }
                 }
             }
             state.symbols = new_map
             state.symbol_names = updated_names
             state.all_symbols = updated_syms
+            state.file_symbols = new_file_map
+            state.all_files = new_all_files
+            state.kind_symbols = new_kind_map
+            state.all_kinds = new_all_kinds
+            state.effect_symbols = new_eff_map
+            state.all_effects = new_all_effs
             state.total_count = state.total_count - 1
             did_remove = true
         }
@@ -92,30 +204,24 @@ agent SymbolTable {
 
     fn find_by_file(path: string) -> [SymbolEntry] {
         let mut res: [SymbolEntry] = []
-        for e in state.all_symbols {
-            if e.file_path == path {
-                res = res + [e]
-            }
+        if list_has_string(state.all_files, path) {
+            res = state.file_symbols[path]
         }
         res
     }
 
     fn find_by_kind(kind: string) -> [SymbolEntry] {
         let mut res: [SymbolEntry] = []
-        for e in state.all_symbols {
-            if e.kind == kind {
-                res = res + [e]
-            }
+        if list_has_string(state.all_kinds, kind) {
+            res = state.kind_symbols[kind]
         }
         res
     }
 
     fn find_by_effect(effect: string) -> [SymbolEntry] {
         let mut res: [SymbolEntry] = []
-        for e in state.all_symbols {
-            if list_has_string(e.effects, effect) {
-                res = res + [e]
-            }
+        if list_has_string(state.all_effects, effect) {
+            res = state.effect_symbols[effect]
         }
         res
     }
