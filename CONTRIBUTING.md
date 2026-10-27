@@ -19,6 +19,7 @@ Thanks for considering a contribution. Nudge is Apache-2.0; everything here (com
 - **Every feature is tested.** New compiler diagnostics get a test showing the error *and* the message; runtime features get parity tests on both backends when applicable.
 - **No dependencies** in the Python runtime and the emitted code; compiler deps stay minimal.
 - **Docs move with code** — README(s), `CHANGELOG.md`, and the relevant `docs/` page.
+- **Follow the Nudge Style Guide** — see [docs/style-guide.md](docs/style-guide.md) for naming conventions and formatting standards.
 
 ## Good first contributions
 

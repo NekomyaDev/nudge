@@ -1028,6 +1028,20 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
                             )
                         {
                             format!("rt.str_{name}")
+                        } else if prefix == "map"
+                            && matches!(
+                                name.as_str(),
+                                "has" | "get" | "keys" | "values" | "remove" | "delete" | "set"
+                            )
+                        {
+                            format!("rt.map_{name}")
+                        } else if prefix == "list"
+                            && matches!(
+                                name.as_str(),
+                                "contains" | "index_of" | "slice" | "reverse"
+                            )
+                        {
+                            format!("rt.list_{name}")
                         } else {
                             format!("{prefix}.{name}")
                         }

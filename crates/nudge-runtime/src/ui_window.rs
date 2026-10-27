@@ -8701,8 +8701,16 @@ impl<D: UiDispatcher> NativeApp<D> {
         let total_h = self.content_height;
 
         // Clamp window scroll offsets
-        let max_scroll_y = (total_h - self.height as i32 + 20).max(0);
-        let max_scroll_x = (total_w - self.width as i32 + 20).max(0);
+        let max_scroll_y = if self.scroll_regions.is_empty() {
+            (total_h - self.height as i32 + 20).max(0)
+        } else {
+            0
+        };
+        let max_scroll_x = if self.scroll_regions.is_empty() {
+            (total_w - self.width as i32 + 20).max(0)
+        } else {
+            0
+        };
         self.scroll_y = self.scroll_y.clamp(0, max_scroll_y);
         self.scroll_x = self.scroll_x.clamp(0, max_scroll_x);
 
@@ -12477,7 +12485,11 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
                     Some(key) => {
                         self.scroll_region_by(&key, dy);
                     }
-                    None => self.scroll_by(dx, dy),
+                    None => {
+                        if self.scroll_regions.is_empty() {
+                            self.scroll_by(dx, dy);
+                        }
+                    }
                 }
                 if let Some(win) = &self.window {
                     win.request_redraw();

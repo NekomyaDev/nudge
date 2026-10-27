@@ -40,7 +40,7 @@ struct Face {
 }
 
 impl Face {
-    fn new(bytes: &'static [u8], px: f32) -> Option<Self> {
+    fn new(bytes: &[u8], px: f32) -> Option<Self> {
         let font = FontVec::try_from_vec(bytes.to_vec()).ok()?;
         let sf = font.as_scaled(PxScale::from(px));
         Some(Self {
@@ -71,6 +71,7 @@ pub struct FontEngine {
     ui: Face,
     ui_bold: Face,
     mono: Face,
+    cjk_fallback: Option<Face>,
     /// Fixed monospace cell width used for layout/cursor math (px).
     pub cell_w: i32,
     /// Fixed line height used for layout/cursor math (px).
@@ -97,11 +98,28 @@ impl FontEngine {
         let ui_bold = Face::new(UI_FONT_BOLD_BYTES, px).expect("embedded bold font must parse");
         let mono = Face::new(MONO_FONT_BYTES, px).expect("embedded mono font must parse");
 
+        let cjk_paths = [
+            "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/arphic/uming.ttc",
+        ];
+        let mut cjk_fallback = None;
+        for path in cjk_paths {
+            if let Ok(bytes) = std::fs::read(path) {
+                if let Some(face) = Face::new(&bytes, px) {
+                    cjk_fallback = Some(face);
+                    break;
+                }
+            }
+        }
+
         Self {
             base_px: px,
             ui,
             ui_bold,
             mono,
+            cjk_fallback,
             cell_w,
             cell_h,
         }
@@ -141,6 +159,17 @@ impl FontEngine {
                 continue;
             }
             let id = sf.glyph_id(ch);
+            if id.0 == 0 {
+                if let Some(ref cjk) = self.cjk_fallback {
+                    let csf = cjk.font.as_scaled(PxScale::from(cjk.px));
+                    let cid = csf.glyph_id(ch);
+                    if cid.0 != 0 {
+                        width += csf.h_advance(cid);
+                        prev = None;
+                        continue;
+                    }
+                }
+            }
             if let Some(p) = prev {
                 width += sf.kern(p, id);
             }
@@ -154,7 +183,17 @@ impl FontEngine {
     pub fn advance_of(&self, kind: FaceKind, ch: char) -> i32 {
         let f = self.face(kind);
         let sf = f.font.as_scaled(PxScale::from(f.px));
-        sf.h_advance(sf.glyph_id(ch)).round() as i32
+        let id = sf.glyph_id(ch);
+        if id.0 == 0 {
+            if let Some(ref cjk) = self.cjk_fallback {
+                let csf = cjk.font.as_scaled(PxScale::from(cjk.px));
+                let cid = csf.glyph_id(ch);
+                if cid.0 != 0 {
+                    return csf.h_advance(cid).round() as i32;
+                }
+            }
+        }
+        sf.h_advance(id).round() as i32
     }
 
     /// Pixel x-offset of the first `col` glyphs of `line`.
@@ -214,15 +253,27 @@ impl FontEngine {
         }
         let f = self.face(kind);
         let sf = f.font.as_scaled(PxScale::from(f.px));
-        let id = sf.glyph_id(ch);
+        let mut id = sf.glyph_id(ch);
+        let mut target_face = f;
+        if id.0 == 0 {
+            if let Some(ref cjk) = self.cjk_fallback {
+                let csf = cjk.font.as_scaled(PxScale::from(cjk.px));
+                let cid = csf.glyph_id(ch);
+                if cid.0 != 0 {
+                    id = cid;
+                    target_face = cjk;
+                }
+            }
+        }
+        let tsf = target_face.font.as_scaled(PxScale::from(target_face.px));
         // Position by baseline: y is the *top* of the line box.
-        let baseline = y + sf.ascent().round() as i32;
+        let baseline = y + tsf.ascent().round() as i32;
         let glyph = ab_glyph::Glyph {
             id,
-            scale: PxScale::from(f.px),
+            scale: PxScale::from(target_face.px),
             position: point(x as f32, baseline as f32),
         };
-        if let Some(outlined) = f.font.outline_glyph(glyph) {
+        if let Some(outlined) = target_face.font.outline_glyph(glyph) {
             let bounds = outlined.px_bounds();
             outlined.draw(|gx, gy, coverage| {
                 if coverage <= 0.0 {

@@ -4480,6 +4480,72 @@ def str_replace(s, old, new):
         return ""
     return s.replace(old, new)
 
+# ── map & list standard library primitives ────────────────────────────
+
+def map_has(m, key):
+    if not isinstance(m, dict) or not isinstance(key, str):
+        return False
+    return key in m
+
+def map_get(m, key, default=None):
+    if not isinstance(m, dict) or not isinstance(key, str):
+        return default
+    return m.get(key, default)
+
+def map_keys(m):
+    if not isinstance(m, dict):
+        return []
+    return sorted(list(m.keys()))
+
+def map_values(m):
+    if not isinstance(m, dict):
+        return []
+    return [m[k] for k in sorted(m.keys())]
+
+def map_remove(m, key):
+    if not isinstance(m, dict):
+        return m
+    res = dict(m)
+    res.pop(key, None)
+    return res
+
+def map_delete(m, key):
+    return map_remove(m, key)
+
+def map_set(m, key, val):
+    if not isinstance(m, dict):
+        return {key: val}
+    res = dict(m)
+    res[key] = val
+    return res
+
+def list_contains(xs, item):
+    if not isinstance(xs, list):
+        return False
+    return item in xs
+
+def list_index_of(xs, item):
+    if not isinstance(xs, list):
+        return -1
+    try:
+        return xs.index(item)
+    except ValueError:
+        return -1
+
+def list_slice(xs, start=0, end=None):
+    if not isinstance(xs, list):
+        return []
+    s = max(0, start)
+    if end is None:
+        return xs[s:]
+    e = max(0, end)
+    return xs[s:e]
+
+def list_reverse(xs):
+    if not isinstance(xs, list):
+        return []
+    return list(reversed(xs))
+
 # ── browser use (v1.6, docs/browser-use.md) ───────────────────────────
 
 def browser_fetch(url, **kwargs):

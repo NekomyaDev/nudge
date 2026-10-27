@@ -133,6 +133,22 @@ const KEYWORDS: &[(&str, Tok)] = &[
 ];
 
 pub fn lex(src: &str) -> Result<Vec<Spanned>, LexError> {
+    const MAX_LINE_LEN: usize = 65_536; // 64KB max line limit (Issue #235)
+    let mut cur_line_len = 0usize;
+    for (offset, ch) in src.char_indices() {
+        if ch == '\n' {
+            cur_line_len = 0;
+        } else {
+            cur_line_len += 1;
+            if cur_line_len > MAX_LINE_LEN {
+                return Err(LexError {
+                    msg: "line length exceeds maximum limit of 65536 characters".into(),
+                    at: offset,
+                });
+            }
+        }
+    }
+
     let b = src.as_bytes();
     let mut i = 0usize;
     let mut out = Vec::new();
@@ -560,6 +576,14 @@ mod tests {
 
     fn toks(src: &str) -> Vec<Tok> {
         lex(src).unwrap().into_iter().map(|s| s.tok).collect()
+    }
+
+    #[test]
+    fn test_max_line_length_rejected() {
+        let long_line = "a".repeat(70_000);
+        let err = lex(&long_line);
+        assert!(err.is_err());
+        assert!(err.unwrap_err().msg.contains("exceeds maximum limit"));
     }
 
     #[test]

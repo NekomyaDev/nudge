@@ -104,6 +104,15 @@ pub fn run_in(base: &std::path::Path, rest: &[String]) -> Result<(), String> {
     if template.is_empty() {
         template = "hello".to_string();
     }
+    const RESERVED_NAMES: &[&str] = &[
+        "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+        "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+    ];
+    if RESERVED_NAMES.contains(&name.as_str()) {
+        return Err(format!(
+            "invalid project name '{name}' — reserved OS device name"
+        ));
+    }
     if !name
         .chars()
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
@@ -252,6 +261,8 @@ mod tests {
     fn init_rejects_bad_names_and_unknown_templates_and_filled_dirs() {
         let base = tmpdir("reject");
         assert!(run_in(&base, &["Bad Name".to_string()]).is_err());
+        assert!(run_in(&base, &["con".to_string()]).is_err());
+        assert!(run_in(&base, &["nul".to_string()]).is_err());
         assert!(run_in(
             &base,
             &[

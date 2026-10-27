@@ -847,6 +847,23 @@ impl Parser {
     // ── types ───────────────────────────────────────────────────────
     fn parse_primary_type(&mut self) -> PResult<TypeExpr> {
         let mut ty = match self.peek() {
+            Tok::Map => {
+                let name = "Map".to_string();
+                self.bump();
+                if self.eat(&Tok::LBracket) {
+                    let g = self.enter()?;
+                    let mut args = Vec::new();
+                    while !self.at(&Tok::RBracket) {
+                        args.push(self.parse_type()?);
+                        self.eat(&Tok::Comma);
+                    }
+                    self.expect(&Tok::RBracket, "']' in generic type")?;
+                    self.leave(g);
+                    TypeExpr::Generic(name, args)
+                } else {
+                    TypeExpr::Named(name)
+                }
+            }
             Tok::Ident(name) => {
                 let name = name.clone();
                 self.bump();

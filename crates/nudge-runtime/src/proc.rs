@@ -781,6 +781,9 @@ mod tests {
             err.contains("denied") && err.contains("E0920"),
             "expected denied in error message, got: {err}"
         );
+        // Security verification (Issue #234): Ensure no host environment variables or sensitive paths leaked
+        assert!(!err.contains("PATH="));
+        assert!(!err.contains("HOME="));
     }
 
     #[test]

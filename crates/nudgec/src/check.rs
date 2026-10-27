@@ -2322,6 +2322,56 @@ fn check_expr_pos(
                             "index_of" => return Ty::Int,
                             _ => {}
                         }
+                    } else if prefix == "map" {
+                        match name.as_str() {
+                            "has" => return Ty::Bool,
+                            "get" => {
+                                if let Some(def_ty) = arg_tys.get(2) {
+                                    return def_ty.clone();
+                                }
+                                if let Some(m_ty) = arg_tys.first() {
+                                    if let Ty::Map(_, v) = m_ty {
+                                        return Ty::Optional(v.clone());
+                                    }
+                                }
+                                return Ty::Unknown;
+                            }
+                            "keys" => {
+                                if let Some(m_ty) = arg_tys.first() {
+                                    if let Ty::Map(k, _) = m_ty {
+                                        return Ty::List(k.clone());
+                                    }
+                                }
+                                return Ty::List(Box::new(Ty::Str));
+                            }
+                            "values" => {
+                                if let Some(m_ty) = arg_tys.first() {
+                                    if let Ty::Map(_, v) = m_ty {
+                                        return Ty::List(v.clone());
+                                    }
+                                }
+                                return Ty::List(Box::new(Ty::Unknown));
+                            }
+                            "remove" | "delete" => {
+                                if let Some(m_ty) = arg_tys.first() {
+                                    return m_ty.clone();
+                                }
+                                return Ty::Unknown;
+                            }
+                            _ => {}
+                        }
+                    } else if prefix == "list" {
+                        match name.as_str() {
+                            "contains" => return Ty::Bool,
+                            "index_of" => return Ty::Int,
+                            "slice" | "reverse" => {
+                                if let Some(l_ty) = arg_tys.first() {
+                                    return l_ty.clone();
+                                }
+                                return Ty::List(Box::new(Ty::Unknown));
+                            }
+                            _ => {}
+                        }
                     } else if let Some((params, ret)) = g.fns.get(&format!("{prefix}.{name}")) {
                         let full_name = format!("{prefix}.{name}");
                         if args.len() > params.len() {
@@ -6037,6 +6087,33 @@ fn f() -> int | string {
         assert!(errs
             .iter()
             .any(|e| e.code == "E0201" && e.msg.contains("math.abs")));
+    }
+
+    #[test]
+    fn test_map_and_list_stdlib_typechecking() {
+        let src = r#"
+            fn test_collections() -> bool {
+                let mut m: Map[string, int] = {}
+                m["alpha"] = 1
+                m["beta"] = 2
+
+                let has_alpha: bool = map.has(m, "alpha")
+                let val_opt = map.get(m, "alpha")
+                let val_def: int = map.get(m, "gamma", 42)
+                let keys: [string] = map.keys(m)
+                let vals: [int] = map.values(m)
+                let m_rem = map.remove(m, "alpha")
+
+                let xs: [string] = ["apple", "banana", "cherry"]
+                let has_banana: bool = list.contains(xs, "banana")
+                let banana_idx: int = list.index_of(xs, "banana")
+                let sliced: [string] = list.slice(xs, 1, 3)
+                let reversed: [string] = list.reverse(xs)
+
+                has_alpha and has_banana and val_def == 42
+            }
+        "#;
+        assert_eq!(check_src(src), vec![]);
     }
 
     /// A boolean control hands its handler a Bool, so a handler declaring
