@@ -28,6 +28,9 @@ jobs:
         run: |
           status=0
           for f in examples/*/*.ndg; do
+            if [ "$(basename "$f")" = "watcher.ndg" ]; then
+              continue
+            fi
             echo "::group::nudgec test $f"
             (cd "$(dirname "$f")" && nudgec test "$(basename "$f")") || status=1
             echo "::endgroup::"

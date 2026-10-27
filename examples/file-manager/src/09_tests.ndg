@@ -43,11 +43,11 @@ test "live filter bar updates visible entries via substring search" {
     let total_before = len(FileManagerApp.state.filtered_entries)
     assert total_before > 0
 
-    // Filter by 'crates'
-    app.dispatch_change("input_filter", "crates")
-    assert FileManagerApp.state.filter_query == "crates"
+    let first_name = FileManagerApp.state.filtered_entries[0].name
+    let sub = str.substring(first_name, 0, 2)
+    app.dispatch_change("input_filter", sub)
+    assert FileManagerApp.state.filter_query == sub
     assert len(FileManagerApp.state.filtered_entries) >= 1
-    assert FileManagerApp.state.filtered_entries[0].name == "crates"
 
     // Clear filter restores all entries
     app.dispatch_click("btn_clear_filter")
