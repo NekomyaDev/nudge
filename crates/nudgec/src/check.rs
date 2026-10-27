@@ -1092,7 +1092,7 @@ fn check_test_body_inner(
             } => {
                 let vt = check_expr(value, &locals, g, errs);
                 check_reserved_binding(name, errs);
-                if let Some(ann) = ty {
+                let bound = if let Some(ann) = ty {
                     let at = resolve(ann, g, &mut Vec::new(), errs);
                     if !assignable(&vt, &at) {
                         errs.push(CheckError {
@@ -1101,8 +1101,11 @@ fn check_test_body_inner(
                             msg: format!("let '{name}' is annotated {at} but the value is {vt}"),
                         });
                     }
-                }
-                locals.insert(name.clone(), vt);
+                    at
+                } else {
+                    vt
+                };
+                locals.insert(name.clone(), bound);
                 if *mutable {
                     mut_locals.insert(name.clone());
                 } else {
@@ -2284,10 +2287,31 @@ fn check_expr_pos(
                             }
                             _ => {}
                         }
+                    } else if prefix == "time" {
+                        match name.as_str() {
+                            "now" => return Ty::Float,
+                            "sleep" => return Ty::None_,
+                            "format" => return Ty::Str,
+                            _ => {}
+                        }
+                    } else if prefix == "env" {
+                        match name.as_str() {
+                            "get" => return Ty::Optional(Box::new(Ty::Str)),
+                            "set" => return Ty::None_,
+                            "has" => return Ty::Bool,
+                            _ => {}
+                        }
+                    } else if prefix == "os" {
+                        match name.as_str() {
+                            "args" => return Ty::List(Box::new(Ty::Str)),
+                            "cwd" => return Ty::Str,
+                            "pid" => return Ty::Int,
+                            _ => {}
+                        }
                     } else if prefix == "math" {
                         match name.as_str() {
                             "abs" | "floor" | "ceil" | "round" | "sqrt" | "sin" | "cos" | "tan"
-                            | "exp" | "ln" => {
+                            | "asin" | "acos" | "atan" | "atan2" | "exp" | "ln" | "clamp" => {
                                 if args.is_empty() {
                                     errs.push(CheckError {
                                         span: None,
@@ -2297,12 +2321,12 @@ fn check_expr_pos(
                                 }
                                 return arg_tys.first().cloned().unwrap_or(Ty::Float);
                             }
-                            "pow" | "log" | "min" | "max" => {
+                            "pow" | "log" | "min" | "max" | "sum" => {
                                 return arg_tys.first().cloned().unwrap_or(Ty::Float);
                             }
                             "random_int" | "bitwise_xor" | "bitwise_and" | "bitwise_or"
                             | "bitwise_not" | "shift_left" | "shift_right" => return Ty::Int,
-                            "random_float" | "mean" => return Ty::Float,
+                            "random_float" | "mean" | "PI" | "E" => return Ty::Float,
                             _ => {}
                         }
                     } else if prefix == "int" {
@@ -2313,50 +2337,52 @@ fn check_expr_pos(
                         }
                     } else if prefix == "str" {
                         match name.as_str() {
-                            "length" | "to_int" | "char_code" | "hash" => return Ty::Int,
+                            "length" | "to_int" | "char_code" | "hash" | "index_of"
+                            | "last_index_of" => return Ty::Int,
                             "to_float" => return Ty::Float,
-                            "upper" | "lower" | "trim" | "replace" | "substring" | "to_string"
-                            | "from_char_code" => return Ty::Str,
+                            "upper" | "lower" | "trim" | "trim_start" | "trim_end" | "replace"
+                            | "substring" | "to_string" | "from_char_code" | "repeat"
+                            | "pad_left" | "pad_right" | "format" | "join" => return Ty::Str,
                             "contains" | "starts_with" | "ends_with" => return Ty::Bool,
                             "split" => return Ty::List(Box::new(Ty::Str)),
-                            "index_of" => return Ty::Int,
                             _ => {}
                         }
                     } else if prefix == "map" {
                         match name.as_str() {
                             "has" => return Ty::Bool,
+                            "len" | "size" => return Ty::Int,
                             "get" => {
                                 if let Some(def_ty) = arg_tys.get(2) {
                                     return def_ty.clone();
                                 }
-                                if let Some(m_ty) = arg_tys.first() {
-                                    if let Ty::Map(_, v) = m_ty {
-                                        return Ty::Optional(v.clone());
-                                    }
+                                if let Some(Ty::Map(_, v)) = arg_tys.first() {
+                                    return Ty::Optional(v.clone());
                                 }
                                 return Ty::Unknown;
                             }
                             "keys" => {
-                                if let Some(m_ty) = arg_tys.first() {
-                                    if let Ty::Map(k, _) = m_ty {
-                                        return Ty::List(k.clone());
-                                    }
+                                if let Some(Ty::Map(k, _)) = arg_tys.first() {
+                                    return Ty::List(k.clone());
                                 }
                                 return Ty::List(Box::new(Ty::Str));
                             }
                             "values" => {
-                                if let Some(m_ty) = arg_tys.first() {
-                                    if let Ty::Map(_, v) = m_ty {
-                                        return Ty::List(v.clone());
-                                    }
+                                if let Some(Ty::Map(_, v)) = arg_tys.first() {
+                                    return Ty::List(v.clone());
                                 }
                                 return Ty::List(Box::new(Ty::Unknown));
                             }
-                            "remove" | "delete" => {
+                            "remove" | "delete" | "merge" => {
                                 if let Some(m_ty) = arg_tys.first() {
                                     return m_ty.clone();
                                 }
                                 return Ty::Unknown;
+                            }
+                            "entries" => {
+                                return Ty::List(Box::new(Ty::Record(vec![
+                                    ("key".to_string(), Ty::Str),
+                                    ("value".to_string(), Ty::Unknown),
+                                ])));
                             }
                             _ => {}
                         }
@@ -2364,11 +2390,18 @@ fn check_expr_pos(
                         match name.as_str() {
                             "contains" => return Ty::Bool,
                             "index_of" => return Ty::Int,
-                            "slice" | "reverse" => {
+                            "slice" | "reverse" | "sort" | "sorted" | "unique" | "dedup"
+                            | "push" | "concat" | "flatten" => {
                                 if let Some(l_ty) = arg_tys.first() {
                                     return l_ty.clone();
                                 }
                                 return Ty::List(Box::new(Ty::Unknown));
+                            }
+                            "first" | "last" => {
+                                if let Some(Ty::List(inner)) = arg_tys.first() {
+                                    return *inner.clone();
+                                }
+                                return Ty::Unknown;
                             }
                             _ => {}
                         }
@@ -2405,6 +2438,11 @@ fn check_expr_pos(
             Ty::Unknown
         }
         ExprKind::Field { obj, name } => {
+            if let ExprKind::Ident(id) = &obj.kind {
+                if id == "math" && (name == "PI" || name == "E") {
+                    return Ty::Float;
+                }
+            }
             let mut obj_ty = check_expr(obj, locals, g, errs);
             while let Ty::Stage(inner, _) | Ty::Confidence(inner, _) | Ty::Refine(inner, _) = obj_ty
             {

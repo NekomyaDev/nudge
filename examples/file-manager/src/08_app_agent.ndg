@@ -492,6 +492,43 @@ agent FileManagerApp {
         }
     }
 
+    fn set_zoom_75() uses UI {
+        state.zoom_pct = 75
+    }
+
+    fn set_zoom_100() uses UI {
+        state.zoom_pct = 100
+    }
+
+    fn set_zoom_125() uses UI {
+        state.zoom_pct = 125
+    }
+
+    fn set_zoom_150() uses UI {
+        state.zoom_pct = 150
+    }
+
+    fn open_in_new_tab() uses UI, Workspace, Store {
+        if state.selected_path != "" {
+            state.tabs = state.tabs + [state.selected_path]
+            state.active_tab_idx = len(state.tabs) - 1
+            state.current_path = state.selected_path
+            FileManagerApp.refresh()
+        }
+    }
+
+    fn select_all() uses UI, Workspace {
+        if len(state.filtered_entries) > 0 {
+            let first = state.filtered_entries[0]
+            state.selected_name = first.name
+            state.selected_path = first.path
+            state.selected_size = first.size_str
+            state.selected_perms = first.permissions
+            state.selected_cas = compute_cas_hash(first.path)
+            state.preview_content = if first.is_dir { "" } else { workspace.read(first.path) }
+        }
+    }
+
     fn sort_by_name() uses UI {
         if state.sort_column == "name" {
             state.sort_asc = !state.sort_asc
@@ -739,6 +776,8 @@ agent FileManagerApp {
 
                 if act == "open" {
                     FileManagerApp.open_selected_directory()
+                } else if act == "open_tab" {
+                    FileManagerApp.open_in_new_tab()
                 } else if act == "cut" {
                     FileManagerApp.cut_selected()
                 } else if act == "copy" {
@@ -753,6 +792,8 @@ agent FileManagerApp {
                     state.show_inspector = true
                 } else if act == "new_folder" {
                     FileManagerApp.create_new_folder()
+                } else if act == "select_all" {
+                    FileManagerApp.select_all()
                 } else if act == "open_terminal" {
                     state.show_terminal = true
                 } else if act == "reload" {

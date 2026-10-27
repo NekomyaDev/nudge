@@ -183,6 +183,10 @@ impl Parser {
                 self.bump();
                 Ok("type".to_string())
             }
+            Tok::Map => {
+                self.bump();
+                Ok("map".to_string())
+            }
             other => {
                 let other = format!("{other:?}");
                 self.err(format!("expected identifier, found {other}"))
@@ -1610,6 +1614,11 @@ impl Parser {
                 let start = self.pos();
                 self.bump();
                 Ok(self.ex_from(start, ExprKind::Ident("state".into())))
+            }
+            Tok::Map => {
+                let start = self.pos();
+                self.bump();
+                Ok(self.ex_from(start, ExprKind::Ident("map".into())))
             }
             Tok::Ident(name) => {
                 let name = name.clone();

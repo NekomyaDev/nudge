@@ -2381,7 +2381,8 @@ impl ContextMenuState {
             Some(b)
                 if b.id.as_deref().unwrap_or("").starts_with("entry_")
                     || b.id.as_deref().unwrap_or("").starts_with("sz_")
-                    || b.id.as_deref().unwrap_or("").starts_with("perm_") =>
+                    || b.id.as_deref().unwrap_or("").starts_with("perm_")
+                    || b.id.as_deref().unwrap_or("").starts_with("type_") =>
             {
                 (
                     b.id.clone(),
@@ -2390,15 +2391,19 @@ impl ContextMenuState {
                     vec![
                         ContextMenuItem {
                             id: "open".into(),
-                            label: "Open".into(),
+                            label: "Open (Enter)".into(),
+                        },
+                        ContextMenuItem {
+                            id: "open_tab".into(),
+                            label: "Open in New Tab".into(),
                         },
                         ContextMenuItem {
                             id: "cut".into(),
-                            label: "Cut".into(),
+                            label: "Cut (Ctrl+X)".into(),
                         },
                         ContextMenuItem {
                             id: "copy".into(),
-                            label: "Copy".into(),
+                            label: "Copy (Ctrl+C)".into(),
                         },
                         ContextMenuItem {
                             id: "rename".into(),
@@ -2410,7 +2415,46 @@ impl ContextMenuState {
                         },
                         ContextMenuItem {
                             id: "properties".into(),
-                            label: "Properties".into(),
+                            label: "Properties (F11)".into(),
+                        },
+                    ],
+                )
+            }
+            Some(b)
+                if b.tag == "scroll"
+                    || b.tag == "panel"
+                    || b.tag == "column"
+                    || b.tag == "row"
+                    || b.tag == "window" =>
+            {
+                (
+                    b.id.clone(),
+                    b.tag.clone(),
+                    b.text.clone(),
+                    vec![
+                        ContextMenuItem {
+                            id: "new_folder".into(),
+                            label: "Create New Folder".into(),
+                        },
+                        ContextMenuItem {
+                            id: "paste".into(),
+                            label: "Paste (Ctrl+V)".into(),
+                        },
+                        ContextMenuItem {
+                            id: "select_all".into(),
+                            label: "Select All (Ctrl+A)".into(),
+                        },
+                        ContextMenuItem {
+                            id: "open_terminal".into(),
+                            label: "Open Terminal Here (F4)".into(),
+                        },
+                        ContextMenuItem {
+                            id: "reload".into(),
+                            label: "Reload (F5)".into(),
+                        },
+                        ContextMenuItem {
+                            id: "properties".into(),
+                            label: "Properties (F11)".into(),
                         },
                     ],
                 )
@@ -4400,6 +4444,349 @@ pub fn draw_breeze_file_icon(
 }
 
 #[allow(clippy::too_many_arguments)]
+pub fn draw_image_thumbnail_card(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    clip: Option<Rect>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+) {
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    let frame_bg = 0xFFFA_FAFC;
+    let frame_border = 0xFFD0_D7DE;
+    draw_rounded_rect_box_clipped(
+        buf,
+        stride,
+        height,
+        clip,
+        x,
+        y,
+        w,
+        h,
+        3,
+        frame_bg,
+        frame_border,
+    );
+
+    let pad = 3;
+    let pic_x = x + pad;
+    let pic_y = y + pad;
+    let pic_w = (w - pad * 2).max(4);
+    let pic_h = (h - pad * 2 - 4).max(4);
+    let sky_color = 0xFF4A_90D9;
+    draw_rounded_rect_box_clipped(
+        buf, stride, height, clip, pic_x, pic_y, pic_w, pic_h, 2, sky_color, sky_color,
+    );
+
+    let sun_x = pic_x + pic_w - 10;
+    let sun_y = pic_y + 4;
+    draw_rounded_rect_box_clipped(
+        buf,
+        stride,
+        height,
+        clip,
+        sun_x,
+        sun_y,
+        6,
+        6,
+        3,
+        0xFFF6_C343,
+        0xFFF6_C343,
+    );
+
+    let mtn_h = (pic_h * 45) / 100;
+    let mtn_y = pic_y + pic_h - mtn_h;
+    draw_rounded_rect_box_clipped(
+        buf,
+        stride,
+        height,
+        clip,
+        pic_x + 2,
+        mtn_y + 2,
+        pic_w - 4,
+        mtn_h - 2,
+        2,
+        0xFF27_AE60,
+        0xFF27_AE60,
+    );
+    draw_rounded_rect_box_clipped(
+        buf,
+        stride,
+        height,
+        clip,
+        pic_x + (pic_w / 4),
+        mtn_y + (mtn_h / 2),
+        (pic_w * 5) / 8,
+        mtn_h / 2,
+        1,
+        0xFF2E_CC71,
+        0xFF2E_CC71,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn draw_code_thumbnail_card(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    clip: Option<Rect>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    ext: &str,
+) {
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    let editor_bg = 0xFF21_252B;
+    let editor_border = 0xFF35_3B45;
+    draw_rounded_rect_box_clipped(
+        buf,
+        stride,
+        height,
+        clip,
+        x,
+        y,
+        w,
+        h,
+        3,
+        editor_bg,
+        editor_border,
+    );
+
+    draw_rect(buf, stride, height, x + 4, y + 4, 3, 3, 0xFFE0_6C75);
+    draw_rect(buf, stride, height, x + 9, y + 4, 3, 3, 0xFFE5_C07B);
+    draw_rect(buf, stride, height, x + 14, y + 4, 3, 3, 0xFF98_C379);
+
+    let code_colors = [0xFFC6_78DD, 0xFF61_AFEF, 0xFFE5_C07B, 0xFF98_C379];
+    let start_y = y + 11;
+    for (i, &col) in code_colors.iter().enumerate() {
+        let ly = start_y + (i as i32) * 6;
+        if ly + 2 < y + h - 10 {
+            let indent = if i == 1 || i == 2 { 8 } else { 4 };
+            let lw = (w - indent - 8).max(6);
+            draw_rounded_rect_box_clipped(
+                buf,
+                stride,
+                height,
+                clip,
+                x + indent,
+                ly,
+                lw,
+                2,
+                1,
+                col,
+                col,
+            );
+        }
+    }
+
+    let badge_color = match ext {
+        "rs" => 0xFFD8_5A2B,
+        "ndg" => 0xFF3D_AEE9,
+        "py" => 0xFF37_76AB,
+        "js" | "ts" => 0xFFF7_DF1E,
+        "json" | "toml" | "yaml" => 0xFF98_C379,
+        _ => 0xFF5C_6370,
+    };
+    let badge_w = (w * 35) / 100;
+    draw_rounded_rect_box_clipped(
+        buf,
+        stride,
+        height,
+        clip,
+        x + w - badge_w - 3,
+        y + h - 8,
+        badge_w,
+        5,
+        2,
+        badge_color,
+        badge_color,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn draw_audio_thumbnail_card(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    clip: Option<Rect>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+) {
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    let sleeve_bg = 0xFF2B_2D42;
+    let sleeve_border = 0xFF4A_4E69;
+    draw_rounded_rect_box_clipped(
+        buf,
+        stride,
+        height,
+        clip,
+        x,
+        y,
+        w,
+        h,
+        4,
+        sleeve_bg,
+        sleeve_border,
+    );
+
+    let center_x = x + w / 2;
+    let center_y = y + h / 2;
+    let disc_radius = (w.min(h) / 2 - 4).max(6);
+    draw_rounded_rect_box_clipped(
+        buf,
+        stride,
+        height,
+        clip,
+        center_x - disc_radius,
+        center_y - disc_radius,
+        disc_radius * 2,
+        disc_radius * 2,
+        disc_radius,
+        0xFF1A_1A24,
+        0xFF3A_3A4A,
+    );
+
+    let label_radius = disc_radius / 2;
+    draw_rounded_rect_box_clipped(
+        buf,
+        stride,
+        height,
+        clip,
+        center_x - label_radius,
+        center_y - label_radius,
+        label_radius * 2,
+        label_radius * 2,
+        label_radius,
+        0xFFE0_56FD,
+        0xFFBE_2EED,
+    );
+
+    draw_rect(
+        buf,
+        stride,
+        height,
+        center_x - 1,
+        center_y - 1,
+        2,
+        2,
+        0xFFFF_FFFF,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn draw_video_thumbnail_card(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    clip: Option<Rect>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+) {
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    let slate_bg = 0xFF1E_232A;
+    let slate_border = 0xFF3E_4754;
+    draw_rounded_rect_box_clipped(
+        buf,
+        stride,
+        height,
+        clip,
+        x,
+        y,
+        w,
+        h,
+        3,
+        slate_bg,
+        slate_border,
+    );
+
+    for i in 0..4 {
+        let hole_y = y + 4 + i * 8;
+        if hole_y + 4 < y + h - 2 {
+            draw_rect(buf, stride, height, x + 2, hole_y, 2, 4, 0xFFFF_FFFF);
+            draw_rect(buf, stride, height, x + w - 4, hole_y, 2, 4, 0xFFFF_FFFF);
+        }
+    }
+
+    let scr_x = x + 7;
+    let scr_y = y + 5;
+    let scr_w = (w - 14).max(6);
+    let scr_h = (h - 10).max(6);
+    draw_rounded_rect_box_clipped(
+        buf,
+        stride,
+        height,
+        clip,
+        scr_x,
+        scr_y,
+        scr_w,
+        scr_h,
+        2,
+        0xFF0D_1117,
+        0xFF2D_333B,
+    );
+
+    let play_x = scr_x + scr_w / 2 - 3;
+    let play_y = scr_y + scr_h / 2 - 5;
+    for dy in 0..10 {
+        let span = if dy <= 5 { dy + 1 } else { 10 - dy };
+        draw_rect(
+            buf,
+            stride,
+            height,
+            play_x,
+            play_y + dy,
+            span,
+            1,
+            0xFF3D_AEE9,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn draw_archive_thumbnail_card(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    clip: Option<Rect>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+) {
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    let box_bg = 0xFFD3_5400;
+    let box_border = 0xFFE6_7E22;
+    draw_rounded_rect_box_clipped(buf, stride, height, clip, x, y, w, h, 3, box_bg, box_border);
+
+    let zip_x = x + w / 2 - 3;
+    draw_rect(buf, stride, height, zip_x, y + 2, 6, h - 4, 0xFF2C_3E50);
+
+    for i in 0..(h - 8) / 4 {
+        let zy = y + 4 + i * 4;
+        let tooth_x = if i % 2 == 0 { zip_x } else { zip_x + 3 };
+        draw_rect(buf, stride, height, tooth_x, zy, 3, 2, 0xFFBD_C3C7);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn draw_rounded_rect_box_clipped(
     buf: &mut [u32],
     stride: usize,
@@ -5336,7 +5723,15 @@ pub fn layout_element_ctx(
                             ew + pad * 2 + gap
                         })
                         .sum();
-                    (max_w - (child_x - x) - padding - subsequent_w).max(60)
+                    let rem_expanding = elem
+                        .children
+                        .iter()
+                        .skip(child_idx)
+                        .filter(|c| c.props.get("expand").is_some_and(|v| v == "true"))
+                        .count()
+                        .max(1) as i32;
+                    let avail = (max_w - (child_x - x) - padding - subsequent_w).max(60);
+                    (avail / rem_expanding).max(60)
                 } else {
                     max_w
                 };
@@ -5418,8 +5813,28 @@ pub fn layout_element_ctx(
                 }
             }
 
+            let avail_h = total_h - 2 * padding;
+            for (child_idx, (range, _)) in child_box_ranges.iter().enumerate() {
+                if let Some(child_elem) = elem.children.get(child_idx) {
+                    if child_elem
+                        .props
+                        .get("expand_h")
+                        .is_some_and(|v| v == "true")
+                    {
+                        for b in &mut boxes[range.clone()] {
+                            if b.tag == "divider"
+                                || b.tag == "panel"
+                                || b.tag == "column"
+                                || b.tag == "scroll"
+                            {
+                                b.rect.h = b.rect.h.max(avail_h);
+                            }
+                        }
+                    }
+                }
+            }
+
             if align == "center" || align == "end" {
-                let avail_h = total_h - 2 * padding;
                 for b in &mut boxes[start_box_idx..] {
                     let offset = if align == "center" {
                         (avail_h - b.rect.h) / 2
@@ -6185,8 +6600,15 @@ pub fn layout_element_ctx(
                 .get("height")
                 .or_else(|| elem.props.get("h"))
                 .and_then(|s| s.parse::<i32>().ok());
+            let expand_h = elem.props.get("expand_h").is_some_and(|v| v == "true");
             let (w, h) = if orientation == "vertical" {
-                let vh = explicit_h.unwrap_or(24);
+                let vh = explicit_h.unwrap_or_else(|| {
+                    if expand_h {
+                        (ctx.max_h - y).max(24)
+                    } else {
+                        24
+                    }
+                });
                 (size.max(1), vh)
             } else {
                 let hw = explicit_w.unwrap_or(max_w.max(20));
@@ -6214,16 +6636,20 @@ pub fn layout_element_ctx(
             (w, h)
         }
         "spacer" => {
+            let expand = elem.props.get("expand").is_some_and(|v| v == "true");
             let size = elem
                 .props
                 .get("size")
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(16);
-            let w = elem
-                .props
-                .get("width")
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(size);
+            let w = if expand {
+                max_w.max(size)
+            } else {
+                elem.props
+                    .get("width")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(size)
+            };
             let h = elem
                 .props
                 .get("height")
@@ -6851,6 +7277,7 @@ pub struct NativeApp<D: UiDispatcher> {
     /// landed, so the thumb does not jump to the pointer's centre), and the
     /// offset the drag started from.
     scrollbar_drag: Option<(ScrollbarAxis, i32, i32)>,
+    pub region_scrollbar_drag: Option<(String, i32, i32, i32, i32)>,
     /// Set while the pointer is down on a slider: the control's dispatch key,
     /// the grab offset (how far the press landed from the handle's centre, so
     /// pressing the handle moves the number by as much as the finger did
@@ -6946,6 +7373,7 @@ impl<D: UiDispatcher> NativeApp<D> {
             last_tick: None,
             scrollbar_hover: None,
             scrollbar_drag: None,
+            region_scrollbar_drag: None,
             slider_drag: None,
             layout_boxes: Vec::new(),
             render_count: 0,
@@ -7873,7 +8301,7 @@ impl<D: UiDispatcher> NativeApp<D> {
         // A drag owns the pointer entirely: the thumb follows it and nothing
         // else under it lights up, which is what stops a control sliding past
         // the cursor mid-drag from hijacking the gesture.
-        if self.scrollbar_drag.is_some() {
+        if self.scrollbar_drag.is_some() || self.region_scrollbar_drag.is_some() {
             return self.update_scrollbar_drag(pos);
         }
         // A slider being dragged is the same claim on the pointer: the handle
@@ -8263,6 +8691,37 @@ impl<D: UiDispatcher> NativeApp<D> {
     /// thumb's centre — otherwise the thumb jumps the instant it is pressed,
     /// which makes precise positioning impossible.
     fn begin_scrollbar_drag(&mut self, pos: (i32, i32)) -> bool {
+        for r in &self.scroll_regions {
+            let max = r.max_offset();
+            if max <= 0 {
+                continue;
+            }
+            let vx = r.rect.x - self.scroll_x - r.pan.0;
+            let vy = r.rect.y - self.scroll_y - r.pan.1;
+            let (vw, vh) = (r.rect.w, r.rect.h);
+            if pos.0 >= vx + vw - 14 && pos.0 <= vx + vw && pos.1 >= vy && pos.1 <= vy + vh {
+                let track_h = (vh - 8).max(1);
+                let thumb_h = ((track_h as f64 * vh as f64) / r.content_h.max(1) as f64)
+                    .max(20.0)
+                    .min(track_h as f64) as i32;
+                let travel = (track_h - thumb_h).max(1);
+                let off = self.scroll_offsets.get(&r.key).copied().unwrap_or(0);
+                let thumb_y =
+                    vy + 4 + ((off as f64 / max as f64) * (track_h - thumb_h).max(0) as f64) as i32;
+                let grab = if pos.1 >= thumb_y && pos.1 <= thumb_y + thumb_h {
+                    pos.1 - thumb_y
+                } else {
+                    let target = (pos.1 - (vy + 4) - thumb_h / 2).clamp(0, travel);
+                    let new_off = ((target as f64 / travel as f64) * max as f64).round() as i32;
+                    self.scroll_offsets.insert(r.key.clone(), new_off);
+                    thumb_h / 2
+                };
+                self.region_scrollbar_drag = Some((r.key.clone(), grab, vy + 4, travel, max));
+                self.render();
+                return true;
+            }
+        }
+
         let g = self.scrollbar_geometry();
         let Some(axis) = g.axis_at(pos) else {
             return false;
@@ -8311,6 +8770,18 @@ impl<D: UiDispatcher> NativeApp<D> {
     /// Follow the pointer with the bar being dragged. Returns whether the
     /// offset moved.
     fn update_scrollbar_drag(&mut self, pos: (i32, i32)) -> bool {
+        if let Some((ref key, grab, track_y, travel, max)) = self.region_scrollbar_drag {
+            let target = (pos.1 - track_y - grab).clamp(0, travel);
+            let new_off = ((target as f64 / travel as f64) * max as f64).round() as i32;
+            let cur = self.scroll_offsets.get(key).copied().unwrap_or(0);
+            if new_off != cur {
+                self.scroll_offsets.insert(key.clone(), new_off);
+                self.render();
+                return true;
+            }
+            return false;
+        }
+
         let Some((axis, grab, _)) = self.scrollbar_drag else {
             return false;
         };
@@ -8344,7 +8815,9 @@ impl<D: UiDispatcher> NativeApp<D> {
     /// released pointer staying dark until the next pixel of movement, and a
     /// bar staying lit long after the pointer has left it.
     fn end_scrollbar_drag(&mut self) -> bool {
-        if self.scrollbar_drag.take().is_none() {
+        let r_ended = self.region_scrollbar_drag.take().is_some();
+        let b_ended = self.scrollbar_drag.take().is_some();
+        if !r_ended && !b_ended {
             return false;
         }
         self.handle_cursor_moved(self.cursor_pos);
@@ -9115,22 +9588,144 @@ impl<D: UiDispatcher> NativeApp<D> {
                                 icon_h,
                             );
                         } else {
-                            let icon_w = 36;
-                            let icon_h = 44;
-                            let icon_x = rx + (lbox.rect.w - icon_w) / 2;
-                            let icon_y = ry + 8;
-                            let accent = 0xFF4A_90D9;
-                            draw_breeze_file_icon(
-                                &mut buffer,
-                                stride,
-                                h_usize,
-                                clip,
-                                icon_x,
-                                icon_y,
-                                icon_w,
-                                icon_h,
-                                accent,
-                            );
+                            let ftype = lbox
+                                .props
+                                .get("file_type")
+                                .map(|s| s.as_str())
+                                .unwrap_or("");
+                            let ext = lbox.props.get("ext").map(|s| s.as_str()).unwrap_or("");
+                            let is_img = ftype == "image"
+                                || ext == "png"
+                                || ext == "jpg"
+                                || ext == "jpeg"
+                                || ext == "svg"
+                                || ext == "webp"
+                                || ext == "gif";
+                            let is_code = ftype == "code"
+                                || ext == "rs"
+                                || ext == "ndg"
+                                || ext == "py"
+                                || ext == "js"
+                                || ext == "ts"
+                                || ext == "c"
+                                || ext == "cpp"
+                                || ext == "h"
+                                || ext == "json"
+                                || ext == "toml"
+                                || ext == "yaml"
+                                || ext == "md"
+                                || ext == "sh";
+                            let is_audio = ftype == "audio"
+                                || ext == "mp3"
+                                || ext == "wav"
+                                || ext == "flac"
+                                || ext == "ogg";
+                            let is_video = ftype == "video"
+                                || ext == "mp4"
+                                || ext == "mkv"
+                                || ext == "webm"
+                                || ext == "avi";
+                            let is_archive = ftype == "archive"
+                                || ext == "zip"
+                                || ext == "tar"
+                                || ext == "gz"
+                                || ext == "7z"
+                                || ext == "xz";
+
+                            if is_img {
+                                let icon_w = 48;
+                                let icon_h = 40;
+                                let icon_x = rx + (lbox.rect.w - icon_w) / 2;
+                                let icon_y = ry + 8;
+                                draw_image_thumbnail_card(
+                                    &mut buffer,
+                                    stride,
+                                    h_usize,
+                                    clip,
+                                    icon_x,
+                                    icon_y,
+                                    icon_w,
+                                    icon_h,
+                                );
+                            } else if is_code {
+                                let icon_w = 38;
+                                let icon_h = 44;
+                                let icon_x = rx + (lbox.rect.w - icon_w) / 2;
+                                let icon_y = ry + 8;
+                                draw_code_thumbnail_card(
+                                    &mut buffer,
+                                    stride,
+                                    h_usize,
+                                    clip,
+                                    icon_x,
+                                    icon_y,
+                                    icon_w,
+                                    icon_h,
+                                    ext,
+                                );
+                            } else if is_audio {
+                                let icon_w = 40;
+                                let icon_h = 42;
+                                let icon_x = rx + (lbox.rect.w - icon_w) / 2;
+                                let icon_y = ry + 8;
+                                draw_audio_thumbnail_card(
+                                    &mut buffer,
+                                    stride,
+                                    h_usize,
+                                    clip,
+                                    icon_x,
+                                    icon_y,
+                                    icon_w,
+                                    icon_h,
+                                );
+                            } else if is_video {
+                                let icon_w = 46;
+                                let icon_h = 40;
+                                let icon_x = rx + (lbox.rect.w - icon_w) / 2;
+                                let icon_y = ry + 8;
+                                draw_video_thumbnail_card(
+                                    &mut buffer,
+                                    stride,
+                                    h_usize,
+                                    clip,
+                                    icon_x,
+                                    icon_y,
+                                    icon_w,
+                                    icon_h,
+                                );
+                            } else if is_archive {
+                                let icon_w = 36;
+                                let icon_h = 44;
+                                let icon_x = rx + (lbox.rect.w - icon_w) / 2;
+                                let icon_y = ry + 8;
+                                draw_archive_thumbnail_card(
+                                    &mut buffer,
+                                    stride,
+                                    h_usize,
+                                    clip,
+                                    icon_x,
+                                    icon_y,
+                                    icon_w,
+                                    icon_h,
+                                );
+                            } else {
+                                let icon_w = 36;
+                                let icon_h = 44;
+                                let icon_x = rx + (lbox.rect.w - icon_w) / 2;
+                                let icon_y = ry + 8;
+                                let accent = 0xFF4A_90D9;
+                                draw_breeze_file_icon(
+                                    &mut buffer,
+                                    stride,
+                                    h_usize,
+                                    clip,
+                                    icon_x,
+                                    icon_y,
+                                    icon_w,
+                                    icon_h,
+                                    accent,
+                                );
+                            }
                         }
                         if let Some(ref text) = lbox.text {
                             let parts: Vec<&str> = text.split('\n').collect();
@@ -10544,15 +11139,50 @@ impl<D: UiDispatcher> NativeApp<D> {
             let off = self.scroll_offsets.get(&r.key).copied().unwrap_or(0);
             let thumb_y =
                 vy + 4 + ((off as f64 / max as f64) * (track_h - thumb_h).max(0) as f64) as i32;
-            draw_rect(
+            let is_dragging = self
+                .region_scrollbar_drag
+                .as_ref()
+                .is_some_and(|(k, ..)| k == &r.key);
+            let is_hovered = self.cursor_pos.0 >= vx + vw - 14
+                && self.cursor_pos.0 <= vx + vw
+                && self.cursor_pos.1 >= vy
+                && self.cursor_pos.1 <= vy + vh;
+            // Draw subtle track
+            draw_rounded_rect_box(
                 &mut buffer,
                 stride,
                 h_usize,
-                vx + vw - 5,
+                vx + vw - 8,
+                vy + 4,
+                6,
+                track_h,
+                3,
+                if theme.is_dark() {
+                    0x1A00_0000
+                } else {
+                    0x1000_0000
+                },
+                0x0000_0000,
+            );
+            // Draw rounded thumb
+            let thumb_col = if is_dragging {
+                theme.selection_bg
+            } else if is_hovered {
+                lerp_color(theme.scrollbar_thumb, theme.text, 0.4)
+            } else {
+                theme.scrollbar_thumb
+            };
+            draw_rounded_rect_box(
+                &mut buffer,
+                stride,
+                h_usize,
+                vx + vw - 8,
                 thumb_y,
-                4,
+                6,
                 thumb_h,
-                theme.scrollbar_thumb,
+                3,
+                thumb_col,
+                thumb_col,
             );
         }
 

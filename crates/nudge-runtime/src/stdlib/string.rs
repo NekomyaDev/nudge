@@ -14,6 +14,11 @@ pub fn register() -> HashMap<String, Value> {
     functions.insert("str.upper".to_string(), Value::Native("str.upper"));
     functions.insert("str.lower".to_string(), Value::Native("str.lower"));
     functions.insert("str.trim".to_string(), Value::Native("str.trim"));
+    functions.insert(
+        "str.trim_start".to_string(),
+        Value::Native("str.trim_start"),
+    );
+    functions.insert("str.trim_end".to_string(), Value::Native("str.trim_end"));
     functions.insert("str.split".to_string(), Value::Native("str.split"));
     functions.insert("str.join".to_string(), Value::Native("str.join"));
     functions.insert("str.contains".to_string(), Value::Native("str.contains"));
@@ -25,6 +30,10 @@ pub fn register() -> HashMap<String, Value> {
     functions.insert("str.replace".to_string(), Value::Native("str.replace"));
     functions.insert("str.substring".to_string(), Value::Native("str.substring"));
     functions.insert("str.index_of".to_string(), Value::Native("str.index_of"));
+    functions.insert(
+        "str.last_index_of".to_string(),
+        Value::Native("str.last_index_of"),
+    );
     functions.insert("str.reverse".to_string(), Value::Native("str.reverse"));
     functions.insert("str.repeat".to_string(), Value::Native("str.repeat"));
 
@@ -90,6 +99,26 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             match &args[0] {
                 Value::String(s) => Ok(Value::String(s.trim().to_string())),
                 _ => Err("str.trim: argument must be a string".to_string()),
+            }
+        }
+
+        "str.trim_start" => {
+            if args.len() != 1 {
+                return Err("str.trim_start requires 1 argument".to_string());
+            }
+            match &args[0] {
+                Value::String(s) => Ok(Value::String(s.trim_start().to_string())),
+                _ => Err("str.trim_start: argument must be a string".to_string()),
+            }
+        }
+
+        "str.trim_end" => {
+            if args.len() != 1 {
+                return Err("str.trim_end requires 1 argument".to_string());
+            }
+            match &args[0] {
+                Value::String(s) => Ok(Value::String(s.trim_end().to_string())),
+                _ => Err("str.trim_end: argument must be a string".to_string()),
             }
         }
 
@@ -215,6 +244,24 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                     None => Ok(Value::Int(-1)),
                 },
                 _ => Err("str.index_of: arguments must be strings".to_string()),
+            }
+        }
+
+        "str.last_index_of" => {
+            if args.len() != 2 {
+                return Err(
+                    "str.last_index_of requires 2 arguments (string, substring)".to_string()
+                );
+            }
+            match (&args[0], &args[1]) {
+                (Value::String(s), Value::String(sub)) => match s.rfind(sub.as_str()) {
+                    Some(byte_idx) => {
+                        let char_idx = s[..byte_idx].chars().count() as i64;
+                        Ok(Value::Int(char_idx))
+                    }
+                    None => Ok(Value::Int(-1)),
+                },
+                _ => Err("str.last_index_of: arguments must be strings".to_string()),
             }
         }
 

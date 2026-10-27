@@ -53,6 +53,51 @@ mod tests {
     }
 
     #[test]
+    fn test_eval_map_and_list_primitives() {
+        let src = r#"
+            fn main() -> bool {
+                let mut m: Map[string, int] = {}
+                m["apple"] = 10
+                m["banana"] = 20
+
+                let has_apple = map.has(m, "apple")
+                let has_cherry = map.has(m, "cherry")
+                let apple_val = map.get(m, "apple", 0)
+                let cherry_val = map.get(m, "cherry", 99)
+                let keys = map.keys(m)
+                let vals = map.values(m)
+
+                let m2 = map.remove(m, "apple")
+                let apple_removed = !map.has(m2, "apple")
+
+                let m3 = map.set(m2, "orange", 30)
+                let has_orange = map.has(m3, "orange")
+
+                let xs: [string] = ["first", "second", "third", "fourth"]
+                let has_second = list.contains(xs, "second")
+                let not_has_fifth = !list.contains(xs, "fifth")
+                let idx_third = list.index_of(xs, "third")
+                let idx_missing = list.index_of(xs, "missing")
+                let sliced = list.slice(xs, 1, 3)
+                let rev = list.reverse(xs)
+
+                let ok_slice = len(sliced) == 2 and sliced[0] == "second" and sliced[1] == "third"
+                let ok_rev = rev[0] == "fourth" and rev[3] == "first"
+                let ok_keys = len(keys) == 2 and keys[0] == "apple" and keys[1] == "banana"
+                let ok_vals = len(vals) == 2 and vals[0] == 10 and vals[1] == 20
+
+                has_apple and !has_cherry and apple_val == 10 and cherry_val == 99
+                    and apple_removed and has_orange
+                    and has_second and not_has_fifth and idx_third == 2 and idx_missing == -1
+                    and ok_slice and ok_rev and ok_keys and ok_vals
+            }
+        "#;
+        let items = parse_src(src);
+        let res = run_program(&items, "main", &[]).expect("execution failed");
+        assert_eq!(res, NudgeVal::Bool(true));
+    }
+
+    #[test]
     fn test_eval_agent_state() {
         let src = r#"
             agent Counter {
@@ -1115,7 +1160,17 @@ fn test_round_trip() -> bool {{
     let parsed_arr = parse_json_string_array(arr_json)
     let ok_arr = len(parsed_arr) == 3 and parsed_arr[0] == "alpha" and parsed_arr[1] == "beta" and parsed_arr[2] == "gamma"
 
-    s_name == "nudge" and n_ver == 1 and b_en and back == raw and ok_arr
+    let num_arr = [10, 20, 30]
+    let num_json = stringify_int_array(num_arr)
+    let parsed_nums = parse_json_int_array(num_json)
+    let ok_nums = len(parsed_nums) == 3 and parsed_nums[0] == 10 and parsed_nums[2] == 30
+
+    let bool_arr = [true, false, true]
+    let bool_json = stringify_bool_array(bool_arr)
+    let parsed_bools = parse_json_bool_array(bool_json)
+    let ok_bools = len(parsed_bools) == 3 and parsed_bools[0] and !parsed_bools[1] and parsed_bools[2]
+
+    s_name == "nudge" and n_ver == 1 and b_en and back == raw and ok_arr and ok_nums and ok_bools
 }}
 "#
         );
@@ -1133,8 +1188,9 @@ fn test_round_trip() -> bool {{
 
         let url_src = std::fs::read_to_string(&url_path).expect("read url.ndg");
         let test_src = format!(
-            r#"{url_src}
-fn test_url_resolve() -> bool {{
+            "{url_src}\n{}",
+            r#"
+fn test_url_resolve() -> bool {
     let base = parse_url("https://example.com:8080/path/to/page.html?v=1#top")
     let b_ok = base.scheme == "https" and base.host == "example.com" and base.port == 8080 and base.path == "/path/to/page.html" and base.query == "v=1" and base.fragment == "top"
 
@@ -1157,8 +1213,12 @@ fn test_url_resolve() -> bool {{
     let u_val = get_query_param(params, "user", "")
     let ok_params = q_val == "nudge lang" and f_val == "active+ready" and u_val == "alice@corp.org"
 
-    b_ok and r1_ok and r2_ok and r3_ok and r4_ok and ok_params
-}}
+    // Query parameter builder test
+    let built_q = build_query_string([{ name: "key with spaces", value: "val&more" }])
+    let ok_built = built_q == "?key%20with%20spaces=val%26more"
+
+    b_ok and r1_ok and r2_ok and r3_ok and r4_ok and ok_params and ok_built
+}
 "#
         );
         let items = parse_src(&test_src);
@@ -1255,7 +1315,18 @@ fn test_dom_suite() -> bool {{
     let first_elems = query_selector_all(tree, ":first-child")
     let ok_first = len(first_elems) >= 1
 
-    cnt_ok and h1_ok and main_ok and btn_ok and input_ok and desc_ok and ref_ok and ok_compound_btn and ok_child and ok_first
+    // New DOM & Entity tests
+    let by_id = get_element_by_id(tree, "main")
+    let ok_by_id = if by_id != none {{ by_id.tag == "div" }} else {{ false }}
+    let inputs_by_tag = get_elements_by_tag_name(tree, "input")
+    let ok_tag = len(inputs_by_tag) == 1 and inputs_by_tag[0].name == "username"
+    let titles_by_class = get_elements_by_class_name(tree, "title")
+    let ok_class = len(titles_by_class) == 1 and titles_by_class[0].tag == "h1"
+
+    let dec_entities = decode_entities("Product&trade; &reg; 100&yen; 50&cent;")
+    let ok_entities = dec_entities == "Product™ ® 100¥ 50¢"
+
+    cnt_ok and h1_ok and main_ok and btn_ok and input_ok and desc_ok and ref_ok and ok_compound_btn and ok_child and ok_first and ok_by_id and ok_tag and ok_class and ok_entities
 }}
 "##
         );
@@ -2002,6 +2073,82 @@ fn test_f9_recipes() -> bool uses Browser {{
     }
 
     #[test]
+    fn test_eval_stdlib_expanded_suite() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let src = r#"
+            fn test_expanded() -> bool {
+                // 1. Time & OS & Env
+                let now_ts = time.now()
+                let ok_time = now_ts > 1000000000.0
+                let formatted = time.format(1700000000.0, "%Y-%m-%d")
+                let ok_fmt = formatted == "2023-11-14"
+
+                env.set("NUDGE_TEST_ENV_VAR", "active_value")
+                let has_var = env.has("NUDGE_TEST_ENV_VAR")
+                let env_val = env.get("NUDGE_TEST_ENV_VAR")
+                let ok_env = has_var and env_val == "active_value"
+
+                let pid = os.pid()
+                let cwd = os.cwd()
+                let ok_os = pid > 0 and str.length(cwd) > 0
+
+                // 2. Str expanded
+                let rep = str.repeat("ab", 3)
+                let ok_rep = rep == "ababab"
+                let padded = str.pad_left("42", 5, "0")
+                let ok_pad = padded == "00042"
+                let l_idx = str.last_index_of("foo.bar.baz", ".")
+                let ok_l_idx = l_idx == 7
+                let trimmed_s = str.trim_start("  hello  ")
+                let trimmed_e = str.trim_end("  hello  ")
+                let ok_trim = trimmed_s == "hello  " and trimmed_e == "  hello"
+                let parsed_num = str.parse("1234")
+                let ok_parse = parsed_num == 1234
+
+                // 3. Math expanded
+                let sin_0 = math.sin(0.0)
+                let cos_0 = math.cos(0.0)
+                let ok_trig = sin_0 == 0.0 and cos_0 == 1.0
+                let clamped = math.clamp(150, 0, 100)
+                let ok_clamp = clamped == 100
+                let sum_val = math.sum([10, 20, 30, 40])
+                let mean_val = math.mean([10, 20, 30])
+                let ok_math = sum_val == 100 and mean_val == 20.0 and math.PI > 3.14
+
+                // 4. List expanded
+                let sorted_xs = list.sort([5, 2, 8, 1, 9])
+                let ok_sort = sorted_xs[0] == 1 and sorted_xs[1] == 2 and sorted_xs[4] == 9
+                let uniq_xs = list.unique([1, 2, 2, 3, 1, 4])
+                let ok_uniq = len(uniq_xs) == 4 and uniq_xs[0] == 1 and uniq_xs[3] == 4
+                let f_elem = list.first([100, 200, 300])
+                let l_elem = list.last([100, 200, 300])
+                let ok_fl = f_elem == 100 and l_elem == 300
+                let pushed = list.push([1, 2], 3)
+                let ok_push = len(pushed) == 3 and pushed[2] == 3
+                let cat = list.concat([1, 2], [3, 4])
+                let ok_cat = len(cat) == 4 and cat[2] == 3
+                let flat = list.flatten([[1, 2], [3, 4]])
+                let ok_flat = len(flat) == 4 and flat[3] == 4
+
+                // 5. Map expanded
+                let m1 = { a: 1, b: 2 }
+                let m2 = { b: 20, c: 30 }
+                let merged = map.merge(m1, m2)
+                let ok_merge = merged["a"] == 1 and merged["b"] == 20 and merged["c"] == 30
+                let m_len = map.len(merged)
+                let ok_len = m_len == 3
+                let entries = map.entries(m1)
+                let ok_entries = len(entries) == 2
+
+                ok_time and ok_fmt and ok_env and ok_os and ok_rep and ok_pad and ok_l_idx and ok_trim and ok_parse and ok_trig and ok_clamp and ok_math and ok_sort and ok_uniq and ok_fl and ok_push and ok_cat and ok_flat and ok_merge and ok_len and ok_entries
+            }
+        "#;
+        let items = parse_src(src);
+        let ok = run_program(&items, "test_expanded", &[]).unwrap();
+        assert_eq!(ok, NudgeVal::Bool(true));
+    }
+
+    #[test]
     fn test_nvfs_acceptance_suite() {
         let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -2229,6 +2376,26 @@ fn test_f9_recipes() -> bool uses Browser {{
         let res = interp
             .invoke_fn("main", &[])
             .expect("mcp provider main execution succeeds");
+        assert_eq!(res, NudgeVal::Int(0));
+    }
+
+    #[test]
+    fn test_collections_acceptance_suite() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root_dir = manifest_dir.parent().unwrap().parent().unwrap();
+        let coll_path = root_dir.join("examples/collections_demo.ndg");
+
+        let coll_src = std::fs::read_to_string(&coll_path).expect("read test_collections.ndg");
+        let items = parse_src(&coll_src);
+        let mut interp = crate::eval::interpreter::Interpreter::new();
+        interp.load_items(&items).expect("load items succeeds");
+        interp
+            .run_all_tests()
+            .expect("all collections test blocks pass");
+        let res = interp
+            .invoke_fn("main", &[])
+            .expect("collections main execution succeeds");
         assert_eq!(res, NudgeVal::Int(0));
     }
 }

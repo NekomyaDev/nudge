@@ -4480,6 +4480,84 @@ def str_replace(s, old, new):
         return ""
     return s.replace(old, new)
 
+def str_trim_start(s):
+    if not isinstance(s, str):
+        return ""
+    return s.lstrip()
+
+def str_trim_end(s):
+    if not isinstance(s, str):
+        return ""
+    return s.rstrip()
+
+def str_last_index_of(s, sub):
+    if not isinstance(s, str) or not isinstance(sub, str):
+        return -1
+    return s.rfind(sub)
+
+def str_from_char_code(c):
+    try:
+        return chr(int(c))
+    except Exception:
+        return ""
+
+def str_repeat(s, n):
+    if not isinstance(s, str):
+        return ""
+    return s * max(0, int(n))
+
+def str_reverse(s):
+    if not isinstance(s, str):
+        return ""
+    return s[::-1]
+
+def str_pad_left(s, width, pad=" "):
+    if not isinstance(s, str):
+        return ""
+    w = max(0, int(width))
+    p = pad[0] if pad else " "
+    return s.rjust(w, p)
+
+def str_pad_right(s, width, pad=" "):
+    if not isinstance(s, str):
+        return ""
+    w = max(0, int(width))
+    p = pad[0] if pad else " "
+    return s.ljust(w, p)
+
+def str_format(template, *args):
+    if not isinstance(template, str):
+        return ""
+    out = template
+    for idx, arg in enumerate(args):
+        out = out.replace(f"{{{idx}}}", str(arg))
+    return out
+
+def str_join(xs, sep=""):
+    if not isinstance(xs, (list, tuple)):
+        return ""
+    return sep.join(str(x) for x in xs)
+
+def str_parse(s):
+    if not isinstance(s, str):
+        return s
+    t = s.strip()
+    try:
+        return int(t)
+    except ValueError:
+        pass
+    try:
+        return float(t)
+    except ValueError:
+        pass
+    if t == "true":
+        return True
+    if t == "false":
+        return False
+    if t in ("null", "none", ""):
+        return None
+    return s
+
 # ── map & list standard library primitives ────────────────────────────
 
 def map_has(m, key):
@@ -4511,6 +4589,25 @@ def map_remove(m, key):
 
 def map_delete(m, key):
     return map_remove(m, key)
+
+def map_len(m):
+    if not isinstance(m, dict):
+        return 0
+    return len(m)
+
+def map_size(m):
+    return map_len(m)
+
+def map_merge(m1, m2):
+    res = dict(m1) if isinstance(m1, dict) else {}
+    if isinstance(m2, dict):
+        res.update(m2)
+    return res
+
+def map_entries(m):
+    if not isinstance(m, dict):
+        return []
+    return [{"key": k, "value": m[k]} for k in sorted(m.keys())]
 
 def map_set(m, key, val):
     if not isinstance(m, dict):
@@ -4545,6 +4642,65 @@ def list_reverse(xs):
     if not isinstance(xs, list):
         return []
     return list(reversed(xs))
+
+def list_sort(xs):
+    if not isinstance(xs, list):
+        return []
+    try:
+        return sorted(xs)
+    except Exception:
+        return sorted(xs, key=lambda x: str(x))
+
+def list_sorted(xs):
+    return list_sort(xs)
+
+def list_unique(xs):
+    if not isinstance(xs, list):
+        return []
+    out = []
+    for x in xs:
+        if x not in out:
+            out.append(x)
+    return out
+
+def list_dedup(xs):
+    return list_unique(xs)
+
+def list_first(xs):
+    if not isinstance(xs, list) or not xs:
+        return None
+    return xs[0]
+
+def list_last(xs):
+    if not isinstance(xs, list) or not xs:
+        return None
+    return xs[-1]
+
+def list_push(xs, item):
+    if not isinstance(xs, list):
+        return [item]
+    res = list(xs)
+    res.append(item)
+    return res
+
+def list_append(xs, item):
+    return list_push(xs, item)
+
+def list_concat(l1, l2):
+    r1 = list(l1) if isinstance(l1, list) else []
+    r2 = list(l2) if isinstance(l2, list) else []
+    return r1 + r2
+
+def list_flatten(xs):
+    if not isinstance(xs, list):
+        return []
+    res = []
+    for x in xs:
+        if isinstance(x, list):
+            res.extend(x)
+        else:
+            res.append(x)
+    return res
 
 # ── browser use (v1.6, docs/browser-use.md) ───────────────────────────
 

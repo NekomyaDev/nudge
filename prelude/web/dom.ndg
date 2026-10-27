@@ -454,6 +454,39 @@ fn get_element_by_ref(tree: DomTree, target_ref: int) -> Element? {
     res
 }
 
+fn get_element_by_id(tree: DomTree, id: string) -> Element? {
+    let mut res: Element? = none
+    for n in tree.nodes {
+        if n.id == id {
+            res = node_to_element(n)
+        }
+    }
+    res
+}
+
+fn get_elements_by_tag_name(tree: DomTree, tag: string) -> [Element] {
+    let target = str.lower(tag)
+    let mut out: [Element] = []
+    for n in tree.nodes {
+        if str.lower(n.tag) == target {
+            out = out + [node_to_element(n)]
+        }
+    }
+    out
+}
+
+fn get_elements_by_class_name(tree: DomTree, class_name: string) -> [Element] {
+    let mut out: [Element] = []
+    for n in tree.nodes {
+        for c in n.classes {
+            if c == class_name {
+                out = out + [node_to_element(n)]
+            }
+        }
+    }
+    out
+}
+
 fn update_element_text(tree: DomTree, target_ref: int, new_text: string) -> DomTree {
     let mut updated_nodes: [DomNode] = []
     for n in tree.nodes {

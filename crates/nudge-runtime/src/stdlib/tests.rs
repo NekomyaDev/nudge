@@ -190,6 +190,39 @@ mod tests {
     }
 
     #[test]
+    fn test_str_trim_start_and_end() {
+        let r1 = stdlib::string::execute(
+            "str.trim_start",
+            vec![Value::String("  hello  ".to_string())],
+        );
+        assert_eq!(r1.unwrap(), Value::String("hello  ".to_string()));
+        let r2 =
+            stdlib::string::execute("str.trim_end", vec![Value::String("  hello  ".to_string())]);
+        assert_eq!(r2.unwrap(), Value::String("  hello".to_string()));
+    }
+
+    #[test]
+    fn test_str_last_index_of() {
+        let result = stdlib::string::execute(
+            "str.last_index_of",
+            vec![
+                Value::String("/path/to/file.ext.txt".to_string()),
+                Value::String(".".to_string()),
+            ],
+        );
+        assert_eq!(result.unwrap(), Value::Int(17));
+
+        let not_found = stdlib::string::execute(
+            "str.last_index_of",
+            vec![
+                Value::String("hello world".to_string()),
+                Value::String("xyz".to_string()),
+            ],
+        );
+        assert_eq!(not_found.unwrap(), Value::Int(-1));
+    }
+
+    #[test]
     fn test_str_split_join() {
         let result = stdlib::string::execute(
             "str.split",

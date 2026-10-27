@@ -71,7 +71,7 @@ pub struct FontEngine {
     ui: Face,
     ui_bold: Face,
     mono: Face,
-    cjk_fallback: Option<Face>,
+    fallbacks: Vec<Face>,
     /// Fixed monospace cell width used for layout/cursor math (px).
     pub cell_w: i32,
     /// Fixed line height used for layout/cursor math (px).
@@ -98,18 +98,18 @@ impl FontEngine {
         let ui_bold = Face::new(UI_FONT_BOLD_BYTES, px).expect("embedded bold font must parse");
         let mono = Face::new(MONO_FONT_BYTES, px).expect("embedded mono font must parse");
 
-        let cjk_paths = [
+        let fallback_paths = [
+            "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
             "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
             "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
             "/usr/share/fonts/truetype/arphic/uming.ttc",
         ];
-        let mut cjk_fallback = None;
-        for path in cjk_paths {
+        let mut fallbacks = Vec::new();
+        for path in fallback_paths {
             if let Ok(bytes) = std::fs::read(path) {
                 if let Some(face) = Face::new(&bytes, px) {
-                    cjk_fallback = Some(face);
-                    break;
+                    fallbacks.push(face);
                 }
             }
         }
@@ -119,7 +119,7 @@ impl FontEngine {
             ui,
             ui_bold,
             mono,
-            cjk_fallback,
+            fallbacks,
             cell_w,
             cell_h,
         }
@@ -160,14 +160,19 @@ impl FontEngine {
             }
             let id = sf.glyph_id(ch);
             if id.0 == 0 {
-                if let Some(ref cjk) = self.cjk_fallback {
-                    let csf = cjk.font.as_scaled(PxScale::from(cjk.px));
+                let mut found_fb = false;
+                for fb in &self.fallbacks {
+                    let csf = fb.font.as_scaled(PxScale::from(fb.px));
                     let cid = csf.glyph_id(ch);
                     if cid.0 != 0 {
                         width += csf.h_advance(cid);
                         prev = None;
-                        continue;
+                        found_fb = true;
+                        break;
                     }
+                }
+                if found_fb {
+                    continue;
                 }
             }
             if let Some(p) = prev {
@@ -185,8 +190,8 @@ impl FontEngine {
         let sf = f.font.as_scaled(PxScale::from(f.px));
         let id = sf.glyph_id(ch);
         if id.0 == 0 {
-            if let Some(ref cjk) = self.cjk_fallback {
-                let csf = cjk.font.as_scaled(PxScale::from(cjk.px));
+            for fb in &self.fallbacks {
+                let csf = fb.font.as_scaled(PxScale::from(fb.px));
                 let cid = csf.glyph_id(ch);
                 if cid.0 != 0 {
                     return csf.h_advance(cid).round() as i32;
@@ -256,12 +261,13 @@ impl FontEngine {
         let mut id = sf.glyph_id(ch);
         let mut target_face = f;
         if id.0 == 0 {
-            if let Some(ref cjk) = self.cjk_fallback {
-                let csf = cjk.font.as_scaled(PxScale::from(cjk.px));
+            for fb in &self.fallbacks {
+                let csf = fb.font.as_scaled(PxScale::from(fb.px));
                 let cid = csf.glyph_id(ch);
                 if cid.0 != 0 {
                     id = cid;
-                    target_face = cjk;
+                    target_face = fb;
+                    break;
                 }
             }
         }

@@ -926,7 +926,18 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
                 }
             }
         }
-        ExprKind::Field { obj, name } => format!("{}.{name}", ts(obj, aliases, sigs)),
+        ExprKind::Field { obj, name } => {
+            if let ExprKind::Ident(id) = &obj.kind {
+                if id == "math" {
+                    if name == "PI" {
+                        return "Math.PI".to_string();
+                    } else if name == "E" {
+                        return "Math.E".to_string();
+                    }
+                }
+            }
+            format!("{}.{name}", ts(obj, aliases, sigs))
+        }
         ExprKind::Binary { op, l, r } => {
             let o = match op {
                 BinOp::And => "&&",

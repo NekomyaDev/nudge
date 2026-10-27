@@ -52,6 +52,24 @@ fn schema_option_lowers_to_rt_schema() {
 }
 
 #[test]
+fn map_and_list_codegen_lowering() {
+    let src = r#"
+fn test_ops(m: Map[string, int], xs: [string]) -> bool {
+    let h = map.has(m, "k")
+    let v = map.get(m, "k", 0)
+    let c = list.contains(xs, "v")
+    let i = list.index_of(xs, "v")
+    h and c
+}
+"#;
+    let out = gen(src);
+    assert!(out.contains("rt.map_has(m, \"k\")"), "got:\n{out}");
+    assert!(out.contains("rt.map_get(m, \"k\", 0)"), "got:\n{out}");
+    assert!(out.contains("rt.list_contains(xs, \"v\")"), "got:\n{out}");
+    assert!(out.contains("rt.list_index_of(xs, \"v\")"), "got:\n{out}");
+}
+
+#[test]
 fn tool_lowers_to_stub_fn() {
     let src = "tool web_search(q: string) -> [R] { impl: mcp(\"s\").web(q) side_effects: none }";
     let out = gen(src);

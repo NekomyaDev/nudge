@@ -7,33 +7,38 @@ view PlacesSidebar(current_path: string, current_lang: string) -> View {
         text("▾ " + i18n("places", current_lang), bold = true),
         button("  ⌂  " + i18n("home", current_lang), id = "place_home", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/home/neko" or current_path == "." or current_path == ""), on_click = nav_home),
         button("  ⌨  " + i18n("desktop", current_lang), id = "place_desktop", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Masaüstü") or str.contains(current_path, "Desktop") or str.contains(current_path, "Schreibtisch"), on_click = nav_desktop),
-        button("  ▪  " + i18n("documents", current_lang), id = "place_docs", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Belgeler") or str.contains(current_path, "Documents") or str.contains(current_path, "Dokumente"), on_click = nav_docs),
+        button("  📄  " + i18n("documents", current_lang), id = "place_docs", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Belgeler") or str.contains(current_path, "Documents") or str.contains(current_path, "Dokumente"), on_click = nav_docs),
         button("  ⬇  " + i18n("downloads", current_lang), id = "place_downloads", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "İndirilenler") or str.contains(current_path, "Downloads"), on_click = nav_downloads),
         button("  ♪  " + i18n("music", current_lang), id = "place_music", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Müzik") or str.contains(current_path, "Music") or str.contains(current_path, "Musik"), on_click = nav_music),
-        button("  ◇  " + i18n("pictures", current_lang), id = "place_pictures", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Resimler") or str.contains(current_path, "Pictures") or str.contains(current_path, "Bilder"), on_click = nav_pictures),
+        button("  🖼  " + i18n("pictures", current_lang), id = "place_pictures", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Resimler") or str.contains(current_path, "Pictures") or str.contains(current_path, "Bilder"), on_click = nav_pictures),
         button("  ▶  " + i18n("videos", current_lang), id = "place_videos", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Videolar") or str.contains(current_path, "Videos"), on_click = nav_videos),
-        button("  ✕  " + i18n("trash", current_lang), id = "place_trash", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Trash") or str.contains(current_path, "Çöp"), on_click = nav_trash),
+        button("  🗑  " + i18n("trash", current_lang), id = "place_trash", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Trash") or str.contains(current_path, "Çöp"), on_click = nav_trash),
 
         divider(w = 158, size = 1),
 
         // Group 2: Remote
         text("▾ " + i18n("remote", current_lang), bold = true),
-        button("  ⊚  " + i18n("network", current_lang), id = "place_network", variant = "item", align = "start", w = 158, h = 24, on_click = nav_root),
+        button("  🌐  " + i18n("network", current_lang), id = "place_network", variant = "item", align = "start", w = 158, h = 24, on_click = nav_root),
 
         divider(w = 158, size = 1),
 
         // Group 3: Recent
         text("▾ " + i18n("recent", current_lang), bold = true),
-        button("  ◷  " + i18n("recent_files", current_lang), id = "place_recent_files", variant = "item", align = "start", w = 158, h = 24, on_click = nav_home),
-        button("  ◈  " + i18n("recent_loc", current_lang), id = "place_recent_loc", variant = "item", align = "start", w = 158, h = 24, on_click = nav_docs),
+        button("  🕒  " + i18n("recent_files", current_lang), id = "place_recent_files", variant = "item", align = "start", w = 158, h = 24, on_click = nav_home),
+        button("  📍  " + i18n("recent_loc", current_lang), id = "place_recent_loc", variant = "item", align = "start", w = 158, h = 24, on_click = nav_docs),
 
         divider(w = 158, size = 1),
 
         // Group 4: Devices
         text("▾ " + i18n("devices", current_lang), bold = true),
-        button("  ⛁  " + i18n("root_system", current_lang), id = "place_root", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/"), on_click = nav_root),
-        text("   [■■■■□□] 42% / 500 GiB"),
-        button("  ⚡  Temp (/tmp)", id = "place_nvfs", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/tmp"), on_click = nav_nvfs)
+        button("  🖴  " + i18n("root_system", current_lang), id = "place_root", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/"), on_click = nav_root),
+        row(padding = 1, gap = 2, w = 158) [
+            progress(value = 42, max = 100, label = "42% (210/500 GB)")
+        ],
+        button("  💾  Temp (/tmp)", id = "place_nvfs", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/tmp"), on_click = nav_nvfs),
+        row(padding = 1, gap = 2, w = 158) [
+            progress(value = 18, max = 100, label = "18% (1.4/8.0 GB)")
+        ]
     ]
 
     column(padding = 4, gap = 1, w = 170, expand_h = true, bg = "sidebar") [

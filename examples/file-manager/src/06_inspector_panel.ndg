@@ -12,7 +12,7 @@ view InspectorPanel(
 ) -> View {
     column(padding = 4, gap = 2, w = 210, expand_h = true, bg = "sidebar") [
         text("ℹ " + i18n("information", current_lang) + " (F11)", bold = true),
-        divider(size = 1),
+        divider(w = 202, size = 1),
         if selected_name != "" {
             column(padding = 2, gap = 2) [
                 text("▪ " + selected_name, bold = true),
@@ -32,7 +32,7 @@ view InspectorPanel(
                     button("Paste", id = "btn_paste", variant = "toolbar", h = 24, on_click = paste_clipboard),
                     button("✕ " + i18n("act_delete", current_lang), id = "btn_delete", variant = "toolbar", h = 24, on_click = delete_selected)
                 ],
-                divider(size = 1),
+                divider(w = 202, size = 1),
                 text(i18n("information", current_lang) + ":", bold = true),
                 if preview_content != "" {
                     code_block(preview_content, id = "inspector_preview")

@@ -78,7 +78,7 @@ agent VfsBridge {
 
                 let raw_names = workspace.list(norm)
                 let mut entries: [FileEntry] = []
-                let max_to_index = 250
+                let max_to_index = 5000
                 let mut indexed_count = 0
 
                 for name in raw_names {

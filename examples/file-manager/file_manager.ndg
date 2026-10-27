@@ -857,7 +857,7 @@ agent VfsBridge {
 
                 let raw_names = workspace.list(norm)
                 let mut entries: [FileEntry] = []
-                let max_to_index = 250
+                let max_to_index = 5000
                 let mut indexed_count = 0
 
                 for name in raw_names {
@@ -923,33 +923,38 @@ view PlacesSidebar(current_path: string, current_lang: string) -> View {
         text("▾ " + i18n("places", current_lang), bold = true),
         button("  ⌂  " + i18n("home", current_lang), id = "place_home", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/home/neko" or current_path == "." or current_path == ""), on_click = nav_home),
         button("  ⌨  " + i18n("desktop", current_lang), id = "place_desktop", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Masaüstü") or str.contains(current_path, "Desktop") or str.contains(current_path, "Schreibtisch"), on_click = nav_desktop),
-        button("  ▪  " + i18n("documents", current_lang), id = "place_docs", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Belgeler") or str.contains(current_path, "Documents") or str.contains(current_path, "Dokumente"), on_click = nav_docs),
+        button("  📄  " + i18n("documents", current_lang), id = "place_docs", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Belgeler") or str.contains(current_path, "Documents") or str.contains(current_path, "Dokumente"), on_click = nav_docs),
         button("  ⬇  " + i18n("downloads", current_lang), id = "place_downloads", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "İndirilenler") or str.contains(current_path, "Downloads"), on_click = nav_downloads),
         button("  ♪  " + i18n("music", current_lang), id = "place_music", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Müzik") or str.contains(current_path, "Music") or str.contains(current_path, "Musik"), on_click = nav_music),
-        button("  ◇  " + i18n("pictures", current_lang), id = "place_pictures", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Resimler") or str.contains(current_path, "Pictures") or str.contains(current_path, "Bilder"), on_click = nav_pictures),
+        button("  🖼  " + i18n("pictures", current_lang), id = "place_pictures", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Resimler") or str.contains(current_path, "Pictures") or str.contains(current_path, "Bilder"), on_click = nav_pictures),
         button("  ▶  " + i18n("videos", current_lang), id = "place_videos", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Videolar") or str.contains(current_path, "Videos"), on_click = nav_videos),
-        button("  ✕  " + i18n("trash", current_lang), id = "place_trash", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Trash") or str.contains(current_path, "Çöp"), on_click = nav_trash),
+        button("  🗑  " + i18n("trash", current_lang), id = "place_trash", variant = "item", align = "start", w = 158, h = 24, selected = str.contains(current_path, "Trash") or str.contains(current_path, "Çöp"), on_click = nav_trash),
 
         divider(w = 158, size = 1),
 
         // Group 2: Remote
         text("▾ " + i18n("remote", current_lang), bold = true),
-        button("  ⊚  " + i18n("network", current_lang), id = "place_network", variant = "item", align = "start", w = 158, h = 24, on_click = nav_root),
+        button("  🌐  " + i18n("network", current_lang), id = "place_network", variant = "item", align = "start", w = 158, h = 24, on_click = nav_root),
 
         divider(w = 158, size = 1),
 
         // Group 3: Recent
         text("▾ " + i18n("recent", current_lang), bold = true),
-        button("  ◷  " + i18n("recent_files", current_lang), id = "place_recent_files", variant = "item", align = "start", w = 158, h = 24, on_click = nav_home),
-        button("  ◈  " + i18n("recent_loc", current_lang), id = "place_recent_loc", variant = "item", align = "start", w = 158, h = 24, on_click = nav_docs),
+        button("  🕒  " + i18n("recent_files", current_lang), id = "place_recent_files", variant = "item", align = "start", w = 158, h = 24, on_click = nav_home),
+        button("  📍  " + i18n("recent_loc", current_lang), id = "place_recent_loc", variant = "item", align = "start", w = 158, h = 24, on_click = nav_docs),
 
         divider(w = 158, size = 1),
 
         // Group 4: Devices
         text("▾ " + i18n("devices", current_lang), bold = true),
-        button("  ⛁  " + i18n("root_system", current_lang), id = "place_root", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/"), on_click = nav_root),
-        text("   [■■■■□□] 42% / 500 GiB"),
-        button("  ⚡  Temp (/tmp)", id = "place_nvfs", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/tmp"), on_click = nav_nvfs)
+        button("  🖴  " + i18n("root_system", current_lang), id = "place_root", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/"), on_click = nav_root),
+        row(padding = 1, gap = 2, w = 158) [
+            progress(value = 42, max = 100, label = "42% (210/500 GB)")
+        ],
+        button("  💾  Temp (/tmp)", id = "place_nvfs", variant = "item", align = "start", w = 158, h = 24, selected = (current_path == "/tmp"), on_click = nav_nvfs),
+        row(padding = 1, gap = 2, w = 158) [
+            progress(value = 18, max = 100, label = "18% (1.4/8.0 GB)")
+        ]
     ]
 
     column(padding = 4, gap = 1, w = 170, expand_h = true, bg = "sidebar") [
@@ -1010,10 +1015,14 @@ view FileIconsGrid(entries: [FileEntry], selected_name: string, current_lang: st
         let is_sel = (item.name == selected_name)
         let sub_text = if item.is_dir { "" } else { item.size_str }
         let card_label = if sub_text == "" { item.name } else { item.name + "\n" + sub_text }
+        let ftype = if item.is_dir { "folder" } else if item.extension == "png" or item.extension == "jpg" or item.extension == "jpeg" or item.extension == "svg" or item.extension == "webp" or item.extension == "gif" { "image" } else if item.extension == "mp4" or item.extension == "mkv" or item.extension == "webm" or item.extension == "avi" { "video" } else if item.extension == "mp3" or item.extension == "flac" or item.extension == "wav" or item.extension == "ogg" { "audio" } else if item.extension == "rs" or item.extension == "ndg" or item.extension == "py" or item.extension == "js" or item.extension == "ts" or item.extension == "c" or item.extension == "cpp" or item.extension == "h" or item.extension == "json" or item.extension == "toml" or item.extension == "yaml" or item.extension == "md" { "code" } else if item.extension == "zip" or item.extension == "tar" or item.extension == "gz" or item.extension == "7z" or item.extension == "xz" { "archive" } else { "file" }
         let card = button(
             card_label,
             id = "entry_" + item.name,
             variant = if item.is_dir { "folder_card" } else { "file_card" },
+            file_type = ftype,
+            ext = item.extension,
+            path = item.path,
             w = card_w,
             h = card_h,
             selected = is_sel,
@@ -1195,7 +1204,7 @@ view InspectorPanel(
 ) -> View {
     column(padding = 4, gap = 2, w = 210, expand_h = true, bg = "sidebar") [
         text("ℹ " + i18n("information", current_lang) + " (F11)", bold = true),
-        divider(size = 1),
+        divider(w = 202, size = 1),
         if selected_name != "" {
             column(padding = 2, gap = 2) [
                 text("▪ " + selected_name, bold = true),
@@ -1215,7 +1224,7 @@ view InspectorPanel(
                     button("Paste", id = "btn_paste", variant = "toolbar", h = 24, on_click = paste_clipboard),
                     button("✕ " + i18n("act_delete", current_lang), id = "btn_delete", variant = "toolbar", h = 24, on_click = delete_selected)
                 ],
-                divider(size = 1),
+                divider(w = 202, size = 1),
                 text(i18n("information", current_lang) + ":", bold = true),
                 if preview_content != "" {
                     code_block(preview_content, id = "inspector_preview")
@@ -1259,11 +1268,16 @@ view BottomStatusBar(
         button("✕", id = "btn_clear_filter", variant = "flat", w = 20, h = 22, on_click = clear_filter),
         divider(orientation = "vertical", size = 1, h = 18),
         text(summary),
-        spacer(1),
+        spacer(expand = true),
         divider(orientation = "vertical", size = 1, h = 18),
-        button("−", id = "btn_zoom_out", variant = "flat", w = 20, h = 20, on_click = zoom_out),
-        text(zoom_text),
-        button("+", id = "btn_zoom_in", variant = "flat", w = 20, h = 20, on_click = zoom_in),
+        row(padding = 0, gap = 2) [
+            button("−", id = "btn_zoom_out", variant = "flat", w = 20, h = 20, on_click = zoom_out),
+            button("75%", id = "btn_zoom_75", variant = if zoom_pct == 75 { "toolbar" } else { "flat" }, h = 20, on_click = set_zoom_75),
+            button("100%", id = "btn_zoom_100", variant = if zoom_pct == 100 { "toolbar" } else { "flat" }, h = 20, on_click = set_zoom_100),
+            button("125%", id = "btn_zoom_125", variant = if zoom_pct == 125 { "toolbar" } else { "flat" }, h = 20, on_click = set_zoom_125),
+            button("150%", id = "btn_zoom_150", variant = if zoom_pct == 150 { "toolbar" } else { "flat" }, h = 20, on_click = set_zoom_150),
+            button("+", id = "btn_zoom_in", variant = "flat", w = 20, h = 20, on_click = zoom_in)
+        ],
         divider(orientation = "vertical", size = 1, h = 18),
         text(free_text)
     ]
@@ -1365,20 +1379,17 @@ view FileManagerLayout(
             },
 
             if show_inspector {
-                row(padding = 0, gap = 0, w = 212, expand_h = true) [
-                    divider(orientation = "vertical", size = 1, expand_h = true),
-                    InspectorPanel(
-                        selected_name,
-                        selected_path,
-                        selected_size,
-                        selected_perms,
-                        selected_cas,
-                        preview_content,
-                        current_lang
-                    )
-                ]
+                InspectorPanel(
+                    selected_name,
+                    selected_path,
+                    selected_size,
+                    selected_perms,
+                    selected_cas,
+                    preview_content,
+                    current_lang
+                )
             } else {
-                spacer(1)
+                column(w = 0, h = 0) []
             }
         ],
 
@@ -1389,7 +1400,7 @@ view FileManagerLayout(
                 TerminalPanel(current_path, terminal_history, terminal_input)
             ]
         } else {
-            spacer(1)
+            column(w = 0, h = 0) []
         },
 
         // 5. Bottom Status Bar with Integrated Filter & Space Info
@@ -1899,6 +1910,43 @@ agent FileManagerApp {
         }
     }
 
+    fn set_zoom_75() uses UI {
+        state.zoom_pct = 75
+    }
+
+    fn set_zoom_100() uses UI {
+        state.zoom_pct = 100
+    }
+
+    fn set_zoom_125() uses UI {
+        state.zoom_pct = 125
+    }
+
+    fn set_zoom_150() uses UI {
+        state.zoom_pct = 150
+    }
+
+    fn open_in_new_tab() uses UI, Workspace, Store {
+        if state.selected_path != "" {
+            state.tabs = state.tabs + [state.selected_path]
+            state.active_tab_idx = len(state.tabs) - 1
+            state.current_path = state.selected_path
+            FileManagerApp.refresh()
+        }
+    }
+
+    fn select_all() uses UI, Workspace {
+        if len(state.filtered_entries) > 0 {
+            let first = state.filtered_entries[0]
+            state.selected_name = first.name
+            state.selected_path = first.path
+            state.selected_size = first.size_str
+            state.selected_perms = first.permissions
+            state.selected_cas = compute_cas_hash(first.path)
+            state.preview_content = if first.is_dir { "" } else { workspace.read(first.path) }
+        }
+    }
+
     fn sort_by_name() uses UI {
         if state.sort_column == "name" {
             state.sort_asc = !state.sort_asc
@@ -2146,6 +2194,8 @@ agent FileManagerApp {
 
                 if act == "open" {
                     FileManagerApp.open_selected_directory()
+                } else if act == "open_tab" {
+                    FileManagerApp.open_in_new_tab()
                 } else if act == "cut" {
                     FileManagerApp.cut_selected()
                 } else if act == "copy" {
@@ -2160,6 +2210,8 @@ agent FileManagerApp {
                     state.show_inspector = true
                 } else if act == "new_folder" {
                     FileManagerApp.create_new_folder()
+                } else if act == "select_all" {
+                    FileManagerApp.select_all()
                 } else if act == "open_terminal" {
                     state.show_terminal = true
                 } else if act == "reload" {

@@ -26,11 +26,16 @@ view BottomStatusBar(
         button("✕", id = "btn_clear_filter", variant = "flat", w = 20, h = 22, on_click = clear_filter),
         divider(orientation = "vertical", size = 1, h = 18),
         text(summary),
-        spacer(1),
+        spacer(expand = true),
         divider(orientation = "vertical", size = 1, h = 18),
-        button("−", id = "btn_zoom_out", variant = "flat", w = 20, h = 20, on_click = zoom_out),
-        text(zoom_text),
-        button("+", id = "btn_zoom_in", variant = "flat", w = 20, h = 20, on_click = zoom_in),
+        row(padding = 0, gap = 2) [
+            button("−", id = "btn_zoom_out", variant = "flat", w = 20, h = 20, on_click = zoom_out),
+            button("75%", id = "btn_zoom_75", variant = if zoom_pct == 75 { "toolbar" } else { "flat" }, h = 20, on_click = set_zoom_75),
+            button("100%", id = "btn_zoom_100", variant = if zoom_pct == 100 { "toolbar" } else { "flat" }, h = 20, on_click = set_zoom_100),
+            button("125%", id = "btn_zoom_125", variant = if zoom_pct == 125 { "toolbar" } else { "flat" }, h = 20, on_click = set_zoom_125),
+            button("150%", id = "btn_zoom_150", variant = if zoom_pct == 150 { "toolbar" } else { "flat" }, h = 20, on_click = set_zoom_150),
+            button("+", id = "btn_zoom_in", variant = "flat", w = 20, h = 20, on_click = zoom_in)
+        ],
         divider(orientation = "vertical", size = 1, h = 18),
         text(free_text)
     ]
@@ -132,20 +137,17 @@ view FileManagerLayout(
             },
 
             if show_inspector {
-                row(padding = 0, gap = 0, w = 212, expand_h = true) [
-                    divider(orientation = "vertical", size = 1, expand_h = true),
-                    InspectorPanel(
-                        selected_name,
-                        selected_path,
-                        selected_size,
-                        selected_perms,
-                        selected_cas,
-                        preview_content,
-                        current_lang
-                    )
-                ]
+                InspectorPanel(
+                    selected_name,
+                    selected_path,
+                    selected_size,
+                    selected_perms,
+                    selected_cas,
+                    preview_content,
+                    current_lang
+                )
             } else {
-                spacer(1)
+                column(w = 0, h = 0) []
             }
         ],
 
@@ -156,7 +158,7 @@ view FileManagerLayout(
                 TerminalPanel(current_path, terminal_history, terminal_input)
             ]
         } else {
-            spacer(1)
+            column(w = 0, h = 0) []
         },
 
         // 5. Bottom Status Bar with Integrated Filter & Space Info

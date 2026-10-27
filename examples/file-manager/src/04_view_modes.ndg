@@ -52,10 +52,14 @@ view FileIconsGrid(entries: [FileEntry], selected_name: string, current_lang: st
         let is_sel = (item.name == selected_name)
         let sub_text = if item.is_dir { "" } else { item.size_str }
         let card_label = if sub_text == "" { item.name } else { item.name + "\n" + sub_text }
+        let ftype = if item.is_dir { "folder" } else if item.extension == "png" or item.extension == "jpg" or item.extension == "jpeg" or item.extension == "svg" or item.extension == "webp" or item.extension == "gif" { "image" } else if item.extension == "mp4" or item.extension == "mkv" or item.extension == "webm" or item.extension == "avi" { "video" } else if item.extension == "mp3" or item.extension == "flac" or item.extension == "wav" or item.extension == "ogg" { "audio" } else if item.extension == "rs" or item.extension == "ndg" or item.extension == "py" or item.extension == "js" or item.extension == "ts" or item.extension == "c" or item.extension == "cpp" or item.extension == "h" or item.extension == "json" or item.extension == "toml" or item.extension == "yaml" or item.extension == "md" { "code" } else if item.extension == "zip" or item.extension == "tar" or item.extension == "gz" or item.extension == "7z" or item.extension == "xz" { "archive" } else { "file" }
         let card = button(
             card_label,
             id = "entry_" + item.name,
             variant = if item.is_dir { "folder_card" } else { "file_card" },
+            file_type = ftype,
+            ext = item.extension,
+            path = item.path,
             w = card_w,
             h = card_h,
             selected = is_sel,

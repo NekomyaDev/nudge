@@ -1014,10 +1014,14 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
                                     | "char_code"
                                     | "to_string"
                                     | "to_int"
+                                    | "to_float"
                                     | "length"
                                     | "trim"
+                                    | "trim_start"
+                                    | "trim_end"
                                     | "substring"
                                     | "index_of"
+                                    | "last_index_of"
                                     | "split"
                                     | "lower"
                                     | "upper"
@@ -1025,20 +1029,51 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
                                     | "starts_with"
                                     | "ends_with"
                                     | "replace"
+                                    | "repeat"
+                                    | "reverse"
+                                    | "pad_left"
+                                    | "pad_right"
+                                    | "from_char_code"
+                                    | "format"
+                                    | "join"
+                                    | "parse"
                             )
                         {
                             format!("rt.str_{name}")
                         } else if prefix == "map"
                             && matches!(
                                 name.as_str(),
-                                "has" | "get" | "keys" | "values" | "remove" | "delete" | "set"
+                                "has"
+                                    | "get"
+                                    | "keys"
+                                    | "values"
+                                    | "remove"
+                                    | "delete"
+                                    | "set"
+                                    | "len"
+                                    | "size"
+                                    | "merge"
+                                    | "entries"
                             )
                         {
                             format!("rt.map_{name}")
                         } else if prefix == "list"
                             && matches!(
                                 name.as_str(),
-                                "contains" | "index_of" | "slice" | "reverse"
+                                "contains"
+                                    | "index_of"
+                                    | "slice"
+                                    | "reverse"
+                                    | "sort"
+                                    | "sorted"
+                                    | "unique"
+                                    | "dedup"
+                                    | "first"
+                                    | "last"
+                                    | "push"
+                                    | "append"
+                                    | "concat"
+                                    | "flatten"
                             )
                         {
                             format!("rt.list_{name}")
@@ -1053,7 +1088,18 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
             };
             format!("{}({})", f, parts.join(", "))
         }
-        ExprKind::Field { obj, name } => format!("{}.{name}", py(obj, aliases)),
+        ExprKind::Field { obj, name } => {
+            if let ExprKind::Ident(id) = &obj.kind {
+                if id == "math" {
+                    if name == "PI" {
+                        return "math.pi".to_string();
+                    } else if name == "E" {
+                        return "math.e".to_string();
+                    }
+                }
+            }
+            format!("{}.{name}", py(obj, aliases))
+        }
         // always parenthesized: precedence is decided by the Nudge parser,
         // never re-decided by Python
         ExprKind::Binary { op, l, r } => match op {

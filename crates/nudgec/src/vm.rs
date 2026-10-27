@@ -666,6 +666,419 @@ impl<'a> VM<'a> {
                             }
                             _ => return Err("'zip' arguments must be lists".into()),
                         }
+                    } else if name.starts_with("map.") || name.starts_with("list.") {
+                        let start = self
+                            .stack
+                            .len()
+                            .checked_sub(*argc)
+                            .ok_or_else(|| "stack underflow in CallBuiltin".to_string())?;
+                        let args: Vec<NudgeVal> = self.stack.drain(start..).collect();
+                        let res = match name.as_str() {
+                            "map.has" => {
+                                let map = match args.first() {
+                                    Some(NudgeVal::Map(m)) => m,
+                                    Some(NudgeVal::AgentState { fields, .. }) => fields,
+                                    _ => {
+                                        return Err(
+                                            "'map.has' requires a Map as first argument".into()
+                                        )
+                                    }
+                                };
+                                let key =
+                                    match args.get(1) {
+                                        Some(NudgeVal::Str(s)) => s.as_str(),
+                                        _ => return Err(
+                                            "'map.has' requires a string key as second argument"
+                                                .into(),
+                                        ),
+                                    };
+                                NudgeVal::Bool(map.contains_key(key))
+                            }
+                            "map.get" => {
+                                let map = match args.first() {
+                                    Some(NudgeVal::Map(m)) => m,
+                                    Some(NudgeVal::AgentState { fields, .. }) => fields,
+                                    _ => {
+                                        return Err(
+                                            "'map.get' requires a Map as first argument".into()
+                                        )
+                                    }
+                                };
+                                let key =
+                                    match args.get(1) {
+                                        Some(NudgeVal::Str(s)) => s.as_str(),
+                                        _ => return Err(
+                                            "'map.get' requires a string key as second argument"
+                                                .into(),
+                                        ),
+                                    };
+                                match map.get(key) {
+                                    Some(val) => val.clone(),
+                                    None => {
+                                        if let Some(default_val) = args.get(2) {
+                                            default_val.clone()
+                                        } else {
+                                            NudgeVal::Unit
+                                        }
+                                    }
+                                }
+                            }
+                            "map.keys" => {
+                                let map = match args.first() {
+                                    Some(NudgeVal::Map(m)) => m,
+                                    Some(NudgeVal::AgentState { fields, .. }) => fields,
+                                    _ => {
+                                        return Err(
+                                            "'map.keys' requires a Map as first argument".into()
+                                        )
+                                    }
+                                };
+                                let mut keys: Vec<NudgeVal> =
+                                    map.keys().map(|k| NudgeVal::Str(k.clone())).collect();
+                                keys.sort_by(|a, b| match (a, b) {
+                                    (NudgeVal::Str(s1), NudgeVal::Str(s2)) => s1.cmp(s2),
+                                    _ => std::cmp::Ordering::Equal,
+                                });
+                                NudgeVal::List(keys)
+                            }
+                            "map.values" => {
+                                let map = match args.first() {
+                                    Some(NudgeVal::Map(m)) => m,
+                                    Some(NudgeVal::AgentState { fields, .. }) => fields,
+                                    _ => {
+                                        return Err(
+                                            "'map.values' requires a Map as first argument".into()
+                                        )
+                                    }
+                                };
+                                let mut entries: Vec<(&String, &NudgeVal)> = map.iter().collect();
+                                entries.sort_by_key(|(k1, _)| *k1);
+                                let vals: Vec<NudgeVal> =
+                                    entries.into_iter().map(|(_, v)| v.clone()).collect();
+                                NudgeVal::List(vals)
+                            }
+                            "map.remove" | "map.delete" => {
+                                let mut map = match args.first() {
+                                    Some(NudgeVal::Map(m)) => m.clone(),
+                                    Some(NudgeVal::AgentState { fields, .. }) => fields.clone(),
+                                    _ => {
+                                        return Err(
+                                            "'map.remove' requires a Map as first argument".into()
+                                        )
+                                    }
+                                };
+                                let key =
+                                    match args.get(1) {
+                                        Some(NudgeVal::Str(s)) => s.as_str(),
+                                        _ => return Err(
+                                            "'map.remove' requires a string key as second argument"
+                                                .into(),
+                                        ),
+                                    };
+                                map.remove(key);
+                                NudgeVal::Map(map)
+                            }
+                            "map.set" => {
+                                let mut map = match args.first() {
+                                    Some(NudgeVal::Map(m)) => m.clone(),
+                                    Some(NudgeVal::AgentState { fields, .. }) => fields.clone(),
+                                    _ => {
+                                        return Err(
+                                            "'map.set' requires a Map as first argument".into()
+                                        )
+                                    }
+                                };
+                                let key =
+                                    match args.get(1) {
+                                        Some(NudgeVal::Str(s)) => s.clone(),
+                                        _ => return Err(
+                                            "'map.set' requires a string key as second argument"
+                                                .into(),
+                                        ),
+                                    };
+                                let val = match args.get(2) {
+                                    Some(v) => v.clone(),
+                                    None => {
+                                        return Err(
+                                            "'map.set' requires 3 arguments (map, key, value)"
+                                                .into(),
+                                        )
+                                    }
+                                };
+                                map.insert(key, val);
+                                NudgeVal::Map(map)
+                            }
+                            "map.len" | "map.size" => {
+                                let count = match args.first() {
+                                    Some(NudgeVal::Map(m)) => m.len() as i64,
+                                    Some(NudgeVal::AgentState { fields, .. }) => {
+                                        fields.len() as i64
+                                    }
+                                    _ => {
+                                        return Err(
+                                            "'map.len' requires a Map as first argument".into()
+                                        )
+                                    }
+                                };
+                                NudgeVal::Int(count)
+                            }
+                            "map.merge" => {
+                                let m1 = match args.first() {
+                                    Some(NudgeVal::Map(m)) => m,
+                                    Some(NudgeVal::AgentState { fields, .. }) => fields,
+                                    _ => {
+                                        return Err(
+                                            "'map.merge' requires Map as first argument".into()
+                                        )
+                                    }
+                                };
+                                let m2 = match args.get(1) {
+                                    Some(NudgeVal::Map(m)) => m,
+                                    Some(NudgeVal::AgentState { fields, .. }) => fields,
+                                    _ => {
+                                        return Err(
+                                            "'map.merge' requires Map as second argument".into()
+                                        )
+                                    }
+                                };
+                                let mut merged = m1.clone();
+                                for (k, v) in m2 {
+                                    merged.insert(k.clone(), v.clone());
+                                }
+                                NudgeVal::Map(merged)
+                            }
+                            "map.entries" => {
+                                let map = match args.first() {
+                                    Some(NudgeVal::Map(m)) => m,
+                                    Some(NudgeVal::AgentState { fields, .. }) => fields,
+                                    _ => {
+                                        return Err(
+                                            "'map.entries' requires a Map as first argument".into(),
+                                        )
+                                    }
+                                };
+                                let mut entries_list = Vec::with_capacity(map.len());
+                                let mut sorted_keys: Vec<_> = map.keys().collect();
+                                sorted_keys.sort();
+                                for k in sorted_keys {
+                                    let mut entry = HashMap::new();
+                                    entry.insert("key".to_string(), NudgeVal::Str(k.clone()));
+                                    entry.insert("value".to_string(), map[k].clone());
+                                    entries_list.push(NudgeVal::Map(entry));
+                                }
+                                NudgeVal::List(entries_list)
+                            }
+                            "list.contains" => {
+                                let list = match args.first() {
+                                    Some(NudgeVal::List(l)) => l,
+                                    _ => {
+                                        return Err(
+                                            "'list.contains' requires a list as first argument"
+                                                .into(),
+                                        )
+                                    }
+                                };
+                                let target = match args.get(1) {
+                                    Some(t) => t,
+                                    None => {
+                                        return Err("'list.contains' requires 2 arguments".into())
+                                    }
+                                };
+                                let found = list.iter().any(|item| item == target);
+                                NudgeVal::Bool(found)
+                            }
+                            "list.index_of" => {
+                                let list = match args.first() {
+                                    Some(NudgeVal::List(l)) => l,
+                                    _ => {
+                                        return Err(
+                                            "'list.index_of' requires a list as first argument"
+                                                .into(),
+                                        )
+                                    }
+                                };
+                                let target = match args.get(1) {
+                                    Some(t) => t,
+                                    None => {
+                                        return Err("'list.index_of' requires 2 arguments".into())
+                                    }
+                                };
+                                let idx = list
+                                    .iter()
+                                    .position(|item| item == target)
+                                    .map(|i| i as i64)
+                                    .unwrap_or(-1);
+                                NudgeVal::Int(idx)
+                            }
+                            "list.slice" => {
+                                let list = match args.first() {
+                                    Some(NudgeVal::List(l)) => l,
+                                    _ => {
+                                        return Err(
+                                            "'list.slice' requires a list as first argument".into(),
+                                        )
+                                    }
+                                };
+                                let start = match args.get(1) {
+                                    Some(NudgeVal::Int(i)) => (*i).max(0) as usize,
+                                    _ => 0,
+                                };
+                                let end = match args.get(2) {
+                                    Some(NudgeVal::Int(i)) => (*i).max(0) as usize,
+                                    _ => list.len(),
+                                };
+                                let a = start.min(list.len());
+                                let b = end.min(list.len());
+                                let sliced = if a <= b {
+                                    list[a..b].to_vec()
+                                } else {
+                                    Vec::new()
+                                };
+                                NudgeVal::List(sliced)
+                            }
+                            "list.reverse" => {
+                                let list = match args.first() {
+                                    Some(NudgeVal::List(l)) => l,
+                                    _ => {
+                                        return Err(
+                                            "'list.reverse' requires a list as first argument"
+                                                .into(),
+                                        )
+                                    }
+                                };
+                                let mut rev = list.clone();
+                                rev.reverse();
+                                NudgeVal::List(rev)
+                            }
+                            "list.sort" | "list.sorted" => {
+                                let list = match args.first() {
+                                    Some(NudgeVal::List(l)) => l,
+                                    _ => {
+                                        return Err(
+                                            "'list.sort' requires a list as first argument".into()
+                                        )
+                                    }
+                                };
+                                let mut sorted = list.clone();
+                                sorted.sort_by(|a, b| match (a, b) {
+                                    (NudgeVal::Int(i1), NudgeVal::Int(i2)) => i1.cmp(i2),
+                                    (NudgeVal::Float(f1), NudgeVal::Float(f2)) => f1.total_cmp(f2),
+                                    (NudgeVal::Int(i1), NudgeVal::Float(f2)) => {
+                                        (*i1 as f64).total_cmp(f2)
+                                    }
+                                    (NudgeVal::Float(f1), NudgeVal::Int(i2)) => {
+                                        f1.total_cmp(&(*i2 as f64))
+                                    }
+                                    (NudgeVal::Str(s1), NudgeVal::Str(s2)) => s1.cmp(s2),
+                                    _ => std::cmp::Ordering::Equal,
+                                });
+                                NudgeVal::List(sorted)
+                            }
+                            "list.unique" | "list.dedup" => {
+                                let list = match args.first() {
+                                    Some(NudgeVal::List(l)) => l,
+                                    _ => {
+                                        return Err(
+                                            "'list.unique' requires a list as first argument"
+                                                .into(),
+                                        )
+                                    }
+                                };
+                                let mut deduped = Vec::new();
+                                for item in list {
+                                    if !deduped.contains(item) {
+                                        deduped.push(item.clone());
+                                    }
+                                }
+                                NudgeVal::List(deduped)
+                            }
+                            "list.first" => {
+                                let list = match args.first() {
+                                    Some(NudgeVal::List(l)) => l,
+                                    _ => {
+                                        return Err(
+                                            "'list.first' requires a list as first argument".into(),
+                                        )
+                                    }
+                                };
+                                list.first().cloned().unwrap_or(NudgeVal::Unit)
+                            }
+                            "list.last" => {
+                                let list = match args.first() {
+                                    Some(NudgeVal::List(l)) => l,
+                                    _ => {
+                                        return Err(
+                                            "'list.last' requires a list as first argument".into()
+                                        )
+                                    }
+                                };
+                                list.last().cloned().unwrap_or(NudgeVal::Unit)
+                            }
+                            "list.push" | "list.append" => {
+                                let list = match args.first() {
+                                    Some(NudgeVal::List(l)) => l,
+                                    _ => {
+                                        return Err(
+                                            "'list.push' requires a list as first argument".into()
+                                        )
+                                    }
+                                };
+                                let item = match args.get(1) {
+                                    Some(it) => it.clone(),
+                                    None => {
+                                        return Err("'list.push' requires an item to append".into())
+                                    }
+                                };
+                                let mut res = list.clone();
+                                res.push(item);
+                                NudgeVal::List(res)
+                            }
+                            "list.concat" => {
+                                let l1 = match args.first() {
+                                    Some(NudgeVal::List(l)) => l,
+                                    _ => {
+                                        return Err(
+                                            "'list.concat' requires a list as first argument"
+                                                .into(),
+                                        )
+                                    }
+                                };
+                                let l2 = match args.get(1) {
+                                    Some(NudgeVal::List(l)) => l,
+                                    _ => {
+                                        return Err(
+                                            "'list.concat' requires a list as second argument"
+                                                .into(),
+                                        )
+                                    }
+                                };
+                                let mut res = l1.clone();
+                                res.extend(l2.iter().cloned());
+                                NudgeVal::List(res)
+                            }
+                            "list.flatten" => {
+                                let list = match args.first() {
+                                    Some(NudgeVal::List(l)) => l,
+                                    _ => {
+                                        return Err(
+                                            "'list.flatten' requires a list as first argument"
+                                                .into(),
+                                        )
+                                    }
+                                };
+                                let mut flattened = Vec::new();
+                                for item in list {
+                                    if let NudgeVal::List(sub) = item {
+                                        flattened.extend(sub.iter().cloned());
+                                    } else {
+                                        flattened.push(item.clone());
+                                    }
+                                }
+                                NudgeVal::List(flattened)
+                            }
+                            other => return Err(format!("unsupported builtin '{other}'")),
+                        };
+                        self.stack.push(res);
                     } else {
                         return Err(format!("unsupported builtin '{name}'"));
                     }
@@ -2839,5 +3252,37 @@ mod tests {
             }
         "#;
         assert_parity_error(src_oob, "main", &[]);
+    }
+
+    #[test]
+    fn test_parity_map_and_list_primitives() {
+        let src = r#"
+            fn main() -> bool {
+                let mut m: Map[string, int] = {}
+                m["k1"] = 100
+                m["k2"] = 200
+
+                let has_k1 = map.has(m, "k1")
+                let val_k1 = map.get(m, "k1", 0)
+                let val_missing = map.get(m, "missing", -1)
+                let keys = map.keys(m)
+                let vals = map.values(m)
+
+                let m_del = map.remove(m, "k1")
+                let has_k1_after = map.has(m_del, "k1")
+
+                let xs = [10, 20, 30, 40]
+                let has_20 = list.contains(xs, 20)
+                let idx_30 = list.index_of(xs, 30)
+                let sliced = list.slice(xs, 1, 3)
+                let rev = list.reverse(xs)
+
+                has_k1 and val_k1 == 100 and val_missing == -1
+                    and !has_k1_after and has_20 and idx_30 == 2
+                    and len(keys) == 2 and len(vals) == 2
+                    and len(sliced) == 2 and rev[0] == 40
+            }
+        "#;
+        assert_parity(src, "main", &[]);
     }
 }

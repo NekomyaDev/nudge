@@ -208,3 +208,77 @@ fn get_query_param(params: [{ name: string, value: string }], name: string, fall
     }
     res
 }
+
+fn url_encode_component(s: string) -> string {
+    let mut out = ""
+    for ch in str.split(s, "") {
+        if ch == " " {
+            out = out + "%20"
+        } else if ch == "!" {
+            out = out + "%21"
+        } else if ch == "\"" {
+            out = out + "%22"
+        } else if ch == "#" {
+            out = out + "%23"
+        } else if ch == "$" {
+            out = out + "%24"
+        } else if ch == "%" {
+            out = out + "%25"
+        } else if ch == "&" {
+            out = out + "%26"
+        } else if ch == "'" {
+            out = out + "%27"
+        } else if ch == "(" {
+            out = out + "%28"
+        } else if ch == ")" {
+            out = out + "%29"
+        } else if ch == "+" {
+            out = out + "%2B"
+        } else if ch == "," {
+            out = out + "%2C"
+        } else if ch == "/" {
+            out = out + "%2F"
+        } else if ch == ":" {
+            out = out + "%3A"
+        } else if ch == ";" {
+            out = out + "%3B"
+        } else if ch == "<" {
+            out = out + "%3C"
+        } else if ch == "=" {
+            out = out + "%3D"
+        } else if ch == ">" {
+            out = out + "%3E"
+        } else if ch == "?" {
+            out = out + "%3F"
+        } else if ch == "@" {
+            out = out + "%40"
+        } else if ch == "[" {
+            out = out + "%5B"
+        } else if ch == "]" {
+            out = out + "%5D"
+        } else if ch == "{" {
+            out = out + "%7B"
+        } else if ch == "}" {
+            out = out + "%7D"
+        } else if ch == "\n" {
+            out = out + "%0A"
+        } else {
+            out = out + ch
+        }
+    }
+    out
+}
+
+fn build_query_string(params: [{ name: string, value: string }]) -> string {
+    let mut parts: [string] = []
+    for p in params {
+        let key = url_encode_component(p.name)
+        let val = url_encode_component(p.value)
+        parts = parts + [key + "=" + val]
+    }
+    if len(parts) > 0 {
+        "?" + str.join(parts, "&")
+    } else {
+        ""
+    }
+}

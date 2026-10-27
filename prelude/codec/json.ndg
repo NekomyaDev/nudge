@@ -264,3 +264,90 @@ fn parse_json_string_array(s: string) -> [string] {
     }
     items
 }
+
+fn stringify_int_array(xs: [int]) -> string {
+    let mut parts: [string] = []
+    for x in xs {
+        parts = parts + [stringify_int(x)]
+    }
+    "[" + str.join(parts, ",") + "]"
+}
+
+fn parse_json_int_array(s: string) -> [int] {
+    let mut i = skip_whitespace(s, 0)
+    let n = str.length(s)
+    let mut items: [int] = []
+    let mut closed = false
+
+    if i < n and str.substring(s, i, i + 1) == "[" {
+        i = i + 1 // skip '['
+
+        for _ in str.split(s, "") {
+            i = skip_whitespace(s, i)
+            if i >= n or str.substring(s, i, i + 1) == "]" {
+                closed = true
+            }
+
+            if !closed {
+                let ch = str.substring(s, i, i + 1)
+                if is_digit(ch) or ch == "-" {
+                    let num_res = parse_json_number(s, i)
+                    items = items + [num_res.val]
+                    i = skip_whitespace(s, num_res.next)
+
+                    if i < n and str.substring(s, i, i + 1) == "," {
+                        i = i + 1
+                    }
+                } else {
+                    closed = true
+                }
+            }
+        }
+    }
+    items
+}
+
+fn stringify_bool_array(xs: [bool]) -> string {
+    let mut parts: [string] = []
+    for x in xs {
+        parts = parts + [stringify_bool(x)]
+    }
+    "[" + str.join(parts, ",") + "]"
+}
+
+fn parse_json_bool_array(s: string) -> [bool] {
+    let mut i = skip_whitespace(s, 0)
+    let n = str.length(s)
+    let mut items: [bool] = []
+    let mut closed = false
+
+    if i < n and str.substring(s, i, i + 1) == "[" {
+        i = i + 1 // skip '['
+
+        for _ in str.split(s, "") {
+            i = skip_whitespace(s, i)
+            if i >= n or str.substring(s, i, i + 1) == "]" {
+                closed = true
+            }
+
+            if !closed {
+                if i + 4 <= n and str.substring(s, i, i + 4) == "true" {
+                    items = items + [true]
+                    i = skip_whitespace(s, i + 4)
+                    if i < n and str.substring(s, i, i + 1) == "," {
+                        i = i + 1
+                    }
+                } else if i + 5 <= n and str.substring(s, i, i + 5) == "false" {
+                    items = items + [false]
+                    i = skip_whitespace(s, i + 5)
+                    if i < n and str.substring(s, i, i + 1) == "," {
+                        i = i + 1
+                    }
+                } else {
+                    closed = true
+                }
+            }
+        }
+    }
+    items
+}

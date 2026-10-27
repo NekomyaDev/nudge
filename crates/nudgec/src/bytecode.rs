@@ -541,6 +541,21 @@ impl<'a> Compiler<'a> {
                     if id == "state" {
                         return Err("not in bytecode subset: agent state read".to_string());
                     }
+                    if id == "math" {
+                        if name == "PI" {
+                            let idx = self
+                                .chunk
+                                .add_constant(NudgeVal::Float(std::f64::consts::PI));
+                            self.chunk.emit(Op::Const(idx));
+                            return Ok(());
+                        } else if name == "E" {
+                            let idx = self
+                                .chunk
+                                .add_constant(NudgeVal::Float(std::f64::consts::E));
+                            self.chunk.emit(Op::Const(idx));
+                            return Ok(());
+                        }
+                    }
                 }
                 self.compile_expr(obj)?;
                 self.chunk.emit(Op::Field(name.clone()));
@@ -693,6 +708,17 @@ impl<'a> Compiler<'a> {
                     }
                     self.chunk
                         .emit(Op::CallBuiltin("zip".to_string(), args.len()));
+                    return Ok(());
+                }
+
+                if name.starts_with("map.") || name.starts_with("list.") {
+                    if !kwargs.is_empty() {
+                        return Err(format!("'{name}' does not take kwargs"));
+                    }
+                    for a in args {
+                        self.compile_expr(a)?;
+                    }
+                    self.chunk.emit(Op::CallBuiltin(name, args.len()));
                     return Ok(());
                 }
 
