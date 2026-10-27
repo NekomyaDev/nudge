@@ -2163,3 +2163,347 @@ export async function browserFetch(url, options = {}) {
     headers: respHeaders,
   };
 }
+
+// ── string, map, list, time, env, os & math standard library (v1.6) ──
+
+export function str_length(s) {
+  return typeof s === "string" ? Array.from(s).length : 0;
+}
+export function str_upper(s) {
+  return typeof s === "string" ? s.toUpperCase() : "";
+}
+export function str_lower(s) {
+  return typeof s === "string" ? s.toLowerCase() : "";
+}
+export function str_trim(s) {
+  return typeof s === "string" ? s.trim() : "";
+}
+export function str_trim_start(s) {
+  return typeof s === "string" ? s.trimStart() : "";
+}
+export function str_trim_end(s) {
+  return typeof s === "string" ? s.trimEnd() : "";
+}
+export function str_split(s, delim = " ") {
+  return typeof s === "string" ? s.split(delim) : [];
+}
+export function str_join(xs, sep = "") {
+  return Array.isArray(xs) ? xs.map(String).join(sep) : "";
+}
+export function str_contains(s, sub) {
+  return typeof s === "string" ? s.includes(sub) : false;
+}
+export function str_starts_with(s, prefix) {
+  return typeof s === "string" ? s.startsWith(prefix) : false;
+}
+export function str_ends_with(s, suffix) {
+  return typeof s === "string" ? s.endsWith(suffix) : false;
+}
+export function str_replace(s, old, nw) {
+  return typeof s === "string" ? s.split(old).join(nw) : "";
+}
+export function str_substring(s, start, end = null) {
+  if (typeof s !== "string") return "";
+  const chars = Array.from(s);
+  const st = Math.max(0, start);
+  const ed = end !== null ? Math.max(0, end) : chars.length;
+  return chars.slice(st, ed).join("");
+}
+export function str_index_of(s, sub) {
+  if (typeof s !== "string" || typeof sub !== "string") return -1;
+  const byteIdx = s.indexOf(sub);
+  return byteIdx >= 0 ? Array.from(s.slice(0, byteIdx)).length : -1;
+}
+export function str_last_index_of(s, sub) {
+  if (typeof s !== "string" || typeof sub !== "string") return -1;
+  const byteIdx = s.lastIndexOf(sub);
+  return byteIdx >= 0 ? Array.from(s.slice(0, byteIdx)).length : -1;
+}
+export function str_reverse(s) {
+  return typeof s === "string" ? Array.from(s).reverse().join("") : "";
+}
+export function str_repeat(s, n) {
+  return typeof s === "string" && n >= 0 ? s.repeat(n) : "";
+}
+export function str_to_string(v) {
+  return v !== null && v !== undefined ? String(v) : "";
+}
+export function str_to_int(v) {
+  if (typeof v === "number") return Math.trunc(v);
+  if (typeof v === "string") {
+    const parsed = parseInt(v.trim(), 10);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
+}
+export function str_to_float(v) {
+  if (typeof v === "number") return v;
+  if (typeof v === "string") {
+    const parsed = parseFloat(v.trim());
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
+}
+export function str_parse(s) {
+  if (typeof s !== "string") return s;
+  const t = s.trim();
+  const n = Number(t);
+  if (!Number.isNaN(n) && t !== "") return n;
+  if (t === "true") return true;
+  if (t === "false") return false;
+  if (t === "null" || t === "none" || t === "") return null;
+  return s;
+}
+export function str_char_code(s, idx = 0) {
+  return typeof s === "string" ? (s.codePointAt(idx) || 0) : 0;
+}
+export function str_from_char_code(c) {
+  return String.fromCodePoint(Number(c) || 0);
+}
+export function str_hash(s) {
+  return Number(fnv1a(String(s)) & 0x7fffffffffffffffn);
+}
+export function str_pad_left(s, width, pad = " ") {
+  const str = String(s);
+  const p = String(pad)[0] || " ";
+  return str.padStart(width, p);
+}
+export function str_pad_right(s, width, pad = " ") {
+  const str = String(s);
+  const p = String(pad)[0] || " ";
+  return str.padEnd(width, p);
+}
+export function str_format(template, ...args) {
+  return String(template).replace(/\{(\d+)\}/g, (m, i) => (args[i] !== undefined ? String(args[i]) : m));
+}
+
+export function map_has(m, key) {
+  return m && typeof m === "object" && Object.prototype.hasOwnProperty.call(m, key);
+}
+export function map_get(m, key, defaultVal = null) {
+  return map_has(m, key) ? m[key] : defaultVal;
+}
+export function map_keys(m) {
+  return m && typeof m === "object" ? Object.keys(m).sort() : [];
+}
+export function map_values(m) {
+  return m && typeof m === "object" ? Object.keys(m).sort().map((k) => m[k]) : [];
+}
+export function map_remove(m, key) {
+  if (!m || typeof m !== "object") return m;
+  const res = { ...m };
+  delete res[key];
+  return res;
+}
+export function map_delete(m, key) {
+  return map_remove(m, key);
+}
+export function map_len(m) {
+  return m && typeof m === "object" ? Object.keys(m).length : 0;
+}
+export function map_size(m) {
+  return map_len(m);
+}
+export function map_merge(m1, m2) {
+  return { ...(m1 || {}), ...(m2 || {}) };
+}
+export function map_entries(m) {
+  return m && typeof m === "object" ? Object.keys(m).sort().map((k) => ({ key: k, value: m[k] })) : [];
+}
+export function map_set(m, key, val) {
+  return { ...(m || {}), [key]: val };
+}
+
+export function list_contains(xs, item) {
+  return Array.isArray(xs) && xs.some((x) => JSON.stringify(x) === JSON.stringify(item));
+}
+export function list_index_of(xs, item) {
+  return Array.isArray(xs) ? xs.findIndex((x) => JSON.stringify(x) === JSON.stringify(item)) : -1;
+}
+export function list_slice(xs, start = 0, end = null) {
+  if (!Array.isArray(xs)) return [];
+  const s = Math.max(0, start);
+  return end !== null ? xs.slice(s, Math.max(0, end)) : xs.slice(s);
+}
+export function list_reverse(xs) {
+  return Array.isArray(xs) ? xs.slice().reverse() : [];
+}
+export function list_sort(xs) {
+  if (!Array.isArray(xs)) return [];
+  return xs.slice().sort((a, b) => {
+    if (typeof a === "number" && typeof b === "number") return a - b;
+    return String(a).localeCompare(String(b));
+  });
+}
+export function list_sorted(xs) {
+  return list_sort(xs);
+}
+export function list_unique(xs) {
+  if (!Array.isArray(xs)) return [];
+  const out = [];
+  for (const x of xs) {
+    if (!out.some((y) => JSON.stringify(y) === JSON.stringify(x))) out.push(x);
+  }
+  return out;
+}
+export function list_dedup(xs) {
+  return list_unique(xs);
+}
+export function list_first(xs) {
+  return Array.isArray(xs) && xs.length > 0 ? xs[0] : null;
+}
+export function list_last(xs) {
+  return Array.isArray(xs) && xs.length > 0 ? xs[xs.length - 1] : null;
+}
+export function list_push(xs, item) {
+  return Array.isArray(xs) ? [...xs, item] : [item];
+}
+export function list_append(xs, item) {
+  return list_push(xs, item);
+}
+export function list_concat(l1, l2) {
+  return [...(Array.isArray(l1) ? l1 : []), ...(Array.isArray(l2) ? l2 : [])];
+}
+export function list_flatten(xs) {
+  if (!Array.isArray(xs)) return [];
+  return xs.flatMap((x) => (Array.isArray(x) ? list_flatten(x) : [x]));
+}
+
+export function time_now() {
+  return Date.now() / 1000;
+}
+export function time_sleep(seconds) {
+  const ms = Number(seconds) * 1000;
+  const end = Date.now() + ms;
+  while (Date.now() < end) {}
+  return null;
+}
+export function time_format(timestamp, fmt) {
+  const d = new Date(Number(timestamp) * 1000);
+  const pad = (n, w = 2) => String(n).padStart(w, "0");
+  return String(fmt)
+    .replace(/%Y/g, String(d.getUTCFullYear()))
+    .replace(/%m/g, pad(d.getUTCMonth() + 1))
+    .replace(/%d/g, pad(d.getUTCDate()))
+    .replace(/%H/g, pad(d.getUTCHours()))
+    .replace(/%M/g, pad(d.getUTCMinutes()))
+    .replace(/%S/g, pad(d.getUTCSeconds()));
+}
+
+export function env_get(key, defaultVal = null) {
+  return process.env[key] !== undefined ? process.env[key] : defaultVal;
+}
+export function env_set(key, val) {
+  process.env[key] = String(val);
+  return null;
+}
+export function env_has(key) {
+  return process.env[key] !== undefined;
+}
+
+export function os_args() {
+  return process.argv.slice(1);
+}
+export function os_cwd() {
+  return process.cwd();
+}
+export function os_pid() {
+  return process.pid;
+}
+
+export function math_sin(x) { return Math.sin(x); }
+export function math_cos(x) { return Math.cos(x); }
+export function math_tan(x) { return Math.tan(x); }
+export function math_asin(x) { return Math.asin(x); }
+export function math_acos(x) { return Math.acos(x); }
+export function math_atan(x) { return Math.atan(x); }
+export function math_atan2(y, x) { return Math.atan2(y, x); }
+export function math_log(x, base = null) {
+  return base !== null ? Math.log(x) / Math.log(base) : Math.log(x);
+}
+export function math_clamp(v, minV, maxV) {
+  return Math.min(Math.max(v, minV), maxV);
+}
+export function math_sum(xs) {
+  return Array.isArray(xs) ? xs.reduce((a, b) => a + Number(b), 0) : 0;
+}
+export function str_is_digit(s) {
+  return typeof s === "string" && s.length > 0 && /^\d+$/.test(s);
+}
+export function str_is_alpha(s) {
+  return typeof s === "string" && s.length > 0 && /^[a-zA-Z]+$/.test(s);
+}
+export function str_is_empty(s) {
+  return typeof s === "string" && s.length === 0;
+}
+export function str_capitalize(s) {
+  if (typeof s !== "string" || s.length === 0) return "";
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+}
+export function str_lines(s) {
+  return typeof s === "string" ? s.split(/\r?\n/) : [];
+}
+
+export function json_stringify(v) {
+  return JSON.stringify(v);
+}
+export function json_parse(s) {
+  return typeof s === "string" ? JSON.parse(s) : s;
+}
+
+export function env_delete(key) {
+  delete process.env[key];
+  return null;
+}
+export function env_remove(key) {
+  return env_delete(key);
+}
+export function env_vars() {
+  return { ...process.env };
+}
+export function env_all() {
+  return env_vars();
+}
+
+export function os_platform() {
+  return process.platform;
+}
+export function os_arch() {
+  return process.arch;
+}
+export function os_family() {
+  return process.platform === "win32" ? "windows" : "unix";
+}
+
+export function list_count(xs, item) {
+  if (!Array.isArray(xs)) return 0;
+  return xs.filter((x) => JSON.stringify(x) === JSON.stringify(item)).length;
+}
+export function list_min(xs) {
+  if (!Array.isArray(xs) || xs.length === 0) return null;
+  return xs.reduce((min, cur) => (cur < min ? cur : min));
+}
+export function list_max(xs) {
+  if (!Array.isArray(xs) || xs.length === 0) return null;
+  return xs.reduce((max, cur) => (cur > max ? cur : max));
+}
+
+export function math_hypot(x, y) { return Math.hypot(x, y); }
+export function math_degrees(rad) { return (Number(rad) * 180) / Math.PI; }
+export function math_radians(deg) { return (Number(deg) * Math.PI) / 180; }
+export function math_gcd(a, b) {
+  let x = Math.abs(Math.trunc(a));
+  let y = Math.abs(Math.trunc(b));
+  while (y !== 0) {
+    const t = y;
+    y = x % y;
+    x = t;
+  }
+  return x;
+}
+export function math_lcm(a, b) {
+  const x = Math.abs(Math.trunc(a));
+  const y = Math.abs(Math.trunc(b));
+  if (x === 0 || y === 0) return 0;
+  return Math.trunc((x / math_gcd(x, y)) * y);
+}

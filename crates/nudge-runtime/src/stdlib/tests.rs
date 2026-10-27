@@ -119,6 +119,21 @@ mod tests {
 
         let result = stdlib::math::execute("math.cos", vec![Value::Float(0.0)]);
         assert_eq!(result.unwrap(), Value::Float(1.0));
+
+        let hyp = stdlib::math::execute("math.hypot", vec![Value::Float(3.0), Value::Float(4.0)]).unwrap();
+        assert_eq!(hyp, Value::Float(5.0));
+
+        let deg = stdlib::math::execute("math.degrees", vec![Value::Float(std::f64::consts::PI)]).unwrap();
+        assert_eq!(deg, Value::Float(180.0));
+
+        let rad = stdlib::math::execute("math.radians", vec![Value::Float(180.0)]).unwrap();
+        assert_eq!(rad, Value::Float(std::f64::consts::PI));
+
+        let gcd_res = stdlib::math::execute("math.gcd", vec![Value::Int(48), Value::Int(18)]).unwrap();
+        assert_eq!(gcd_res, Value::Int(6));
+
+        let lcm_res = stdlib::math::execute("math.lcm", vec![Value::Int(4), Value::Int(6)]).unwrap();
+        assert_eq!(lcm_res, Value::Int(12));
     }
 
     #[test]
@@ -220,6 +235,34 @@ mod tests {
             ],
         );
         assert_eq!(not_found.unwrap(), Value::Int(-1));
+    }
+
+    #[test]
+    fn test_str_predicates_and_lines() {
+        let d1 = stdlib::string::execute("str.is_digit", vec![Value::String("12345".to_string())]).unwrap();
+        assert_eq!(d1, Value::Bool(true));
+        let d2 = stdlib::string::execute("str.is_digit", vec![Value::String("123a".to_string())]).unwrap();
+        assert_eq!(d2, Value::Bool(false));
+
+        let a1 = stdlib::string::execute("str.is_alpha", vec![Value::String("Hello".to_string())]).unwrap();
+        assert_eq!(a1, Value::Bool(true));
+        let a2 = stdlib::string::execute("str.is_alpha", vec![Value::String("Hello1".to_string())]).unwrap();
+        assert_eq!(a2, Value::Bool(false));
+
+        let e1 = stdlib::string::execute("str.is_empty", vec![Value::String("".to_string())]).unwrap();
+        assert_eq!(e1, Value::Bool(true));
+        let e2 = stdlib::string::execute("str.is_empty", vec![Value::String("nonempty".to_string())]).unwrap();
+        assert_eq!(e2, Value::Bool(false));
+
+        let cap = stdlib::string::execute("str.capitalize", vec![Value::String("wORLD".to_string())]).unwrap();
+        assert_eq!(cap, Value::String("World".to_string()));
+
+        let lns = stdlib::string::execute("str.lines", vec![Value::String("a\nb\r\nc".to_string())]).unwrap();
+        assert_eq!(lns, Value::List(vec![
+            Value::String("a".to_string()),
+            Value::String("b".to_string()),
+            Value::String("c".to_string()),
+        ]));
     }
 
     #[test]
@@ -907,6 +950,24 @@ mod computer_tests {
             Value::Int(pid) => assert!(pid > 0),
             other => panic!("expected Int, got {:?}", other),
         }
+
+        let plat = crate::stdlib::os::execute("os.platform", vec![]).unwrap();
+        match plat {
+            Value::String(s) => assert!(!s.is_empty()),
+            other => panic!("expected String, got {:?}", other),
+        }
+
+        let arch = crate::stdlib::os::execute("os.arch", vec![]).unwrap();
+        match arch {
+            Value::String(s) => assert!(!s.is_empty()),
+            other => panic!("expected String, got {:?}", other),
+        }
+
+        let fam = crate::stdlib::os::execute("os.family", vec![]).unwrap();
+        match fam {
+            Value::String(s) => assert!(!s.is_empty()),
+            other => panic!("expected String, got {:?}", other),
+        }
     }
 
     #[test]
@@ -944,6 +1005,19 @@ mod computer_tests {
         let get_res2 = crate::stdlib::env::execute("env.get", vec![Value::String(key.to_string())]);
         assert!(get_res2.is_ok());
         assert_eq!(get_res2.unwrap(), Value::String(val.to_string()));
+
+        // env.all / env.vars
+        let vars_res = crate::stdlib::env::execute("env.all", vec![]).unwrap();
+        match vars_res {
+            Value::Map(m) => assert!(m.contains_key(key)),
+            other => panic!("expected Map, got {:?}", other),
+        }
+
+        // env.delete
+        let del_res = crate::stdlib::env::execute("env.delete", vec![Value::String(key.to_string())]).unwrap();
+        assert_eq!(del_res, Value::None);
+        let has_after = crate::stdlib::env::execute("env.has", vec![Value::String(key.to_string())]).unwrap();
+        assert_eq!(has_after, Value::Bool(false));
 
         // Clean up
         std::env::remove_var(key);

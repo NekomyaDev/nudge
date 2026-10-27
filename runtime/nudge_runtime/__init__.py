@@ -4558,6 +4558,21 @@ def str_parse(s):
         return None
     return s
 
+def str_is_digit(s):
+    return isinstance(s, str) and s.isdigit()
+
+def str_is_alpha(s):
+    return isinstance(s, str) and s.isalpha()
+
+def str_is_empty(s):
+    return isinstance(s, str) and len(s) == 0
+
+def str_capitalize(s):
+    return s.capitalize() if isinstance(s, str) else ""
+
+def str_lines(s):
+    return s.splitlines() if isinstance(s, str) else []
+
 # ── map & list standard library primitives ────────────────────────────
 
 def map_has(m, key):
@@ -4701,6 +4716,166 @@ def list_flatten(xs):
         else:
             res.append(x)
     return res
+
+def list_count(xs, item):
+    if not isinstance(xs, list):
+        return 0
+    return xs.count(item)
+
+def list_min(xs):
+    if not isinstance(xs, list) or not xs:
+        return None
+    return min(xs)
+
+def list_max(xs):
+    if not isinstance(xs, list) or not xs:
+        return None
+    return max(xs)
+
+# ── time, env, os & math standard library primitives ──────────────────
+
+def time_now():
+    import time
+    return float(time.time())
+
+def time_sleep(seconds):
+    import time
+    time.sleep(float(seconds))
+    return None
+
+def time_format(timestamp, fmt):
+    import datetime
+    dt = datetime.datetime.fromtimestamp(float(timestamp), tz=datetime.timezone.utc)
+    return dt.strftime(fmt)
+
+def env_get(key, default=None):
+    import os
+    return os.environ.get(key, default)
+
+def env_set(key, val):
+    import os
+    os.environ[key] = str(val)
+    return None
+
+def env_has(key):
+    import os
+    return key in os.environ
+
+def env_delete(key):
+    import os
+    os.environ.pop(key, None)
+    return None
+
+def env_remove(key):
+    return env_delete(key)
+
+def env_vars():
+    import os
+    return dict(os.environ)
+
+def env_all():
+    return env_vars()
+
+def os_args():
+    import sys
+    return list(sys.argv)
+
+def os_cwd():
+    import os
+    return os.getcwd()
+
+def os_pid():
+    import os
+    return os.getpid()
+
+def os_platform():
+    import sys
+    return sys.platform
+
+def os_arch():
+    import platform
+    return platform.machine()
+
+def os_family():
+    import os
+    return os.name
+
+def json_stringify(v):
+    import json
+    return json.dumps(v, ensure_ascii=False)
+
+def json_parse(s):
+    import json
+    if not isinstance(s, str):
+        return s
+    return json.loads(s)
+
+def math_sin(x):
+    import math
+    return float(math.sin(x))
+
+def math_cos(x):
+    import math
+    return float(math.cos(x))
+
+def math_tan(x):
+    import math
+    return float(math.tan(x))
+
+def math_asin(x):
+    import math
+    return float(math.asin(x))
+
+def math_acos(x):
+    import math
+    return float(math.acos(x))
+
+def math_atan(x):
+    import math
+    return float(math.atan(x))
+
+def math_atan2(y, x):
+    import math
+    return float(math.atan2(y, x))
+
+def math_log(x, base=None):
+    import math
+    if base is not None:
+        return float(math.log(x, base))
+    return float(math.log(x))
+
+def math_clamp(v, min_v, max_v):
+    return max(min_v, min(v, max_v))
+
+def math_sum(xs):
+    if not isinstance(xs, list):
+        return 0
+    return sum(xs)
+
+def math_mean(xs):
+    if not isinstance(xs, list) or not xs:
+        return 0.0
+    return float(sum(xs)) / len(xs)
+
+def math_hypot(x, y):
+    import math
+    return float(math.hypot(x, y))
+
+def math_degrees(rad):
+    import math
+    return float(math.degrees(rad))
+
+def math_radians(deg):
+    import math
+    return float(math.radians(deg))
+
+def math_gcd(a, b):
+    import math
+    return int(math.gcd(int(a), int(b)))
+
+def math_lcm(a, b):
+    import math
+    return int(math.lcm(int(a), int(b)))
 
 # ── browser use (v1.6, docs/browser-use.md) ───────────────────────────
 

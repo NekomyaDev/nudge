@@ -2684,6 +2684,7 @@ impl Interpreter {
                 || name.starts_with("time.")
                 || name.starts_with("env.")
                 || name.starts_with("os.")
+                || name.starts_with("json.")
                 || name.starts_with("math.")
                 || name.starts_with("str.")
                 || name.starts_with("map.")
@@ -3435,7 +3436,7 @@ impl Interpreter {
                     .map_err(|e| format!("error[E-native-0202]: {name} failed: {e}"))?;
                 value_to_nudgeval(&result).map_err(|e| format!("error[E-native-0203]: {name}: {e}"))
             }
-            "env.get" | "env.set" | "env.has" => {
+            "env.get" | "env.set" | "env.has" | "env.delete" | "env.remove" | "env.vars" | "env.all" => {
                 let mut call_args = Vec::with_capacity(args.len());
                 for a in args {
                     let converted = nudgeval_to_value(a)
@@ -3446,7 +3447,7 @@ impl Interpreter {
                     .map_err(|e| format!("error[E-native-0202]: {name} failed: {e}"))?;
                 value_to_nudgeval(&result).map_err(|e| format!("error[E-native-0203]: {name}: {e}"))
             }
-            "os.args" | "os.cwd" | "os.pid" => {
+            "os.args" | "os.cwd" | "os.pid" | "os.platform" | "os.arch" | "os.family" => {
                 let mut call_args = Vec::with_capacity(args.len());
                 for a in args {
                     let converted = nudgeval_to_value(a)
@@ -3456,6 +3457,24 @@ impl Interpreter {
                 let result = nudge_runtime::stdlib::os::execute(name, call_args)
                     .map_err(|e| format!("error[E-native-0202]: {name} failed: {e}"))?;
                 value_to_nudgeval(&result).map_err(|e| format!("error[E-native-0203]: {name}: {e}"))
+            }
+            "json.stringify" => {
+                let val = args.first().ok_or("'json.stringify' requires 1 argument")?;
+                let j = nudgeval_to_json(val);
+                Ok(NudgeVal::Str(serde_json::to_string(&j).unwrap_or_default()))
+            }
+            "json.parse" => {
+                let s = args
+                    .first()
+                    .and_then(|a| match a {
+                        NudgeVal::Str(s) => Some(s),
+                        _ => None,
+                    })
+                    .ok_or("'json.parse' requires 1 string argument")?;
+                match serde_json::from_str::<serde_json::Value>(s) {
+                    Ok(v) => Ok(json_to_nudgeval(v)),
+                    Err(e) => Err(format!("'json.parse' failed: {e}")),
+                }
             }
             "io.print" | "print" => {
                 let s = args
@@ -3946,6 +3965,62 @@ impl Interpreter {
                     _ => Ok(NudgeVal::Str(s.clone())),
                 }
             }
+            "str.is_digit" => {
+                let s = args
+                    .first()
+                    .and_then(|a| match a {
+                        NudgeVal::Str(s) => Some(s),
+                        _ => None,
+                    })
+                    .ok_or("'str.is_digit' requires 1 string argument")?;
+                Ok(NudgeVal::Bool(!s.is_empty() && s.chars().all(|c| c.is_ascii_digit())))
+            }
+            "str.is_alpha" => {
+                let s = args
+                    .first()
+                    .and_then(|a| match a {
+                        NudgeVal::Str(s) => Some(s),
+                        _ => None,
+                    })
+                    .ok_or("'str.is_alpha' requires 1 string argument")?;
+                Ok(NudgeVal::Bool(!s.is_empty() && s.chars().all(|c| c.is_alphabetic())))
+            }
+            "str.is_empty" => {
+                let s = args
+                    .first()
+                    .and_then(|a| match a {
+                        NudgeVal::Str(s) => Some(s),
+                        _ => None,
+                    })
+                    .ok_or("'str.is_empty' requires 1 string argument")?;
+                Ok(NudgeVal::Bool(s.is_empty()))
+            }
+            "str.capitalize" => {
+                let s = args
+                    .first()
+                    .and_then(|a| match a {
+                        NudgeVal::Str(s) => Some(s),
+                        _ => None,
+                    })
+                    .ok_or("'str.capitalize' requires 1 string argument")?;
+                let mut chars = s.chars();
+                let res = match chars.next() {
+                    None => String::new(),
+                    Some(f) => f.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
+                };
+                Ok(NudgeVal::Str(res))
+            }
+            "str.lines" => {
+                let s = args
+                    .first()
+                    .and_then(|a| match a {
+                        NudgeVal::Str(s) => Some(s),
+                        _ => None,
+                    })
+                    .ok_or("'str.lines' requires 1 string argument")?;
+                let lines: Vec<NudgeVal> = s.lines().map(|l| NudgeVal::Str(l.to_string())).collect();
+                Ok(NudgeVal::List(lines))
+            }
             "math.abs" => match args.first() {
                 Some(NudgeVal::Int(i)) => match i.checked_abs() {
                     Some(val) => Ok(NudgeVal::Int(val)),
@@ -4104,6 +4179,58 @@ impl Interpreter {
                     Ok(NudgeVal::Float((*y as f64).atan2(*x)))
                 }
                 _ => Err("'math.atan2' requires 2 numeric arguments (y, x)".into()),
+            },
+            "math.hypot" => {
+                let to_f = |n: &NudgeVal| match n {
+                    NudgeVal::Float(f) => Some(*f),
+                    NudgeVal::Int(i) => Some(*i as f64),
+                    _ => None,
+                };
+                match (args.first().and_then(to_f), args.get(1).and_then(to_f)) {
+                    (Some(x), Some(y)) => Ok(NudgeVal::Float(x.hypot(y))),
+                    _ => Err("'math.hypot' requires 2 numeric arguments (x, y)".into()),
+                }
+            }
+            "math.degrees" => match args.first() {
+                Some(NudgeVal::Float(f)) => Ok(NudgeVal::Float(f.to_degrees())),
+                Some(NudgeVal::Int(i)) => Ok(NudgeVal::Float((*i as f64).to_degrees())),
+                _ => Err("'math.degrees' requires 1 numeric argument".into()),
+            },
+            "math.radians" => match args.first() {
+                Some(NudgeVal::Float(f)) => Ok(NudgeVal::Float(f.to_radians())),
+                Some(NudgeVal::Int(i)) => Ok(NudgeVal::Float((*i as f64).to_radians())),
+                _ => Err("'math.radians' requires 1 numeric argument".into()),
+            },
+            "math.gcd" => match (args.first(), args.get(1)) {
+                (Some(NudgeVal::Int(a)), Some(NudgeVal::Int(b))) => {
+                    let mut x = a.abs();
+                    let mut y = b.abs();
+                    while y != 0 {
+                        let t = y;
+                        y = x % y;
+                        x = t;
+                    }
+                    Ok(NudgeVal::Int(x))
+                }
+                _ => Err("'math.gcd' requires 2 integer arguments".into()),
+            },
+            "math.lcm" => match (args.first(), args.get(1)) {
+                (Some(NudgeVal::Int(a)), Some(NudgeVal::Int(b))) => {
+                    if *a == 0 || *b == 0 {
+                        Ok(NudgeVal::Int(0))
+                    } else {
+                        let mut x = a.abs();
+                        let mut y = b.abs();
+                        while y != 0 {
+                            let t = y;
+                            y = x % y;
+                            x = t;
+                        }
+                        let g = x;
+                        Ok(NudgeVal::Int((a.abs() / g) * b.abs()))
+                    }
+                }
+                _ => Err("'math.lcm' requires 2 integer arguments".into()),
             },
             "math.log" => match (args.first(), args.get(1)) {
                 (Some(NudgeVal::Float(x)), None) => Ok(NudgeVal::Float(x.ln())),
@@ -4455,6 +4582,60 @@ impl Interpreter {
                     }
                 }
                 Ok(NudgeVal::List(flattened))
+            }
+            "list.count" => {
+                let list = match args.first() {
+                    Some(NudgeVal::List(l)) => l,
+                    _ => return Err("'list.count' requires a list as first argument".into()),
+                };
+                let target = match args.get(1) {
+                    Some(t) => t,
+                    None => return Err("'list.count' requires 2 arguments".into()),
+                };
+                let count = list.iter().filter(|x| *x == target).count() as i64;
+                Ok(NudgeVal::Int(count))
+            }
+            "list.min" => {
+                let list = match args.first() {
+                    Some(NudgeVal::List(l)) => l,
+                    _ => return Err("'list.min' requires a list as first argument".into()),
+                };
+                if list.is_empty() {
+                    return Ok(NudgeVal::Unit);
+                }
+                let mut min_val = list[0].clone();
+                for item in &list[1..] {
+                    match (&min_val, item) {
+                        (NudgeVal::Int(a), NudgeVal::Int(b)) => if b < a { min_val = item.clone(); },
+                        (NudgeVal::Float(a), NudgeVal::Float(b)) => if b < a { min_val = item.clone(); },
+                        (NudgeVal::Int(a), NudgeVal::Float(b)) => if *b < (*a as f64) { min_val = item.clone(); },
+                        (NudgeVal::Float(a), NudgeVal::Int(b)) => if (*b as f64) < *a { min_val = item.clone(); },
+                        (NudgeVal::Str(a), NudgeVal::Str(b)) => if b < a { min_val = item.clone(); },
+                        _ => {}
+                    }
+                }
+                Ok(min_val)
+            }
+            "list.max" => {
+                let list = match args.first() {
+                    Some(NudgeVal::List(l)) => l,
+                    _ => return Err("'list.max' requires a list as first argument".into()),
+                };
+                if list.is_empty() {
+                    return Ok(NudgeVal::Unit);
+                }
+                let mut max_val = list[0].clone();
+                for item in &list[1..] {
+                    match (&max_val, item) {
+                        (NudgeVal::Int(a), NudgeVal::Int(b)) => if b > a { max_val = item.clone(); },
+                        (NudgeVal::Float(a), NudgeVal::Float(b)) => if b > a { max_val = item.clone(); },
+                        (NudgeVal::Int(a), NudgeVal::Float(b)) => if *b > (*a as f64) { max_val = item.clone(); },
+                        (NudgeVal::Float(a), NudgeVal::Int(b)) => if (*b as f64) > *a { max_val = item.clone(); },
+                        (NudgeVal::Str(a), NudgeVal::Str(b)) => if b > a { max_val = item.clone(); },
+                        _ => {}
+                    }
+                }
+                Ok(max_val)
             }
             other => Err(format!("unknown standard library function '{other}'")),
         }

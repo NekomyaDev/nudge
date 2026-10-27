@@ -2090,7 +2090,15 @@ fn test_f9_recipes() -> bool uses Browser {{
 
                 let pid = os.pid()
                 let cwd = os.cwd()
-                let ok_os = pid > 0 and str.length(cwd) > 0
+                let plat = os.platform()
+                let arch = os.arch()
+                let fam = os.family()
+                let ok_os = pid > 0 and str.length(cwd) > 0 and str.length(plat) > 0 and str.length(arch) > 0 and str.length(fam) > 0
+
+                env.delete("NUDGE_TEST_ENV_VAR")
+                let deleted_ok = !env.has("NUDGE_TEST_ENV_VAR")
+                let all_vars = env.vars()
+                let ok_env_ext = deleted_ok and map.len(all_vars) > 0
 
                 // 2. Str expanded
                 let rep = str.repeat("ab", 3)
@@ -2104,6 +2112,12 @@ fn test_f9_recipes() -> bool uses Browser {{
                 let ok_trim = trimmed_s == "hello  " and trimmed_e == "  hello"
                 let parsed_num = str.parse("1234")
                 let ok_parse = parsed_num == 1234
+                let is_d = str.is_digit("12345") and !str.is_digit("123a")
+                let is_a = str.is_alpha("abcXYZ") and !str.is_alpha("abc1")
+                let is_e = str.is_empty("") and !str.is_empty("a")
+                let cap = str.capitalize("hELLO wORLD") == "Hello world"
+                let lns = str.lines("line1\nline2\nline3")
+                let ok_str_ext = is_d and is_a and is_e and cap and len(lns) == 3 and lns[1] == "line2"
 
                 // 3. Math expanded
                 let sin_0 = math.sin(0.0)
@@ -2113,7 +2127,12 @@ fn test_f9_recipes() -> bool uses Browser {{
                 let ok_clamp = clamped == 100
                 let sum_val = math.sum([10, 20, 30, 40])
                 let mean_val = math.mean([10, 20, 30])
-                let ok_math = sum_val == 100 and mean_val == 20.0 and math.PI > 3.14
+                let hyp = math.hypot(3.0, 4.0)
+                let deg = math.degrees(3.141592653589793)
+                let rad = math.radians(180.0)
+                let gcd_val = math.gcd(54, 24)
+                let lcm_val = math.lcm(12, 18)
+                let ok_math = sum_val == 100 and mean_val == 20.0 and math.PI > 3.14 and hyp == 5.0 and deg > 179.9 and rad > 3.14 and gcd_val == 6 and lcm_val == 36
 
                 // 4. List expanded
                 let sorted_xs = list.sort([5, 2, 8, 1, 9])
@@ -2129,6 +2148,10 @@ fn test_f9_recipes() -> bool uses Browser {{
                 let ok_cat = len(cat) == 4 and cat[2] == 3
                 let flat = list.flatten([[1, 2], [3, 4]])
                 let ok_flat = len(flat) == 4 and flat[3] == 4
+                let cnt = list.count([1, 2, 2, 3, 2, 4], 2)
+                let l_min = list.min([42, 10, 99, 5])
+                let l_max = list.max([42, 10, 99, 5])
+                let ok_list_ext = cnt == 3 and l_min == 5 and l_max == 99
 
                 // 5. Map expanded
                 let m1 = { a: 1, b: 2 }
@@ -2140,7 +2163,12 @@ fn test_f9_recipes() -> bool uses Browser {{
                 let entries = map.entries(m1)
                 let ok_entries = len(entries) == 2
 
-                ok_time and ok_fmt and ok_env and ok_os and ok_rep and ok_pad and ok_l_idx and ok_trim and ok_parse and ok_trig and ok_clamp and ok_math and ok_sort and ok_uniq and ok_fl and ok_push and ok_cat and ok_flat and ok_merge and ok_len and ok_entries
+                // 6. JSON native bridge
+                let j_str = json.stringify({ name: "nudge", version: 1 })
+                let j_parsed = json.parse(j_str)
+                let ok_json = j_parsed["name"] == "nudge" and j_parsed["version"] == 1
+
+                ok_time and ok_fmt and ok_env and ok_os and ok_env_ext and ok_rep and ok_pad and ok_l_idx and ok_trim and ok_parse and ok_str_ext and ok_trig and ok_clamp and ok_math and ok_sort and ok_uniq and ok_fl and ok_push and ok_cat and ok_flat and ok_list_ext and ok_merge and ok_len and ok_entries and ok_json
             }
         "#;
         let items = parse_src(src);

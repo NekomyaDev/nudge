@@ -905,6 +905,11 @@ fn ts(e: &Expr, aliases: &HashSet<String>, sigs: &HashMap<String, Vec<String>>) 
                                 }
                             }
                             format!("await rt.browser{camel_name}({})", parts.join(", "))
+                        } else if matches!(
+                            prefix.as_str(),
+                            "str" | "map" | "list" | "math" | "time" | "env" | "os" | "json"
+                        ) {
+                            format!("rt.{prefix}_{name}({})", parts.join(", "))
                         } else {
                             format!("{prefix}.{name}({})", parts.join(", "))
                         }

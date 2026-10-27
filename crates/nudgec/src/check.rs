@@ -2297,21 +2297,29 @@ fn check_expr_pos(
                     } else if prefix == "env" {
                         match name.as_str() {
                             "get" => return Ty::Optional(Box::new(Ty::Str)),
-                            "set" => return Ty::None_,
+                            "set" | "delete" | "remove" => return Ty::None_,
                             "has" => return Ty::Bool,
+                            "vars" | "all" => return Ty::Map(Box::new(Ty::Str), Box::new(Ty::Str)),
                             _ => {}
                         }
                     } else if prefix == "os" {
                         match name.as_str() {
                             "args" => return Ty::List(Box::new(Ty::Str)),
-                            "cwd" => return Ty::Str,
+                            "cwd" | "platform" | "arch" | "family" => return Ty::Str,
                             "pid" => return Ty::Int,
+                            _ => {}
+                        }
+                    } else if prefix == "json" {
+                        match name.as_str() {
+                            "stringify" => return Ty::Str,
+                            "parse" => return Ty::Unknown,
                             _ => {}
                         }
                     } else if prefix == "math" {
                         match name.as_str() {
                             "abs" | "floor" | "ceil" | "round" | "sqrt" | "sin" | "cos" | "tan"
-                            | "asin" | "acos" | "atan" | "atan2" | "exp" | "ln" | "clamp" => {
+                            | "asin" | "acos" | "atan" | "atan2" | "exp" | "ln" | "clamp"
+                            | "degrees" | "radians" => {
                                 if args.is_empty() {
                                     errs.push(CheckError {
                                         span: None,
@@ -2321,11 +2329,11 @@ fn check_expr_pos(
                                 }
                                 return arg_tys.first().cloned().unwrap_or(Ty::Float);
                             }
-                            "pow" | "log" | "min" | "max" | "sum" => {
+                            "pow" | "log" | "min" | "max" | "sum" | "hypot" => {
                                 return arg_tys.first().cloned().unwrap_or(Ty::Float);
                             }
                             "random_int" | "bitwise_xor" | "bitwise_and" | "bitwise_or"
-                            | "bitwise_not" | "shift_left" | "shift_right" => return Ty::Int,
+                            | "bitwise_not" | "shift_left" | "shift_right" | "gcd" | "lcm" => return Ty::Int,
                             "random_float" | "mean" | "PI" | "E" => return Ty::Float,
                             _ => {}
                         }
@@ -2342,9 +2350,9 @@ fn check_expr_pos(
                             "to_float" => return Ty::Float,
                             "upper" | "lower" | "trim" | "trim_start" | "trim_end" | "replace"
                             | "substring" | "to_string" | "from_char_code" | "repeat"
-                            | "pad_left" | "pad_right" | "format" | "join" => return Ty::Str,
-                            "contains" | "starts_with" | "ends_with" => return Ty::Bool,
-                            "split" => return Ty::List(Box::new(Ty::Str)),
+                            | "pad_left" | "pad_right" | "format" | "join" | "capitalize" => return Ty::Str,
+                            "contains" | "starts_with" | "ends_with" | "is_digit" | "is_alpha" | "is_empty" => return Ty::Bool,
+                            "split" | "lines" => return Ty::List(Box::new(Ty::Str)),
                             _ => {}
                         }
                     } else if prefix == "map" {
@@ -2389,7 +2397,7 @@ fn check_expr_pos(
                     } else if prefix == "list" {
                         match name.as_str() {
                             "contains" => return Ty::Bool,
-                            "index_of" => return Ty::Int,
+                            "index_of" | "count" => return Ty::Int,
                             "slice" | "reverse" | "sort" | "sorted" | "unique" | "dedup"
                             | "push" | "concat" | "flatten" => {
                                 if let Some(l_ty) = arg_tys.first() {
@@ -2397,7 +2405,7 @@ fn check_expr_pos(
                                 }
                                 return Ty::List(Box::new(Ty::Unknown));
                             }
-                            "first" | "last" => {
+                            "first" | "last" | "min" | "max" => {
                                 if let Some(Ty::List(inner)) = arg_tys.first() {
                                     return *inner.clone();
                                 }

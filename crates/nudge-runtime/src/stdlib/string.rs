@@ -53,6 +53,11 @@ pub fn register() -> HashMap<String, Value> {
         Value::Native("str.from_char_code"),
     );
     functions.insert("str.hash".to_string(), Value::Native("str.hash"));
+    functions.insert("str.is_digit".to_string(), Value::Native("str.is_digit"));
+    functions.insert("str.is_alpha".to_string(), Value::Native("str.is_alpha"));
+    functions.insert("str.is_empty".to_string(), Value::Native("str.is_empty"));
+    functions.insert("str.capitalize".to_string(), Value::Native("str.capitalize"));
+    functions.insert("str.lines".to_string(), Value::Native("str.lines"));
 
     functions
 }
@@ -497,6 +502,66 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 h = h.wrapping_mul(0x100000001b3);
             }
             Ok(Value::Int(h as i64))
+        }
+
+        "str.is_digit" => {
+            if args.len() != 1 {
+                return Err("str.is_digit requires 1 argument (string)".to_string());
+            }
+            match &args[0] {
+                Value::String(s) => Ok(Value::Bool(!s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))),
+                _ => Err("str.is_digit: argument must be a string".to_string()),
+            }
+        }
+
+        "str.is_alpha" => {
+            if args.len() != 1 {
+                return Err("str.is_alpha requires 1 argument (string)".to_string());
+            }
+            match &args[0] {
+                Value::String(s) => Ok(Value::Bool(!s.is_empty() && s.chars().all(|c| c.is_alphabetic()))),
+                _ => Err("str.is_alpha: argument must be a string".to_string()),
+            }
+        }
+
+        "str.is_empty" => {
+            if args.len() != 1 {
+                return Err("str.is_empty requires 1 argument (string)".to_string());
+            }
+            match &args[0] {
+                Value::String(s) => Ok(Value::Bool(s.is_empty())),
+                _ => Err("str.is_empty: argument must be a string".to_string()),
+            }
+        }
+
+        "str.capitalize" => {
+            if args.len() != 1 {
+                return Err("str.capitalize requires 1 argument (string)".to_string());
+            }
+            match &args[0] {
+                Value::String(s) => {
+                    let mut chars = s.chars();
+                    let res = match chars.next() {
+                        None => String::new(),
+                        Some(f) => f.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
+                    };
+                    Ok(Value::String(res))
+                }
+                _ => Err("str.capitalize: argument must be a string".to_string()),
+            }
+        }
+
+        "str.lines" => {
+            if args.len() != 1 {
+                return Err("str.lines requires 1 argument (string)".to_string());
+            }
+            match &args[0] {
+                Value::String(s) => {
+                    let lines: Vec<Value> = s.lines().map(|l| Value::String(l.to_string())).collect();
+                    Ok(Value::List(lines))
+                }
+                _ => Err("str.lines: argument must be a string".to_string()),
+            }
         }
 
         _ => Err(format!("Unknown string function: {}", name)),

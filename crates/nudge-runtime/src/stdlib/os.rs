@@ -11,6 +11,9 @@ pub fn register() -> HashMap<String, Value> {
     functions.insert("os.args".to_string(), Value::Native("os.args"));
     functions.insert("os.cwd".to_string(), Value::Native("os.cwd"));
     functions.insert("os.pid".to_string(), Value::Native("os.pid"));
+    functions.insert("os.platform".to_string(), Value::Native("os.platform"));
+    functions.insert("os.arch".to_string(), Value::Native("os.arch"));
+    functions.insert("os.family".to_string(), Value::Native("os.family"));
     functions
 }
 
@@ -47,6 +50,27 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             }
             let pid = std::process::id() as i64;
             Ok(Value::Int(pid))
+        }
+
+        "os.platform" => {
+            if !args.is_empty() {
+                return Err("os.platform takes no arguments".to_string());
+            }
+            Ok(Value::String(std::env::consts::OS.to_string()))
+        }
+
+        "os.arch" => {
+            if !args.is_empty() {
+                return Err("os.arch takes no arguments".to_string());
+            }
+            Ok(Value::String(std::env::consts::ARCH.to_string()))
+        }
+
+        "os.family" => {
+            if !args.is_empty() {
+                return Err("os.family takes no arguments".to_string());
+            }
+            Ok(Value::String(std::env::consts::FAMILY.to_string()))
         }
 
         _ => Err(format!("Unknown os function: {}", name)),

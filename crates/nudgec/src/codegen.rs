@@ -1037,6 +1037,11 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
                                     | "format"
                                     | "join"
                                     | "parse"
+                                    | "is_digit"
+                                    | "is_alpha"
+                                    | "is_empty"
+                                    | "capitalize"
+                                    | "lines"
                             )
                         {
                             format!("rt.str_{name}")
@@ -1074,9 +1079,36 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
                                     | "append"
                                     | "concat"
                                     | "flatten"
+                                    | "count"
+                                    | "min"
+                                    | "max"
                             )
                         {
                             format!("rt.list_{name}")
+                        } else if prefix == "time"
+                            && matches!(name.as_str(), "now" | "sleep" | "format")
+                        {
+                            format!("rt.time_{name}")
+                        } else if prefix == "env"
+                            && matches!(name.as_str(), "get" | "set" | "has" | "delete" | "remove" | "vars" | "all")
+                        {
+                            format!("rt.env_{name}")
+                        } else if prefix == "os"
+                            && matches!(name.as_str(), "args" | "cwd" | "pid" | "platform" | "arch" | "family")
+                        {
+                            format!("rt.os_{name}")
+                        } else if prefix == "json"
+                            && matches!(name.as_str(), "stringify" | "parse")
+                        {
+                            format!("rt.json_{name}")
+                        } else if prefix == "math"
+                            && matches!(
+                                name.as_str(),
+                                "clamp" | "sum" | "mean" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2" | "log"
+                                    | "hypot" | "degrees" | "radians" | "gcd" | "lcm"
+                            )
+                        {
+                            format!("rt.math_{name}")
                         } else {
                             format!("{prefix}.{name}")
                         }

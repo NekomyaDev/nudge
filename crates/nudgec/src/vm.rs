@@ -1076,6 +1076,77 @@ impl<'a> VM<'a> {
                                 }
                                 NudgeVal::List(flattened)
                             }
+                            "list.count" => {
+                                let list = match args.first() {
+                                    Some(NudgeVal::List(l)) => l,
+                                    _ => {
+                                        return Err(
+                                            "'list.count' requires a list as first argument"
+                                                .into(),
+                                        )
+                                    }
+                                };
+                                let target = match args.get(1) {
+                                    Some(t) => t,
+                                    None => {
+                                        return Err("'list.count' requires 2 arguments".into())
+                                    }
+                                };
+                                let count = list.iter().filter(|x| *x == target).count() as i64;
+                                NudgeVal::Int(count)
+                            }
+                            "list.min" => {
+                                let list = match args.first() {
+                                    Some(NudgeVal::List(l)) => l,
+                                    _ => {
+                                        return Err(
+                                            "'list.min' requires a list as first argument".into(),
+                                        )
+                                    }
+                                };
+                                if list.is_empty() {
+                                    NudgeVal::Unit
+                                } else {
+                                    let mut min_val = list[0].clone();
+                                    for item in &list[1..] {
+                                        match (&min_val, item) {
+                                            (NudgeVal::Int(a), NudgeVal::Int(b)) => if b < a { min_val = item.clone(); },
+                                            (NudgeVal::Float(a), NudgeVal::Float(b)) => if b < a { min_val = item.clone(); },
+                                            (NudgeVal::Int(a), NudgeVal::Float(b)) => if *b < (*a as f64) { min_val = item.clone(); },
+                                            (NudgeVal::Float(a), NudgeVal::Int(b)) => if (*b as f64) < *a { min_val = item.clone(); },
+                                            (NudgeVal::Str(a), NudgeVal::Str(b)) => if b < a { min_val = item.clone(); },
+                                            _ => {}
+                                        }
+                                    }
+                                    min_val
+                                }
+                            }
+                            "list.max" => {
+                                let list = match args.first() {
+                                    Some(NudgeVal::List(l)) => l,
+                                    _ => {
+                                        return Err(
+                                            "'list.max' requires a list as first argument".into(),
+                                        )
+                                    }
+                                };
+                                if list.is_empty() {
+                                    NudgeVal::Unit
+                                } else {
+                                    let mut max_val = list[0].clone();
+                                    for item in &list[1..] {
+                                        match (&max_val, item) {
+                                            (NudgeVal::Int(a), NudgeVal::Int(b)) => if b > a { max_val = item.clone(); },
+                                            (NudgeVal::Float(a), NudgeVal::Float(b)) => if b > a { max_val = item.clone(); },
+                                            (NudgeVal::Int(a), NudgeVal::Float(b)) => if *b > (*a as f64) { max_val = item.clone(); },
+                                            (NudgeVal::Float(a), NudgeVal::Int(b)) => if (*b as f64) > *a { max_val = item.clone(); },
+                                            (NudgeVal::Str(a), NudgeVal::Str(b)) => if b > a { max_val = item.clone(); },
+                                            _ => {}
+                                        }
+                                    }
+                                    max_val
+                                }
+                            }
                             other => return Err(format!("unsupported builtin '{other}'")),
                         };
                         self.stack.push(res);

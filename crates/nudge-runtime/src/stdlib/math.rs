@@ -91,6 +91,11 @@ pub fn register() -> HashMap<String, Value> {
     functions.insert("math.acos".to_string(), Value::Native("math.acos"));
     functions.insert("math.atan".to_string(), Value::Native("math.atan"));
     functions.insert("math.atan2".to_string(), Value::Native("math.atan2"));
+    functions.insert("math.hypot".to_string(), Value::Native("math.hypot"));
+    functions.insert("math.degrees".to_string(), Value::Native("math.degrees"));
+    functions.insert("math.radians".to_string(), Value::Native("math.radians"));
+    functions.insert("math.gcd".to_string(), Value::Native("math.gcd"));
+    functions.insert("math.lcm".to_string(), Value::Native("math.lcm"));
 
     // Random
     functions.insert("math.random".to_string(), Value::Native("math.random"));
@@ -394,6 +399,92 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 (Value::Int(y), Value::Float(x)) => Ok(Value::Float((*y as f64).atan2(*x))),
                 (Value::Float(y), Value::Int(x)) => Ok(Value::Float(y.atan2(*x as f64))),
                 _ => Err("math.atan2: arguments must be numbers".to_string()),
+            }
+        }
+
+        "math.hypot" => {
+            if args.len() != 2 {
+                return Err("math.hypot requires 2 arguments (x, y)".to_string());
+            }
+            let to_f = |v: &Value| match v {
+                Value::Float(f) => Some(*f),
+                Value::Int(i) => Some(*i as f64),
+                _ => None,
+            };
+            match (to_f(&args[0]), to_f(&args[1])) {
+                (Some(x), Some(y)) => Ok(Value::Float(x.hypot(y))),
+                _ => Err("math.hypot: arguments must be numbers".to_string()),
+            }
+        }
+
+        "math.degrees" => {
+            if args.len() != 1 {
+                return Err("math.degrees requires 1 argument (rad)".to_string());
+            }
+            match &args[0] {
+                Value::Float(rad) => Ok(Value::Float(rad.to_degrees())),
+                Value::Int(rad) => Ok(Value::Float((*rad as f64).to_degrees())),
+                _ => Err("math.degrees: argument must be a number".to_string()),
+            }
+        }
+
+        "math.radians" => {
+            if args.len() != 1 {
+                return Err("math.radians requires 1 argument (deg)".to_string());
+            }
+            match &args[0] {
+                Value::Float(deg) => Ok(Value::Float(deg.to_radians())),
+                Value::Int(deg) => Ok(Value::Float((*deg as f64).to_radians())),
+                _ => Err("math.radians: argument must be a number".to_string()),
+            }
+        }
+
+        "math.gcd" => {
+            if args.len() != 2 {
+                return Err("math.gcd requires 2 integer arguments".to_string());
+            }
+            match (&args[0], &args[1]) {
+                (Value::Int(a), Value::Int(b)) => {
+                    fn gcd(mut x: i64, mut y: i64) -> i64 {
+                        x = x.abs();
+                        y = y.abs();
+                        while y != 0 {
+                            let t = y;
+                            y = x % y;
+                            x = t;
+                        }
+                        x
+                    }
+                    Ok(Value::Int(gcd(*a, *b)))
+                }
+                _ => Err("math.gcd: arguments must be integers".to_string()),
+            }
+        }
+
+        "math.lcm" => {
+            if args.len() != 2 {
+                return Err("math.lcm requires 2 integer arguments".to_string());
+            }
+            match (&args[0], &args[1]) {
+                (Value::Int(a), Value::Int(b)) => {
+                    fn gcd(mut x: i64, mut y: i64) -> i64 {
+                        x = x.abs();
+                        y = y.abs();
+                        while y != 0 {
+                            let t = y;
+                            y = x % y;
+                            x = t;
+                        }
+                        x
+                    }
+                    if *a == 0 || *b == 0 {
+                        Ok(Value::Int(0))
+                    } else {
+                        let g = gcd(*a, *b);
+                        Ok(Value::Int((a.abs() / g) * b.abs()))
+                    }
+                }
+                _ => Err("math.lcm: arguments must be integers".to_string()),
             }
         }
 
