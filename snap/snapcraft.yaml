@@ -1,5 +1,5 @@
 name: nudge
-version: '1.2.1'
+version: '1.4.0'
 title: Nudge - Programming Language for LLM Agents
 summary: Typed, replayable, budget-aware programming language for LLM agents
 description: |
@@ -32,7 +32,7 @@ architectures:
 parts:
   nudge:
     plugin: dump
-    source: https://github.com/NekomyaDev/nudge/releases/download/v1.2.1/nudgec-v1.2.1-linux-x86_64.tar.gz
+    source: https://github.com/NekomyaDev/nudge/releases/download/v1.4.0/nudgec-v1.4.0-linux-x86_64.tar.gz
     source-checksum: sha256/0b05a3ac75c853cb80f5576f15059291ea05e4b83be12f6661d138b3fb476b65
     organize:
       nudgec: bin/nudgec

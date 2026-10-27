@@ -13,7 +13,7 @@ inputs:
     description: "Newline- or space-separated list of .ndg files (globs allowed)"
     required: true
   version:
-    description: "nudgec version to install (e.g. v1.2.1, or 'main'); default: latest per-platform release"
+    description: "nudgec version to install (e.g. v1.4.0, or 'main'); default: latest per-platform release"
     required: false
     default: ""
   trace-diff:

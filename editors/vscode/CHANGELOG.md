@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.0
+
+- Bump version to 1.4.0
+- Updated language support and diagnostics
+
 ## 1.2.1
 
 - Added document formatting provider powered by `nudgec fmt`.

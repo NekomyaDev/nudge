@@ -61,8 +61,7 @@ if [ "$VERSION_OVERRIDE" = "latest" ]; then
         VERSION_OVERRIDE=""
     fi
 fi
-# VERSION is set per-platform below: v1.2.1 assets currently ship for linux,
-# while macOS/Windows remain on the v1.2.0 release assets.
+# VERSION is set to v1.4.0 by default for all platforms.
 
 # Detect OS and architecture
 OS="$(uname -s)"
@@ -72,17 +71,17 @@ case "$OS" in
     Linux*)
         PLATFORM="linux"
         ARCHIVE="tar.gz"
-        VERSION="${VERSION_OVERRIDE:-v1.2.1}"
+        VERSION="${VERSION_OVERRIDE:-v1.4.0}"
         ;;
     Darwin*)
         PLATFORM="macos"
         ARCHIVE="tar.gz"
-        VERSION="${VERSION_OVERRIDE:-v1.2.0}"
+        VERSION="${VERSION_OVERRIDE:-v1.4.0}"
         ;;
     MINGW*|MSYS*|CYGWIN*)
         PLATFORM="windows"
         ARCHIVE="zip"
-        VERSION="${VERSION_OVERRIDE:-v1.2.0}"
+        VERSION="${VERSION_OVERRIDE:-v1.4.0}"
         ;;
     *)
         echo "Error: Unsupported OS: $OS"

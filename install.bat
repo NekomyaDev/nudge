@@ -7,7 +7,7 @@ color 0A
 
 echo.
 echo  ========================================
-echo     Nudge Installer v1.2.0
+echo     Nudge Installer v1.4.0
 echo  ========================================
 echo.
 echo  Installing Nudge programming language...
@@ -25,7 +25,7 @@ if %errorLevel% == 0 (
 )
 
 REM Download URL
-set VERSION=v1.2.0
+set VERSION=v1.4.0
 set URL=https://github.com/NekomyaDev/nudge/releases/download/%VERSION%/nudgec-%VERSION%-windows-x86_64.zip
 set INSTALL_DIR=C:\Program Files\Nudge
 set TMP_DIR=%TEMP%\nudge_install

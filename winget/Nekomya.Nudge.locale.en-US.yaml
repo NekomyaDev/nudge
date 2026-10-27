@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.5.0.schema.json
 
 PackageIdentifier: Nekomya.Nudge
-PackageVersion: 1.2.1
+PackageVersion: 1.4.0
 PackageLocale: en-US
 Publisher: Nekomya
 PublisherUrl: https://github.com/NekomyaDev

@@ -19,7 +19,7 @@ else
     FILENAME="nudgec-v1.4.0-macos-x86_64.tar.gz"
 fi
 
-URL="https://github.com/NekomyaDev/nudge/releases/download/v1.2.1/$FILENAME"
+URL="https://github.com/NekomyaDev/nudge/releases/download/v1.4.0/$FILENAME"
 
 # Download
 TMPDIR=$(mktemp -d)
@@ -36,4 +36,4 @@ sudo chmod +x /usr/local/bin/nudgec
 # Cleanup
 rm -rf "$TMPDIR"
 
-osascript -e 'display dialog "Nudge v1.2.1 installed successfully!\n\nRun \"nudgec --help\" in Terminal to get started." with title "Nudge Installer" buttons {"OK"}'
+osascript -e 'display dialog "Nudge v1.4.0 installed successfully!\n\nRun \"nudgec --help\" in Terminal to get started." with title "Nudge Installer" buttons {"OK"}'

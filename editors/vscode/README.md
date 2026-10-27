@@ -42,7 +42,7 @@ To step through a recorded trace (`.jsonl`), add a launch configuration in `.vsc
 ## Install from .vsix
 
 ```bash
-code --install-extension nudge-lang-1.2.1.vsix
+code --install-extension nudge-lang-1.4.0.vsix
 ```
 
 or: Extensions view → `...` → *Install from VSIX...*
