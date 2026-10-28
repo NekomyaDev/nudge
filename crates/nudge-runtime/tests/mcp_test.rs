@@ -255,6 +255,30 @@ fn test_mcp_crash_eviction_and_clean_restart() {
 }
 
 #[test]
+fn test_mcp_jsonrpc_framing_fuzz_never_panics() {
+    let mut rng = nudgec::fuzz::Rng(0x5EED_0009);
+    let fragments = [
+        "{\"jsonrpc\": \"2.0\", \"id\": 1, \"result\": {}}",
+        "Content-Length: 42\r\n\r\n",
+        "{\"error\": {\"code\": -32600, \"message\": \"invalid\"}}",
+        "\r\n\r\n",
+        "Content-Length: -1\r\n\r\n",
+        "{\"jsonrpc\": \"2.0\", \"method\": \"notifications/cancelled\"}",
+        "foo bar baz",
+    ];
+    for _ in 0..500 {
+        let mut msg = String::new();
+        let count = 1 + rng.below(5);
+        for _ in 0..count {
+            let idx = rng.below(fragments.len());
+            msg.push_str(fragments[idx]);
+        }
+        // Fuzz deserialization of arbitrary framing outputs
+        let _ = serde_json::from_str::<serde_json::Value>(&msg);
+    }
+}
+
+#[test]
 fn test_mcp_per_rpc_timeout_override() {
     let _guard = MCP_TEST_LOCK.lock().unwrap();
     let mock_bin = env!("CARGO_BIN_EXE_mock_mcp");

@@ -56,7 +56,10 @@ pub fn register() -> HashMap<String, Value> {
     functions.insert("str.is_digit".to_string(), Value::Native("str.is_digit"));
     functions.insert("str.is_alpha".to_string(), Value::Native("str.is_alpha"));
     functions.insert("str.is_empty".to_string(), Value::Native("str.is_empty"));
-    functions.insert("str.capitalize".to_string(), Value::Native("str.capitalize"));
+    functions.insert(
+        "str.capitalize".to_string(),
+        Value::Native("str.capitalize"),
+    );
     functions.insert("str.lines".to_string(), Value::Native("str.lines"));
 
     functions
@@ -509,7 +512,9 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 return Err("str.is_digit requires 1 argument (string)".to_string());
             }
             match &args[0] {
-                Value::String(s) => Ok(Value::Bool(!s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))),
+                Value::String(s) => Ok(Value::Bool(
+                    !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()),
+                )),
                 _ => Err("str.is_digit: argument must be a string".to_string()),
             }
         }
@@ -519,7 +524,9 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 return Err("str.is_alpha requires 1 argument (string)".to_string());
             }
             match &args[0] {
-                Value::String(s) => Ok(Value::Bool(!s.is_empty() && s.chars().all(|c| c.is_alphabetic()))),
+                Value::String(s) => Ok(Value::Bool(
+                    !s.is_empty() && s.chars().all(|c| c.is_alphabetic()),
+                )),
                 _ => Err("str.is_alpha: argument must be a string".to_string()),
             }
         }
@@ -543,7 +550,9 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                     let mut chars = s.chars();
                     let res = match chars.next() {
                         None => String::new(),
-                        Some(f) => f.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
+                        Some(f) => {
+                            f.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+                        }
                     };
                     Ok(Value::String(res))
                 }
@@ -557,7 +566,8 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             }
             match &args[0] {
                 Value::String(s) => {
-                    let lines: Vec<Value> = s.lines().map(|l| Value::String(l.to_string())).collect();
+                    let lines: Vec<Value> =
+                        s.lines().map(|l| Value::String(l.to_string())).collect();
                     Ok(Value::List(lines))
                 }
                 _ => Err("str.lines: argument must be a string".to_string()),

@@ -25,3 +25,11 @@ test "review identifies security issues" {
     assert t.output.score < 5.0
     assert t.cost_usd < 0.05
 }
+
+test "code review evaluates PR with structured scores" {
+    let t = replay("traces/review.jsonl")
+    assert t.output.score >= 0.0
+    assert t.output.score <= 10.0
+    assert len(t.output.summary) > 0
+    assert t.cost_usd >= 0.0
+}

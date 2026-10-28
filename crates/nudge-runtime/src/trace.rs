@@ -2061,4 +2061,32 @@ mod tests {
 
         let _ = std::fs::remove_file(&trace_path);
     }
+
+    #[test]
+    fn test_trace_emission_throughput() {
+        let _g = guard();
+        let trace_path = tmp("throughput_bench");
+        {
+            let mut writer = TraceWriter::open(&trace_path).expect("open writer");
+            let start = std::time::Instant::now();
+            for i in 0..5_000 {
+                writer
+                    .emit(json!({
+                        "kind": "step_start",
+                        "agent": "worker",
+                        "step": i,
+                        "status": "ok",
+                    }))
+                    .expect("emit");
+            }
+            writer.flush().expect("flush");
+            let elapsed = start.elapsed();
+            assert!(
+                elapsed.as_secs() < 2,
+                "5000 trace emissions took too long: {:?}",
+                elapsed
+            );
+        }
+        let _ = std::fs::remove_file(&trace_path);
+    }
 }

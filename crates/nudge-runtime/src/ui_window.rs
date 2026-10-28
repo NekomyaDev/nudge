@@ -705,6 +705,46 @@ pub fn draw_rect_alpha(
 }
 
 #[allow(clippy::too_many_arguments)]
+pub fn draw_rect_alpha_clipped(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    clip: Option<Rect>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    color: u32,
+    alpha: f32,
+) {
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    if let Some(c) = clip {
+        if let Some(r) = intersect(Rect { x, y, w, h }, c) {
+            draw_rect_alpha(buf, stride, height, r.x, r.y, r.w, r.h, color, alpha);
+        }
+    } else {
+        draw_rect_alpha(buf, stride, height, x, y, w, h, color, alpha);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn draw_rect_clipped(
+    buf: &mut [u32],
+    stride: usize,
+    height: usize,
+    clip: Option<Rect>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    color: u32,
+) {
+    draw_rect_alpha_clipped(buf, stride, height, clip, x, y, w, h, color, 1.0);
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn draw_rect_outline(
     buf: &mut [u32],
     stride: usize,
@@ -4323,10 +4363,11 @@ pub fn draw_breeze_folder_icon(
     );
 
     // Subtle dark opening slit
-    draw_rect_alpha(
+    draw_rect_alpha_clipped(
         buf,
         stride,
         height,
+        clip,
         x + 3,
         body_top + 2,
         (w - 6).max(1),
@@ -4560,9 +4601,9 @@ pub fn draw_code_thumbnail_card(
         editor_border,
     );
 
-    draw_rect(buf, stride, height, x + 4, y + 4, 3, 3, 0xFFE0_6C75);
-    draw_rect(buf, stride, height, x + 9, y + 4, 3, 3, 0xFFE5_C07B);
-    draw_rect(buf, stride, height, x + 14, y + 4, 3, 3, 0xFF98_C379);
+    draw_rect_clipped(buf, stride, height, clip, x + 4, y + 4, 3, 3, 0xFFE0_6C75);
+    draw_rect_clipped(buf, stride, height, clip, x + 9, y + 4, 3, 3, 0xFFE5_C07B);
+    draw_rect_clipped(buf, stride, height, clip, x + 14, y + 4, 3, 3, 0xFF98_C379);
 
     let code_colors = [0xFFC6_78DD, 0xFF61_AFEF, 0xFFE5_C07B, 0xFF98_C379];
     let start_y = y + 11;
@@ -4673,10 +4714,11 @@ pub fn draw_audio_thumbnail_card(
         0xFFBE_2EED,
     );
 
-    draw_rect(
+    draw_rect_clipped(
         buf,
         stride,
         height,
+        clip,
         center_x - 1,
         center_y - 1,
         2,
@@ -4718,8 +4760,18 @@ pub fn draw_video_thumbnail_card(
     for i in 0..4 {
         let hole_y = y + 4 + i * 8;
         if hole_y + 4 < y + h - 2 {
-            draw_rect(buf, stride, height, x + 2, hole_y, 2, 4, 0xFFFF_FFFF);
-            draw_rect(buf, stride, height, x + w - 4, hole_y, 2, 4, 0xFFFF_FFFF);
+            draw_rect_clipped(buf, stride, height, clip, x + 2, hole_y, 2, 4, 0xFFFF_FFFF);
+            draw_rect_clipped(
+                buf,
+                stride,
+                height,
+                clip,
+                x + w - 4,
+                hole_y,
+                2,
+                4,
+                0xFFFF_FFFF,
+            );
         }
     }
 
@@ -4745,10 +4797,11 @@ pub fn draw_video_thumbnail_card(
     let play_y = scr_y + scr_h / 2 - 5;
     for dy in 0..10 {
         let span = if dy <= 5 { dy + 1 } else { 10 - dy };
-        draw_rect(
+        draw_rect_clipped(
             buf,
             stride,
             height,
+            clip,
             play_x,
             play_y + dy,
             span,
@@ -4777,12 +4830,22 @@ pub fn draw_archive_thumbnail_card(
     draw_rounded_rect_box_clipped(buf, stride, height, clip, x, y, w, h, 3, box_bg, box_border);
 
     let zip_x = x + w / 2 - 3;
-    draw_rect(buf, stride, height, zip_x, y + 2, 6, h - 4, 0xFF2C_3E50);
+    draw_rect_clipped(
+        buf,
+        stride,
+        height,
+        clip,
+        zip_x,
+        y + 2,
+        6,
+        h - 4,
+        0xFF2C_3E50,
+    );
 
     for i in 0..(h - 8) / 4 {
         let zy = y + 4 + i * 4;
         let tooth_x = if i % 2 == 0 { zip_x } else { zip_x + 3 };
-        draw_rect(buf, stride, height, tooth_x, zy, 3, 2, 0xFFBD_C3C7);
+        draw_rect_clipped(buf, stride, height, clip, tooth_x, zy, 3, 2, 0xFFBD_C3C7);
     }
 }
 
@@ -5546,6 +5609,11 @@ pub fn layout_element_ctx(
                 .get("width")
                 .or_else(|| elem.props.get("w"))
                 .and_then(|s| s.parse::<i32>().ok());
+            let explicit_h = elem
+                .props
+                .get("height")
+                .or_else(|| elem.props.get("h"))
+                .and_then(|s| s.parse::<i32>().ok());
 
             let start_box_idx = boxes.len();
             let mut child_y = y + padding;
@@ -5572,7 +5640,11 @@ pub fn layout_element_ctx(
                     })
                     .sum();
                 let saved_max_h = ctx.max_h;
-                ctx.max_h = (ctx.max_h - subsequent_h).max(y + padding + 60);
+                if let Some(eh) = explicit_h {
+                    ctx.max_h = (y + eh - subsequent_h).max(child_y + 20);
+                } else {
+                    ctx.max_h = (ctx.max_h - subsequent_h).max(y + padding + 60);
+                }
                 let col_avail_w = explicit_w.unwrap_or(max_w) - 2 * padding;
                 let (cw, ch) = layout_element_ctx(
                     child,
@@ -5598,11 +5670,6 @@ pub fn layout_element_ctx(
                 .props
                 .get("width")
                 .or_else(|| elem.props.get("w"))
-                .and_then(|s| s.parse::<i32>().ok());
-            let explicit_h = elem
-                .props
-                .get("height")
-                .or_else(|| elem.props.get("h"))
                 .and_then(|s| s.parse::<i32>().ok());
             let total_w = if let Some(ew) = explicit_w {
                 ew
@@ -6209,7 +6276,14 @@ pub fn layout_element_ctx(
                 .get("height")
                 .or_else(|| elem.props.get("h"))
                 .and_then(|s| s.parse::<i32>().ok());
-            let w = explicit_w.unwrap_or(220.max(max_line_len * CELL_W + 24));
+            let expand = elem.props.get("expand").is_some_and(|v| v == "true");
+            let w = if let Some(ew) = explicit_w {
+                ew
+            } else if expand {
+                max_w
+            } else {
+                220.max(max_line_len * CELL_W + 24)
+            };
             let h = explicit_h.unwrap_or((CELL_H + 16).max(lines * CELL_H + 16));
             boxes.push(LayoutBox {
                 rect: Rect { x, y, w, h },
@@ -6395,7 +6469,12 @@ pub fn layout_element_ctx(
             } else {
                 FLAG_GAP + label.chars().count() as i32 * CELL_W + 8
             };
-            let w = PROGRESS_TRACK_W + text_w;
+            let explicit_w = elem
+                .props
+                .get("width")
+                .or_else(|| elem.props.get("w"))
+                .and_then(|s| s.parse::<i32>().ok());
+            let w = explicit_w.unwrap_or(PROGRESS_TRACK_W + text_w);
             let h = PROGRESS_H;
             let min: f64 = elem
                 .props
@@ -7345,6 +7424,11 @@ pub struct NativeApp<D: UiDispatcher> {
     pub dirty_rect: Option<Rect>,
     /// Sidebar visibility state (Section 5.4).
     pub sidebar_open: bool,
+    /// Target and animated zoom scale percentage (Issue #262).
+    pub target_zoom_pct: f32,
+    pub current_zoom_pct: f32,
+    /// Watch-Only Jarvis HUD overlay mode (RFC-2026-SOVEREIGN-HUD).
+    pub hud_mode: bool,
 }
 
 impl<D: UiDispatcher> NativeApp<D> {
@@ -7410,6 +7494,9 @@ impl<D: UiDispatcher> NativeApp<D> {
             async_state: AsyncExecutionState::default(),
             dirty_rect: None,
             sidebar_open: true,
+            target_zoom_pct: 100.0,
+            current_zoom_pct: 100.0,
+            hud_mode: false,
         }
     }
 
@@ -7998,6 +8085,21 @@ impl<D: UiDispatcher> NativeApp<D> {
         };
         self.render();
         res
+    }
+
+    /// Sets target zoom percentage with animated convergence (Issue #262).
+    pub fn set_zoom_target(&mut self, target_pct: f32) {
+        self.target_zoom_pct = target_pct.clamp(50.0, 300.0);
+    }
+
+    /// Steps zoom animation towards target zoom percentage.
+    pub fn step_zoom_animation(&mut self, factor: f32) {
+        let diff = self.target_zoom_pct - self.current_zoom_pct;
+        if diff.abs() > 0.1 {
+            self.current_zoom_pct += diff * factor.clamp(0.0, 1.0);
+        } else {
+            self.current_zoom_pct = self.target_zoom_pct;
+        }
     }
 
     // =========================================================================
@@ -8658,6 +8760,9 @@ impl<D: UiDispatcher> NativeApp<D> {
 
     /// Both window scrollbars against the current layout.
     fn scrollbar_geometry(&self) -> ScrollbarGeometry {
+        if !self.scroll_regions.is_empty() {
+            return ScrollbarGeometry::default();
+        }
         ScrollbarGeometry::resolve(
             self.width as i32,
             self.height as i32,
@@ -9743,14 +9848,35 @@ impl<D: UiDispatcher> NativeApp<D> {
                             };
                             if let Some(tc) = text_clip {
                                 let w1 = self.fonts.measure_width(FaceKind::Ui, line1);
-                                let tx1 = rx + ((lbox.rect.w - w1) / 2).max(4);
+                                let max_text_w = (lbox.rect.w - 12).max(20);
+                                let display_line1 = if w1 > max_text_w {
+                                    let mut truncated = String::new();
+                                    for ch in line1.chars() {
+                                        let candidate = format!("{truncated}{ch}…");
+                                        if self.fonts.measure_width(FaceKind::Ui, &candidate)
+                                            > max_text_w
+                                        {
+                                            break;
+                                        }
+                                        truncated.push(ch);
+                                    }
+                                    if truncated.is_empty() {
+                                        line1.chars().take(4).collect::<String>()
+                                    } else {
+                                        format!("{truncated}…")
+                                    }
+                                } else {
+                                    line1.to_string()
+                                };
+                                let dw1 = self.fonts.measure_width(FaceKind::Ui, &display_line1);
+                                let tx1 = rx + ((lbox.rect.w - dw1) / 2).max(4);
                                 let ty1 = ry + 54;
                                 draw_text_ttf_clipped(
                                     &self.fonts,
                                     FaceKind::Ui,
                                     tx1,
                                     ty1,
-                                    line1,
+                                    &display_line1,
                                     tc,
                                     |px, py, w, h, cov| {
                                         draw_rect_alpha(
@@ -9769,7 +9895,7 @@ impl<D: UiDispatcher> NativeApp<D> {
                                 if !line2.is_empty() {
                                     let w2 = self.fonts.measure_width(FaceKind::Ui, line2);
                                     let tx2 = rx + ((lbox.rect.w - w2) / 2).max(4);
-                                    let ty2 = ry + 70;
+                                    let ty2 = ry + 74;
                                     let sub_color = if is_selected {
                                         0xFFEE_F2F5
                                     } else {
@@ -9889,10 +10015,15 @@ impl<D: UiDispatcher> NativeApp<D> {
                     }
 
                     let (display_text, cursor_opt, selection_opt) = if let Some(ref id) = lbox.id {
-                        if let Some(st) = self.text_inputs.get(id) {
+                        let lbox_text = lbox.text.clone().unwrap_or_default();
+                        if let Some(st) = self.text_inputs.get_mut(id) {
+                            if lbox_text.is_empty() && !st.text.is_empty() {
+                                st.text.clear();
+                                st.cursor = 0;
+                            }
                             (st.text.clone(), Some(st.cursor), st.selection_range())
                         } else {
-                            (lbox.text.clone().unwrap_or_default(), None, None)
+                            (lbox_text, None, None)
                         }
                     } else {
                         (lbox.text.clone().unwrap_or_default(), None, None)
@@ -10370,10 +10501,22 @@ impl<D: UiDispatcher> NativeApp<D> {
                     let Some(spec) = lbox.slider else {
                         continue;
                     };
+                    let track_w = lbox
+                        .props
+                        .get("width")
+                        .or_else(|| lbox.props.get("w"))
+                        .and_then(|s| s.parse::<i32>().ok())
+                        .unwrap_or_else(|| {
+                            if lbox.text.is_some() {
+                                (lbox.rect.w - 60).max(40)
+                            } else {
+                                lbox.rect.w.min(PROGRESS_TRACK_W)
+                            }
+                        });
                     let track_r = Rect {
                         x: rx,
                         y: ry + ((lbox.rect.h - PROGRESS_TRACK_H) / 2).max(0),
-                        w: PROGRESS_TRACK_W,
+                        w: track_w,
                         h: PROGRESS_TRACK_H,
                     };
                     draw_progress_control(
@@ -11157,12 +11300,8 @@ impl<D: UiDispatcher> NativeApp<D> {
                 6,
                 track_h,
                 3,
-                if theme.is_dark() {
-                    0x1A00_0000
-                } else {
-                    0x1000_0000
-                },
-                0x0000_0000,
+                theme.scrollbar_track,
+                theme.scrollbar_track,
             );
             // Draw rounded thumb
             let thumb_col = if is_dragging {
@@ -11412,6 +11551,14 @@ impl<D: UiDispatcher> NativeApp<D> {
                 my,
                 &tip,
             );
+        }
+
+        if self.hud_mode || std::env::var("NUDGE_HUD").as_deref() == Ok("1") {
+            let _ = crate::jarvis_hud::with_hud(|h| {
+                h.advance_tick();
+                h.render_to_u32_buffer(&mut buffer, stride, h_usize);
+                Ok(())
+            });
         }
 
         self.last_frame = buffer.to_vec();
@@ -12139,7 +12286,7 @@ impl<D: UiDispatcher> NativeApp<D> {
                         }
                     }
                     Key::Named(NamedKey::ArrowDown) => {
-                        if !focusable_ids.is_empty() {
+                        if self.scroll_regions.is_empty() && !focusable_ids.is_empty() {
                             let curr_pos = focusable_ids.iter().position(|id| id == focused_id);
                             let next_idx = match curr_pos {
                                 Some(pos) => (pos + 1) % focusable_ids.len(),
@@ -12151,7 +12298,7 @@ impl<D: UiDispatcher> NativeApp<D> {
                         }
                     }
                     Key::Named(NamedKey::ArrowUp) => {
-                        if !focusable_ids.is_empty() {
+                        if self.scroll_regions.is_empty() && !focusable_ids.is_empty() {
                             let curr_pos = focusable_ids.iter().position(|id| id == focused_id);
                             let prev_idx = match curr_pos {
                                 Some(pos) => {
@@ -12227,273 +12374,276 @@ impl<D: UiDispatcher> NativeApp<D> {
                 }
             }
 
-            let initial = lbox
-                .as_ref()
-                .and_then(|b| b.text.as_deref())
-                .unwrap_or_default();
-            let on_change = lbox.as_ref().and_then(|b| b.on_change.clone());
-            let on_key = lbox.as_ref().and_then(|b| b.on_key.clone());
+            if tag == "input" {
+                let initial = lbox
+                    .as_ref()
+                    .and_then(|b| b.text.as_deref())
+                    .unwrap_or_default();
+                let on_change = lbox.as_ref().and_then(|b| b.on_change.clone());
+                let on_key = lbox.as_ref().and_then(|b| b.on_key.clone());
 
-            let mut value_changed = false;
-            let mut key_name = String::new();
-            let shift = self.shift_pressed;
+                let mut value_changed = false;
+                let mut key_name = String::new();
+                let shift = self.shift_pressed;
 
-            if self.ctrl_pressed {
-                match logical_key {
-                    Key::Character(s) if s.eq_ignore_ascii_case("a") => {
-                        let st = self.ensure_input_state(focused_id, initial);
-                        st.select_all();
-                        self.render();
-                        return;
-                    }
-                    Key::Character(s) if s.eq_ignore_ascii_case("c") => {
-                        let st = self.ensure_input_state(focused_id, initial);
-                        if let Some(copied) = st.copy() {
-                            self.clipboard = copied;
-                        }
-                        return;
-                    }
-                    Key::Character(s) if s.eq_ignore_ascii_case("x") => {
-                        let st = self.ensure_input_state(focused_id, initial);
-                        if let Some(cut_text) = st.cut() {
-                            self.clipboard = cut_text;
-                            value_changed = true;
-                        }
-                    }
-                    Key::Character(s) if s.eq_ignore_ascii_case("v") => {
-                        if !self.clipboard.is_empty() {
-                            let clip = normalize_rich_text_paste(&self.clipboard);
+                if self.ctrl_pressed {
+                    match logical_key {
+                        Key::Character(s) if s.eq_ignore_ascii_case("a") => {
                             let st = self.ensure_input_state(focused_id, initial);
-                            st.paste(&clip);
-                            value_changed = true;
+                            st.select_all();
+                            self.render();
+                            return;
                         }
-                    }
-                    Key::Character(s) if s.eq_ignore_ascii_case("z") => {
-                        let st = self.ensure_input_state(focused_id, initial);
-                        if shift {
+                        Key::Character(s) if s.eq_ignore_ascii_case("c") => {
+                            let st = self.ensure_input_state(focused_id, initial);
+                            if let Some(copied) = st.copy() {
+                                self.clipboard = copied;
+                            }
+                            return;
+                        }
+                        Key::Character(s) if s.eq_ignore_ascii_case("x") => {
+                            let st = self.ensure_input_state(focused_id, initial);
+                            if let Some(cut_text) = st.cut() {
+                                self.clipboard = cut_text;
+                                value_changed = true;
+                            }
+                        }
+                        Key::Character(s) if s.eq_ignore_ascii_case("v") => {
+                            if !self.clipboard.is_empty() {
+                                let clip = normalize_rich_text_paste(&self.clipboard);
+                                let st = self.ensure_input_state(focused_id, initial);
+                                st.paste(&clip);
+                                value_changed = true;
+                            }
+                        }
+                        Key::Character(s) if s.eq_ignore_ascii_case("z") => {
+                            let st = self.ensure_input_state(focused_id, initial);
+                            if shift {
+                                st.redo();
+                                value_changed = true;
+                                key_name = "Redo".into();
+                            } else {
+                                st.undo();
+                                value_changed = true;
+                                key_name = "Undo".into();
+                            }
+                        }
+                        Key::Character(s) if s.eq_ignore_ascii_case("y") => {
+                            let st = self.ensure_input_state(focused_id, initial);
                             st.redo();
                             value_changed = true;
                             key_name = "Redo".into();
-                        } else {
-                            st.undo();
-                            value_changed = true;
-                            key_name = "Undo".into();
                         }
-                    }
-                    Key::Character(s) if s.eq_ignore_ascii_case("y") => {
-                        let st = self.ensure_input_state(focused_id, initial);
-                        st.redo();
-                        value_changed = true;
-                        key_name = "Redo".into();
-                    }
-                    Key::Named(NamedKey::Home) => {
-                        let st = self.ensure_input_state(focused_id, initial);
-                        st.move_doc_start(shift);
-                        key_name = "Home".to_string();
-                    }
-                    Key::Named(NamedKey::End) => {
-                        let st = self.ensure_input_state(focused_id, initial);
-                        st.move_doc_end(shift);
-                        key_name = "End".to_string();
-                    }
-                    Key::Named(NamedKey::F1)
-                    | Key::Named(NamedKey::F2)
-                    | Key::Named(NamedKey::F3)
-                    | Key::Named(NamedKey::F4)
-                    | Key::Named(NamedKey::F5)
-                    | Key::Named(NamedKey::F6)
-                    | Key::Named(NamedKey::F7)
-                    | Key::Named(NamedKey::F8)
-                    | Key::Named(NamedKey::F9)
-                    | Key::Named(NamedKey::F10)
-                    | Key::Named(NamedKey::F11)
-                    | Key::Named(NamedKey::F12) => {
-                        let f_name = match logical_key {
-                            Key::Named(NamedKey::F1) => "F1",
-                            Key::Named(NamedKey::F2) => "F2",
-                            Key::Named(NamedKey::F3) => "F3",
-                            Key::Named(NamedKey::F4) => "F4",
-                            Key::Named(NamedKey::F5) => "F5",
-                            Key::Named(NamedKey::F6) => "F6",
-                            Key::Named(NamedKey::F7) => "F7",
-                            Key::Named(NamedKey::F8) => "F8",
-                            Key::Named(NamedKey::F9) => "F9",
-                            Key::Named(NamedKey::F10) => "F10",
-                            Key::Named(NamedKey::F11) => "F11",
-                            Key::Named(NamedKey::F12) => "F12",
-                            _ => "",
-                        };
-                        self.dispatcher.dispatch_key(f_name, None);
-                        self.render();
-                        return;
-                    }
-                    Key::Character(s)
-                        if s.eq_ignore_ascii_case("k")
-                            || s.eq_ignore_ascii_case("b")
-                            || s.eq_ignore_ascii_case("h")
-                            || s.eq_ignore_ascii_case("t")
-                            || s.eq_ignore_ascii_case("w")
-                            || s.eq_ignore_ascii_case("l")
-                            || s.eq_ignore_ascii_case("f")
-                            || s == "/" =>
-                    {
-                        // Global shortcuts take precedence even when focused in input
-                        if s.eq_ignore_ascii_case("k") {
-                            if self.command_palette.is_some() {
-                                self.command_palette = None;
-                            } else {
-                                self.command_palette = Some(CommandPaletteState::default());
-                            }
-                        }
-                        let chord = format!("Ctrl+{s}");
-                        self.dispatcher.dispatch_key(&chord, None);
-                        self.render();
-                        return;
-                    }
-                    _ => {}
-                }
-            } else {
-                match logical_key {
-                    Key::Named(NamedKey::ArrowLeft) => {
-                        let st = self.ensure_input_state(focused_id, initial);
-                        st.move_left(shift);
-                        key_name = "ArrowLeft".to_string();
-                    }
-                    Key::Named(NamedKey::ArrowRight) => {
-                        let st = self.ensure_input_state(focused_id, initial);
-                        st.move_right(shift);
-                        key_name = "ArrowRight".to_string();
-                    }
-                    Key::Named(NamedKey::ArrowUp) => {
-                        let st = self.ensure_input_state(focused_id, initial);
-                        st.move_up(shift);
-                        key_name = "ArrowUp".to_string();
-                    }
-                    Key::Named(NamedKey::ArrowDown) => {
-                        let st = self.ensure_input_state(focused_id, initial);
-                        st.move_down(shift);
-                        key_name = "ArrowDown".to_string();
-                    }
-                    Key::Named(NamedKey::Home) => {
-                        let st = self.ensure_input_state(focused_id, initial);
-                        st.move_home(shift);
-                        key_name = "Home".to_string();
-                    }
-                    Key::Named(NamedKey::End) => {
-                        let st = self.ensure_input_state(focused_id, initial);
-                        st.move_end(shift);
-                        key_name = "End".to_string();
-                    }
-                    Key::Named(NamedKey::Backspace) => {
-                        let st = self.ensure_input_state(focused_id, initial);
-                        value_changed = st.backspace();
-                        key_name = "Backspace".to_string();
-                    }
-                    Key::Named(NamedKey::Delete) => {
-                        let st = self.ensure_input_state(focused_id, initial);
-                        value_changed = st.delete();
-                        key_name = "Delete".to_string();
-                    }
-                    Key::Named(NamedKey::Enter) => {
-                        let is_multiline = lbox
-                            .as_ref()
-                            .and_then(|b| b.text.as_ref())
-                            .map(|t| t.contains('\n'))
-                            .unwrap_or(false)
-                            || shift;
-                        if is_multiline {
+                        Key::Named(NamedKey::Home) => {
                             let st = self.ensure_input_state(focused_id, initial);
-                            st.insert_newline();
-                            value_changed = true;
+                            st.move_doc_start(shift);
+                            key_name = "Home".to_string();
                         }
-                        key_name = "Enter".to_string();
-                    }
-                    Key::Named(NamedKey::Escape) => {
-                        key_name = "Escape".to_string();
-                        self.focused_id = None;
-                    }
-                    Key::Named(NamedKey::Tab) => {
-                        key_name = "Tab".to_string();
-                        let focusable_ids: Vec<String> = self
-                            .layout_boxes
-                            .iter()
-                            .filter(|b| {
-                                !b.disabled
-                                    && (b.tag == "input"
-                                        || b.tag == "button"
-                                        || b.tag == "select"
-                                        || b.tag == "slider"
-                                        || matches!(b.tag.as_str(), "checkbox" | "toggle"))
-                                    && b.id.is_some()
-                            })
-                            .filter_map(|b| b.id.clone())
-                            .collect();
-                        if !focusable_ids.is_empty() {
-                            let curr_pos = focusable_ids.iter().position(|id| id == focused_id);
-                            let next_idx = if self.shift_pressed {
-                                match curr_pos {
-                                    Some(pos) => {
-                                        if pos == 0 {
-                                            focusable_ids.len().saturating_sub(1)
-                                        } else {
-                                            pos - 1
-                                        }
-                                    }
-                                    None => 0,
-                                }
-                            } else {
-                                match curr_pos {
-                                    Some(pos) => (pos + 1) % focusable_ids.len(),
-                                    None => 0,
-                                }
+                        Key::Named(NamedKey::End) => {
+                            let st = self.ensure_input_state(focused_id, initial);
+                            st.move_doc_end(shift);
+                            key_name = "End".to_string();
+                        }
+                        Key::Named(NamedKey::F1)
+                        | Key::Named(NamedKey::F2)
+                        | Key::Named(NamedKey::F3)
+                        | Key::Named(NamedKey::F4)
+                        | Key::Named(NamedKey::F5)
+                        | Key::Named(NamedKey::F6)
+                        | Key::Named(NamedKey::F7)
+                        | Key::Named(NamedKey::F8)
+                        | Key::Named(NamedKey::F9)
+                        | Key::Named(NamedKey::F10)
+                        | Key::Named(NamedKey::F11)
+                        | Key::Named(NamedKey::F12) => {
+                            let f_name = match logical_key {
+                                Key::Named(NamedKey::F1) => "F1",
+                                Key::Named(NamedKey::F2) => "F2",
+                                Key::Named(NamedKey::F3) => "F3",
+                                Key::Named(NamedKey::F4) => "F4",
+                                Key::Named(NamedKey::F5) => "F5",
+                                Key::Named(NamedKey::F6) => "F6",
+                                Key::Named(NamedKey::F7) => "F7",
+                                Key::Named(NamedKey::F8) => "F8",
+                                Key::Named(NamedKey::F9) => "F9",
+                                Key::Named(NamedKey::F10) => "F10",
+                                Key::Named(NamedKey::F11) => "F11",
+                                Key::Named(NamedKey::F12) => "F12",
+                                _ => "",
                             };
-                            self.focused_id = Some(focusable_ids[next_idx].clone());
+                            self.dispatcher.dispatch_key(f_name, None);
+                            self.render();
+                            return;
                         }
-                    }
-                    _ => {
-                        if let Some(txt) = typed_text {
-                            if !txt.chars().any(|c| c.is_control()) && !txt.is_empty() {
-                                let st = self.ensure_input_state(focused_id, initial);
-                                st.insert_str(txt);
-                                value_changed = true;
-                                key_name = txt.to_string();
+                        Key::Character(s)
+                            if s.eq_ignore_ascii_case("k")
+                                || s.eq_ignore_ascii_case("b")
+                                || s.eq_ignore_ascii_case("h")
+                                || s.eq_ignore_ascii_case("t")
+                                || s.eq_ignore_ascii_case("w")
+                                || s.eq_ignore_ascii_case("l")
+                                || s.eq_ignore_ascii_case("f")
+                                || s == "/" =>
+                        {
+                            // Global shortcuts take precedence even when focused in input
+                            if s.eq_ignore_ascii_case("k") {
+                                if self.command_palette.is_some() {
+                                    self.command_palette = None;
+                                } else {
+                                    self.command_palette = Some(CommandPaletteState::default());
+                                }
                             }
-                        } else if let Key::Character(s) = logical_key {
-                            if !s.chars().any(|c| c.is_control()) && !s.is_empty() {
-                                let st = self.ensure_input_state(focused_id, initial);
-                                st.insert_str(s.as_str());
-                                value_changed = true;
-                                key_name = s.to_string();
-                            }
+                            let chord = format!("Ctrl+{s}");
+                            self.dispatcher.dispatch_key(&chord, None);
+                            self.render();
+                            return;
                         }
+                        _ => {}
                     }
-                }
-            }
-
-            if value_changed {
-                let new_text = self
-                    .text_inputs
-                    .get(focused_id)
-                    .map(|st| st.text.clone())
-                    .unwrap_or_default();
-                if on_change.is_some() {
-                    self.dispatcher.dispatch_change(focused_id, &new_text);
-                }
-            }
-
-            if !key_name.is_empty() {
-                let chord = if self.ctrl_pressed {
-                    format!("Ctrl+{key_name}")
                 } else {
-                    key_name
-                };
-                if on_key.is_some() {
-                    self.dispatcher.dispatch_key(&chord, Some(focused_id));
+                    match logical_key {
+                        Key::Named(NamedKey::ArrowLeft) => {
+                            let st = self.ensure_input_state(focused_id, initial);
+                            st.move_left(shift);
+                            key_name = "ArrowLeft".to_string();
+                        }
+                        Key::Named(NamedKey::ArrowRight) => {
+                            let st = self.ensure_input_state(focused_id, initial);
+                            st.move_right(shift);
+                            key_name = "ArrowRight".to_string();
+                        }
+                        Key::Named(NamedKey::ArrowUp) => {
+                            let st = self.ensure_input_state(focused_id, initial);
+                            st.move_up(shift);
+                            key_name = "ArrowUp".to_string();
+                        }
+                        Key::Named(NamedKey::ArrowDown) => {
+                            let st = self.ensure_input_state(focused_id, initial);
+                            st.move_down(shift);
+                            key_name = "ArrowDown".to_string();
+                        }
+                        Key::Named(NamedKey::Home) => {
+                            let st = self.ensure_input_state(focused_id, initial);
+                            st.move_home(shift);
+                            key_name = "Home".to_string();
+                        }
+                        Key::Named(NamedKey::End) => {
+                            let st = self.ensure_input_state(focused_id, initial);
+                            st.move_end(shift);
+                            key_name = "End".to_string();
+                        }
+                        Key::Named(NamedKey::Backspace) => {
+                            let st = self.ensure_input_state(focused_id, initial);
+                            value_changed = st.backspace();
+                            key_name = "Backspace".to_string();
+                        }
+                        Key::Named(NamedKey::Delete) => {
+                            let st = self.ensure_input_state(focused_id, initial);
+                            value_changed = st.delete();
+                            key_name = "Delete".to_string();
+                        }
+                        Key::Named(NamedKey::Enter) => {
+                            let is_multiline = lbox
+                                .as_ref()
+                                .and_then(|b| b.text.as_ref())
+                                .map(|t| t.contains('\n'))
+                                .unwrap_or(false)
+                                || shift;
+                            if is_multiline {
+                                let st = self.ensure_input_state(focused_id, initial);
+                                st.insert_newline();
+                                value_changed = true;
+                            }
+                            key_name = "Enter".to_string();
+                        }
+                        Key::Named(NamedKey::Escape) => {
+                            key_name = "Escape".to_string();
+                            self.focused_id = None;
+                        }
+                        Key::Named(NamedKey::Tab) => {
+                            key_name = "Tab".to_string();
+                            let focusable_ids: Vec<String> = self
+                                .layout_boxes
+                                .iter()
+                                .filter(|b| {
+                                    !b.disabled
+                                        && (b.tag == "input"
+                                            || b.tag == "button"
+                                            || b.tag == "select"
+                                            || b.tag == "slider"
+                                            || matches!(b.tag.as_str(), "checkbox" | "toggle"))
+                                        && b.id.is_some()
+                                })
+                                .filter_map(|b| b.id.clone())
+                                .collect();
+                            if !focusable_ids.is_empty() {
+                                let curr_pos = focusable_ids.iter().position(|id| id == focused_id);
+                                let next_idx = if self.shift_pressed {
+                                    match curr_pos {
+                                        Some(pos) => {
+                                            if pos == 0 {
+                                                focusable_ids.len().saturating_sub(1)
+                                            } else {
+                                                pos - 1
+                                            }
+                                        }
+                                        None => 0,
+                                    }
+                                } else {
+                                    match curr_pos {
+                                        Some(pos) => (pos + 1) % focusable_ids.len(),
+                                        None => 0,
+                                    }
+                                };
+                                self.focused_id = Some(focusable_ids[next_idx].clone());
+                            }
+                        }
+                        _ => {
+                            if let Some(txt) = typed_text {
+                                if !txt.chars().any(|c| c.is_control()) && !txt.is_empty() {
+                                    let st = self.ensure_input_state(focused_id, initial);
+                                    st.insert_str(txt);
+                                    value_changed = true;
+                                    key_name = txt.to_string();
+                                }
+                            } else if let Key::Character(s) = logical_key {
+                                if !s.chars().any(|c| c.is_control()) && !s.is_empty() {
+                                    let st = self.ensure_input_state(focused_id, initial);
+                                    st.insert_str(s.as_str());
+                                    value_changed = true;
+                                    key_name = s.to_string();
+                                }
+                            }
+                        }
+                    }
                 }
-            }
 
-            self.render();
-            return;
+                if value_changed {
+                    let new_text = self
+                        .text_inputs
+                        .get(focused_id)
+                        .map(|st| st.text.clone())
+                        .unwrap_or_default();
+                    if on_change.is_some() {
+                        self.dispatcher.dispatch_change(focused_id, &new_text);
+                    }
+                }
+
+                if !key_name.is_empty() {
+                    let is_enter_or_esc = key_name == "Enter" || key_name == "Escape";
+                    let chord = if self.ctrl_pressed {
+                        format!("Ctrl+{key_name}")
+                    } else {
+                        key_name
+                    };
+                    if on_key.is_some() || is_enter_or_esc {
+                        self.dispatcher.dispatch_key(&chord, Some(focused_id));
+                    }
+                }
+
+                self.render();
+                return;
+            }
         }
 
         let mut handled_scroll = false;
@@ -12670,6 +12820,13 @@ impl<D: UiDispatcher> NativeApp<D> {
                 }
             } else if chord == "Ctrl+l" || chord == "Ctrl+L" {
                 self.toggle_locale();
+            } else if chord == "Ctrl+f" || chord == "Ctrl+F" {
+                // Focus search/filter input if present (Issue #276)
+                for id in &["input_filter", "filter", "search", "search_input", "find"] {
+                    if self.focus_input(id) {
+                        break;
+                    }
+                }
             }
             self.dispatcher.dispatch_key(&chord, None);
         }
@@ -13041,6 +13198,25 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
                     win.request_redraw();
                 }
             }
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Other(btn),
+                ..
+            } if btn == 4 || btn == 5 => {
+                let dy = if btn == 4 { -40 } else { 40 };
+                let region_key = self.region_at(self.cursor_pos).map(|r| r.key.clone());
+                match region_key {
+                    Some(key) => {
+                        self.scroll_region_by(&key, dy);
+                    }
+                    None => {
+                        self.scroll_by(0, dy);
+                    }
+                }
+                if let Some(win) = &self.window {
+                    win.request_redraw();
+                }
+            }
             WindowEvent::DroppedFile(path) => {
                 let p_str = path.display().to_string();
                 self.last_dropped_file = Some(p_str.clone());
@@ -13116,9 +13292,7 @@ impl<D: UiDispatcher> ApplicationHandler for NativeApp<D> {
                         self.scroll_region_by(&key, dy);
                     }
                     None => {
-                        if self.scroll_regions.is_empty() {
-                            self.scroll_by(dx, dy);
-                        }
+                        self.scroll_by(dx, dy);
                     }
                 }
                 if let Some(win) = &self.window {
@@ -14247,6 +14421,13 @@ mod tests {
 
         app.handle_key_input(&Key::Character("/".into()), Some("/"));
         assert_eq!(*app.dispatcher.last_key, "Ctrl+/");
+
+        // Ctrl+F focusing search input (Issue #276)
+        let mut filter_box = test_box("input", "input_filter", 50, false);
+        filter_box.text = Some("".into());
+        app.layout_boxes = vec![filter_box];
+        app.handle_key_input(&Key::Character("f".into()), Some("f"));
+        assert_eq!(app.focused_id, Some("input_filter".into()));
 
         // 2. Global shortcut when focused inside input takes precedence
         let mut inp = test_box("input", "prompt_box", 50, false);
@@ -20179,6 +20360,35 @@ mod tests {
     }
 
     #[test]
+    fn test_zoom_animation_convergence() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "Zoom Test".into(),
+                width: 500,
+                height: 400,
+            },
+            dummy,
+        );
+
+        assert_eq!(app.current_zoom_pct, 100.0);
+        app.set_zoom_target(150.0);
+        assert_eq!(app.target_zoom_pct, 150.0);
+
+        for _ in 0..10 {
+            app.step_zoom_animation(0.5);
+        }
+        assert_eq!(app.current_zoom_pct, 150.0);
+    }
+
+    #[test]
     fn test_error_banner_lifecycle_retry_and_dismissal() {
         let mut val = 0;
         let mut notes = String::new();
@@ -20407,5 +20617,44 @@ mod tests {
         // Clear dirty
         app.clear_dirty();
         assert_eq!(app.dirty_rect, None);
+    }
+
+    #[test]
+    fn test_native_app_hud_overlay_mode() {
+        let mut val = 0;
+        let mut notes = String::new();
+        let mut key = String::new();
+        let dummy = DummyDisp {
+            val: &mut val,
+            notes: &mut notes,
+            last_key: &mut key,
+        };
+        let mut app = NativeApp::new(
+            WindowConfig {
+                title: "HUD Test".into(),
+                width: 800,
+                height: 600,
+            },
+            dummy,
+        );
+        assert!(!app.hud_mode);
+
+        app.hud_mode = true;
+        let stride = 800usize;
+        let height = 600usize;
+        let mut buffer = vec![0xFF12_1826u32; stride * height];
+
+        let _ = crate::jarvis_hud::with_hud(|h| {
+            h.push_ticker("Testing HUD compositing on native app surface.");
+            h.set_pip("web", true, "Test Viewport", Some("Button"));
+            h.render_to_u32_buffer(&mut buffer, stride, height);
+            Ok(())
+        });
+
+        let modified_count = buffer.iter().filter(|&&px| px != 0xFF12_1826).count();
+        assert!(
+            modified_count > 0,
+            "HUD overlay modified pixels on the buffer"
+        );
     }
 }

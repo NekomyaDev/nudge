@@ -362,14 +362,31 @@ impl Interpreter {
             .root
             .as_ref()
             .and_then(|r| r.find_by_id(target_id))
-            .and_then(|e| e.on_click.clone());
+            .and_then(|e| e.on_click.clone())
+            .or_else(|| {
+                if self.fns.contains_key(target_id)
+                    || app
+                        .agent
+                        .as_ref()
+                        .is_some_and(|ag| self.fns.contains_key(&format!("{ag}.{target_id}")))
+                {
+                    Some(target_id.to_string())
+                } else {
+                    None
+                }
+            });
         if let Some(hname) = on_click {
             let agent = app.agent.clone();
             let prev_agent = self.active_agent.clone();
             if agent.is_some() {
                 self.active_agent = agent.clone();
             }
-            if let Some((fn_item, fn_agent)) = self.fns.get(&hname).cloned() {
+            let fn_lookup = self.fns.get(&hname).cloned().or_else(|| {
+                agent
+                    .as_ref()
+                    .and_then(|ag| self.fns.get(&format!("{ag}.{hname}")).cloned())
+            });
+            if let Some((fn_item, fn_agent)) = fn_lookup {
                 let param_count = match &fn_item {
                     Item::Fn { params, .. } => params.len(),
                     _ => 0,
@@ -456,7 +473,12 @@ impl Interpreter {
             if agent.is_some() {
                 self.active_agent = agent.clone();
             }
-            if let Some((fn_item, fn_agent)) = self.fns.get(&hname).cloned() {
+            let fn_lookup = self.fns.get(&hname).cloned().or_else(|| {
+                agent
+                    .as_ref()
+                    .and_then(|ag| self.fns.get(&format!("{ag}.{hname}")).cloned())
+            });
+            if let Some((fn_item, fn_agent)) = fn_lookup {
                 self.call_user_fn_with_vals(
                     &fn_item,
                     fn_agent.as_deref().or(agent.as_deref()),
@@ -690,7 +712,12 @@ impl Interpreter {
             if agent.is_some() {
                 self.active_agent = agent.clone();
             }
-            if let Some((fn_item, fn_agent)) = self.fns.get(&hname).cloned() {
+            let fn_lookup = self.fns.get(&hname).cloned().or_else(|| {
+                agent
+                    .as_ref()
+                    .and_then(|ag| self.fns.get(&format!("{ag}.{hname}")).cloned())
+            });
+            if let Some((fn_item, fn_agent)) = fn_lookup {
                 self.call_user_fn_with_vals(
                     &fn_item,
                     fn_agent.as_deref().or(agent.as_deref()),
@@ -2680,6 +2707,10 @@ impl Interpreter {
                 || name.starts_with("proc.")
                 || name.starts_with("store.")
                 || name.starts_with("mem.")
+                || name.starts_with("schedule.")
+                || name.starts_with("sovereign.")
+                || name.starts_with("healer.")
+                || name.starts_with("hud.")
                 || name.starts_with("task.")
                 || name.starts_with("time.")
                 || name.starts_with("env.")
@@ -3195,8 +3226,18 @@ impl Interpreter {
                     .map_err(|e| format!("error[E-native-0202]: {name} failed: {e}"))?;
                 value_to_nudgeval(&result).map_err(|e| format!("error[E-native-0203]: {name}: {e}"))
             }
-            "browser.fetch" | "browser.connect" | "browser.read" | "browser.write"
-            | "browser.close" | "browser.rasterize" => {
+            "browser.fetch"
+            | "browser.connect"
+            | "browser.read"
+            | "browser.write"
+            | "browser.close"
+            | "browser.rasterize"
+            | "browser.cookie_set"
+            | "browser.cookie_get"
+            | "browser.cookie_all"
+            | "browser.cookie_clear"
+            | "browser.tier_status"
+            | "browser.set_tier" => {
                 let mut call_args = Vec::with_capacity(args.len());
                 for a in args {
                     let converted = nudgeval_to_value(a)
@@ -3241,7 +3282,8 @@ impl Interpreter {
                 value_to_nudgeval(&result)
                     .map_err(|e| format!("error[E0913]: store schema mismatch: {name}: {e}"))
             }
-            "mem.get" | "mem.set" | "mem.has" | "mem.delete" | "mem.keys" | "mem.clear" => {
+            "mem.get" | "mem.set" | "mem.has" | "mem.delete" | "mem.keys" | "mem.clear"
+            | "mem.persist" | "mem.snapshot" | "mem.recover" | "mem.status" => {
                 let mut call_args = Vec::with_capacity(args.len());
                 for a in args {
                     let converted = nudgeval_to_value(a)
@@ -3257,6 +3299,81 @@ impl Interpreter {
                 })?;
                 value_to_nudgeval(&result)
                     .map_err(|e| format!("error[E0930]: mem store schema mismatch: {name}: {e}"))
+            }
+            "schedule.every" | "schedule.after" | "schedule.on_change" | "schedule.notify"
+            | "schedule.cancel" | "schedule.list" | "schedule.tick" => {
+                let mut call_args = Vec::with_capacity(args.len());
+                for a in args {
+                    let converted = nudgeval_to_value(a)
+                        .map_err(|e| format!("error[E-native-0203]: {name}: {e}"))?;
+                    call_args.push(converted);
+                }
+                let result = nudge_runtime::scheduler::execute(name, call_args).map_err(|e| {
+                    if e.starts_with("error[") {
+                        e
+                    } else {
+                        format!("error[E-native-0202]: {name} failed: {e}")
+                    }
+                })?;
+                value_to_nudgeval(&result)
+                    .map_err(|e| format!("error[E0940]: schedule schema mismatch: {name}: {e}"))
+            }
+            "sovereign.submit"
+            | "sovereign.telemetry"
+            | "sovereign.next_goal"
+            | "sovereign.complete_goal"
+            | "sovereign.fail_goal"
+            | "sovereign.list_goals"
+            | "sovereign.tick" => {
+                let mut call_args = Vec::with_capacity(args.len());
+                for a in args {
+                    let converted = nudgeval_to_value(a)
+                        .map_err(|e| format!("error[E-native-0203]: {name}: {e}"))?;
+                    call_args.push(converted);
+                }
+                let result = nudge_runtime::sovereign::execute(name, call_args).map_err(|e| {
+                    if e.starts_with("error[") {
+                        e
+                    } else {
+                        format!("error[E-native-0202]: {name} failed: {e}")
+                    }
+                })?;
+                value_to_nudgeval(&result)
+                    .map_err(|e| format!("error[E0950]: sovereign schema mismatch: {name}: {e}"))
+            }
+            "healer.candidates" | "healer.commit" | "healer.history" | "healer.status" => {
+                let mut call_args = Vec::with_capacity(args.len());
+                for a in args {
+                    let converted = nudgeval_to_value(a)
+                        .map_err(|e| format!("error[E-native-0203]: {name}: {e}"))?;
+                    call_args.push(converted);
+                }
+                let result = nudge_runtime::healer::execute(name, call_args).map_err(|e| {
+                    if e.starts_with("error[") {
+                        e
+                    } else {
+                        format!("error[E-native-0202]: {name} failed: {e}")
+                    }
+                })?;
+                value_to_nudgeval(&result)
+                    .map_err(|e| format!("error[E0960]: healer schema mismatch: {name}: {e}"))
+            }
+            "hud.state" | "hud.ticker" | "hud.set_pip" | "hud.advance" | "hud.render" => {
+                let mut call_args = Vec::with_capacity(args.len());
+                for a in args {
+                    let converted = nudgeval_to_value(a)
+                        .map_err(|e| format!("error[E-native-0203]: {name}: {e}"))?;
+                    call_args.push(converted);
+                }
+                let result = nudge_runtime::jarvis_hud::execute(name, call_args).map_err(|e| {
+                    if e.starts_with("error[") {
+                        e
+                    } else {
+                        format!("error[E-native-0202]: {name} failed: {e}")
+                    }
+                })?;
+                value_to_nudgeval(&result)
+                    .map_err(|e| format!("error[E0970]: hud schema mismatch: {name}: {e}"))
             }
             "fs.watch" | "fs.changed" => {
                 let mut call_args = Vec::with_capacity(args.len());
@@ -3436,7 +3553,8 @@ impl Interpreter {
                     .map_err(|e| format!("error[E-native-0202]: {name} failed: {e}"))?;
                 value_to_nudgeval(&result).map_err(|e| format!("error[E-native-0203]: {name}: {e}"))
             }
-            "env.get" | "env.set" | "env.has" | "env.delete" | "env.remove" | "env.vars" | "env.all" => {
+            "env.get" | "env.set" | "env.has" | "env.delete" | "env.remove" | "env.vars"
+            | "env.all" => {
                 let mut call_args = Vec::with_capacity(args.len());
                 for a in args {
                     let converted = nudgeval_to_value(a)
@@ -3973,7 +4091,9 @@ impl Interpreter {
                         _ => None,
                     })
                     .ok_or("'str.is_digit' requires 1 string argument")?;
-                Ok(NudgeVal::Bool(!s.is_empty() && s.chars().all(|c| c.is_ascii_digit())))
+                Ok(NudgeVal::Bool(
+                    !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()),
+                ))
             }
             "str.is_alpha" => {
                 let s = args
@@ -3983,7 +4103,9 @@ impl Interpreter {
                         _ => None,
                     })
                     .ok_or("'str.is_alpha' requires 1 string argument")?;
-                Ok(NudgeVal::Bool(!s.is_empty() && s.chars().all(|c| c.is_alphabetic())))
+                Ok(NudgeVal::Bool(
+                    !s.is_empty() && s.chars().all(|c| c.is_alphabetic()),
+                ))
             }
             "str.is_empty" => {
                 let s = args
@@ -4006,7 +4128,9 @@ impl Interpreter {
                 let mut chars = s.chars();
                 let res = match chars.next() {
                     None => String::new(),
-                    Some(f) => f.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
+                    Some(f) => {
+                        f.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+                    }
                 };
                 Ok(NudgeVal::Str(res))
             }
@@ -4018,7 +4142,8 @@ impl Interpreter {
                         _ => None,
                     })
                     .ok_or("'str.lines' requires 1 string argument")?;
-                let lines: Vec<NudgeVal> = s.lines().map(|l| NudgeVal::Str(l.to_string())).collect();
+                let lines: Vec<NudgeVal> =
+                    s.lines().map(|l| NudgeVal::Str(l.to_string())).collect();
                 Ok(NudgeVal::List(lines))
             }
             "math.abs" => match args.first() {
@@ -4606,11 +4731,15 @@ impl Interpreter {
                 let mut min_val = list[0].clone();
                 for item in &list[1..] {
                     match (&min_val, item) {
-                        (NudgeVal::Int(a), NudgeVal::Int(b)) => if b < a { min_val = item.clone(); },
-                        (NudgeVal::Float(a), NudgeVal::Float(b)) => if b < a { min_val = item.clone(); },
-                        (NudgeVal::Int(a), NudgeVal::Float(b)) => if *b < (*a as f64) { min_val = item.clone(); },
-                        (NudgeVal::Float(a), NudgeVal::Int(b)) => if (*b as f64) < *a { min_val = item.clone(); },
-                        (NudgeVal::Str(a), NudgeVal::Str(b)) => if b < a { min_val = item.clone(); },
+                        (NudgeVal::Int(a), NudgeVal::Int(b)) if b < a => min_val = item.clone(),
+                        (NudgeVal::Float(a), NudgeVal::Float(b)) if b < a => min_val = item.clone(),
+                        (NudgeVal::Int(a), NudgeVal::Float(b)) if *b < (*a as f64) => {
+                            min_val = item.clone()
+                        }
+                        (NudgeVal::Float(a), NudgeVal::Int(b)) if (*b as f64) < *a => {
+                            min_val = item.clone()
+                        }
+                        (NudgeVal::Str(a), NudgeVal::Str(b)) if b < a => min_val = item.clone(),
                         _ => {}
                     }
                 }
@@ -4627,11 +4756,15 @@ impl Interpreter {
                 let mut max_val = list[0].clone();
                 for item in &list[1..] {
                     match (&max_val, item) {
-                        (NudgeVal::Int(a), NudgeVal::Int(b)) => if b > a { max_val = item.clone(); },
-                        (NudgeVal::Float(a), NudgeVal::Float(b)) => if b > a { max_val = item.clone(); },
-                        (NudgeVal::Int(a), NudgeVal::Float(b)) => if *b > (*a as f64) { max_val = item.clone(); },
-                        (NudgeVal::Float(a), NudgeVal::Int(b)) => if (*b as f64) > *a { max_val = item.clone(); },
-                        (NudgeVal::Str(a), NudgeVal::Str(b)) => if b > a { max_val = item.clone(); },
+                        (NudgeVal::Int(a), NudgeVal::Int(b)) if b > a => max_val = item.clone(),
+                        (NudgeVal::Float(a), NudgeVal::Float(b)) if b > a => max_val = item.clone(),
+                        (NudgeVal::Int(a), NudgeVal::Float(b)) if *b > (*a as f64) => {
+                            max_val = item.clone()
+                        }
+                        (NudgeVal::Float(a), NudgeVal::Int(b)) if (*b as f64) > *a => {
+                            max_val = item.clone()
+                        }
+                        (NudgeVal::Str(a), NudgeVal::Str(b)) if b > a => max_val = item.clone(),
                         _ => {}
                     }
                 }

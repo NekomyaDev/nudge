@@ -698,9 +698,24 @@ mod tests {
         );
         let msg = res.unwrap_err();
         assert!(
-            msg.contains("escape denied") || msg.contains("symlink"),
-            "unexpected error: {}",
+            msg.contains("error[E0910]") && msg.contains("workspace path escape denied"),
+            "unexpected error message: {}",
             msg
+        );
+
+        // Also test relative symlink pointing upwards outside workspace
+        let rel_sym = dir.join("rel_evil");
+        std::os::unix::fs::symlink("../../", &rel_sym).unwrap();
+        let res_rel = execute(
+            "workspace.read",
+            vec![Value::String("rel_evil/Cargo.toml".to_string())],
+        );
+        assert!(res_rel.is_err(), "expected relative symlink escape denial");
+        let msg_rel = res_rel.unwrap_err();
+        assert!(
+            msg_rel.contains("error[E0910]") && msg_rel.contains("workspace path escape denied"),
+            "unexpected error message for relative symlink: {}",
+            msg_rel
         );
 
         teardown(&dir);

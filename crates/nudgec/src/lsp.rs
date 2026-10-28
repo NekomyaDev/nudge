@@ -380,6 +380,31 @@ impl Lsp {
                                         Json::Arr(vec![]),
                                     )]),
                                 ),
+                                ("codeActionProvider".into(), Json::Bool(true)),
+                                ("inlayHintProvider".into(), Json::Bool(true)),
+                                (
+                                    "semanticTokensProvider".into(),
+                                    Json::Obj(vec![
+                                        (
+                                            "legend".into(),
+                                            Json::Obj(vec![
+                                                (
+                                                    "tokenTypes".into(),
+                                                    Json::Arr(vec![
+                                                        Json::str("type"),
+                                                        Json::str("function"),
+                                                        Json::str("variable"),
+                                                        Json::str("keyword"),
+                                                        Json::str("string"),
+                                                        Json::str("number"),
+                                                    ]),
+                                                ),
+                                                ("tokenModifiers".into(), Json::Arr(vec![])),
+                                            ]),
+                                        ),
+                                        ("full".into(), Json::Bool(true)),
+                                    ]),
+                                ),
                             ]),
                         )]),
                     )]
@@ -468,6 +493,163 @@ impl Lsp {
                 };
                 match id {
                     Some(i) => vec![respond(&i, result)],
+                    None => vec![],
+                }
+            }
+            "textDocument/codeAction" => {
+                let doc = params.get("textDocument").cloned().unwrap_or(Json::Null);
+                let uri = doc.get("uri").and_then(Json::as_str).unwrap_or("");
+                let src = self.docs.get(uri).map(|s| s.as_str()).unwrap_or("");
+                let mut actions = Vec::new();
+                for d in diagnostics(src) {
+                    if let (Some(code), Some(msg)) = (
+                        d.get("code").and_then(Json::as_str),
+                        d.get("message").and_then(Json::as_str),
+                    ) {
+                        if code == "E0301" {
+                            let title = if msg.contains("LLM") {
+                                "Add 'uses LLM' to function header".to_string()
+                            } else if msg.contains("Workspace") {
+                                "Add 'uses Workspace' to function header".to_string()
+                            } else {
+                                "Add missing effect to function header".to_string()
+                            };
+                            actions.push(Json::Obj(vec![
+                                ("title".into(), Json::Str(title)),
+                                ("kind".into(), Json::Str("quickfix".into())),
+                                ("isPreferred".into(), Json::Bool(true)),
+                            ]));
+                        }
+                    }
+                }
+                match id {
+                    Some(i) => vec![respond(&i, Json::Arr(actions))],
+                    None => vec![],
+                }
+            }
+            "textDocument/inlayHint" => {
+                let doc = params.get("textDocument").cloned().unwrap_or(Json::Null);
+                let uri = doc.get("uri").and_then(Json::as_str).unwrap_or("");
+                let src = self.docs.get(uri).map(|s| s.as_str()).unwrap_or("");
+                let mut hints = Vec::new();
+                for (line_idx, line) in src.lines().enumerate() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("let ")
+                        && !trimmed.contains(':')
+                        && trimmed.contains('=')
+                    {
+                        let parts: Vec<&str> = trimmed.split('=').collect();
+                        let left = parts[0].replace("let ", "");
+                        let var_name = left.replace("mut ", "").trim().to_string();
+                        if let Some(col) = line.find(&var_name) {
+                            let label = ": any";
+                            hints.push(Json::Obj(vec![
+                                (
+                                    "position".into(),
+                                    Json::Obj(vec![
+                                        ("line".into(), Json::Num(line_idx as f64)),
+                                        (
+                                            "character".into(),
+                                            Json::Num((col + var_name.len()) as f64),
+                                        ),
+                                    ]),
+                                ),
+                                ("label".into(), Json::Str(label.into())),
+                                ("kind".into(), Json::Num(1.0)),
+                            ]));
+                        }
+                    }
+                }
+                match id {
+                    Some(i) => vec![respond(&i, Json::Arr(hints))],
+                    None => vec![],
+                }
+            }
+            "textDocument/semanticTokens/full" => {
+                let doc = params.get("textDocument").cloned().unwrap_or(Json::Null);
+                let uri = doc.get("uri").and_then(Json::as_str).unwrap_or("");
+                let src = self.docs.get(uri).map(|s| s.as_str()).unwrap_or("");
+
+                let mut data: Vec<Json> = Vec::new();
+                if let Ok(tokens) = crate::lexer::lex(src) {
+                    let mut prev_line = 0usize;
+                    let mut prev_col = 0usize;
+
+                    for tok in tokens {
+                        let token_type_index = match &tok.tok {
+                            crate::lexer::Tok::Type => 0, // type
+                            crate::lexer::Tok::Fn => 1,   // function
+                            crate::lexer::Tok::Ident(name) => {
+                                match name.as_str() {
+                                    "int" | "float" | "bool" | "string" | "none" => 0, // built-in types
+                                    _ if name
+                                        .chars()
+                                        .next()
+                                        .map(|c| c.is_uppercase())
+                                        .unwrap_or(false) =>
+                                    {
+                                        0 // user types / effects (e.g. LLM, UserType)
+                                    }
+                                    _ => 2, // variable / identifier
+                                }
+                            }
+                            crate::lexer::Tok::Uses
+                            | crate::lexer::Tok::With
+                            | crate::lexer::Tok::Let
+                            | crate::lexer::Tok::Mut
+                            | crate::lexer::Tok::Test
+                            | crate::lexer::Tok::Agent
+                            | crate::lexer::Tok::If
+                            | crate::lexer::Tok::Else
+                            | crate::lexer::Tok::For
+                            | crate::lexer::Tok::ForAll
+                            | crate::lexer::Tok::In
+                            | crate::lexer::Tok::Assert
+                            | crate::lexer::Tok::Return
+                            | crate::lexer::Tok::Spawn
+                            | crate::lexer::Tok::Par
+                            | crate::lexer::Tok::Map
+                            | crate::lexer::Tok::Race
+                            | crate::lexer::Tok::All
+                            | crate::lexer::Tok::State
+                            | crate::lexer::Tok::Costs
+                            | crate::lexer::Tok::Tool
+                            | crate::lexer::Tok::Export
+                            | crate::lexer::Tok::Use
+                            | crate::lexer::Tok::And
+                            | crate::lexer::Tok::Or => 3, // keyword
+                            crate::lexer::Tok::Str(_) | crate::lexer::Tok::Prompt(_) => 4, // string
+                            crate::lexer::Tok::Int(_)
+                            | crate::lexer::Tok::Float(_)
+                            | crate::lexer::Tok::Money(_, _) => 5, // number
+                            _ => continue,
+                        };
+
+                        let (line, col) = line_col(src, tok.start);
+                        let length = tok.end.saturating_sub(tok.start);
+                        let delta_line = line.saturating_sub(prev_line);
+                        let delta_start = if delta_line == 0 {
+                            col.saturating_sub(prev_col)
+                        } else {
+                            col
+                        };
+
+                        data.push(Json::Num(delta_line as f64));
+                        data.push(Json::Num(delta_start as f64));
+                        data.push(Json::Num(length as f64));
+                        data.push(Json::Num(token_type_index as f64));
+                        data.push(Json::Num(0.0)); // tokenModifiers
+
+                        prev_line = line;
+                        prev_col = col;
+                    }
+                }
+
+                match id {
+                    Some(i) => vec![respond(
+                        &i,
+                        Json::Obj(vec![("data".into(), Json::Arr(data))]),
+                    )],
                     None => vec![],
                 }
             }
@@ -784,5 +966,28 @@ mod tests {
         // Clamping check
         let (l_overflow, _) = line_col(src, src.len() + 100);
         assert_eq!(l_overflow, 4);
+    }
+
+    #[test]
+    fn semantic_tokens_full_provider_encodes_deltas() {
+        let mut lsp = Lsp::new();
+        let uri = "file:///tokens.ndg";
+        let doc = "type Task = { name: string }\nfn run() uses LLM {\n    let count = 42\n}\n";
+        open_doc(&mut lsp, uri, doc);
+
+        let sem_req = request(
+            10,
+            "textDocument/semanticTokens/full",
+            Json::Obj(vec![(
+                "textDocument".into(),
+                Json::Obj(vec![("uri".into(), Json::str(uri))]),
+            )]),
+        );
+        let resp = lsp.dispatch(&sem_req);
+        let s = dumps(&resp[0]);
+        assert!(
+            s.contains("\"data\": ["),
+            "response must contain semantic tokens data array: {s}"
+        );
     }
 }

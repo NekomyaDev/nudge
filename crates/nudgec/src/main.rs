@@ -20,9 +20,9 @@
 //!   nudgec audit <trace.jsonl> [--json]  EU AI Act compliance audit report over an NTF trace (v1.6)
 
 use nudgec::{
-    a2a, ast, check, codegen, codegen_ts, compile, cost, dap, eval, evalcmd, fmt, fuzz, hints,
-    init, json, learn, lexer, lint, lsp, mcpserver, parser, policysweep, runs, serve, standalone,
-    stats, traceaudit, tracecheck, tracediff, traceexplain, traceview, watch,
+    a2a, ast, check, clean, codegen, codegen_ts, compile, cost, dap, eval, evalcmd, fmt, fuzz,
+    hints, init, json, learn, lexer, lint, lsp, mcpserver, parser, policysweep, runs, serve,
+    standalone, stats, traceaudit, tracecheck, tracediff, traceexplain, traceview, watch,
 };
 
 use std::{env, fs, process};
@@ -73,10 +73,18 @@ fn print_lints(items: &[ast::Item]) {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    // `--version` / `-V`: print and exit 0 (was: usage banner + exit 64,
-    // which broke version detection in scripts)
-    if args.len() == 2 && (args[1] == "--version" || args[1] == "-V") {
-        println!("nudgec {}", env!("CARGO_PKG_VERSION"));
+    // `--version` / `-V`: print and exit 0 (with optional --json for machine consumption #278)
+    if args.len() >= 2 && (args[1] == "--version" || args[1] == "-V" || args[1] == "version") {
+        let json_mode = args.iter().any(|a| a == "--json");
+        if json_mode {
+            println!(
+                "{{\n  \"version\": \"{}\",\n  \"compiler\": \"nudgec\",\n  \"target\": \"{}\"\n}}",
+                env!("CARGO_PKG_VERSION"),
+                env!("TARGET")
+            );
+        } else {
+            println!("nudgec {}", env!("CARGO_PKG_VERSION"));
+        }
         process::exit(0);
     }
     // `--help` / `-h`: print usage and exit 0
@@ -104,6 +112,23 @@ fn main() {
     if args.len() == 2 && args[1] == "lsp" {
         lsp::run();
         return;
+    }
+    // `clean` purges local cache and temporary traces
+    if args.len() >= 2 && args[1] == "clean" {
+        if args.iter().skip(2).any(|a| a == "--help" || a == "-h") {
+            println!("usage: nudgec clean");
+            process::exit(0);
+        }
+        match clean::run() {
+            Ok(rep) => {
+                println!("{}", rep.to_text());
+                process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                process::exit(1);
+            }
+        }
     }
     // `auth` manages credentials and OAuth login (e.g. `nudgec auth login antigravity`)
     if args.len() >= 2 && args[1] == "auth" {
@@ -380,14 +405,17 @@ fn main() {
     if args.len() >= 2 && args[1] == "check" {
         let mut json_mode = false;
         let mut watch_mode = false;
+        let mut quiet_mode = false;
         let mut file = None;
         for arg in &args[2..] {
             if arg == "--json" {
                 json_mode = true;
             } else if arg == "--watch" {
                 watch_mode = true;
+            } else if arg == "--quiet" || arg == "-q" {
+                quiet_mode = true;
             } else if arg == "--help" || arg == "-h" {
-                println!("usage: nudgec check <file.ndg> [--json] [--watch]");
+                println!("usage: nudgec check <file.ndg> [--json] [--watch] [--quiet]");
                 process::exit(0);
             } else if arg.starts_with('-') {
                 eprintln!("error: unknown flag '{arg}'");
@@ -444,8 +472,10 @@ fn main() {
                 Ok(items) => {
                     let errs = check::check(&items);
                     if errs.is_empty() {
-                        print_lints(&items);
-                        eprintln!("-- checked {} item(s): OK", items.len());
+                        if !quiet_mode {
+                            print_lints(&items);
+                            eprintln!("-- checked {} item(s): OK", items.len());
+                        }
                     } else {
                         for e in &errs {
                             match e.span {
@@ -1893,14 +1923,16 @@ fn main() {
             // B5: lint with auto-fix (and optional --json)
             let mut check_fix = false;
             let mut json_mode = false;
+            let mut strict = false;
             let mut file_opt = None;
             let mut i = 2;
             while i < args.len() {
                 match args[i].as_str() {
                     "--fix" => check_fix = true,
                     "--json" => json_mode = true,
+                    "--strict" => strict = true,
                     "--help" | "-h" => {
-                        println!("usage: nudgec lint <file.ndg> [--fix] [--json]");
+                        println!("usage: nudgec lint <file.ndg> [--fix] [--json] [--strict]");
                         process::exit(0);
                     }
                     arg if arg.starts_with('-') => {
@@ -1945,7 +1977,7 @@ fn main() {
                     process::exit(1);
                 }
             };
-            let lints = lint::lint_items(&items);
+            let lints = lint::lint_items_opts(&items, &src, strict);
             if check_fix {
                 if lints.iter().any(|l| l.fix.is_some()) {
                     let fixed = lint::apply_fixes(&src, &lints);
@@ -2007,11 +2039,15 @@ fn main() {
             // behavior (docs/ntf-spec.md)
             nudge_runtime::trace::enable_default_sink();
             let mut entry = "main".to_string();
+            let mut verbose = false;
             let mut raw_args = Vec::new();
             let mut file_seen = false;
             let mut i = 2;
             while i < args.len() {
                 match args[i].as_str() {
+                    "--verbose" | "-v" => {
+                        verbose = true;
+                    }
                     "--fn" | "-f" => {
                         i += 1;
                         if let Some(f) = args.get(i) {
@@ -2059,11 +2095,23 @@ fn main() {
                 process::exit(1);
             }
 
+            let start_time = std::time::Instant::now();
             match eval::run_program(&items, &entry, &cli_args) {
                 Ok(val) => {
+                    let elapsed = start_time.elapsed();
                     let _ = nudge_runtime::trace::flush_sink();
                     if val != eval::NudgeVal::Unit {
                         println!("{val}");
+                    }
+                    if verbose {
+                        let dur_str = if elapsed.as_secs() > 0 {
+                            format!("{:.2}s", elapsed.as_secs_f64())
+                        } else if elapsed.as_millis() > 0 {
+                            format!("{:.1}ms", elapsed.as_secs_f64() * 1000.0)
+                        } else {
+                            format!("{}µs", elapsed.as_micros())
+                        };
+                        println!("Completed in {dur_str}");
                     }
                 }
                 Err(e) => {

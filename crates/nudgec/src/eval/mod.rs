@@ -2426,4 +2426,58 @@ fn test_f9_recipes() -> bool uses Browser {{
             .expect("collections main execution succeeds");
         assert_eq!(res, NudgeVal::Int(0));
     }
+
+    #[test]
+    fn test_sovereign_scheduler_and_healer_acceptance() {
+        let _guard = crate::eval::interpreter::tests::EnvResetGuard::acquire();
+        let src = r##"
+            fn test_sovereign_flow() -> bool {
+                // 1. Memory persistence and WAL status
+                mem.set("sovereign_token", "alpha_99")
+                let tok = mem.get("sovereign_token", "")
+                let has_tok = mem.has("sovereign_token")
+                let st = mem.status()
+
+                // 2. Scheduler operations
+                let ev_id = schedule.every("10s", "sync_rates", [])
+                let af_id = schedule.after("500ms", "delayed_check", [])
+                let wt_id = schedule.on_change("rate_page", "on_rate_change", [])
+                let triggered = schedule.notify("rate_page")
+                let due = schedule.tick()
+                let sched_list = schedule.list()
+
+                // 3. Sovereign Goal DAG
+                let g1 = sovereign.submit("Scrape prices")
+                let g2 = sovereign.submit("Generate summary report")
+                let telem = sovereign.telemetry()
+                let next = sovereign.next_goal()
+                let ok_comp = sovereign.complete_goal(g1, {})
+
+                // 4. Healer diagnostics
+                let cands = healer.candidates("#btn_order")
+                let ok_commit = healer.commit("#btn_order", "aria", "[aria-label='order']")
+                let h_st = healer.status()
+
+                // 5. Tiered Browser & Cookies
+                let ok_cook = browser.cookie_set("example.com", "auth_sess", "secret_99", "/", 3600)
+                let c_val = browser.cookie_get("example.com", "auth_sess")
+                let b_tier = browser.tier_status()
+
+                // 6. Jarvis Watch-Only HUD
+                let ok_tick = hud.ticker("Re-evaluating Goal #12... Verified.")
+                let ok_pip = hud.set_pip("web", true, "Price Watch", "#buy-btn")
+                let hud_st = hud.state()
+                let hud_frm = hud.render(640, 480)
+
+                has_tok and tok == "alpha_99" and triggered == 1 and ok_comp and ok_commit and len(cands) == 3 and ok_cook and c_val == "secret_99" and b_tier.active_tier == 1 and ok_tick and ok_pip and hud_frm.byte_count > 0
+            }
+        "##;
+        let items = parse_src(src);
+        let mut interp = crate::eval::interpreter::Interpreter::new();
+        interp.load_items(&items).expect("load items succeeds");
+        let res = interp
+            .invoke_fn("test_sovereign_flow", &[])
+            .expect("invoke test_sovereign_flow");
+        assert_eq!(res, NudgeVal::Bool(true));
+    }
 }

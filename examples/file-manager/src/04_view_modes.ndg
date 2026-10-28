@@ -41,10 +41,14 @@ view FileDetailsTable(panel_title: string, entries: [FileEntry], selected_name: 
 
 // ── View Mode 2: Icons View (Grid of Cards) ─────────────────────────
 
-view FileIconsGrid(entries: [FileEntry], selected_name: string, current_lang: string, zoom_pct: int) -> View {
+view FileIconsGrid(entries: [FileEntry], selected_name: string, current_lang: string, zoom_pct: int, is_split: bool) -> View {
     let card_w = if zoom_pct <= 75 { 120 } else if zoom_pct >= 150 { 190 } else if zoom_pct >= 125 { 165 } else { 145 }
-    let card_h = if zoom_pct <= 75 { 80 } else if zoom_pct >= 150 { 120 } else if zoom_pct >= 125 { 108 } else { 96 }
-    let cols = if zoom_pct <= 75 { 7 } else if zoom_pct >= 150 { 4 } else if zoom_pct >= 125 { 5 } else { 6 }
+    let card_h = if zoom_pct <= 75 { 90 } else if zoom_pct >= 150 { 130 } else if zoom_pct >= 125 { 118 } else { 106 }
+    let cols = if is_split {
+        if zoom_pct <= 75 { 4 } else if zoom_pct >= 150 { 2 } else { 3 }
+    } else {
+        if zoom_pct <= 75 { 7 } else if zoom_pct >= 150 { 4 } else if zoom_pct >= 125 { 5 } else { 6 }
+    }
 
     let mut grid_rows = []
     let mut current_row = []
@@ -86,9 +90,9 @@ view FileIconsGrid(entries: [FileEntry], selected_name: string, current_lang: st
 
 // ── View Mode 3: Compact View (Multi-column list) ────────────────────
 
-view FileCompactGrid(entries: [FileEntry], selected_name: string, current_lang: string, zoom_pct: int) -> View {
-    let comp_w = if zoom_pct <= 75 { 160 } else if zoom_pct >= 125 { 240 } else { 200 }
-    let comp_cols = if zoom_pct <= 75 { 6 } else if zoom_pct >= 125 { 4 } else { 5 }
+view FileCompactGrid(entries: [FileEntry], selected_name: string, current_lang: string, zoom_pct: int, is_split: bool) -> View {
+    let comp_w = if is_split { 180 } else if zoom_pct <= 75 { 160 } else if zoom_pct >= 125 { 240 } else { 200 }
+    let comp_cols = if is_split { 2 } else if zoom_pct <= 75 { 6 } else if zoom_pct >= 125 { 4 } else { 5 }
 
     let mut compact_rows = []
     let mut current_row = []

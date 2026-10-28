@@ -3,6 +3,10 @@ use std::path::Path;
 
 fn main() {
     println!("cargo:rerun-if-changed=../../docs/learn");
+    println!(
+        "cargo:rustc-env=TARGET={}",
+        std::env::var("TARGET").unwrap_or_else(|_| "unknown".to_string())
+    );
 
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("learn_curriculum.rs");

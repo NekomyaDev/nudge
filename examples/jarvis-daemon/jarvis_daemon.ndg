@@ -1,0 +1,73 @@
+// Jarvis Daemon — Sovereign Autonomous Consciousness Loop & Watch-Only HUD
+// Example demonstrating 0-context accumulation, NVFS WAL, and HUD telemetry.
+
+fn init_sovereign_memory() -> bool uses MemStore {
+    mem.set("daemon.version", "1.5.0")
+    mem.set("daemon.status", "autonomous")
+    let has_v = mem.has("daemon.version")
+    let st = mem.status()
+    has_v and st.count >= 2
+}
+
+fn setup_schedules() -> bool {
+    let task_id1 = schedule.every("10s", "sync_telemetry", [])
+    let task_id2 = schedule.after("2s", "health_ping", [])
+    let watch_id = schedule.on_change("inventory_feed", "on_feed_change", [])
+
+    let fired = schedule.notify("inventory_feed")
+    let active = schedule.list()
+    fired == 1 and len(active) >= 3
+}
+
+fn queue_sovereign_goals() -> bool {
+    let g1 = sovereign.submit("Scrape product inventory")
+    let g2 = sovereign.submit("Audit pricing differentials")
+    let telem = sovereign.telemetry()
+
+    let next = sovereign.next_goal()
+    let comp_ok = sovereign.complete_goal(g1, {})
+    telem.total_goals >= 2 and comp_ok
+}
+
+fn simulate_healer() -> bool {
+    let candidates = healer.candidates("#checkout-submit")
+    let ok = healer.commit("#checkout-submit", "aria", "[aria-label='submit-order']")
+    let h_st = healer.status()
+    ok and len(candidates) == 3 and h_st.total_healed >= 1
+}
+
+fn update_hud_telemetry() -> bool uses Browser {
+    browser.cookie_set("service.internal", "jarvis_token", "sec_token_99", "/", 3600, allow = ["service.internal"])
+    let c_tok = browser.cookie_get("service.internal", "jarvis_token", allow = ["service.internal"])
+    let t_status = browser.tier_status(allow = ["service.internal"])
+
+    hud.ticker("Monitoring inventory stream: 0 drifts detected, 100% deterministic replay.")
+    hud.set_pip("web", true, "Live Inventory Web", "#checkout-submit")
+    let st = hud.state()
+    let frame = hud.render(640, 480)
+
+    st.pip_web_active and frame.byte_count > 0 and t_status.active_tier == 1
+}
+
+fn main() -> int uses MemStore, Browser, IO {
+    io.println("Initializing Jarvis Sovereign Daemon...")
+    let ok_mem = init_sovereign_memory()
+    let ok_sched = setup_schedules()
+    let ok_goals = queue_sovereign_goals()
+    let ok_heal = simulate_healer()
+    let ok_hud = update_hud_telemetry()
+
+    let ok = ok_mem and ok_sched and ok_goals and ok_heal and ok_hud
+    route {
+        success: 0 when ok,
+        fail: 1 otherwise
+    }
+}
+
+test "jarvis sovereign autonomy loop passes verification" {
+    assert init_sovereign_memory()
+    assert setup_schedules()
+    assert queue_sovereign_goals()
+    assert simulate_healer()
+    assert update_hud_telemetry()
+}

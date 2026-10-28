@@ -244,4 +244,25 @@ mod tests {
         let out2 = fmt(&out).unwrap();
         assert_eq!(out, out2);
     }
+
+    #[test]
+    fn fmt_preserves_trailing_commas_in_multiline_records_and_lists() {
+        let src = r#"type Config = {
+    host: string,
+    port: int,
+}
+
+fn make_list() -> [int] {
+    let items = [
+        1,
+        2,
+        3,
+    ]
+    items
+}
+"#;
+        let out = fmt(src).unwrap();
+        assert_eq!(out, src);
+        assert!(!needs_formatting(src).unwrap());
+    }
 }

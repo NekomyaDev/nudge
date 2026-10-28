@@ -346,6 +346,24 @@ mod tests {
     }
 
     #[test]
+    fn test_fuzz_unicode_multibyte_string_slicing() {
+        let mut rng = Rng(0x5EED_0005);
+        let sample_chars = [
+            'a', 'z', '0', '9', ' ', 'ç', 'ğ', 'ı', 'ö', 'ş', 'ü', '世', '界', '👋', '🦀', '🌍',
+        ];
+        for _ in 0..1000 {
+            let len = 1 + rng.below(64);
+            let mut s = String::new();
+            for _ in 0..len {
+                let idx = rng.below(sample_chars.len());
+                s.push(sample_chars[idx]);
+            }
+            // Exercise compiler lexical parser with randomized multibyte inputs
+            drive(&format!("fn f() -> string {{ \"{s}\" }}"));
+        }
+    }
+
+    #[test]
     fn fuzz_random_strings_never_panic() {
         let mut rng = Rng(0x5EED_0002);
         for _ in 0..2000 {

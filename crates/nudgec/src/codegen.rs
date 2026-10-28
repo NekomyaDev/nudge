@@ -994,6 +994,14 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
                             format!("rt.browser_{name}")
                         } else if prefix == "mem" {
                             format!("rt.mem_{name}")
+                        } else if prefix == "schedule" {
+                            format!("rt.schedule_{name}")
+                        } else if prefix == "sovereign" {
+                            format!("rt.sovereign_{name}")
+                        } else if prefix == "healer" {
+                            format!("rt.healer_{name}")
+                        } else if prefix == "hud" {
+                            format!("rt.hud_{name}")
                         } else if prefix == "store" {
                             format!("rt.store_{name}")
                         } else if prefix == "workspace" {
@@ -1090,22 +1098,41 @@ fn py(e: &Expr, aliases: &HashSet<String>) -> String {
                         {
                             format!("rt.time_{name}")
                         } else if prefix == "env"
-                            && matches!(name.as_str(), "get" | "set" | "has" | "delete" | "remove" | "vars" | "all")
+                            && matches!(
+                                name.as_str(),
+                                "get" | "set" | "has" | "delete" | "remove" | "vars" | "all"
+                            )
                         {
                             format!("rt.env_{name}")
                         } else if prefix == "os"
-                            && matches!(name.as_str(), "args" | "cwd" | "pid" | "platform" | "arch" | "family")
+                            && matches!(
+                                name.as_str(),
+                                "args" | "cwd" | "pid" | "platform" | "arch" | "family"
+                            )
                         {
                             format!("rt.os_{name}")
-                        } else if prefix == "json"
-                            && matches!(name.as_str(), "stringify" | "parse")
+                        } else if prefix == "json" && matches!(name.as_str(), "stringify" | "parse")
                         {
                             format!("rt.json_{name}")
                         } else if prefix == "math"
                             && matches!(
                                 name.as_str(),
-                                "clamp" | "sum" | "mean" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2" | "log"
-                                    | "hypot" | "degrees" | "radians" | "gcd" | "lcm"
+                                "clamp"
+                                    | "sum"
+                                    | "mean"
+                                    | "sin"
+                                    | "cos"
+                                    | "tan"
+                                    | "asin"
+                                    | "acos"
+                                    | "atan"
+                                    | "atan2"
+                                    | "log"
+                                    | "hypot"
+                                    | "degrees"
+                                    | "radians"
+                                    | "gcd"
+                                    | "lcm"
                             )
                         {
                             format!("rt.math_{name}")

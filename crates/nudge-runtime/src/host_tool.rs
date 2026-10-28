@@ -39,6 +39,9 @@ pub(crate) fn format_host_error(server: &str, tool: &str, code: isize) -> String
         -5 => format!(
             "host tool call '{server}::{tool}' failed: invalid arguments or JSON error (code -5)"
         ),
+        -6 => format!(
+            "host tool call '{server}::{tool}' failed: fuel or execution instruction budget exhausted (code -6)"
+        ),
         code => format!("host tool call '{server}::{tool}' failed with host error code {code}"),
     }
 }
@@ -134,6 +137,9 @@ mod tests {
 
         let err_json = format_host_error("srv", "t", -5);
         assert!(err_json.contains("invalid arguments or JSON error"));
+
+        let err_fuel = format_host_error("srv", "t", -6);
+        assert!(err_fuel.contains("fuel or execution instruction budget exhausted"));
 
         let err_unknown = format_host_error("srv", "t", -99);
         assert!(err_unknown.contains("host error code -99"));

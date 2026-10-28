@@ -418,9 +418,38 @@ pub fn redact_record_fields(fields: &mut serde_json::Map<String, Value>) {
     });
 }
 
+/// Sanitizes raw text by stripping terminal ANSI escape sequences (Issue #259).
+pub fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1B' {
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                while let Some(&next_c) = chars.peek() {
+                    chars.next();
+                    if ('@'..='~').contains(&next_c) {
+                        break;
+                    }
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_strip_ansi_sequences() {
+        let dirty = "\x1B[31mRed Alert\x1B[0m: \x1B[1;32mAll Systems Go\x1B[0m";
+        assert_eq!(strip_ansi(dirty), "Red Alert: All Systems Go");
+        assert_eq!(strip_ansi("Clean Text"), "Clean Text");
+    }
 
     #[test]
     fn test_auth_headers_and_bearer() {
@@ -678,6 +707,29 @@ mod tests {
         assert!(
             elapsed.as_millis() < 500,
             "1000 cached trace redactions took too long: {:?}",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn test_large_log_redaction_throughput() {
+        let redactor = Redactor {
+            env_secrets: Vec::new(),
+            extra_keys: Vec::new(),
+            custom_patterns: Vec::new(),
+        };
+        // Generate ~1MB log text with occasional tokens
+        let chunk = "2026-10-28T12:00:00Z [INFO] request processing Authorization: Bearer a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6 user action logged\n";
+        let large_log = chunk.repeat(10_000); // ~1.1MB
+        let start = std::time::Instant::now();
+        let redacted = redactor.redact_string(&large_log);
+        let elapsed = start.elapsed();
+        assert!(!redacted.contains("a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"));
+        assert!(redacted.contains("[REDACTED]"));
+        // 1MB throughput test: lazy static regexes ensure fast completion
+        assert!(
+            elapsed.as_secs() < 3,
+            "1MB log redaction took too long: {:?}",
             elapsed
         );
     }

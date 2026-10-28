@@ -125,7 +125,7 @@ nudgec test hello.ndg
 ### 3. Interactive Lessons and Project Scaffolding
 
 ```sh
-# Six interactive lessons in your terminal (hello, types, decide, policy, test, trace)
+# 140 interactive lessons in your terminal (see docs/learn-cheatsheet.md for quick index)
 nudgec learn
 
 # Scaffold a project from ready-made templates (triage, chatbot, rag-agent, etc.)

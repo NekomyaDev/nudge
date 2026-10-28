@@ -8,6 +8,8 @@ pub mod bytecode;
 #[cfg(feature = "compiler")]
 pub mod check;
 #[cfg(feature = "compiler")]
+pub mod clean;
+#[cfg(feature = "compiler")]
 pub mod codegen;
 #[cfg(feature = "compiler")]
 pub mod codegen_ts;

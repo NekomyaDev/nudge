@@ -117,6 +117,15 @@ impl Chunk {
         idx
     }
 
+    /// Disassembles the chunk's bytecode instructions into a human-readable string.
+    pub fn disassemble(&self, name: &str) -> String {
+        let mut out = format!("== {name} ==\n");
+        for (offset, op) in self.code.iter().enumerate() {
+            out.push_str(&format!("{offset:04} {op:?}\n"));
+        }
+        out
+    }
+
     pub fn add_constant(&mut self, val: NudgeVal) -> u32 {
         self.constants.push(val);
         (self.constants.len() - 1) as u32
@@ -818,6 +827,10 @@ impl<'a> Compiler<'a> {
                     || name.starts_with("workspace.")
                     || name.starts_with("store.")
                     || name.starts_with("mem.")
+                    || name.starts_with("schedule.")
+                    || name.starts_with("sovereign.")
+                    || name.starts_with("healer.")
+                    || name.starts_with("hud.")
                     || name.starts_with("task.")
                     || name.starts_with("fs.")
                     || name.starts_with("proc.")
@@ -1071,6 +1084,10 @@ fn check_expr_effects(expr: &Expr, tool_names: &[String]) -> Result<(), String> 
                     || name.starts_with("workspace.")
                     || name.starts_with("store.")
                     || name.starts_with("mem.")
+                    || name.starts_with("schedule.")
+                    || name.starts_with("sovereign.")
+                    || name.starts_with("healer.")
+                    || name.starts_with("hud.")
                     || name.starts_with("task.")
                     || name.starts_with("fs.")
                     || name.starts_with("proc.")
@@ -1459,5 +1476,20 @@ mod tests {
             checked.is_err(),
             "checked compilation should reject immutable assignment"
         );
+    }
+
+    #[test]
+    fn test_bytecode_chunk_disassembler() {
+        let mut chunk = Chunk::new();
+        chunk.emit(Op::Unit);
+        chunk.emit(Op::True);
+        chunk.emit(Op::Add);
+        chunk.emit(Op::Return);
+
+        let disasm = chunk.disassemble("test_chunk");
+        assert!(disasm.contains("== test_chunk =="));
+        assert!(disasm.contains("0000 Unit"));
+        assert!(disasm.contains("0002 Add"));
+        assert!(disasm.contains("0003 Return"));
     }
 }

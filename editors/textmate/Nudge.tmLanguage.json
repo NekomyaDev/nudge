@@ -1,0 +1,45 @@
+{
+  "name": "Nudge",
+  "scopeName": "source.nudge",
+  "fileTypes": ["ndg"],
+  "patterns": [
+    {
+      "name": "comment.line.double-slash.nudge",
+      "match": "//.*$"
+    },
+    {
+      "name": "keyword.control.nudge",
+      "match": "\\b(if|else|for|in|while|return|route|when|otherwise|decide|choose|score|yes|no|on|with|uses|agent|state|view|window|test|tool|fn|let|mut)\\b"
+    },
+    {
+      "name": "support.type.nudge",
+      "match": "\\b(int|float|string|bool|any|Observation|Element|ActionResult|Drift|Snapshot|DomTree)\\b"
+    },
+    {
+      "name": "constant.language.nudge",
+      "match": "\\b(true|false|none)\\b"
+    },
+    {
+      "name": "string.quoted.double.nudge",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.nudge",
+          "match": "\\\\."
+        }
+      ]
+    },
+    {
+      "name": "string.interpolated.prompt.nudge",
+      "begin": "llm\"\"\"",
+      "end": "\"\"\"",
+      "patterns": [
+        {
+          "name": "variable.other.interpolation.nudge",
+          "match": "\\{[a-zA-Z0-9_]+\\}"
+        }
+      ]
+    }
+  ]
+}

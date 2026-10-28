@@ -1,0 +1,55 @@
+fn parse_inline(text: string) -> string {
+    let mut res = text
+    // Simple inline replacements
+    res = str.replace(res, "**", "<b>")
+    res = str.replace(res, "*", "<i>")
+    res
+}
+
+fn convert_line(line: string) -> string {
+    let trimmed = str.trim(line)
+    let mut res = "<p>" + parse_inline(trimmed) + "</p>"
+    if str.starts_with(trimmed, "## ") {
+        let content = str.substring(trimmed, 3, len(trimmed))
+        res = "<h2>" + parse_inline(content) + "</h2>"
+    } else if str.starts_with(trimmed, "# ") {
+        let content = str.substring(trimmed, 2, len(trimmed))
+        res = "<h1>" + parse_inline(content) + "</h1>"
+    } else if str.starts_with(trimmed, "- ") {
+        let content = str.substring(trimmed, 2, len(trimmed))
+        res = "<li>" + parse_inline(content) + "</li>"
+    } else if str.is_empty(trimmed) {
+        res = ""
+    }
+    res
+}
+
+fn markdown_to_html(md: string) -> string {
+    let lines = str.lines(md)
+    let mut out = ""
+    for line in lines {
+        let html_line = convert_line(line)
+        if !str.is_empty(html_line) {
+            if str.is_empty(out) {
+                out = html_line
+            } else {
+                out = out + "\n" + html_line
+            }
+        }
+    }
+    out
+}
+
+fn main() -> string {
+    let md = "# Title\n\n## Subtitle\n\n- Item 1\n- Item 2\n\nParagraph text here."
+    markdown_to_html(md)
+}
+
+test "markdown converter parses headings, lists, and paragraphs" {
+    let md = "# Hello World\n## Subheader\n- First Item\nNormal paragraph"
+    let html = markdown_to_html(md)
+    assert str.contains(html, "<h1>Hello World</h1>")
+    assert str.contains(html, "<h2>Subheader</h2>")
+    assert str.contains(html, "<li>First Item</li>")
+    assert str.contains(html, "<p>Normal paragraph</p>")
+}

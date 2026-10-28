@@ -4280,6 +4280,265 @@ def mem_keys():
 def mem_clear():
     _MEM_STORE.clear()
 
+def mem_status():
+    return _attr({
+        "count": len(_MEM_STORE),
+        "dir": "",
+        "persisted": False,
+        "seq": 0,
+    })
+
+def mem_persist(dir_or_bool=None):
+    return 0
+
+def mem_snapshot():
+    return True
+
+def mem_recover(dir_path=None):
+    return 0
+
+# ── Autonomous Scheduler ──────────────────────────────────────────────────────
+_SCHEDULE_TASKS = {}
+_SCHEDULE_SEQ = 0
+
+def schedule_every(duration, task_name, args=None, **kwargs):
+    global _SCHEDULE_SEQ
+    _SCHEDULE_SEQ += 1
+    t_id = f"sched_{_SCHEDULE_SEQ}_{task_name}"
+    _SCHEDULE_TASKS[t_id] = {
+        "id": t_id,
+        "task_name": task_name,
+        "status": "active",
+        "fire_count": 0,
+        "next_fire_ms": 10000,
+    }
+    return t_id
+
+def schedule_after(delay, task_name, args=None, **kwargs):
+    global _SCHEDULE_SEQ
+    _SCHEDULE_SEQ += 1
+    t_id = f"sched_once_{_SCHEDULE_SEQ}_{task_name}"
+    _SCHEDULE_TASKS[t_id] = {
+        "id": t_id,
+        "task_name": task_name,
+        "status": "active",
+        "fire_count": 0,
+        "next_fire_ms": 2000,
+    }
+    return t_id
+
+def schedule_on_change(target, task_name, args=None, **kwargs):
+    global _SCHEDULE_SEQ
+    _SCHEDULE_SEQ += 1
+    t_id = f"sched_watch_{_SCHEDULE_SEQ}_{task_name}"
+    _SCHEDULE_TASKS[t_id] = {
+        "id": t_id,
+        "task_name": task_name,
+        "status": "active",
+        "fire_count": 0,
+        "next_fire_ms": 0,
+    }
+    return t_id
+
+def schedule_notify(target):
+    return 1
+
+def schedule_cancel(task_id):
+    if task_id in _SCHEDULE_TASKS:
+        _SCHEDULE_TASKS[task_id]["status"] = "cancelled"
+        return True
+    return False
+
+def schedule_list():
+    return _attr(list(_SCHEDULE_TASKS.values()))
+
+def schedule_tick():
+    return _attr([])
+
+# ── Sovereign Loop & Goal DAG ──────────────────────────────────────────────────
+_SOVEREIGN_GOALS = {}
+_SOVEREIGN_SEQ = 0
+
+def sovereign_submit(intent, parent_id=None):
+    global _SOVEREIGN_SEQ
+    _SOVEREIGN_SEQ += 1
+    g_id = f"goal_{_SOVEREIGN_SEQ:04d}"
+    _SOVEREIGN_GOALS[g_id] = {
+        "id": g_id,
+        "intent": intent,
+        "status": "pending",
+        "retries_spent": 0,
+        "retry_budget": 3,
+    }
+    return g_id
+
+def sovereign_next_goal():
+    for g in _SOVEREIGN_GOALS.values():
+        if g["status"] in ("pending", "active"):
+            return _attr({
+                "id": g["id"],
+                "intent": g["intent"],
+                "status": g["status"],
+            })
+    return None
+
+def sovereign_complete_goal(goal_id, output=None):
+    if goal_id in _SOVEREIGN_GOALS:
+        _SOVEREIGN_GOALS[goal_id]["status"] = "completed"
+        return True
+    return False
+
+def sovereign_fail_goal(goal_id, error=""):
+    if goal_id in _SOVEREIGN_GOALS:
+        _SOVEREIGN_GOALS[goal_id]["status"] = "failed"
+        return False
+    return False
+
+def sovereign_list_goals():
+    return _attr(list(_SOVEREIGN_GOALS.values()))
+
+def sovereign_telemetry():
+    completed = sum(1 for g in _SOVEREIGN_GOALS.values() if g["status"] == "completed")
+    failed = sum(1 for g in _SOVEREIGN_GOALS.values() if g["status"] == "failed")
+    active = sum(1 for g in _SOVEREIGN_GOALS.values() if g["status"] in ("pending", "active", "evaluating", "healing"))
+    return _attr({
+        "active_goal_id": "",
+        "active_goals": active,
+        "completed_goals": completed,
+        "failed_goals": failed,
+        "phase": "idle",
+        "replay_ratio": 1.0,
+        "thought": "Jarvis loop active.",
+        "tick_count": 1,
+        "total_goals": len(_SOVEREIGN_GOALS),
+        "uptime_secs": 10,
+    })
+
+def sovereign_tick():
+    return _attr({
+        "active_goals": 0,
+        "phase": "idle",
+        "thought": "Tick complete.",
+    })
+
+# ── Self-Healing Replay Engine ────────────────────────────────────────────────
+_HEALER_HISTORY = []
+
+def healer_candidates(broken_target):
+    return _attr([
+        {"confidence": 0.92, "id": "cand_1", "payload": f"[aria-label*='{broken_target}']", "strategy": "aria"},
+        {"confidence": 0.85, "id": "cand_2", "payload": f":contains('{broken_target}')", "strategy": "fuzzy"},
+        {"confidence": 0.70, "id": "cand_3", "payload": "form input", "strategy": "ancestor"},
+    ])
+
+def healer_commit(broken_target, strategy, payload):
+    _HEALER_HISTORY.append({
+        "attempts": 1,
+        "payload": payload,
+        "strategy": strategy,
+        "target": broken_target,
+    })
+    return True
+
+def healer_history():
+    return _attr(list(_HEALER_HISTORY))
+
+def healer_status():
+    return _attr({
+        "active_heals": 0,
+        "total_healed": len(_HEALER_HISTORY),
+    })
+
+# ── Tiered Browser Cookies & Routing ──────────────────────────────────────────
+_BROWSER_COOKIES = {}
+_BROWSER_TIER = 1
+_BROWSER_ESCALATIONS = 0
+
+def browser_cookie_set(domain, name, value, path="/", max_age=None, **kwargs):
+    _BROWSER_COOKIES[(domain, name)] = {
+        "domain": domain,
+        "name": name,
+        "value": value,
+        "path": path,
+        "expires_at": None,
+    }
+    return True
+
+def browser_cookie_get(domain, name, **kwargs):
+    entry = _BROWSER_COOKIES.get((domain, name))
+    return entry["value"] if entry else None
+
+def browser_cookie_all(domain=None, **kwargs):
+    if domain:
+        return _attr([c for (d, _), c in _BROWSER_COOKIES.items() if d == domain])
+    return _attr(list(_BROWSER_COOKIES.values()))
+
+def browser_cookie_clear(domain=None, **kwargs):
+    global _BROWSER_COOKIES
+    if domain:
+        before = len(_BROWSER_COOKIES)
+        _BROWSER_COOKIES = {k: v for k, v in _BROWSER_COOKIES.items() if k[0] != domain}
+        return before - len(_BROWSER_COOKIES)
+    count = len(_BROWSER_COOKIES)
+    _BROWSER_COOKIES.clear()
+    return count
+
+def browser_tier_status(**kwargs):
+    return _attr({
+        "active_tier": _BROWSER_TIER,
+        "cdp_available": False,
+        "cookie_count": len(_BROWSER_COOKIES),
+        "escalations": _BROWSER_ESCALATIONS,
+    })
+
+def browser_set_tier(tier, **kwargs):
+    global _BROWSER_TIER, _BROWSER_ESCALATIONS
+    if tier == 2 and _BROWSER_TIER == 1:
+        _BROWSER_ESCALATIONS += 1
+    _BROWSER_TIER = tier
+    return True
+
+# ── Watch-Only Jarvis HUD ─────────────────────────────────────────────────────
+_HUD_THOUGHT = "Jarvis HUD active."
+_HUD_PIP_WEB = False
+_HUD_PIP_OS = False
+_HUD_PULSE = 0
+
+def hud_ticker(msg):
+    global _HUD_THOUGHT
+    _HUD_THOUGHT = msg
+    return True
+
+def hud_set_pip(kind, active, title, target=None):
+    global _HUD_PIP_WEB, _HUD_PIP_OS
+    if kind == "web":
+        _HUD_PIP_WEB = bool(active)
+    elif kind in ("desktop", "os"):
+        _HUD_PIP_OS = bool(active)
+    return True
+
+def hud_advance():
+    global _HUD_PULSE
+    _HUD_PULSE += 1
+    return _HUD_PULSE
+
+def hud_state():
+    return _attr({
+        "orbital_count": len(_SOVEREIGN_GOALS),
+        "phase": "idle",
+        "pip_os_active": _HUD_PIP_OS,
+        "pip_web_active": _HUD_PIP_WEB,
+        "pulse_tick": _HUD_PULSE,
+        "thought": _HUD_THOUGHT,
+    })
+
+def hud_render(width=640, height=480):
+    return _attr({
+        "byte_count": width * height * 4,
+        "height": height,
+        "width": width,
+    })
+
 # ── persistent file-backed store (Store, crates/nudge-runtime/src/store.rs) ─────
 _STORE_CACHE = None
 

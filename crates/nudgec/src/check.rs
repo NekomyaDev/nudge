@@ -2199,8 +2199,157 @@ fn check_expr_pos(
                                 return Ty::Unknown;
                             }
                             "set" | "clear" => return Ty::None_,
-                            "has" | "delete" => return Ty::Bool,
+                            "has" | "delete" | "snapshot" => return Ty::Bool,
+                            "persist" | "recover" => return Ty::Int,
                             "keys" => return Ty::List(Box::new(Ty::Str)),
+                            "status" => {
+                                return Ty::Record(vec![
+                                    ("count".to_string(), Ty::Int),
+                                    ("dir".to_string(), Ty::Str),
+                                    ("persisted".to_string(), Ty::Bool),
+                                    ("seq".to_string(), Ty::Int),
+                                ]);
+                            }
+                            _ => {}
+                        }
+                    } else if prefix == "schedule" {
+                        match name.as_str() {
+                            "every" | "after" | "on_change" => return Ty::Str,
+                            "notify" => return Ty::Int,
+                            "cancel" => return Ty::Bool,
+                            "list" => {
+                                return Ty::List(Box::new(Ty::Record(vec![
+                                    ("fire_count".to_string(), Ty::Int),
+                                    ("id".to_string(), Ty::Str),
+                                    ("next_fire_ms".to_string(), Ty::Int),
+                                    ("status".to_string(), Ty::Str),
+                                    ("task_name".to_string(), Ty::Str),
+                                ])));
+                            }
+                            "tick" => {
+                                return Ty::List(Box::new(Ty::Record(vec![
+                                    ("fire_count".to_string(), Ty::Int),
+                                    ("id".to_string(), Ty::Str),
+                                    ("task_name".to_string(), Ty::Str),
+                                ])));
+                            }
+                            _ => {}
+                        }
+                    } else if prefix == "sovereign" {
+                        match name.as_str() {
+                            "submit" => return Ty::Str,
+                            "complete_goal" | "fail_goal" => return Ty::Bool,
+                            "next_goal" => {
+                                return Ty::Record(vec![
+                                    ("id".to_string(), Ty::Str),
+                                    ("intent".to_string(), Ty::Str),
+                                    ("status".to_string(), Ty::Str),
+                                ]);
+                            }
+                            "telemetry" => {
+                                return Ty::Record(vec![
+                                    ("active_goal_id".to_string(), Ty::Str),
+                                    ("active_goals".to_string(), Ty::Int),
+                                    ("completed_goals".to_string(), Ty::Int),
+                                    ("failed_goals".to_string(), Ty::Int),
+                                    ("phase".to_string(), Ty::Str),
+                                    ("replay_ratio".to_string(), Ty::Float),
+                                    ("thought".to_string(), Ty::Str),
+                                    ("tick_count".to_string(), Ty::Int),
+                                    ("total_goals".to_string(), Ty::Int),
+                                    ("uptime_secs".to_string(), Ty::Int),
+                                ]);
+                            }
+                            "list_goals" => {
+                                return Ty::List(Box::new(Ty::Record(vec![
+                                    ("id".to_string(), Ty::Str),
+                                    ("intent".to_string(), Ty::Str),
+                                    ("retries_spent".to_string(), Ty::Int),
+                                    ("retry_budget".to_string(), Ty::Int),
+                                    ("status".to_string(), Ty::Str),
+                                ])));
+                            }
+                            "tick" => {
+                                return Ty::Record(vec![
+                                    ("active_goals".to_string(), Ty::Int),
+                                    ("phase".to_string(), Ty::Str),
+                                    ("thought".to_string(), Ty::Str),
+                                ]);
+                            }
+                            _ => {}
+                        }
+                    } else if prefix == "healer" {
+                        match name.as_str() {
+                            "candidates" => {
+                                return Ty::List(Box::new(Ty::Record(vec![
+                                    ("confidence".to_string(), Ty::Float),
+                                    ("id".to_string(), Ty::Str),
+                                    ("payload".to_string(), Ty::Str),
+                                    ("strategy".to_string(), Ty::Str),
+                                ])));
+                            }
+                            "commit" => return Ty::Bool,
+                            "history" => {
+                                return Ty::List(Box::new(Ty::Record(vec![
+                                    ("attempts".to_string(), Ty::Int),
+                                    ("payload".to_string(), Ty::Str),
+                                    ("strategy".to_string(), Ty::Str),
+                                    ("target".to_string(), Ty::Str),
+                                ])));
+                            }
+                            "status" => {
+                                return Ty::Record(vec![
+                                    ("active_heals".to_string(), Ty::Int),
+                                    ("total_healed".to_string(), Ty::Int),
+                                ]);
+                            }
+                            _ => {}
+                        }
+                    } else if prefix == "hud" {
+                        match name.as_str() {
+                            "ticker" | "set_pip" => return Ty::Bool,
+                            "advance" => return Ty::Int,
+                            "state" => {
+                                return Ty::Record(vec![
+                                    ("orbital_count".to_string(), Ty::Int),
+                                    ("phase".to_string(), Ty::Str),
+                                    ("pip_os_active".to_string(), Ty::Bool),
+                                    ("pip_web_active".to_string(), Ty::Bool),
+                                    ("pulse_tick".to_string(), Ty::Int),
+                                    ("thought".to_string(), Ty::Str),
+                                ]);
+                            }
+                            "render" => {
+                                return Ty::Record(vec![
+                                    ("byte_count".to_string(), Ty::Int),
+                                    ("height".to_string(), Ty::Int),
+                                    ("width".to_string(), Ty::Int),
+                                ]);
+                            }
+                            _ => {}
+                        }
+                    } else if prefix == "browser" {
+                        match name.as_str() {
+                            "cookie_set" | "set_tier" => return Ty::Bool,
+                            "cookie_get" => return Ty::Unknown,
+                            "cookie_clear" => return Ty::Int,
+                            "tier_status" => {
+                                return Ty::Record(vec![
+                                    ("active_tier".to_string(), Ty::Int),
+                                    ("cdp_available".to_string(), Ty::Bool),
+                                    ("cookie_count".to_string(), Ty::Int),
+                                    ("escalations".to_string(), Ty::Int),
+                                ]);
+                            }
+                            "cookie_all" => {
+                                return Ty::List(Box::new(Ty::Record(vec![
+                                    ("domain".to_string(), Ty::Str),
+                                    ("expires_at".to_string(), Ty::Unknown),
+                                    ("name".to_string(), Ty::Str),
+                                    ("path".to_string(), Ty::Str),
+                                    ("value".to_string(), Ty::Str),
+                                ])));
+                            }
                             _ => {}
                         }
                     } else if prefix == "workspace" {
@@ -2329,11 +2478,17 @@ fn check_expr_pos(
                                 }
                                 return arg_tys.first().cloned().unwrap_or(Ty::Float);
                             }
-                            "pow" | "log" | "min" | "max" | "sum" | "hypot" => {
+                            "pow" | "log" | "min" | "max" | "hypot" => {
                                 return arg_tys.first().cloned().unwrap_or(Ty::Float);
                             }
+                            "sum" => match arg_tys.first() {
+                                Some(Ty::List(inner)) => return *inner.clone(),
+                                _ => return Ty::Int,
+                            },
                             "random_int" | "bitwise_xor" | "bitwise_and" | "bitwise_or"
-                            | "bitwise_not" | "shift_left" | "shift_right" | "gcd" | "lcm" => return Ty::Int,
+                            | "bitwise_not" | "shift_left" | "shift_right" | "gcd" | "lcm" => {
+                                return Ty::Int
+                            }
                             "random_float" | "mean" | "PI" | "E" => return Ty::Float,
                             _ => {}
                         }
@@ -2350,8 +2505,11 @@ fn check_expr_pos(
                             "to_float" => return Ty::Float,
                             "upper" | "lower" | "trim" | "trim_start" | "trim_end" | "replace"
                             | "substring" | "to_string" | "from_char_code" | "repeat"
-                            | "pad_left" | "pad_right" | "format" | "join" | "capitalize" => return Ty::Str,
-                            "contains" | "starts_with" | "ends_with" | "is_digit" | "is_alpha" | "is_empty" => return Ty::Bool,
+                            | "pad_left" | "pad_right" | "format" | "join" | "capitalize" => {
+                                return Ty::Str
+                            }
+                            "contains" | "starts_with" | "ends_with" | "is_digit" | "is_alpha"
+                            | "is_empty" => return Ty::Bool,
                             "split" | "lines" => return Ty::List(Box::new(Ty::Str)),
                             _ => {}
                         }
@@ -2725,10 +2883,10 @@ fn check_expr_pos(
                     Some(first) => {
                         if !assignable(&vt, first) && !assignable(first, &vt) {
                             errs.push(CheckError {
-                                span: None,
+                                span: Some(value.span),
                                 code: "E0201",
                                 msg: format!(
-                                    "route arm '{label}' yields {vt} but the block yields {first}"
+                                    "route arm '{label}' yields {vt} but the block yields {first} (hint: annotate a union type e.g. {first} | {vt})"
                                 ),
                             });
                         }
@@ -2784,6 +2942,21 @@ fn check_expr_pos(
                                 code: "E0806",
                                 msg: "decide option 'deadline' must be milliseconds (int), e.g. deadline: 50".into(),
                             });
+                        } else {
+                            let is_non_positive = match &val.kind {
+                                ExprKind::Int(v) => *v <= 0,
+                                ExprKind::Unary { op: BinOp::Sub, x } => {
+                                    matches!(&x.kind, ExprKind::Int(v) if *v >= 0)
+                                }
+                                _ => false,
+                            };
+                            if is_non_positive {
+                                errs.push(CheckError {
+                                    span: Some(val.span),
+                                    code: "E0201",
+                                    msg: "decide deadline must be a strictly positive integer, e.g. deadline: 50".into(),
+                                });
+                            }
                         }
                     }
                     other => errs.push(CheckError {
@@ -4018,6 +4191,24 @@ test "r" { for_all p in gen.injection() {
         let errs = check_src(r#"test "x" { for_all s in gen.str(4) { assert s == 1 } }"#);
         // s is a string; `s == 1` must surface an assignability error
         assert!(errs.iter().any(|e| e.code == "E0201"), "{errs:?}");
+    }
+
+    #[test]
+    fn test_decide_negative_deadline_rejected() {
+        let errs = check_src(
+            r#"
+fn triage(t: string) -> string uses Decision {
+    let d = decide {
+        dept: "which team?" choose [billing, technical]
+    } on t with { model: "laya:multilingual", deadline: -5 }
+    d.dept.winner
+}"#,
+        );
+        assert!(
+            errs.iter()
+                .any(|e| e.code == "E0201" && e.msg.contains("strictly positive integer")),
+            "{errs:?}"
+        );
     }
 
     #[test]

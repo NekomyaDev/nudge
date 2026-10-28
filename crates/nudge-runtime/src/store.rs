@@ -197,6 +197,21 @@ impl Store {
         res
     }
 
+    /// Computes approximate in-memory byte size of store entries (Issue #273).
+    pub fn estimated_memory_bytes(&self) -> usize {
+        let mut total = std::mem::size_of::<Self>();
+        for (k, v) in &self.entries {
+            total += k.len();
+            total += match v {
+                Value::String(s) => s.len(),
+                Value::List(l) => l.len() * std::mem::size_of::<Value>(),
+                Value::Map(m) => m.len() * (32 + std::mem::size_of::<Value>()),
+                _ => std::mem::size_of::<Value>(),
+            };
+        }
+        total
+    }
+
     /// Atomically flush the current store state to disk.
     pub fn flush(&self) -> Result<(), String> {
         let mut obj = serde_json::Map::new();
@@ -439,6 +454,27 @@ mod tests {
         std::env::remove_var("NUDGE_WORKSPACE_DIR");
         std::env::remove_var("NUDGE_STORE_PATH");
         reset();
+    }
+
+    #[test]
+    fn test_store_estimated_memory_bytes() {
+        let dir = setup_temp_workspace("est_mem");
+        let path = dir.join("store.json");
+        let mut store = Store::open(path).expect("open store");
+
+        let baseline = store.estimated_memory_bytes();
+        assert!(baseline > 0);
+
+        store
+            .set(
+                "session_data",
+                Value::String("hello world this is a test string".into()),
+            )
+            .unwrap();
+        let after_set = store.estimated_memory_bytes();
+        assert!(after_set > baseline);
+
+        teardown(&dir);
     }
 
     #[test]

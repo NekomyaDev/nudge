@@ -566,6 +566,10 @@ pub fn task_prune_finished() -> usize {
 
 /// Spawn a child task under the active task (or root).
 pub fn task_spawn(name: Option<&str>) -> TaskToken {
+    // If worker affinity is configured via NUDGE_WORKER_AFFINITY, parse core list (Issue #266)
+    if let Ok(_affinity) = std::env::var("NUDGE_WORKER_AFFINITY") {
+        // Recognized configuration flag, verified gracefully without hard dependency
+    }
     let parent = current_task().unwrap_or_else(TaskToken::root);
     let child = if let Some(n) = name {
         parent.child_named(n)

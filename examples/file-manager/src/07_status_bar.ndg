@@ -20,39 +20,44 @@ view BottomStatusBar(
     let zoom_text = str.to_string(zoom_pct) + "%"
     let free_text = "4.0 TiB " + i18n("free", current_lang)
 
-    row(padding = 2, gap = 4, bg = "toolbar", expand = true) [
+    row(padding = 2, gap = 4, bg = "toolbar", expand = true, h = 26) [
         text("Filter:"),
         input(value = filter_query, placeholder = "Filter...", id = "input_filter", w = 120, h = 22, on_change = on_filter_change),
         button("✕", id = "btn_clear_filter", variant = "flat", w = 20, h = 22, on_click = clear_filter),
         divider(orientation = "vertical", size = 1, h = 18),
         text(summary),
         spacer(expand = true),
-        divider(orientation = "vertical", size = 1, h = 18),
-        row(padding = 0, gap = 2) [
+        row(padding = 0, gap = 4, w = 360) [
+            divider(orientation = "vertical", size = 1, h = 18),
             button("−", id = "btn_zoom_out", variant = "flat", w = 20, h = 20, on_click = zoom_out),
-            button("75%", id = "btn_zoom_75", variant = if zoom_pct == 75 { "toolbar" } else { "flat" }, h = 20, on_click = set_zoom_75),
-            button("100%", id = "btn_zoom_100", variant = if zoom_pct == 100 { "toolbar" } else { "flat" }, h = 20, on_click = set_zoom_100),
-            button("125%", id = "btn_zoom_125", variant = if zoom_pct == 125 { "toolbar" } else { "flat" }, h = 20, on_click = set_zoom_125),
-            button("150%", id = "btn_zoom_150", variant = if zoom_pct == 150 { "toolbar" } else { "flat" }, h = 20, on_click = set_zoom_150),
-            button("+", id = "btn_zoom_in", variant = "flat", w = 20, h = 20, on_click = zoom_in)
-        ],
-        divider(orientation = "vertical", size = 1, h = 18),
-        text(free_text)
+            button("75%", id = "btn_zoom_75", variant = if zoom_pct == 75 { "toolbar" } else { "flat" }, w = 36, h = 20, on_click = set_zoom_75),
+            button("100%", id = "btn_zoom_100", variant = if zoom_pct == 100 { "toolbar" } else { "flat" }, w = 42, h = 20, on_click = set_zoom_100),
+            button("125%", id = "btn_zoom_125", variant = if zoom_pct == 125 { "toolbar" } else { "flat" }, w = 42, h = 20, on_click = set_zoom_125),
+            button("150%", id = "btn_zoom_150", variant = if zoom_pct == 150 { "toolbar" } else { "flat" }, w = 42, h = 20, on_click = set_zoom_150),
+            button("+", id = "btn_zoom_in", variant = "flat", w = 20, h = 20, on_click = zoom_in),
+            divider(orientation = "vertical", size = 1, h = 18),
+            text(free_text)
+        ]
     ]
 }
 
 view TerminalPanel(current_path: string, history: [string], input_val: string) -> View {
-    column(padding = 4, gap = 2, h = 160, bg = "sidebar", expand = true) [
+    let mut hist_views = []
+    for line in history {
+        hist_views = hist_views + [text(line)]
+    }
+
+    column(padding = 4, gap = 2, h = 130, bg = "sidebar", expand = true) [
         row(padding = 2, gap = 4, bg = "toolbar", expand = true) [
             text(" >_ Terminal — neko@desktop:" + current_path, bold = true),
             spacer(1),
             button("✕", id = "btn_terminal_close", variant = "flat", w = 22, h = 20, on_click = toggle_terminal)
         ],
-        scroll(history, id = "terminal_history_scroll", expand = true, padding = 2, gap = 1),
-        row(padding = 2, gap = 2, expand = true) [
+        scroll(hist_views, id = "terminal_history_scroll", h = 60, padding = 2, gap = 1),
+        row(padding = 2, gap = 4, expand = true) [
             text("$", bold = true),
-            input(value = input_val, placeholder = "Enter command (ls, pwd, cd, mkdir, clear)...", id = "input_terminal", expand = true, h = 24, on_change = on_terminal_input_change),
-            button("Exec", id = "btn_terminal_exec", variant = "toolbar", w = 50, h = 24, on_click = on_terminal_submit)
+            input(value = input_val, placeholder = "Enter command (ls, pwd, cd, mkdir, clear)...", id = "input_terminal", expand = true, h = 24, on_change = on_terminal_input_change, on_key = on_key),
+            button("Exec", id = "btn_terminal_exec", variant = "default", w = 60, h = 24, on_click = on_terminal_submit)
         ]
     ]
 }
@@ -108,9 +113,9 @@ view FileManagerLayout(
                 row(padding = 0, gap = 2, expand = true, expand_h = true) [
                     column(padding = 0, gap = 0, expand = true, expand_h = true) [
                         if view_mode == "icons" {
-                            FileIconsGrid(left_entries, selected_name, current_lang, zoom_pct)
+                            FileIconsGrid(left_entries, selected_name, current_lang, zoom_pct, true)
                         } else if view_mode == "compact" {
-                            FileCompactGrid(left_entries, selected_name, current_lang, zoom_pct)
+                            FileCompactGrid(left_entries, selected_name, current_lang, zoom_pct, true)
                         } else {
                             FileDetailsTable("Left", left_entries, selected_name, current_lang)
                         }
@@ -118,9 +123,9 @@ view FileManagerLayout(
                     divider(orientation = "vertical", size = 1, expand_h = true),
                     column(padding = 0, gap = 0, expand = true, expand_h = true) [
                         if view_mode == "icons" {
-                            FileIconsGrid(right_entries, "", current_lang, zoom_pct)
+                            FileIconsGrid(right_entries, "", current_lang, zoom_pct, true)
                         } else if view_mode == "compact" {
-                            FileCompactGrid(right_entries, "", current_lang, zoom_pct)
+                            FileCompactGrid(right_entries, "", current_lang, zoom_pct, true)
                         } else {
                             FileDetailsTable("Right", right_entries, "", current_lang)
                         }
@@ -128,9 +133,9 @@ view FileManagerLayout(
                 ]
             } else {
                 if view_mode == "icons" {
-                    FileIconsGrid(left_entries, selected_name, current_lang, zoom_pct)
+                    FileIconsGrid(left_entries, selected_name, current_lang, zoom_pct, false)
                 } else if view_mode == "compact" {
-                    FileCompactGrid(left_entries, selected_name, current_lang, zoom_pct)
+                    FileCompactGrid(left_entries, selected_name, current_lang, zoom_pct, false)
                 } else {
                     FileDetailsTable("Main", left_entries, selected_name, current_lang)
                 }
@@ -153,7 +158,7 @@ view FileManagerLayout(
 
         // 4. Optional F4 Bottom Terminal Panel
         if show_terminal {
-            column(padding = 0, gap = 0, expand = true) [
+            column(padding = 0, gap = 0, h = 130, expand = true) [
                 divider(size = 1),
                 TerminalPanel(current_path, terminal_history, terminal_input)
             ]

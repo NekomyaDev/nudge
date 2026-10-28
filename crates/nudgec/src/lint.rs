@@ -19,8 +19,12 @@
 //!   W0008 browser-unscoped — a `browser.*` call with no `allow` option:
 //!                           the automation may access ANY origin;
 //!                           scope it to the origins the task actually needs
+//!   W0106 unused-parameter — a function parameter is never referenced in the body;
+//!                           prefix with '_' to exempt (e.g. `_req`)
+//!   L0101 missing-doc      — an exported function lacks a doc comment (`///`) in `--strict` mode
 
 use crate::ast::{Expr, ExprKind, Item, Stmt, StmtKind, TypeExpr};
+use std::collections::HashSet;
 
 #[derive(Debug)]
 pub struct Lint {
@@ -515,14 +519,238 @@ fn walk_stmt(ctx: &str, s: &Stmt, records: &[(String, Vec<String>)], out: &mut V
     }
 }
 
+fn collect_expr_idents(e: &Expr, used: &mut HashSet<String>) {
+    match &e.kind {
+        ExprKind::Ident(id) => {
+            used.insert(id.clone());
+        }
+        ExprKind::Prompt { body, interpolations } => {
+            for interp in interpolations {
+                used.insert(interp.clone());
+            }
+            // Also collect individual words in the prompt text that might reference parameters
+            for word in body.split(|c: char| !c.is_ascii_alphanumeric() && c != '_') {
+                if !word.is_empty() {
+                    used.insert(word.to_string());
+                }
+            }
+        }
+        ExprKind::ListLit(xs) | ExprKind::ParAll(xs) | ExprKind::ParRace(xs) => {
+            for x in xs {
+                collect_expr_idents(x, used);
+            }
+        }
+        ExprKind::Binary { l, r, .. } | ExprKind::Merge { l, r, .. } => {
+            collect_expr_idents(l, used);
+            collect_expr_idents(r, used);
+        }
+        ExprKind::Unary { x, .. } | ExprKind::Spawn(x) => {
+            collect_expr_idents(x, used);
+        }
+        ExprKind::Field { obj, .. } => {
+            collect_expr_idents(obj, used);
+        }
+        ExprKind::Index { obj, idx } => {
+            collect_expr_idents(obj, used);
+            collect_expr_idents(idx, used);
+        }
+        ExprKind::RecordLit(fields) => {
+            for (_, v) in fields {
+                collect_expr_idents(v, used);
+            }
+        }
+        ExprKind::If { cond, then, else_ } => {
+            collect_expr_idents(cond, used);
+            collect_expr_idents(then, used);
+            if let Some(el) = else_ {
+                collect_expr_idents(el, used);
+            }
+        }
+        ExprKind::Call { func, args, kwargs } => {
+            collect_expr_idents(func, used);
+            for a in args {
+                collect_expr_idents(a, used);
+            }
+            for (_, v) in kwargs {
+                collect_expr_idents(v, used);
+            }
+        }
+        ExprKind::LlmCall {
+            prompt, options, ..
+        } => {
+            collect_expr_idents(prompt, used);
+            for (_, v) in options {
+                collect_expr_idents(v, used);
+            }
+        }
+        ExprKind::DecideCall {
+            questions: _,
+            state,
+            options,
+        } => {
+            collect_expr_idents(state, used);
+            for (_, v) in options {
+                collect_expr_idents(v, used);
+            }
+        }
+        ExprKind::ComputerCall { args, kwargs, .. } => {
+            for a in args {
+                collect_expr_idents(a, used);
+            }
+            for (_, v) in kwargs {
+                collect_expr_idents(v, used);
+            }
+        }
+        ExprKind::ParMap {
+            coll, kwargs, body, ..
+        } => {
+            collect_expr_idents(coll, used);
+            for (_, v) in kwargs {
+                collect_expr_idents(v, used);
+            }
+            collect_expr_idents(body, used);
+        }
+        ExprKind::Route { arms } => {
+            for (_, body, cond) in arms {
+                if let Some(c) = cond {
+                    collect_expr_idents(c, used);
+                }
+                collect_expr_idents(body, used);
+            }
+        }
+        ExprKind::Block(stmts) => {
+            for s in stmts {
+                collect_stmt_idents(s, used);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_stmt_idents(s: &Stmt, used: &mut HashSet<String>) {
+    match &s.kind {
+        StmtKind::Let { value, .. }
+        | StmtKind::Assign { value, .. }
+        | StmtKind::StateWrite { value, .. }
+        | StmtKind::Assert(value)
+        | StmtKind::ExprStmt(value) => {
+            collect_expr_idents(value, used);
+        }
+        StmtKind::For { coll, body, .. } => {
+            collect_expr_idents(coll, used);
+            for st in body {
+                collect_stmt_idents(st, used);
+            }
+        }
+        StmtKind::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            collect_expr_idents(cond, used);
+            for st in then_body {
+                collect_stmt_idents(st, used);
+            }
+            if let Some(el) = else_body {
+                for st in el {
+                    collect_stmt_idents(st, used);
+                }
+            }
+        }
+        StmtKind::IndexAssign {
+            collection,
+            index,
+            value,
+        } => {
+            collect_expr_idents(collection, used);
+            collect_expr_idents(index, used);
+            collect_expr_idents(value, used);
+        }
+        StmtKind::ForAll { args, body, .. } => {
+            for a in args {
+                collect_expr_idents(a, used);
+            }
+            for st in body {
+                collect_stmt_idents(st, used);
+            }
+        }
+    }
+}
+
+fn check_unused_params(
+    ctx: &str,
+    params: &[crate::ast::Param],
+    body: &[Stmt],
+    out: &mut Vec<Lint>,
+) {
+    let mut used = HashSet::new();
+    for s in body {
+        collect_stmt_idents(s, &mut used);
+    }
+    for p in params {
+        if !p.name.starts_with('_') && !used.contains(&p.name) {
+            out.push(lint(
+                "W0106",
+                format!(
+                    "in {ctx}: unused parameter '{}' (prefix with '_' like '_{}' to exempt)",
+                    p.name, p.name
+                ),
+            ));
+        }
+    }
+}
+
 /// Run all prompt-quality rules over the parsed items.
 pub fn lint_items(items: &[Item]) -> Vec<Lint> {
+    lint_items_opts(items, "", false)
+}
+
+/// Run lint rules with options (such as source text inspection for strict doc comment checks).
+pub fn lint_items_opts(items: &[Item], src: &str, strict: bool) -> Vec<Lint> {
     let records = record_fields(items);
     let mut out = Vec::new();
+
+    if strict && !src.is_empty() {
+        let lines: Vec<&str> = src.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("pub fn ")
+                || (trimmed.starts_with("fn ")
+                    && !trimmed.starts_with("fn _")
+                    && !trimmed.contains("uses"))
+            {
+                let fn_name = trimmed
+                    .strip_prefix("pub fn ")
+                    .or_else(|| trimmed.strip_prefix("fn "))
+                    .and_then(|s| s.split('(').next())
+                    .map(|s| s.trim())
+                    .unwrap_or("");
+
+                if !fn_name.is_empty() && fn_name != "main" && !fn_name.starts_with('_') {
+                    let has_doc = if i > 0 {
+                        let prev = lines[i - 1].trim();
+                        prev.starts_with("///")
+                    } else {
+                        false
+                    };
+                    if !has_doc {
+                        out.push(lint(
+                            "L0101",
+                            format!("missing doc comment ('///') on exported function '{fn_name}'"),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
     fn walk_item(it: &Item, records: &[(String, Vec<String>)], out: &mut Vec<Lint>) {
         match it {
-            Item::Fn { name, body, .. } => {
+            Item::Fn {
+                name, params, body, ..
+            } => {
                 let ctx = format!("fn {name}");
+                check_unused_params(&ctx, params, body, out);
                 for s in body {
                     walk_stmt(&ctx, s, records, out);
                 }
@@ -538,9 +766,13 @@ pub fn lint_items(items: &[Item]) -> Vec<Lint> {
                     // prefix agent context onto fn context
                     match f {
                         Item::Fn {
-                            name: fname, body, ..
+                            name: fname,
+                            params,
+                            body,
+                            ..
                         } => {
                             let ctx = format!("agent {name} / fn {fname}");
+                            check_unused_params(&ctx, params, body, out);
                             for s in body {
                                 walk_stmt(&ctx, s, records, out);
                             }
@@ -823,6 +1055,51 @@ mod tests {
             ls.iter()
                 .any(|l| l.code == "W0007" && l.msg.contains("browser.*")),
             "{ls:?}"
+        );
+    }
+
+    #[test]
+    fn unused_parameter_warns_w0106_and_underscore_exempts_it() {
+        let src_warn = r#"fn compute(x: int, y: int) -> int {
+    x + 1
+}"#;
+        let ls = lints(src_warn);
+        assert!(
+            ls.iter()
+                .any(|l| l.code == "W0106" && l.msg.contains("unused parameter 'y'")),
+            "expected W0106 warning on unused parameter y, got: {ls:?}"
+        );
+
+        let src_ok = r#"fn compute(x: int, _y: int) -> int {
+    x + 1
+}"#;
+        let ls_ok = lints(src_ok);
+        assert!(
+            !ls_ok.iter().any(|l| l.code == "W0106"),
+            "expected leading underscore to exempt parameter, got: {ls_ok:?}"
+        );
+    }
+
+    #[test]
+    fn lint_strict_reports_missing_doc_comment_l0101() {
+        let src_no_doc = "fn public_api_endpoint(data: string) -> string {\n    data\n}\n";
+        let toks = crate::lexer::lex(src_no_doc).unwrap();
+        let items = crate::parser::parse(toks).unwrap();
+        let lints_strict = lint_items_opts(&items, src_no_doc, true);
+        assert!(
+            lints_strict
+                .iter()
+                .any(|l| l.code == "L0101" && l.msg.contains("public_api_endpoint")),
+            "expected L0101 on undocumented function in strict mode: {lints_strict:?}"
+        );
+
+        let src_with_doc = "/// Compute and process API payload.\nfn public_api_endpoint(data: string) -> string {\n    data\n}\n";
+        let toks2 = crate::lexer::lex(src_with_doc).unwrap();
+        let items2 = crate::parser::parse(toks2).unwrap();
+        let lints_strict2 = lint_items_opts(&items2, src_with_doc, true);
+        assert!(
+            !lints_strict2.iter().any(|l| l.code == "L0101"),
+            "doc comment should satisfy L0101 check: {lints_strict2:?}"
         );
     }
 }

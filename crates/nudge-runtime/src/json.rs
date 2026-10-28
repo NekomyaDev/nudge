@@ -100,6 +100,7 @@ pub fn parse(text: &str) -> Result<Json, String> {
         b: &'a [u8],
         i: usize,
         depth: usize,
+        scratch: String,
     }
     impl<'a> P<'a> {
         fn enter(&mut self) -> Result<(), String> {
@@ -166,25 +167,25 @@ pub fn parse(text: &str) -> Result<Json, String> {
         }
         fn string(&mut self) -> Result<String, String> {
             self.expect(b'"')?;
-            let mut out = String::new();
+            self.scratch.clear();
             loop {
                 match self.peek() {
                     None => return Err("unterminated string".into()),
                     Some(b'"') => {
                         self.i += 1;
-                        return Ok(out);
+                        return Ok(std::mem::take(&mut self.scratch));
                     }
                     Some(b'\\') => {
                         self.i += 1;
                         match self.peek() {
-                            Some(b'"') => out.push('"'),
-                            Some(b'\\') => out.push('\\'),
-                            Some(b'/') => out.push('/'),
-                            Some(b'n') => out.push('\n'),
-                            Some(b'r') => out.push('\r'),
-                            Some(b't') => out.push('\t'),
-                            Some(b'b') => out.push('\u{0008}'),
-                            Some(b'f') => out.push('\u{000C}'),
+                            Some(b'"') => self.scratch.push('"'),
+                            Some(b'\\') => self.scratch.push('\\'),
+                            Some(b'/') => self.scratch.push('/'),
+                            Some(b'n') => self.scratch.push('\n'),
+                            Some(b'r') => self.scratch.push('\r'),
+                            Some(b't') => self.scratch.push('\t'),
+                            Some(b'b') => self.scratch.push('\u{0008}'),
+                            Some(b'f') => self.scratch.push('\u{000C}'),
                             Some(b'u') => {
                                 // \uXXXX, with UTF-16 surrogate-pair support
                                 // (astral-plane chars like emoji arrive as
@@ -209,13 +210,14 @@ pub fn parse(text: &str) -> Result<Json, String> {
                                     match paired {
                                         Some(lo) => {
                                             let c = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-                                            out.push(char::from_u32(c).unwrap_or('\u{FFFD}'));
+                                            self.scratch
+                                                .push(char::from_u32(c).unwrap_or('\u{FFFD}'));
                                             self.i += 6; // consumed \uXXXX of the low half
                                         }
-                                        None => out.push('\u{FFFD}'),
+                                        None => self.scratch.push('\u{FFFD}'),
                                     }
                                 } else {
-                                    out.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
+                                    self.scratch.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
                                 }
                             }
                             _ => return Err(format!("bad escape at byte {}", self.i)),
@@ -227,7 +229,7 @@ pub fn parse(text: &str) -> Result<Json, String> {
                         let rest = &self.b[self.i..];
                         let s = std::str::from_utf8(rest).map_err(|e| e.to_string())?;
                         let ch = s.chars().next().ok_or("unexpected end")?;
-                        out.push(ch);
+                        self.scratch.push(ch);
                         self.i += ch.len_utf8();
                     }
                 }
@@ -296,6 +298,7 @@ pub fn parse(text: &str) -> Result<Json, String> {
         b: text.as_bytes(),
         i: 0,
         depth: 0,
+        scratch: String::with_capacity(64),
     };
     let v = p.value()?;
     p.ws();

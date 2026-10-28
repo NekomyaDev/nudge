@@ -1057,13 +1057,21 @@ mod tests {
         // Verify with kill(pid, 0) that process was terminated and reaped from OS
         #[cfg(unix)]
         {
-            // Give OS a moment to reap
-            std::thread::sleep(Duration::from_millis(50));
+            // Bounded polling loop to verify process is reaped
             extern "C" {
                 fn kill(pid: i32, sig: i32) -> i32;
             }
-            let ret = unsafe { kill(pid as i32, 0) };
-            assert_eq!(ret, -1, "process {pid} should not exist after reap");
+            let poll_start = std::time::Instant::now();
+            let mut reaped = false;
+            while poll_start.elapsed() < Duration::from_millis(2000) {
+                let ret = unsafe { kill(pid as i32, 0) };
+                if ret == -1 {
+                    reaped = true;
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert!(reaped, "process {pid} should not exist after reap");
         }
     }
 }

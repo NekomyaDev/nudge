@@ -1929,3 +1929,35 @@ fn test_cli_trace_html_audit_and_trace_view_flag_handling() {
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn test_cli_clean_and_run_verbose() {
+    let tmp = std::env::temp_dir().join(format!("nudgec_cli_run_clean_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(tmp.join(".nudge/cache")).unwrap();
+    fs::write(tmp.join(".nudge/cache/tmp.dat"), "123").unwrap();
+
+    let out_clean_help = Command::new(nudgec_bin())
+        .arg("clean")
+        .arg("--help")
+        .output()
+        .expect("clean --help");
+    assert_eq!(out_clean_help.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out_clean_help.stdout).contains("usage: nudgec clean"));
+
+    // run --verbose prints elapsed duration
+    let script = tmp.join("script.ndg");
+    fs::write(&script, "fn main() -> int { 42 }\n").unwrap();
+    let out_run_verbose = Command::new(nudgec_bin())
+        .arg("run")
+        .arg(&script)
+        .arg("--verbose")
+        .output()
+        .expect("nudgec run --verbose");
+    assert_eq!(out_run_verbose.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out_run_verbose.stdout);
+    assert!(stdout.contains("42"));
+    assert!(stdout.contains("Completed in "));
+
+    let _ = fs::remove_dir_all(&tmp);
+}

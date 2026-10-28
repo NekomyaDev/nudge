@@ -732,7 +732,11 @@ agent FileManagerApp {
                 FileManagerApp.cancel_rename()
             }
         } else if k == "Enter" {
-            FileManagerApp.open_selected_directory()
+            if state.show_terminal and state.terminal_input != "" {
+                FileManagerApp.on_terminal_submit()
+            } else {
+                FileManagerApp.open_selected_directory()
+            }
         } else if k == "Backspace" {
             FileManagerApp.nav_up()
         } else if k == "Ctrl++" or k == "Ctrl+=" {

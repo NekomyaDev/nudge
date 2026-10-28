@@ -1,0 +1,49 @@
+fn parse_csv_numbers(csv_text: string, col_idx: int) -> [int] {
+    let lines = str.lines(csv_text)
+    let mut numbers: [int] = []
+    let mut is_header = true
+    for line in lines {
+        if is_header {
+            is_header = false
+        } else {
+            let row = str.trim(line)
+            if !str.is_empty(row) {
+                let cols = str.split(row, ",")
+                if len(cols) > col_idx {
+                    let val = str.to_int(str.trim(cols[col_idx]))
+                    numbers = list.push(numbers, val)
+                }
+            }
+        }
+    }
+    numbers
+}
+
+fn summarize_stats(name: string, nums: [int]) -> string {
+    let mut res = name + ": empty"
+    if len(nums) > 0 {
+        let total = math.sum(nums)
+        let min_v = list.min(nums)
+        let max_v = list.max(nums)
+        let count = len(nums)
+        let mean_v = total / count
+        res = name + " -> Count: " + str.to_string(count) + ", Sum: " + str.to_string(total) + ", Min: " + str.to_string(min_v) + ", Max: " + str.to_string(max_v) + ", Mean: " + str.to_string(mean_v)
+    }
+    res
+}
+
+fn main() -> string {
+    let sample_csv = "product,category,price,units\nLaptop,Electronics,1200,5\nMouse,Electronics,25,40\nKeyboard,Electronics,75,20\nDesk,Furniture,300,10\nChair,Furniture,150,15\nMonitor,Electronics,250,8"
+    let prices = parse_csv_numbers(sample_csv, 2)
+    let units = parse_csv_numbers(sample_csv, 3)
+    summarize_stats("Price", prices) + "\n" + summarize_stats("Units", units)
+}
+
+test "csv summary computes statistics for price and units" {
+    let sample = "item,qty,cost\nA,10,50\nB,20,100\nC,30,150"
+    let values = parse_csv_numbers(sample, 2)
+    assert len(values) == 3
+    assert list.min(values) == 50
+    assert list.max(values) == 150
+    assert math.sum(values) == 300
+}

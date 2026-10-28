@@ -12,13 +12,19 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-pub const METHODS: [&str; 6] = [
+pub const METHODS: [&str; 12] = [
     "browser.fetch",
     "browser.connect",
     "browser.read",
     "browser.write",
     "browser.close",
     "browser.rasterize",
+    "browser.cookie_set",
+    "browser.cookie_get",
+    "browser.cookie_all",
+    "browser.cookie_clear",
+    "browser.tier_status",
+    "browser.set_tier",
 ];
 
 enum StreamHandle {
@@ -71,8 +77,287 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
         "browser.write" => execute_write(args),
         "browser.close" => execute_close(args),
         "browser.rasterize" => execute_rasterize(args),
+        "browser.cookie_set" => execute_cookie_set(args),
+        "browser.cookie_get" => execute_cookie_get(args),
+        "browser.cookie_all" => execute_cookie_all(args),
+        "browser.cookie_clear" => execute_cookie_clear(args),
+        "browser.tier_status" => execute_tier_status(),
+        "browser.set_tier" => execute_set_tier(args),
         _ => Err(format!("Unimplemented browser function: {name}")),
     }
+}
+
+/// Persistent / in-memory RFC 6265 Cookie Entry.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CookieEntry {
+    pub domain: String,
+    pub name: String,
+    pub value: String,
+    pub path: String,
+    pub expires_at: Option<u64>,
+}
+
+/// Thread-safe Cookie Jar.
+#[derive(Debug, Default)]
+pub struct CookieJar {
+    cookies: Vec<CookieEntry>,
+}
+
+impl CookieJar {
+    pub fn new() -> Self {
+        Self {
+            cookies: Vec::new(),
+        }
+    }
+
+    pub fn set(
+        &mut self,
+        domain: String,
+        name: String,
+        value: String,
+        path: String,
+        max_age_secs: Option<u64>,
+    ) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let expires_at = max_age_secs.map(|s| now.saturating_add(s));
+
+        if let Some(existing) = self
+            .cookies
+            .iter_mut()
+            .find(|c| c.domain == domain && c.name == name && c.path == path)
+        {
+            existing.value = value;
+            existing.expires_at = expires_at;
+        } else {
+            self.cookies.push(CookieEntry {
+                domain,
+                name,
+                value,
+                path,
+                expires_at,
+            });
+        }
+    }
+
+    pub fn get(&self, domain: &str, name: &str) -> Option<String> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        self.cookies.iter().find_map(|c| {
+            if (c.domain == domain || domain.ends_with(&format!(".{}", c.domain))) && c.name == name
+            {
+                if let Some(exp) = c.expires_at {
+                    if exp < now {
+                        return None;
+                    }
+                }
+                Some(c.value.clone())
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn all(&self, domain: Option<&str>) -> Vec<CookieEntry> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        self.cookies
+            .iter()
+            .filter(|c| {
+                if let Some(exp) = c.expires_at {
+                    if exp < now {
+                        return false;
+                    }
+                }
+                if let Some(d) = domain {
+                    c.domain == d || d.ends_with(&format!(".{}", c.domain))
+                } else {
+                    true
+                }
+            })
+            .cloned()
+            .collect()
+    }
+
+    pub fn clear(&mut self, domain: Option<&str>) -> usize {
+        let before = self.cookies.len();
+        if let Some(d) = domain {
+            self.cookies
+                .retain(|c| c.domain != d && !c.domain.ends_with(&format!(".{d}")));
+        } else {
+            self.cookies.clear();
+        }
+        before.saturating_sub(self.cookies.len())
+    }
+}
+
+static COOKIE_JAR: Mutex<Option<CookieJar>> = Mutex::new(None);
+
+fn with_cookie_jar<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut CookieJar) -> R,
+{
+    let mut guard = COOKIE_JAR.lock().unwrap();
+    if guard.is_none() {
+        *guard = Some(CookieJar::new());
+    }
+    f(guard.as_mut().unwrap())
+}
+
+#[derive(Debug)]
+struct TierRouter {
+    active_tier: i64,
+    escalation_count: u64,
+}
+
+impl Default for TierRouter {
+    fn default() -> Self {
+        Self {
+            active_tier: 1, // Katman 1 (Native Engine) default
+            escalation_count: 0,
+        }
+    }
+}
+
+static TIER_ROUTER: Mutex<Option<TierRouter>> = Mutex::new(None);
+
+fn with_tier_router<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut TierRouter) -> R,
+{
+    let mut guard = TIER_ROUTER.lock().unwrap();
+    if guard.is_none() {
+        *guard = Some(TierRouter::default());
+    }
+    f(guard.as_mut().unwrap())
+}
+
+fn execute_cookie_set(args: Vec<Value>) -> Result<Value, String> {
+    if args.len() < 3 {
+        return Err(
+            "browser.cookie_set requires (domain, name, value, [path, max_age_secs])".into(),
+        );
+    }
+    let domain = match &args[0] {
+        Value::String(s) => s.clone(),
+        _ => return Err("browser.cookie_set: domain must be a string".into()),
+    };
+    let name = match &args[1] {
+        Value::String(s) => s.clone(),
+        _ => return Err("browser.cookie_set: name must be a string".into()),
+    };
+    let value = match &args[2] {
+        Value::String(s) => s.clone(),
+        _ => return Err("browser.cookie_set: value must be a string".into()),
+    };
+    let path = match args.get(3) {
+        Some(Value::String(s)) => s.clone(),
+        _ => "/".to_string(),
+    };
+    let max_age_secs = match args.get(4) {
+        Some(Value::Int(n)) => Some((*n).max(0) as u64),
+        _ => None,
+    };
+
+    with_cookie_jar(|jar| {
+        jar.set(domain, name, value, path, max_age_secs);
+    });
+    Ok(Value::Bool(true))
+}
+
+fn execute_cookie_get(args: Vec<Value>) -> Result<Value, String> {
+    if args.len() < 2 {
+        return Err("browser.cookie_get requires (domain, name)".into());
+    }
+    let domain = match &args[0] {
+        Value::String(s) => s.as_str(),
+        _ => return Err("browser.cookie_get: domain must be a string".into()),
+    };
+    let name = match &args[1] {
+        Value::String(s) => s.as_str(),
+        _ => return Err("browser.cookie_get: name must be a string".into()),
+    };
+
+    let found = with_cookie_jar(|jar| jar.get(domain, name));
+    match found {
+        Some(v) => Ok(Value::String(v)),
+        None => Ok(Value::None),
+    }
+}
+
+fn execute_cookie_all(args: Vec<Value>) -> Result<Value, String> {
+    let domain_filter = match args.first() {
+        Some(Value::String(s)) => Some(s.as_str()),
+        _ => None,
+    };
+
+    let cookies = with_cookie_jar(|jar| jar.all(domain_filter));
+    let mut list = Vec::with_capacity(cookies.len());
+    for c in cookies {
+        let mut map = HashMap::new();
+        map.insert("domain".to_string(), Value::String(c.domain));
+        map.insert("name".to_string(), Value::String(c.name));
+        map.insert("value".to_string(), Value::String(c.value));
+        map.insert("path".to_string(), Value::String(c.path));
+        map.insert(
+            "expires_at".to_string(),
+            match c.expires_at {
+                Some(exp) => Value::Int(exp as i64),
+                None => Value::None,
+            },
+        );
+        list.push(Value::Map(map));
+    }
+    Ok(Value::List(list))
+}
+
+fn execute_cookie_clear(args: Vec<Value>) -> Result<Value, String> {
+    let domain_filter = match args.first() {
+        Some(Value::String(s)) => Some(s.as_str()),
+        _ => None,
+    };
+
+    let count = with_cookie_jar(|jar| jar.clear(domain_filter));
+    Ok(Value::Int(count as i64))
+}
+
+fn execute_tier_status() -> Result<Value, String> {
+    let (tier, escalations) = with_tier_router(|tr| (tr.active_tier, tr.escalation_count));
+    let cookie_count = with_cookie_jar(|jar| jar.cookies.len());
+    let cdp_available = std::env::var("NUDGE_CDP_URL").is_ok();
+
+    let mut map = HashMap::new();
+    map.insert("active_tier".to_string(), Value::Int(tier));
+    map.insert("escalations".to_string(), Value::Int(escalations as i64));
+    map.insert("cookie_count".to_string(), Value::Int(cookie_count as i64));
+    map.insert("cdp_available".to_string(), Value::Bool(cdp_available));
+    Ok(Value::Map(map))
+}
+
+fn execute_set_tier(args: Vec<Value>) -> Result<Value, String> {
+    if args.is_empty() {
+        return Err("browser.set_tier requires tier integer (1 or 2)".into());
+    }
+    let tier = match &args[0] {
+        Value::Int(t) if *t == 1 || *t == 2 => *t,
+        _ => return Err("browser.set_tier: tier must be 1 (Native) or 2 (Headless CDP)".into()),
+    };
+
+    with_tier_router(|tr| {
+        if tier == 2 && tr.active_tier == 1 {
+            tr.escalation_count = tr.escalation_count.saturating_add(1);
+        }
+        tr.active_tier = tier;
+    });
+    Ok(Value::Bool(true))
 }
 
 fn execute_rasterize(args: Vec<Value>) -> Result<Value, String> {
@@ -824,5 +1109,64 @@ mod tests {
             }
         }
         Ok(out)
+    }
+
+    #[test]
+    fn test_cookie_jar_lifecycle_and_domain_isolation() {
+        let mut jar = CookieJar::new();
+        jar.set(
+            "example.com".into(),
+            "session_id".into(),
+            "sess_abc123".into(),
+            "/".into(),
+            Some(3600),
+        );
+        jar.set(
+            "sub.example.com".into(),
+            "theme".into(),
+            "dark".into(),
+            "/dashboard".into(),
+            None,
+        );
+
+        assert_eq!(
+            jar.get("example.com", "session_id"),
+            Some("sess_abc123".into())
+        );
+        // Subdomain inherits parent domain cookies
+        assert_eq!(
+            jar.get("sub.example.com", "session_id"),
+            Some("sess_abc123".into())
+        );
+        assert_eq!(jar.get("other.com", "session_id"), None);
+
+        // All cookies
+        let all = jar.all(None);
+        assert_eq!(all.len(), 2);
+
+        // Clear sub domain
+        let cleared = jar.clear(Some("sub.example.com"));
+        assert_eq!(cleared, 1);
+        assert_eq!(jar.all(None).len(), 1);
+    }
+
+    #[test]
+    fn test_tiered_router_status_and_escalation() {
+        execute_set_tier(vec![Value::Int(1)]).unwrap();
+        let status = execute_tier_status().unwrap();
+        if let Value::Map(m) = status {
+            assert_eq!(m.get("active_tier"), Some(&Value::Int(1)));
+        } else {
+            panic!("expected map");
+        }
+
+        execute_set_tier(vec![Value::Int(2)]).unwrap();
+        let status2 = execute_tier_status().unwrap();
+        if let Value::Map(m) = status2 {
+            assert_eq!(m.get("active_tier"), Some(&Value::Int(2)));
+            assert_eq!(m.get("escalations"), Some(&Value::Int(1)));
+        } else {
+            panic!("expected map");
+        }
     }
 }
