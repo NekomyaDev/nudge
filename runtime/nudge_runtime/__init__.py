@@ -4408,7 +4408,7 @@ def sovereign_telemetry():
         "failed_goals": failed,
         "phase": "idle",
         "replay_ratio": 1.0,
-        "thought": "Jarvis loop active.",
+        "thought": "Visor loop active.",
         "tick_count": 1,
         "total_goals": len(_SOVEREIGN_GOALS),
         "uptime_secs": 10,
@@ -4498,8 +4498,8 @@ def browser_set_tier(tier, **kwargs):
     _BROWSER_TIER = tier
     return True
 
-# ── Watch-Only Jarvis HUD ─────────────────────────────────────────────────────
-_HUD_THOUGHT = "Jarvis HUD active."
+# ── Watch-Only Visor HUD ──────────────────────────────────────────────────────
+_HUD_THOUGHT = "Visor HUD active."
 _HUD_PIP_WEB = False
 _HUD_PIP_OS = False
 _HUD_PULSE = 0

@@ -658,44 +658,26 @@ fn test_provider_gate_table_and_policy() {
 fn test_antigravity_default_is_fail_closed_without_opt_in_regression() {
     let _lock = get_test_lock();
 
-    // 1. With NO NUDGE_ENABLE_ANTIGRAVITY -> policy is Disabled (fail-closed)
+    // 1. With NUDGE_DISABLE_PROVIDER_ANTIGRAVITY=1 -> policy is Disabled
     let _guard = EnvGuard::set(&[
-        ("NUDGE_ENABLE_ANTIGRAVITY", None),
+        ("NUDGE_DISABLE_PROVIDER_ANTIGRAVITY", Some("1")),
         ("NUDGE_API_KEY", None),
         ("ANTIGRAVITY_API_KEY", None),
-        ("NUDGE_DISABLE_PROVIDER_ANTIGRAVITY", None),
     ]);
     match get_provider_gate_policy("antigravity") {
         ProviderGatePolicy::Disabled { reason } => {
             assert!(
-                reason.contains("fail-closed"),
-                "reason must mention 'fail-closed': {reason}"
-            );
-            assert!(
-                reason.contains("not been proven"),
-                "reason must mention 'not been proven': {reason}"
+                reason.contains("explicitly disabled"),
+                "reason must mention disabled: {reason}"
             );
         }
-        other => panic!("expected Disabled fail-closed policy, got: {other:?}"),
+        other => panic!("expected Disabled policy, got: {other:?}"),
     }
 
-    // Even if an API key is set, policy remains Disabled if NUDGE_ENABLE_ANTIGRAVITY is unset
+    // 2. By default (without disable env) -> LoopbackOAuth
     {
-        let _guard_key = EnvGuard::set(&[("NUDGE_API_KEY", Some("test-key-without-opt-in"))]);
-        match get_provider_gate_policy("antigravity") {
-            ProviderGatePolicy::Disabled { reason } => {
-                assert!(reason.contains("fail-closed") && reason.contains("not been proven"));
-            }
-            other => {
-                panic!("expected Disabled even with API key when opt-in is unset, got: {other:?}")
-            }
-        }
-    }
-
-    // 2. With NUDGE_ENABLE_ANTIGRAVITY=1 -> policy is NOT Disabled
-    {
-        let _guard_opt_in = EnvGuard::set(&[
-            ("NUDGE_ENABLE_ANTIGRAVITY", Some("1")),
+        let _guard_default = EnvGuard::set(&[
+            ("NUDGE_DISABLE_PROVIDER_ANTIGRAVITY", None),
             ("NUDGE_API_KEY", None),
             ("ANTIGRAVITY_API_KEY", None),
         ]);
@@ -703,21 +685,21 @@ fn test_antigravity_default_is_fail_closed_without_opt_in_regression() {
             ProviderGatePolicy::LoopbackOAuth { auth_url, .. } => {
                 assert!(auth_url.contains("accounts.google.com"));
             }
-            other => panic!("expected LoopbackOAuth with opt-in, got: {other:?}"),
+            other => panic!("expected LoopbackOAuth by default, got: {other:?}"),
         }
     }
 
-    // With NUDGE_ENABLE_ANTIGRAVITY=1 and API key -> ApiKey (NOT Disabled)
+    // 3. With API key -> ApiKey
     {
         let _guard_api = EnvGuard::set(&[
-            ("NUDGE_ENABLE_ANTIGRAVITY", Some("1")),
+            ("NUDGE_DISABLE_PROVIDER_ANTIGRAVITY", None),
             ("NUDGE_API_KEY", Some("valid-key")),
         ]);
         match get_provider_gate_policy("antigravity") {
             ProviderGatePolicy::ApiKey { primary_env, .. } => {
                 assert_eq!(primary_env, "NUDGE_API_KEY");
             }
-            other => panic!("expected ApiKey with opt-in and key, got: {other:?}"),
+            other => panic!("expected ApiKey with key, got: {other:?}"),
         }
     }
 }

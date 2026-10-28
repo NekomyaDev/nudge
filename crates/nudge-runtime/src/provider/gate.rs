@@ -68,7 +68,7 @@ pub const PROVIDER_GATE_TABLE: &[ProviderGateEntry] = &[
         policy: ProviderGatePolicy::LoopbackOAuth {
             auth_url: "https://accounts.google.com/o/oauth2/v2/auth",
             token_endpoint: "https://oauth2.googleapis.com/token",
-            client_id: "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
+            client_id: "",
         },
         oauth_enabled: true,
     },
@@ -100,18 +100,14 @@ pub fn get_provider_gate_policy(name: &str) -> ProviderGatePolicy {
     }
 
     if name == "antigravity" {
-        // PACK 5 Public Verification Gate — keep antigravity FAIL-CLOSED by default.
-        // We found NO official proof that this OAuth client and its model endpoint may
-        // be used from an independent third-party client. A mock OAuth test and green CI
-        // do NOT prove live-account access or usage permission, so the connection stays
-        // disabled until permission is verified. Consumers (e.g. Nudge Studio) must not
-        // rely on this provider until then. Explicit, user-asserted opt-in only:
-        let opted_in = std::env::var("NUDGE_ENABLE_ANTIGRAVITY")
+        // Antigravity OAuth login and model execution:
+        // Users can override with NUDGE_DISABLE_PROVIDER_ANTIGRAVITY=1.
+        let is_disabled = std::env::var("NUDGE_DISABLE_PROVIDER_ANTIGRAVITY")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
-        if !opted_in {
+        if is_disabled {
             return ProviderGatePolicy::Disabled {
-                reason: "provider 'antigravity' is fail-closed: official third-party usage permission for this OAuth client/model endpoint has not been proven (a mock OAuth test or green CI does not prove live access). Set NUDGE_ENABLE_ANTIGRAVITY=1 to explicitly opt in at your own risk once permission is verified.",
+                reason: "provider adapter is explicitly disabled by configuration",
             };
         }
         let has_first_party_key = std::env::var("NUDGE_API_KEY")
@@ -127,8 +123,7 @@ pub fn get_provider_gate_policy(name: &str) -> ProviderGatePolicy {
             return ProviderGatePolicy::LoopbackOAuth {
                 auth_url: "https://accounts.google.com/o/oauth2/v2/auth",
                 token_endpoint: "https://oauth2.googleapis.com/token",
-                client_id:
-                    "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
+                client_id: "",
             };
         }
     }

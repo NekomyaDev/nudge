@@ -1,5 +1,5 @@
-// Jarvis Daemon — Sovereign Autonomous Consciousness Loop & Watch-Only HUD
-// Example demonstrating 0-context accumulation, NVFS WAL, and HUD telemetry.
+// Visor Daemon — Sovereign Autonomous Consciousness Loop & Visor HUD
+// Example demonstrating 0-context accumulation, NVFS WAL, and Visor telemetry.
 
 fn init_sovereign_memory() -> bool uses MemStore {
     mem.set("daemon.version", "1.5.0")
@@ -37,8 +37,8 @@ fn simulate_healer() -> bool {
 }
 
 fn update_hud_telemetry() -> bool uses Browser {
-    browser.cookie_set("service.internal", "jarvis_token", "sec_token_99", "/", 3600, allow = ["service.internal"])
-    let c_tok = browser.cookie_get("service.internal", "jarvis_token", allow = ["service.internal"])
+    browser.cookie_set("service.internal", "visor_token", "sec_token_99", "/", 3600, allow = ["service.internal"])
+    let c_tok = browser.cookie_get("service.internal", "visor_token", allow = ["service.internal"])
     let t_status = browser.tier_status(allow = ["service.internal"])
 
     hud.ticker("Monitoring inventory stream: 0 drifts detected, 100% deterministic replay.")
@@ -50,7 +50,7 @@ fn update_hud_telemetry() -> bool uses Browser {
 }
 
 fn main() -> int uses MemStore, Browser, IO {
-    io.println("Initializing Jarvis Sovereign Daemon...")
+    io.println("Initializing Visor Sovereign Daemon...")
     let ok_mem = init_sovereign_memory()
     let ok_sched = setup_schedules()
     let ok_goals = queue_sovereign_goals()
@@ -64,7 +64,7 @@ fn main() -> int uses MemStore, Browser, IO {
     }
 }
 
-test "jarvis sovereign autonomy loop passes verification" {
+test "visor sovereign autonomy loop passes verification" {
     assert init_sovereign_memory()
     assert setup_schedules()
     assert queue_sovereign_goals()

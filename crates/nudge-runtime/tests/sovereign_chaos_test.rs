@@ -1,12 +1,12 @@
-//! Sovereign Loop, Autonomous Scheduler, Self-Healing, and Jarvis HUD
+//! Sovereign Loop, Autonomous Scheduler, Self-Healing, and Visor HUD
 //! Chaos, Fault-Injection, and Invariant Verification Test Suite.
 
 use nudge_runtime::healer::{HealerEngine, MockDomElement, TargetSignature};
-use nudge_runtime::jarvis_hud::JarvisHudEngine;
 use nudge_runtime::mem_store::{crc32, MemStore};
 use nudge_runtime::scheduler::AutonomousScheduler;
 use nudge_runtime::sovereign::{GoalStatus, SovereignLoop, SovereignPhase};
 use nudge_runtime::value::Value;
+use nudge_runtime::visor::VisorEngine;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
@@ -344,12 +344,12 @@ fn test_self_healing_signature_synthesis_and_sandbox_verification() {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Watch-Only Jarvis HUD 60 FPS Zero-Allocation Performance Proof
+// 4. Watch-Only Visor HUD 60 FPS Zero-Allocation Performance Proof
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_jarvis_hud_framebuffer_zero_allocation_performance() {
-    let hud = JarvisHudEngine::new();
+fn test_visor_hud_framebuffer_zero_allocation_performance() {
+    let hud = VisorEngine::new();
     let width = 1280usize;
     let height = 800usize;
     let mut framebuffer = vec![0u32; width * height];

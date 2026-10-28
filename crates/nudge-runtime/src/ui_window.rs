@@ -7427,7 +7427,7 @@ pub struct NativeApp<D: UiDispatcher> {
     /// Target and animated zoom scale percentage (Issue #262).
     pub target_zoom_pct: f32,
     pub current_zoom_pct: f32,
-    /// Watch-Only Jarvis HUD overlay mode (RFC-2026-SOVEREIGN-HUD).
+    /// Watch-Only Visor HUD overlay mode (RFC-2026-SOVEREIGN-HUD).
     pub hud_mode: bool,
 }
 
@@ -11553,8 +11553,11 @@ impl<D: UiDispatcher> NativeApp<D> {
             );
         }
 
-        if self.hud_mode || std::env::var("NUDGE_HUD").as_deref() == Ok("1") {
-            let _ = crate::jarvis_hud::with_hud(|h| {
+        if self.hud_mode
+            || std::env::var("NUDGE_HUD").as_deref() == Ok("1")
+            || std::env::var("NUDGE_VISOR").as_deref() == Ok("1")
+        {
+            let _ = crate::visor::with_visor(|h| {
                 h.advance_tick();
                 h.render_to_u32_buffer(&mut buffer, stride, h_usize);
                 Ok(())
@@ -20644,7 +20647,7 @@ mod tests {
         let height = 600usize;
         let mut buffer = vec![0xFF12_1826u32; stride * height];
 
-        let _ = crate::jarvis_hud::with_hud(|h| {
+        let _ = crate::visor::with_visor(|h| {
             h.push_ticker("Testing HUD compositing on native app surface.");
             h.set_pip("web", true, "Test Viewport", Some("Button"));
             h.render_to_u32_buffer(&mut buffer, stride, height);

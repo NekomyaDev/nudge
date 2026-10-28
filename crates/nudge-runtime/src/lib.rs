@@ -6,7 +6,6 @@ pub mod fs_watch;
 pub mod grants;
 pub mod healer;
 pub mod host_tool;
-pub mod jarvis_hud;
 pub mod json;
 pub mod mcp;
 pub mod mem_store;
@@ -24,7 +23,10 @@ pub mod ui;
 #[cfg(feature = "native-gui")]
 pub mod ui_window;
 pub mod value;
+pub mod visor;
 pub mod workspace;
+
+pub use visor as hud;
 
 pub use auth::*;
 pub use provider::*;

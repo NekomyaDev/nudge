@@ -2,7 +2,7 @@
 //!
 //! Implements a zero-context accumulation autonomous supervisor that decomposes
 //! intents into executable Goal DAGs, tracks dependencies, handles continuous
-//! ticks, and exports live telemetry for the Watch-Only Jarvis HUD.
+//! ticks, and exports live telemetry for the Watch-Only Visor HUD.
 
 use crate::value::Value;
 use serde::{Deserialize, Serialize};
@@ -61,6 +61,7 @@ pub enum SovereignPhase {
     ExecutingPlan,
     SelfHealing,
     Snapshotting,
+    Hold,
 }
 
 impl SovereignPhase {
@@ -71,6 +72,7 @@ impl SovereignPhase {
             Self::ExecutingPlan => "executing_plan",
             Self::SelfHealing => "self_healing",
             Self::Snapshotting => "snapshotting",
+            Self::Hold => "hold",
         }
     }
 }
@@ -347,9 +349,28 @@ impl SovereignLoop {
         }
     }
 
+    /// Toggle emergency hold on the sovereign loop. Returns true if held/paused.
+    pub fn toggle_hold(&mut self) -> bool {
+        if self.phase == SovereignPhase::Hold {
+            self.phase = SovereignPhase::Idle;
+            self.current_thought = "Sovereign loop resumed from operator hold.".to_string();
+            false
+        } else {
+            self.phase = SovereignPhase::Hold;
+            self.current_thought =
+                "EMERGENCY HOLD: Sovereign loop execution frozen by operator.".to_string();
+            true
+        }
+    }
+
     /// Advance one autonomous tick.
     pub fn tick(&mut self) -> SovereignTelemetry {
         self.tick_count = self.tick_count.saturating_add(1);
+
+        if self.phase == SovereignPhase::Hold {
+            return self.get_telemetry();
+        }
+
         let now = now_secs();
 
         // Check active goal timeout

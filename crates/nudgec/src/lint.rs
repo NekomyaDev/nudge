@@ -524,7 +524,10 @@ fn collect_expr_idents(e: &Expr, used: &mut HashSet<String>) {
         ExprKind::Ident(id) => {
             used.insert(id.clone());
         }
-        ExprKind::Prompt { body, interpolations } => {
+        ExprKind::Prompt {
+            body,
+            interpolations,
+        } => {
             for interp in interpolations {
                 used.insert(interp.clone());
             }

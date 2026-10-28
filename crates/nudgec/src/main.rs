@@ -2048,6 +2048,9 @@ fn main() {
                     "--verbose" | "-v" => {
                         verbose = true;
                     }
+                    "--visor" => {
+                        std::env::set_var("NUDGE_VISOR", "1");
+                    }
                     "--fn" | "-f" => {
                         i += 1;
                         if let Some(f) = args.get(i) {

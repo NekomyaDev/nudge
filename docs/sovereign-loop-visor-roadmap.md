@@ -1,4 +1,4 @@
-# RFC & Architectural Roadmap: Sovereign Loop & Watch-Only Jarvis HUD
+# RFC & Architectural Roadmap: Sovereign Loop & Watch-Only Visor HUD
 # 独立自主闭环（Sovereign Loop）与无干扰全景监控架构路线图
 
 > **Status:** Draft / Specification Phase (RFC-2026-SOVEREIGN-HUD)  
@@ -15,7 +15,7 @@ Nudge provides a deterministic, effect-typed programming model designed for reli
 1. **Context Window Degradation:** Conventional agent frameworks accumulate chat history. After dozens of tool calls and hours of execution, LLM context windows saturate, costs surge exponentially, and instruction adherence degrades.
 2. **Cooperative / Ephemeral Execution:** The existing runtime executes top-down script runs. Once an execution terminates, background scheduling, unhandled web drifts, and state transitions are halted without an active OS-level supervisor.
 3. **In-Memory Volatility:** `MemStore` and `NVFS` currently operate with pure RAM backing ($O(1)$ in-memory lookups), leaving state, active schedules, and acquired tokens vulnerable to process restarts.
-4. **Interactive Friction in UIs:** Traditional AI interfaces demand constant prompt-response turn-taking, confirmation dialogs, and manual window switching. A truly sovereign autonomous assistant must run autonomously for days while projecting a non-blocking, visual **Watch-Only Observer Interface (Jarvis HUD)**.
+4. **Interactive Friction in UIs:** Traditional AI interfaces demand constant prompt-response turn-taking, confirmation dialogs, and manual window switching. A truly sovereign autonomous assistant must run autonomously for days while projecting a non-blocking, visual **Watch-Only Observer Interface (Visor HUD)**.
 
 ### The Objective
 Transform Nudge into a **Sovereign Autonomous Runtime**:
@@ -84,7 +84,7 @@ Transform Nudge into a **Sovereign Autonomous Runtime**:
                  │ IPC / Live Framebuffer Telemetry (60 FPS)
                  ▼
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                    WATCH-ONLY JARVIS HUD (Zero-Menu Sci-Fi HUD)                 │
+│                    WATCH-ONLY VISOR HUD (Zero-Menu Sci-Fi HUD)                 │
 │                                                                                 │
 │  [Top Status & Telemetry] Uptime | Active DAGs | Replay Ratio | Cost/Confidence │
 │                                                                                 │
@@ -193,7 +193,7 @@ Transform Nudge into a **Sovereign Autonomous Runtime**:
 
 ---
 
-### Phase 3: Watch-Only Jarvis HUD (Non-Intrusive Visual Interface)
+### Phase 3: Watch-Only Visor HUD (Non-Intrusive Visual Interface)
 
 #### Track 3.1: Central Consciousness Core & Orbital Goal Graph
 - **Orbital State Dynamics:**
@@ -236,7 +236,7 @@ Week 2: Self-Healing & Hybrid IO Integration
 ├── Day 8-9: Tiered Browser Router (Native Katman 1 + Headless CDP Katman 2)
 └── Day 10:  Real OS Computer & Process Primitives (`computer.*`, `os.spawn`)
 
-Week 3: Jarvis HUD & Autonomous Release
+Week 3: Visor HUD & Autonomous Release
 ├── Day 11-12: High-Performance HUD Window & WebSocket/WASM Telemetry Bus
 ├── Day 13:   Orbital Visualizer, Auto-Docking PiP Viewports & Ambient Subtitles
 └── Day 14:   Standalone Binary Unification (`nudgec build --standalone`) & 48h Stress Test

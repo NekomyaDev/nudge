@@ -3358,14 +3358,15 @@ impl Interpreter {
                 value_to_nudgeval(&result)
                     .map_err(|e| format!("error[E0960]: healer schema mismatch: {name}: {e}"))
             }
-            "hud.state" | "hud.ticker" | "hud.set_pip" | "hud.advance" | "hud.render" => {
+            "visor.state" | "visor.ticker" | "visor.set_pip" | "visor.advance" | "visor.render"
+            | "hud.state" | "hud.ticker" | "hud.set_pip" | "hud.advance" | "hud.render" => {
                 let mut call_args = Vec::with_capacity(args.len());
                 for a in args {
                     let converted = nudgeval_to_value(a)
                         .map_err(|e| format!("error[E-native-0203]: {name}: {e}"))?;
                     call_args.push(converted);
                 }
-                let result = nudge_runtime::jarvis_hud::execute(name, call_args).map_err(|e| {
+                let result = nudge_runtime::visor::execute(name, call_args).map_err(|e| {
                     if e.starts_with("error[") {
                         e
                     } else {
@@ -3373,7 +3374,7 @@ impl Interpreter {
                     }
                 })?;
                 value_to_nudgeval(&result)
-                    .map_err(|e| format!("error[E0970]: hud schema mismatch: {name}: {e}"))
+                    .map_err(|e| format!("error[E0970]: visor schema mismatch: {name}: {e}"))
             }
             "fs.watch" | "fs.changed" => {
                 let mut call_args = Vec::with_capacity(args.len());

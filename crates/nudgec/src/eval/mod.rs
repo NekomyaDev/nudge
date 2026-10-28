@@ -2463,7 +2463,7 @@ fn test_f9_recipes() -> bool uses Browser {{
                 let c_val = browser.cookie_get("example.com", "auth_sess")
                 let b_tier = browser.tier_status()
 
-                // 6. Jarvis Watch-Only HUD
+                // 6. Visor Watch-Only HUD
                 let ok_tick = hud.ticker("Re-evaluating Goal #12... Verified.")
                 let ok_pip = hud.set_pip("web", true, "Price Watch", "#buy-btn")
                 let hud_st = hud.state()
