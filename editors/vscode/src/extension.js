@@ -165,6 +165,24 @@ function activate(context) {
       }
     })
   );
+
+  // 5. Status bar item showing active Nudge compiler version
+  const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+  statusBar.command = "nudge.restartServer";
+  statusBar.text = "$(terminal) Nudge";
+  statusBar.tooltip = "Click to restart Nudge Language Server";
+  statusBar.show();
+  context.subscriptions.push(statusBar);
+
+  execFile(serverPath, ["--version"], (err, stdout) => {
+    if (!err && stdout) {
+      const match = stdout.trim().match(/nudgec\s+([^\s()]+)/);
+      if (match) {
+        statusBar.text = `$(terminal) Nudge ${match[1]}`;
+        statusBar.tooltip = `${stdout.trim()}\nClick to restart Nudge Language Server`;
+      }
+    }
+  });
 }
 
 function deactivate() {

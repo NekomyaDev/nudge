@@ -2478,6 +2478,26 @@ export function lists_chunk(xs, size) {
 export const list_chunk = lists_chunk;
 export const lists_flatten = list_flatten;
 
+export class TimeoutError extends Error {
+  constructor(message = "operation timed out") {
+    super(message);
+    this.name = "TimeoutError";
+  }
+}
+
+export function withTimeout(promise, timeoutMs, message) {
+  if (!timeoutMs || timeoutMs <= 0) return promise;
+  let timer;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new TimeoutError(message || `agent operation timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 export function env_delete(key) {
   delete process.env[key];
   return null;
