@@ -2031,3 +2031,97 @@ fn test_empty() -> int {
 
     let _ = fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn test_cli_run_and_check_stdin() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    // Test check from stdin
+    let mut check_child = Command::new(nudgec_bin())
+        .arg("check")
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn check -");
+    check_child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"fn answer() -> int { 77 }\n")
+        .unwrap();
+    let check_out = check_child.wait_with_output().unwrap();
+    assert_eq!(check_out.status.code(), Some(0));
+
+    // Test run from stdin
+    let mut run_child = Command::new(nudgec_bin())
+        .arg("run")
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn run -");
+    run_child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"fn main() -> int { 88 }\n")
+        .unwrap();
+    let run_out = run_child.wait_with_output().unwrap();
+    assert_eq!(run_out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&run_out.stdout).contains("88"));
+}
+
+#[test]
+fn test_version_extended_metadata() {
+    let out = Command::new(nudgec_bin())
+        .arg("--version")
+        .output()
+        .expect("nudgec --version");
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("commit:"));
+    assert!(stdout.contains("target:"));
+    assert!(stdout.contains("profile:"));
+
+    let out_json = Command::new(nudgec_bin())
+        .arg("--version")
+        .arg("--json")
+        .output()
+        .expect("nudgec --version --json");
+    assert_eq!(out_json.status.code(), Some(0));
+    let v: serde_json::Value = serde_json::from_slice(&out_json.stdout).expect("valid json");
+    assert_eq!(v["compiler"], "nudgec");
+    assert!(v["commit"].is_string());
+    assert!(v["target"].is_string());
+    assert!(v["profile"].is_string());
+}
+
+#[test]
+fn test_cli_completions_generation() {
+    let out_bash = Command::new(nudgec_bin())
+        .arg("completions")
+        .arg("bash")
+        .output()
+        .expect("completions bash");
+    assert_eq!(out_bash.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out_bash.stdout).contains("_nudgec()"));
+
+    let out_fish = Command::new(nudgec_bin())
+        .arg("completions")
+        .arg("fish")
+        .output()
+        .expect("completions fish");
+    assert_eq!(out_fish.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out_fish.stdout).contains("complete -c nudgec"));
+
+    let out_err = Command::new(nudgec_bin())
+        .arg("completions")
+        .arg("unknown_shell")
+        .output()
+        .expect("completions unknown");
+    assert_ne!(out_err.status.code(), Some(0));
+}

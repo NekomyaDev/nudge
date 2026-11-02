@@ -45,6 +45,17 @@ fn usage() -> ! {
 }
 
 fn read_src(path: &str) -> String {
+    if path == "-" {
+        use std::io::Read;
+        let mut s = String::new();
+        match std::io::stdin().read_to_string(&mut s) {
+            Ok(_) => return s,
+            Err(e) => {
+                eprintln!("error: cannot read stdin: {e}");
+                process::exit(1);
+            }
+        }
+    }
     match fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
@@ -76,14 +87,17 @@ fn main() {
     // `--version` / `-V`: print and exit 0 (with optional --json for machine consumption #278)
     if args.len() >= 2 && (args[1] == "--version" || args[1] == "-V" || args[1] == "version") {
         let json_mode = args.iter().any(|a| a == "--json");
+        let version = env!("CARGO_PKG_VERSION");
+        let target = env!("TARGET");
+        let git_hash = option_env!("NUDGE_GIT_HASH").unwrap_or("unknown");
+        let profile = option_env!("NUDGE_BUILD_PROFILE").unwrap_or("unknown");
         if json_mode {
             println!(
-                "{{\n  \"version\": \"{}\",\n  \"compiler\": \"nudgec\",\n  \"target\": \"{}\"\n}}",
-                env!("CARGO_PKG_VERSION"),
-                env!("TARGET")
+                "{{\n  \"version\": \"{}\",\n  \"compiler\": \"nudgec\",\n  \"commit\": \"{}\",\n  \"target\": \"{}\",\n  \"profile\": \"{}\"\n}}",
+                version, git_hash, target, profile
             );
         } else {
-            println!("nudgec {}", env!("CARGO_PKG_VERSION"));
+            println!("nudgec {} (commit: {}, target: {}, profile: {})", version, git_hash, target, profile);
         }
         process::exit(0);
     }
@@ -107,6 +121,73 @@ fn main() {
             process::exit(1);
         }
         return;
+    }
+    // `completions` outputs shell auto-completion scripts
+    if args.len() >= 2 && args[1] == "completions" {
+        if args.len() < 3 || args[2] == "--help" || args[2] == "-h" {
+            println!("usage: nudgec completions <bash|zsh|fish|powershell>");
+            process::exit(0);
+        }
+        match args[2].as_str() {
+            "bash" => {
+                println!(r#"_nudgec() {{
+    local cur prev words cword
+    _init_completion || return
+    local commands="fmt format check run build build-ts test cost stats lint clean init learn trace-html trace-view explain trace-diff audit policy-sweep compare runs mcp serve a2a a2a-serve eval debug fuzz completions --version --help"
+    if [[ $cword -eq 1 ]]; then
+        COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
+        return 0
+    fi
+    case "${{words[1]}}" in
+        check|run|build|build-ts|test|cost|stats|lint|fmt|format)
+            COMPREPLY=( $(compgen -f -X '!*.ndg' -- "$cur") $(compgen -f -- "$cur") )
+            ;;
+        completions)
+            COMPREPLY=( $(compgen -W "bash zsh fish powershell" -- "$cur") )
+            ;;
+    esac
+}}
+complete -F _nudgec nudgec"#);
+            }
+            "zsh" => {
+                println!(r#"#compdef nudgec
+_nudgec() {{
+    local -a commands
+    commands=(
+        'fmt:Format Nudge source file'
+        'check:Type-check Nudge program'
+        'run:Execute Nudge program'
+        'build:Compile Nudge program'
+        'build-ts:Compile Nudge to TypeScript'
+        'test:Run Nudge tests'
+        'cost:Static cost analysis'
+        'completions:Generate shell auto-completions'
+    )
+    _arguments '1: :->command' '*: :->args'
+    case $state in
+        command) _describe -t commands 'nudgec command' commands ;;
+        args) _files -g '*.ndg' ;;
+    esac
+}}
+_nudgec "$@""#);
+            }
+            "fish" => {
+                println!(r#"complete -c nudgec -n "__fish_use_subcommand" -a "fmt format check run build build-ts test cost stats lint clean init learn completions" -d "Nudge compiler commands"
+complete -c nudgec -n "__fish_seen_subcommand_from completions" -a "bash zsh fish powershell""#);
+            }
+            "powershell" => {
+                println!(r#"Register-ArgumentCompleter -Native -CommandName nudgec -ScriptBlock {{
+    param($wordToComplete, $commandAst, $cursorPosition)
+    $commands = @('fmt', 'format', 'check', 'run', 'build', 'build-ts', 'test', 'cost', 'stats', 'lint', 'clean', 'init', 'learn', 'completions')
+    $commands | Where-Object {{ $_ -like "$wordToComplete*" }}
+}}"#);
+            }
+            other => {
+                eprintln!("error: unsupported shell '{other}'. Supported: bash, zsh, fish, powershell");
+                process::exit(1);
+            }
+        }
+        process::exit(0);
     }
     // `lsp` takes no file argument — it serves JSON-RPC over stdio
     if args.len() == 2 && args[1] == "lsp" {
@@ -417,6 +498,13 @@ fn main() {
             } else if arg == "--help" || arg == "-h" {
                 println!("usage: nudgec check <file.ndg> [--json] [--watch] [--quiet]");
                 process::exit(0);
+            } else if arg == "-" {
+                if file.is_none() {
+                    file = Some(arg.as_str());
+                } else {
+                    eprintln!("error: unexpected positional argument '{arg}'");
+                    process::exit(64);
+                }
             } else if arg.starts_with('-') {
                 eprintln!("error: unknown flag '{arg}'");
                 process::exit(64);
@@ -502,8 +590,8 @@ fn main() {
         }
         return;
     }
-    // `fmt` normalizes indentation; --check reports without writing; --json emits structured JSON
-    if args.len() >= 2 && args[1] == "fmt" {
+    // `fmt` (or `format`) normalizes indentation; --check reports without writing; --json emits structured JSON
+    if args.len() >= 2 && (args[1] == "fmt" || args[1] == "format") {
         let mut json_mode = false;
         let mut check_mode = false;
         let mut file = None;
@@ -1482,7 +1570,7 @@ fn main() {
         while i < args.len() {
             if args[i] == "--fn" || args[i] == "-f" {
                 i += 1;
-            } else if !args[i].starts_with('-') {
+            } else if args[i] == "-" || !args[i].starts_with('-') {
                 file = Some(args[i].clone());
                 break;
             }

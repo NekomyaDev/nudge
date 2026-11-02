@@ -8,6 +8,18 @@ fn main() {
         std::env::var("TARGET").unwrap_or_else(|_| "unknown".to_string())
     );
 
+    let git_hash = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    println!("cargo:rustc-env=NUDGE_GIT_HASH={git_hash}");
+
+    let profile = std::env::var("PROFILE").unwrap_or_else(|_| "unknown".to_string());
+    println!("cargo:rustc-env=NUDGE_BUILD_PROFILE={profile}");
+
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("learn_curriculum.rs");
 
