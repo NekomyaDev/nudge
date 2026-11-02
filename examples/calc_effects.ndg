@@ -1,0 +1,29 @@
+// CLI Calculator with Effect-based Error Handling
+// Evaluates binary expressions and handles division by zero safely
+
+type CalcResult = {
+    op: string,
+    a: float,
+    b: float,
+    val: float,
+    err: bool
+}
+
+fn safe_div(num: float, den: float) -> CalcResult {
+    if den == 0.0 {
+        { op: "div", a: num, b: den, val: 0.0, err: true }
+    } else {
+        { op: "div", a: num, b: den, val: num / den, err: false }
+    }
+}
+
+fn safe_add(a: float, b: float) -> CalcResult {
+    { op: "add", a: a, b: b, val: a + b, err: false }
+}
+
+fn main() -> [CalcResult] {
+    let r1 = safe_add(10.0, 5.5)
+    let r2 = safe_div(42.0, 2.0)
+    let r3 = safe_div(100.0, 0.0)
+    [r1, r2, r3]
+}

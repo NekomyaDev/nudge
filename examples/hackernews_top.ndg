@@ -1,0 +1,28 @@
+// HackerNews Top Stories Summarizer Agent
+// Demonstrates typed REST payload handling and record aggregation
+
+type HNStory = {
+    id: int,
+    title: string,
+    score: int,
+    by: string
+}
+
+fn summarize_story(id: int) -> HNStory {
+    {
+        id: id,
+        title: "Nudge: A Typed Language for AI Agents",
+        score: 342,
+        by: "nekomya"
+    }
+}
+
+fn main() -> [HNStory] {
+    let top_ids = [101, 102, 103]
+    let stories = [
+        summarize_story(top_ids[0]),
+        { id: top_ids[1], title: "Zero-Cost Deterministic Tracing", score: 185, by: "dev" },
+        { id: top_ids[2], title: "Algebraic Effects in Agent Loops", score: 240, by: "alice" }
+    ]
+    stories
+}

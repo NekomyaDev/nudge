@@ -1,0 +1,20 @@
+// Weather Lookup Multi-step Agent Example
+// Demonstrates typed queries and structured records
+
+type WeatherReport = {
+    city: string,
+    condition: string,
+    temp_c: float
+}
+
+fn fetch_weather(city: string) -> WeatherReport {
+    {
+        city: city,
+        condition: "Partly Cloudy",
+        temp_c: 21.5
+    }
+}
+
+fn main() -> WeatherReport {
+    fetch_weather("Istanbul")
+}

@@ -1,0 +1,49 @@
+// GitHub Issue Triage Agent in Nudge
+// Analyzes issue labels and titles to assign automated priority and reviewer actions
+
+type Issue = {
+    number: int,
+    title: string,
+    is_bug: bool,
+    needs_repro: bool
+}
+
+type TriageResult = {
+    issue_number: int,
+    severity: string,
+    action: string
+}
+
+fn triage(issue: Issue) -> TriageResult {
+    let sev = if issue.is_bug {
+        if issue.needs_repro { "p2-needs-info" } else { "p1-confirmed-bug" }
+    } else {
+        "p3-enhancement"
+    }
+
+    let act = if issue.needs_repro {
+        "request-reproduction-script"
+    } else {
+        "assign-to-maintainer"
+    }
+
+    {
+        issue_number: issue.number,
+        severity: sev,
+        action: act
+    }
+}
+
+fn main() -> [TriageResult] {
+    let issues = [
+        { number: 104, title: "trace redaction fails on quoted strings", is_bug: true, needs_repro: false },
+        { number: 105, title: "add dark theme option in studio", is_bug: false, needs_repro: false },
+        { number: 106, title: "intermittent timeout on websocket reconnect", is_bug: true, needs_repro: true }
+    ]
+
+    [
+        triage(issues[0]),
+        triage(issues[1]),
+        triage(issues[2])
+    ]
+}
