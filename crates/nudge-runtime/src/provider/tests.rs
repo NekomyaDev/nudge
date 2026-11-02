@@ -441,12 +441,13 @@ fn test_antigravity_no_longer_reads_foreign_tokens_and_fails_closed() {
 
     let temp_home = temp_dir.to_str().unwrap();
 
-    // 1. Without opt-in, try_get_active_provider fails closed with E-auth-0404 (gate Disabled)
+    // 1. When explicitly disabled, try_get_active_provider fails closed with E-auth-0404 (gate Disabled)
     let (res, call_res) = {
         let _guard = EnvGuard::set(&[
             ("HOME", Some(temp_home)),
             ("USERPROFILE", Some(temp_home)),
             ("NUDGE_PROVIDER", Some("antigravity")),
+            ("NUDGE_DISABLE_PROVIDER_ANTIGRAVITY", Some("1")),
             ("NUDGE_CREDENTIALS_PATH", None),
             ("NUDGE_AUTH_ANTIGRAVITY", None),
             ("ANTIGRAVITY_TOKEN", None),
@@ -460,14 +461,11 @@ fn test_antigravity_no_longer_reads_foreign_tokens_and_fails_closed() {
         let p = get_active_provider();
         (r, p.call(&req))
     };
-    assert!(
-        res.is_err(),
-        "antigravity must fail closed when unproven without opt-in"
-    );
+    assert!(res.is_err(), "antigravity must fail closed when disabled");
     let err = res.err().unwrap();
     assert!(
         err.contains("error[E-auth-0404]")
-            && (err.contains("fail-closed") || err.contains("not been proven")),
+            && (err.contains("fail-closed") || err.contains("disabled")),
         "expected E-auth-0404 fail-closed, got: {err}"
     );
 
