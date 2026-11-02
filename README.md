@@ -67,6 +67,31 @@ test "stays within budget on recorded trace" {
 
 The compiler proves the schema matches, infers effects, and bounds worst-case cost. The runtime records every call to a content-addressed trace you can diff, commit, and replay for $0.
 
+## Architecture
+
+```text
+ ┌─────────────┐       ┌───────────────┐       ┌─────────────────┐
+ │ Source Code │ ----> │ Lexer & AST   │ ----> │  Type Checker   │
+ │   (.ndg)    │       │ Spanned Tokens│       │ Effects & Bounds│
+ └─────────────┘       └───────────────┘       └────────┬────────┘
+                                                        │
+                      ┌─────────────────────────────────┴───────────────────────────────┐
+                      │                                                                 │
+                      ▼                                                                 ▼
+           ┌──────────────────────┐                                          ┌──────────────────────┐
+           │   Native Bytecode    │                                          │ Multi-Target Codegen │
+           │ Execution VM & WAL   │                                          │ Python / TS / WASM   │
+           └──────────┬───────────┘                                          └──────────┬───────────┘
+                      │                                                                 │
+                      ▼                                                                 ▼
+           ┌──────────────────────┐                                          ┌──────────────────────┐
+           │ Content-Addressed    │                                          │ Zero-Cost Replay     │
+           │ NTF Trace Engine     │                                          │ Offline CI Sandbox   │
+           └──────────────────────┘                                          └──────────────────────┘
+```
+
+For detailed runtime effect execution, see [docs/effects.md](docs/effects.md).
+
 ## Quick Start
 
 ### 1. Install Nudge

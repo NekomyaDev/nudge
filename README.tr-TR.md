@@ -66,6 +66,31 @@ test "stays within budget on recorded trace" {
 
 Derleyici schema'nın eşleştiğini kanıtlar, effect'leri çıkarır ve en kötü durum maliyetini sınırlandırır. Çalışma zamanı ise her çağrıyı diff alabileceğiniz, commit edebileceğiniz ve 0$'a yeniden oynatabileceğiniz (replay) içerik adresli bir trace'e kaydeder.
 
+## Mimari
+
+```text
+ ┌─────────────┐       ┌───────────────┐       ┌─────────────────┐
+ │ Kaynak Kod  │ ----> │ Lexer & AST   │ ----> │ Tip Denetleyicisi│
+ │   (.ndg)    │       │ Belirteçler   │       │ Effects & Sınır │
+ └─────────────┘       └───────────────┘       └────────┬────────┘
+                                                        │
+                      ┌─────────────────────────────────┴───────────────────────────────┐
+                      │                                                                 │
+                      ▼                                                                 ▼
+           ┌──────────────────────┐                                          ┌──────────────────────┐
+           │ Yerel Bytecode VM    │                                          │ Çoklu Hedef Kod Üretimi│
+           │ Çalışma Zamanı & WAL │                                          │ Python / TS / WASM   │
+           └──────────┬───────────┘                                          └──────────┬───────────┘
+                      │                                                                 │
+                      ▼                                                                 ▼
+           ┌──────────────────────┐                                          ┌──────────────────────┐
+           │ İçerik Adresli       │                                          │ Sıfır Maliyetli      │
+           │ NTF İz Motoru        │                                          │ Çevrimdışı CI Replay │
+           └──────────────────────┘                                          └──────────────────────┘
+```
+
+Ayrıntılı efekt çözümleme döngüsü için [docs/effects.md](docs/effects.md) belgesini inceleyin.
+
 ## Hızlı Başlangıç
 
 ### 1. Nudge'ı Kurun
