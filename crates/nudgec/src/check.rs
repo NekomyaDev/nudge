@@ -2460,7 +2460,7 @@ fn check_expr_pos(
                         }
                     } else if prefix == "json" {
                         match name.as_str() {
-                            "stringify" => return Ty::Str,
+                            "stringify" | "pretty" => return Ty::Str,
                             "parse" => return Ty::Unknown,
                             _ => {}
                         }
@@ -2478,7 +2478,7 @@ fn check_expr_pos(
                                 }
                                 return arg_tys.first().cloned().unwrap_or(Ty::Float);
                             }
-                            "pow" | "log" | "min" | "max" | "hypot" => {
+                            "pow" | "log" | "min" | "max" | "hypot" | "round_to" => {
                                 return arg_tys.first().cloned().unwrap_or(Ty::Float);
                             }
                             "sum" => match arg_tys.first() {
@@ -2498,14 +2498,14 @@ fn check_expr_pos(
                             | "shift_left" | "shift_right" => return Ty::Int,
                             _ => {}
                         }
-                    } else if prefix == "str" {
+                    } else if prefix == "str" || prefix == "strings" {
                         match name.as_str() {
                             "length" | "to_int" | "char_code" | "hash" | "index_of"
                             | "last_index_of" => return Ty::Int,
                             "to_float" => return Ty::Float,
                             "upper" | "lower" | "trim" | "trim_start" | "trim_end" | "replace"
                             | "substring" | "to_string" | "from_char_code" | "repeat"
-                            | "pad_left" | "pad_right" | "format" | "join" | "capitalize" => {
+                            | "pad_left" | "pad_right" | "pad_start" | "pad_end" | "format" | "join" | "capitalize" => {
                                 return Ty::Str
                             }
                             "contains" | "starts_with" | "ends_with" | "is_digit" | "is_alpha"
@@ -2552,10 +2552,21 @@ fn check_expr_pos(
                             }
                             _ => {}
                         }
-                    } else if prefix == "list" {
+                    } else if prefix == "url" {
+                        match name.as_str() {
+                            "encode" | "decode" => return Ty::Str,
+                            _ => {}
+                        }
+                    } else if prefix == "list" || prefix == "lists" {
                         match name.as_str() {
                             "contains" => return Ty::Bool,
                             "index_of" | "count" => return Ty::Int,
+                            "chunk" => {
+                                if let Some(Ty::List(inner)) = arg_tys.first() {
+                                    return Ty::List(Box::new(Ty::List(inner.clone())));
+                                }
+                                return Ty::List(Box::new(Ty::List(Box::new(Ty::Unknown))));
+                            }
                             "slice" | "reverse" | "sort" | "sorted" | "unique" | "dedup"
                             | "push" | "concat" | "flatten" => {
                                 if let Some(l_ty) = arg_tys.first() {

@@ -12,6 +12,7 @@ pub mod os;
 pub mod store;
 pub mod string;
 pub mod time;
+pub mod url;
 pub mod workspace;
 
 #[cfg(test)]
@@ -66,6 +67,9 @@ pub fn register_all() -> HashMap<String, Value> {
     // Register MemStore functions
     functions.extend(crate::mem_store::register());
 
+    // Register URL functions
+    functions.extend(url::register());
+
     functions
 }
 
@@ -83,7 +87,7 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
         crate::proc::execute(name, args)
     } else if name.starts_with("math.") {
         math::execute(name, args)
-    } else if name.starts_with("str.") {
+    } else if name.starts_with("str.") || name.starts_with("strings.") {
         string::execute(name, args)
     } else if name.starts_with("computer.") {
         computer::execute(name, args)
@@ -95,6 +99,8 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
         env::execute(name, args)
     } else if name.starts_with("llm.") {
         llm::execute(name, args)
+    } else if name.starts_with("url.") {
+        url::execute(name, args)
     } else {
         Err(format!("Unknown standard library function: {}", name))
     }

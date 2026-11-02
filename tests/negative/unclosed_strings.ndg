@@ -1,0 +1,5 @@
+// Negative test case: unclosed string literal
+fn main() -> string {
+    let msg = "this string is never closed
+    return msg
+}

@@ -1961,3 +1961,73 @@ fn test_cli_clean_and_run_verbose() {
 
     let _ = fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn test_negative_unclosed_string_syntax_error() {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/negative");
+    let out = Command::new(nudgec_bin())
+        .arg("check")
+        .arg(root.join("unclosed_strings.ndg"))
+        .output()
+        .expect("check negative unclosed string");
+    assert_ne!(out.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("error[E0002]"), "got stderr: {stderr}");
+
+    let out_eof = Command::new(nudgec_bin())
+        .arg("check")
+        .arg(root.join("unclosed_strings_eof.ndg"))
+        .output()
+        .expect("check negative unclosed string at eof");
+    assert_ne!(out_eof.status.code(), Some(0));
+    let stderr_eof = String::from_utf8_lossy(&out_eof.stderr);
+    assert!(stderr_eof.contains("unterminated string"), "got stderr_eof: {stderr_eof}");
+}
+
+#[test]
+fn test_empty_record_and_empty_tuple_coverage() {
+    let tmp = std::env::temp_dir().join(format!("nudgec_empty_rec_tuple_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp).unwrap();
+
+    let ndg_file = tmp.join("empty.ndg");
+    fs::write(
+        &ndg_file,
+        r#"
+type EmptyRec = {}
+
+fn test_empty() -> int {
+    let r1 = {}
+    let r2 = {}
+    let u1 = ()
+    let u2 = ()
+    if r1 == r2 and u1 == u2 {
+        42
+    } else {
+        0
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let check_out = Command::new(nudgec_bin())
+        .arg("check")
+        .arg(&ndg_file)
+        .output()
+        .expect("check empty.ndg");
+    assert_eq!(check_out.status.code(), Some(0));
+
+    let run_out = Command::new(nudgec_bin())
+        .arg("run")
+        .arg(&ndg_file)
+        .arg("--fn")
+        .arg("test_empty")
+        .output()
+        .expect("run empty.ndg");
+    assert_eq!(run_out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&run_out.stdout);
+    assert!(stdout.contains("42"));
+
+    let _ = fs::remove_dir_all(&tmp);
+}

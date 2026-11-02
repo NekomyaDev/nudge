@@ -1,0 +1,2 @@
+fn main() -> string {
+    let msg = "unclosed string at eof

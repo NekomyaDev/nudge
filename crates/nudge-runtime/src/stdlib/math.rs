@@ -82,6 +82,8 @@ pub fn register() -> HashMap<String, Value> {
     functions.insert("math.ceil".to_string(), Value::Native("math.ceil"));
     functions.insert("math.floor".to_string(), Value::Native("math.floor"));
     functions.insert("math.round".to_string(), Value::Native("math.round"));
+    functions.insert("math.round_to".to_string(), Value::Native("math.round_to"));
+    functions.insert("math.clamp".to_string(), Value::Native("math.clamp"));
 
     // Trigonometry
     functions.insert("math.sin".to_string(), Value::Native("math.sin"));
@@ -320,6 +322,54 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 Value::Float(v) => Ok(Value::Float(v.round())),
                 Value::Int(v) => Ok(Value::Int(*v)),
                 _ => Err("math.round: argument must be a number".to_string()),
+            }
+        }
+
+        "math.round_to" => {
+            if args.len() != 2 {
+                return Err("math.round_to requires 2 arguments (val, decimals)".to_string());
+            }
+            let val = match &args[0] {
+                Value::Int(i) => *i as f64,
+                Value::Float(f) => *f,
+                _ => return Err("math.round_to: first argument must be a number".to_string()),
+            };
+            let decimals = match &args[1] {
+                Value::Int(i) => *i,
+                _ => return Err("math.round_to: second argument must be an integer".to_string()),
+            };
+            if !val.is_finite() {
+                return Ok(Value::Float(val));
+            }
+            let factor = 10f64.powi(decimals as i32);
+            let rounded = (val * factor).round() / factor;
+            Ok(Value::Float(rounded))
+        }
+
+        "math.clamp" => {
+            if args.len() != 3 {
+                return Err("math.clamp requires 3 arguments (val, min, max)".to_string());
+            }
+            let to_f = |v: &Value| match v {
+                Value::Int(i) => Some(*i as f64),
+                Value::Float(f) => Some(*f),
+                _ => None,
+            };
+            let (val, min, max) = match (to_f(&args[0]), to_f(&args[1]), to_f(&args[2])) {
+                (Some(v), Some(mi), Some(ma)) => (v, mi, ma),
+                _ => return Err("math.clamp: arguments must be numbers".to_string()),
+            };
+            if min > max {
+                return Err("math.clamp: min cannot be greater than max".to_string());
+            }
+            if val.is_nan() || min.is_nan() || max.is_nan() {
+                return Ok(Value::Float(f64::NAN));
+            }
+            let clamped = val.clamp(min, max);
+            if let (Value::Int(_), Value::Int(_), Value::Int(_)) = (&args[0], &args[1], &args[2]) {
+                Ok(Value::Int(clamped as i64))
+            } else {
+                Ok(Value::Float(clamped))
             }
         }
 

@@ -2718,8 +2718,11 @@ impl Interpreter {
                 || name.starts_with("json.")
                 || name.starts_with("math.")
                 || name.starts_with("str.")
+                || name.starts_with("strings.")
                 || name.starts_with("map.")
                 || name.starts_with("list.")
+                || name.starts_with("lists.")
+                || name.starts_with("url.")
                 || name == "print"
                 || name == "println"
                 || name == "run"
@@ -3582,6 +3585,21 @@ impl Interpreter {
                 let j = nudgeval_to_json(val);
                 Ok(NudgeVal::Str(serde_json::to_string(&j).unwrap_or_default()))
             }
+            "json.pretty" => {
+                let val = args.first().ok_or("'json.pretty' requires at least 1 argument")?;
+                let indent = match args.get(1) {
+                    Some(NudgeVal::Int(i)) => (*i).max(0) as usize,
+                    _ => 2,
+                };
+                let j = nudgeval_to_json(val);
+                let indent_str = " ".repeat(indent);
+                let mut buf = Vec::new();
+                let formatter = serde_json::ser::PrettyFormatter::with_indent(indent_str.as_bytes());
+                let mut ser = serde_json::Serializer::with_formatter(&mut buf, formatter);
+                serde::Serialize::serialize(&j, &mut ser).unwrap_or_default();
+                let res = String::from_utf8(buf).unwrap_or_else(|_| serde_json::to_string_pretty(&j).unwrap_or_default());
+                Ok(NudgeVal::Str(res))
+            }
             "json.parse" => {
                 let s = args
                     .first()
@@ -3593,6 +3611,65 @@ impl Interpreter {
                 match serde_json::from_str::<serde_json::Value>(s) {
                     Ok(v) => Ok(json_to_nudgeval(v)),
                     Err(e) => Err(format!("'json.parse' failed: {e}")),
+                }
+            }
+            "url.encode" => {
+                let s = args
+                    .first()
+                    .and_then(|a| match a {
+                        NudgeVal::Str(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .ok_or("'url.encode' requires 1 string argument")?;
+                let mut encoded = String::with_capacity(s.len());
+                for b in s.as_bytes() {
+                    match b {
+                        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                            encoded.push(*b as char);
+                        }
+                        _ => {
+                            encoded.push_str(&format!("%{:02X}", b));
+                        }
+                    }
+                }
+                Ok(NudgeVal::Str(encoded))
+            }
+            "url.decode" => {
+                let s = args
+                    .first()
+                    .and_then(|a| match a {
+                        NudgeVal::Str(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .ok_or("'url.decode' requires 1 string argument")?;
+                let bytes = s.as_bytes();
+                let mut out = Vec::with_capacity(bytes.len());
+                let mut i = 0;
+                while i < bytes.len() {
+                    if bytes[i] == b'%' {
+                        if i + 2 >= bytes.len() {
+                            return Err("invalid percent encoding in 'url.decode'".into());
+                        }
+                        let hex = match std::str::from_utf8(&bytes[i + 1..i + 3]) {
+                            Ok(h) => h,
+                            Err(_) => return Err("invalid percent encoding in 'url.decode'".into()),
+                        };
+                        match u8::from_str_radix(hex, 16) {
+                            Ok(b) => out.push(b),
+                            Err(_) => return Err("invalid hex digits in 'url.decode'".into()),
+                        }
+                        i += 3;
+                    } else if bytes[i] == b'+' {
+                        out.push(b' ');
+                        i += 1;
+                    } else {
+                        out.push(bytes[i]);
+                        i += 1;
+                    }
+                }
+                match String::from_utf8(out) {
+                    Ok(decoded) => Ok(NudgeVal::Str(decoded)),
+                    Err(e) => Err(format!("'url.decode': invalid UTF-8 sequence: {e}")),
                 }
             }
             "io.print" | "print" => {
@@ -3975,7 +4052,7 @@ impl Interpreter {
                 }
                 Ok(NudgeVal::Str(s.repeat(cnt)))
             }
-            "str.pad_left" => {
+            "str.pad_left" | "str.pad_start" | "strings.pad_left" | "strings.pad_start" => {
                 let s = args
                     .first()
                     .and_then(|a| match a {
@@ -4002,7 +4079,7 @@ impl Interpreter {
                     Ok(NudgeVal::Str(format!("{padding}{s}")))
                 }
             }
-            "str.pad_right" => {
+            "str.pad_right" | "str.pad_end" | "strings.pad_right" | "strings.pad_end" => {
                 let s = args
                     .first()
                     .and_then(|a| match a {
@@ -4377,6 +4454,9 @@ impl Interpreter {
             },
             "math.clamp" => match (args.first(), args.get(1), args.get(2)) {
                 (Some(NudgeVal::Int(v)), Some(NudgeVal::Int(min)), Some(NudgeVal::Int(max))) => {
+                    if min > max {
+                        return Err("'math.clamp': min cannot be greater than max".into());
+                    }
                     Ok(NudgeVal::Int(*v.clamp(min, max)))
                 }
                 (Some(v), Some(min), Some(max)) => {
@@ -4386,12 +4466,36 @@ impl Interpreter {
                         _ => None,
                     };
                     if let (Some(vf), Some(minf), Some(maxf)) = (to_f(v), to_f(min), to_f(max)) {
+                        if minf > maxf {
+                            return Err("'math.clamp': min cannot be greater than max".into());
+                        }
+                        if vf.is_nan() || minf.is_nan() || maxf.is_nan() {
+                            return Ok(NudgeVal::Float(f64::NAN));
+                        }
                         Ok(NudgeVal::Float(vf.clamp(minf, maxf)))
                     } else {
                         Err("'math.clamp' requires 3 numeric arguments (val, min, max)".into())
                     }
                 }
                 _ => Err("'math.clamp' requires 3 numeric arguments (val, min, max)".into()),
+            },
+            "math.round_to" => {
+                let to_f = |n: &NudgeVal| match n {
+                    NudgeVal::Float(f) => Some(*f),
+                    NudgeVal::Int(i) => Some(*i as f64),
+                    _ => None,
+                };
+                match (args.first().and_then(to_f), args.get(1)) {
+                    (Some(v), Some(NudgeVal::Int(dec))) => {
+                        if !v.is_finite() {
+                            Ok(NudgeVal::Float(v))
+                        } else {
+                            let factor = 10f64.powi(*dec as i32);
+                            Ok(NudgeVal::Float((v * factor).round() / factor))
+                        }
+                    }
+                    _ => Err("'math.round_to' requires 2 arguments (val: number, decimals: int)".into()),
+                }
             },
             "math.sum" => match args.first() {
                 Some(NudgeVal::List(l)) => {
@@ -4695,7 +4799,23 @@ impl Interpreter {
                 res.extend(l2.iter().cloned());
                 Ok(NudgeVal::List(res))
             }
-            "list.flatten" => {
+            "list.chunk" | "lists.chunk" => {
+                let list = match args.first() {
+                    Some(NudgeVal::List(l)) => l,
+                    _ => return Err("'lists.chunk' requires a list as first argument".into()),
+                };
+                let size = match args.get(1) {
+                    Some(NudgeVal::Int(s)) if *s > 0 => *s as usize,
+                    Some(NudgeVal::Int(_)) => return Err("'lists.chunk': size must be greater than 0".into()),
+                    _ => return Err("'lists.chunk' requires positive integer size as second argument".into()),
+                };
+                let chunks: Vec<NudgeVal> = list
+                    .chunks(size)
+                    .map(|c| NudgeVal::List(c.to_vec()))
+                    .collect();
+                Ok(NudgeVal::List(chunks))
+            }
+            "list.flatten" | "lists.flatten" => {
                 let list = match args.first() {
                     Some(NudgeVal::List(l)) => l,
                     _ => return Err("'list.flatten' requires a list as first argument".into()),

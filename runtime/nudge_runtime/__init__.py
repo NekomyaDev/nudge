@@ -5063,11 +5063,33 @@ def json_stringify(v):
     import json
     return json.dumps(v, ensure_ascii=False)
 
+def json_pretty(v, indent=2):
+    import json
+    return json.dumps(v, indent=indent, ensure_ascii=False)
+
 def json_parse(s):
     import json
     if not isinstance(s, str):
         return s
     return json.loads(s)
+
+def url_encode(s):
+    import urllib.parse
+    return urllib.parse.quote(str(s), safe="~-._")
+
+def url_decode(s):
+    import urllib.parse
+    return urllib.parse.unquote(str(s))
+
+def lists_chunk(xs, size):
+    if size <= 0:
+        raise ValueError("lists.chunk: size must be greater than 0")
+    if not isinstance(xs, list):
+        return []
+    return [xs[i:i + size] for i in range(0, len(xs), size)]
+
+list_chunk = lists_chunk
+lists_flatten = list_flatten
 
 def math_sin(x):
     import math
@@ -5104,7 +5126,12 @@ def math_log(x, base=None):
     return float(math.log(x))
 
 def math_clamp(v, min_v, max_v):
+    if min_v > max_v:
+        raise ValueError("math.clamp: min cannot be greater than max")
     return max(min_v, min(v, max_v))
+
+def math_round_to(v, decimals=0):
+    return round(float(v), int(decimals))
 
 def math_sum(xs):
     if not isinstance(xs, list):

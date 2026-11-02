@@ -1206,7 +1206,13 @@ impl Parser {
                         },
                     );
                 }
-                Tok::LParen => {
+                Tok::LParen
+                    if !self
+                        .t
+                        .get(self.i)
+                        .map(|s| s.newline_before)
+                        .unwrap_or(false) =>
+                {
                     let (args, kwargs) = self.parse_call_args()?;
                     let span = Span {
                         start: e.span.start,
@@ -1640,7 +1646,11 @@ impl Parser {
                 Ok(self.ex_from(start, ExprKind::ListLit(xs)))
             }
             Tok::LParen => {
+                let start = self.pos();
                 self.bump();
+                if self.eat(&Tok::RParen) {
+                    return Ok(self.ex_from(start, ExprKind::None));
+                }
                 let g = self.enter()?;
                 let e = self.parse_expr()?;
                 self.expect(&Tok::RParen, "')'")?;

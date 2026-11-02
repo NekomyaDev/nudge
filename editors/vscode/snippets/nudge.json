@@ -96,5 +96,25 @@
       "}"
     ],
     "description": "For-all iteration loop"
+  },
+  "Effect definition": {
+    "prefix": "effect",
+    "body": [
+      "effect ${1:Name} {",
+      "\t${2:operation}(${3:args}): ${4:return_type}",
+      "}"
+    ],
+    "description": "Algebraic effect declaration"
+  },
+  "Handler block": {
+    "prefix": "handler",
+    "body": [
+      "handler for ${1:Effect} {",
+      "\t${2:operation}(${3:args}) -> {",
+      "\t\t${0}",
+      "\t}",
+      "}"
+    ],
+    "description": "Handler for algebraic effect"
   }
 }

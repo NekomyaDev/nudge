@@ -1266,4 +1266,76 @@ mod computer_tests {
         let _ = std::fs::remove_file(fixture_path);
         let _ = std::fs::remove_dir(temp_dir);
     }
+
+    #[test]
+    fn test_math_clamp_and_round_to() {
+        let res = crate::stdlib::execute(
+            "math.clamp",
+            vec![Value::Int(15), Value::Int(0), Value::Int(10)],
+        )
+        .unwrap();
+        assert_eq!(res, Value::Int(10));
+
+        let res = crate::stdlib::execute(
+            "math.clamp",
+            vec![Value::Int(-5), Value::Int(0), Value::Int(10)],
+        )
+        .unwrap();
+        assert_eq!(res, Value::Int(0));
+
+        let err = crate::stdlib::execute(
+            "math.clamp",
+            vec![Value::Int(5), Value::Int(10), Value::Int(0)],
+        );
+        assert!(err.is_err());
+
+        let res = crate::stdlib::execute(
+            "math.round_to",
+            vec![Value::Float(3.1415926), Value::Int(2)],
+        )
+        .unwrap();
+        assert_eq!(res, Value::Float(3.14));
+
+        let res = crate::stdlib::execute(
+            "math.round_to",
+            vec![Value::Float(1234.5), Value::Int(-2)],
+        )
+        .unwrap();
+        assert_eq!(res, Value::Float(1200.0));
+    }
+
+    #[test]
+    fn test_str_pad_start_and_end() {
+        let res = crate::stdlib::execute(
+            "str.pad_start",
+            vec![
+                Value::String("42".to_string()),
+                Value::Int(5),
+                Value::String("0".to_string()),
+            ],
+        )
+        .unwrap();
+        assert_eq!(res, Value::String("00042".to_string()));
+
+        let res = crate::stdlib::execute(
+            "strings.pad_end",
+            vec![
+                Value::String("hello".to_string()),
+                Value::Int(8),
+                Value::String("!".to_string()),
+            ],
+        )
+        .unwrap();
+        assert_eq!(res, Value::String("hello!!!".to_string()));
+    }
+
+    #[test]
+    fn test_url_encode_and_decode() {
+        let raw = "hello world & foo=bar/baz";
+        let enc = crate::stdlib::execute("url.encode", vec![Value::String(raw.to_string())]).unwrap();
+        assert_eq!(enc, Value::String("hello%20world%20%26%20foo%3Dbar%2Fbaz".to_string()));
+
+        let dec = crate::stdlib::execute("url.decode", vec![enc]).unwrap();
+        assert_eq!(dec, Value::String(raw.to_string()));
+    }
 }

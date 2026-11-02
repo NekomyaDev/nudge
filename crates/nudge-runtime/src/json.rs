@@ -94,6 +94,66 @@ pub fn dumps(v: &Json) -> String {
     }
 }
 
+/// Format a JSON value with indentation and line breaks.
+pub fn dumps_pretty(v: &Json, indent_size: usize) -> String {
+    fn format_inner(v: &Json, indent_size: usize, level: usize) -> String {
+        let pad = " ".repeat(level * indent_size);
+        let next_pad = " ".repeat((level + 1) * indent_size);
+        match v {
+            Json::Null => "null".into(),
+            Json::Bool(b) => b.to_string(),
+            Json::Num(n) => {
+                if !n.is_finite() {
+                    "null".into()
+                } else if n.fract() == 0.0 && n.abs() < 1e15 {
+                    format!("{}", *n as i64)
+                } else {
+                    format!("{n}")
+                }
+            }
+            Json::Str(s) => format!("\"{}\"", escape(s)),
+            Json::Arr(xs) => {
+                if xs.is_empty() {
+                    "[]".into()
+                } else {
+                    let mut out = String::from("[\n");
+                    for (i, x) in xs.iter().enumerate() {
+                        out.push_str(&next_pad);
+                        out.push_str(&format_inner(x, indent_size, level + 1));
+                        if i + 1 < xs.len() {
+                            out.push(',');
+                        }
+                        out.push('\n');
+                    }
+                    out.push_str(&pad);
+                    out.push(']');
+                    out
+                }
+            }
+            Json::Obj(m) => {
+                if m.is_empty() {
+                    "{}".into()
+                } else {
+                    let mut out = String::from("{\n");
+                    for (i, (k, val)) in m.iter().enumerate() {
+                        out.push_str(&next_pad);
+                        out.push_str(&format!("\"{}\": ", escape(k)));
+                        out.push_str(&format_inner(val, indent_size, level + 1));
+                        if i + 1 < m.len() {
+                            out.push(',');
+                        }
+                        out.push('\n');
+                    }
+                    out.push_str(&pad);
+                    out.push('}');
+                    out
+                }
+            }
+        }
+    }
+    format_inner(v, indent_size, 0)
+}
+
 pub fn parse(text: &str) -> Result<Json, String> {
     const MAX_DEPTH: usize = 256;
     struct P<'a> {
@@ -368,5 +428,20 @@ mod tests {
         assert!(escaped.contains("\\u001f"));
         let parsed = parse(&format!("\"{escaped}\"")).unwrap();
         assert_eq!(parsed.as_str(), Some(raw));
+    }
+
+    #[test]
+    fn json_pretty_formatting() {
+        let mut obj = Vec::new();
+        obj.push(("title".to_string(), Json::Str("Nudge".to_string())));
+        obj.push(("version".to_string(), Json::Num(2.0)));
+        obj.push(("tags".to_string(), Json::Arr(vec![Json::Str("ai".to_string()), Json::Str("agent".to_string())])));
+        let val = Json::Obj(obj);
+
+        let pretty2 = dumps_pretty(&val, 2);
+        assert!(pretty2.contains("{\n  \"title\": \"Nudge\",\n  \"version\": 2,\n  \"tags\": [\n    \"ai\",\n    \"agent\"\n  ]\n}"));
+
+        let pretty4 = dumps_pretty(&val, 4);
+        assert!(pretty4.contains("    \"title\": \"Nudge\""));
     }
 }

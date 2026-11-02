@@ -11,3 +11,7 @@ license = { text = "Apache-2.0" }
 
 [tool.setuptools.packages.find]
 include = ["nudge_runtime*"]
+
+[tool.setuptools.package-data]
+nudge_runtime = ["py.typed"]
+

@@ -47,8 +47,13 @@
           "nudge"
         ],
         "extensions": [
-          ".ndg"
+          ".ndg",
+          ".nudge"
         ],
+        "icon": {
+          "light": "./icons/nudge.svg",
+          "dark": "./icons/nudge.svg"
+        },
         "configuration": "./language-configuration.json"
       }
     ],

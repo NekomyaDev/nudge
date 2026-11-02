@@ -2422,7 +2422,14 @@ export function math_log(x, base = null) {
   return base !== null ? Math.log(x) / Math.log(base) : Math.log(x);
 }
 export function math_clamp(v, minV, maxV) {
+  if (minV > maxV) {
+    throw new Error("math.clamp: min cannot be greater than max");
+  }
   return Math.min(Math.max(v, minV), maxV);
+}
+export function math_round_to(v, decimals = 0) {
+  const factor = Math.pow(10, decimals);
+  return Math.round(Number(v) * factor) / factor;
 }
 export function math_sum(xs) {
   return Array.isArray(xs) ? xs.reduce((a, b) => a + Number(b), 0) : 0;
@@ -2447,9 +2454,29 @@ export function str_lines(s) {
 export function json_stringify(v) {
   return JSON.stringify(v);
 }
+export function json_pretty(v, indent = 2) {
+  return JSON.stringify(v, null, indent);
+}
 export function json_parse(s) {
   return typeof s === "string" ? JSON.parse(s) : s;
 }
+export function url_encode(s) {
+  return encodeURIComponent(String(s)).replace(/[!'()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+}
+export function url_decode(s) {
+  return decodeURIComponent(String(s).replace(/\+/g, " "));
+}
+export function lists_chunk(xs, size) {
+  if (size <= 0) throw new Error("lists.chunk: size must be greater than 0");
+  if (!Array.isArray(xs)) return [];
+  const res = [];
+  for (let i = 0; i < xs.length; i += size) {
+    res.push(xs.slice(i, i + size));
+  }
+  return res;
+}
+export const list_chunk = lists_chunk;
+export const lists_flatten = list_flatten;
 
 export function env_delete(key) {
   delete process.env[key];

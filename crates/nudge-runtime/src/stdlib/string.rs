@@ -47,6 +47,12 @@ pub fn register() -> HashMap<String, Value> {
     functions.insert("str.format".to_string(), Value::Native("str.format"));
     functions.insert("str.pad_left".to_string(), Value::Native("str.pad_left"));
     functions.insert("str.pad_right".to_string(), Value::Native("str.pad_right"));
+    functions.insert("str.pad_start".to_string(), Value::Native("str.pad_start"));
+    functions.insert("str.pad_end".to_string(), Value::Native("str.pad_end"));
+    functions.insert("strings.pad_start".to_string(), Value::Native("strings.pad_start"));
+    functions.insert("strings.pad_end".to_string(), Value::Native("strings.pad_end"));
+    functions.insert("strings.pad_left".to_string(), Value::Native("strings.pad_left"));
+    functions.insert("strings.pad_right".to_string(), Value::Native("strings.pad_right"));
     functions.insert("str.char_code".to_string(), Value::Native("str.char_code"));
     functions.insert(
         "str.from_char_code".to_string(),
@@ -408,9 +414,9 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             }
         }
 
-        "str.pad_left" => {
+        "str.pad_left" | "str.pad_start" | "strings.pad_left" | "strings.pad_start" => {
             if args.len() != 3 {
-                return Err("str.pad_left requires 3 arguments (string, width, char)".to_string());
+                return Err("str.pad_start requires 3 arguments (string, width, char)".to_string());
             }
             match (&args[0], &args[1], &args[2]) {
                 (Value::String(s), Value::Int(width), Value::String(pad)) => {
@@ -430,9 +436,9 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             }
         }
 
-        "str.pad_right" => {
+        "str.pad_right" | "str.pad_end" | "strings.pad_right" | "strings.pad_end" => {
             if args.len() != 3 {
-                return Err("str.pad_right requires 3 arguments (string, width, char)".to_string());
+                return Err("str.pad_end requires 3 arguments (string, width, char)".to_string());
             }
             match (&args[0], &args[1], &args[2]) {
                 (Value::String(s), Value::Int(width), Value::String(pad)) => {
