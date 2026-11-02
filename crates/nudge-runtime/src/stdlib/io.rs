@@ -28,6 +28,13 @@ pub fn register() -> HashMap<String, Value> {
     functions
 }
 
+fn validate_path(path: &str) -> Result<&str, String> {
+    if path.contains('\0') {
+        return Err("null byte in path".to_string());
+    }
+    Ok(path)
+}
+
 /// Execute an io function
 pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
     match name {
@@ -36,7 +43,7 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 return Err("io.read requires 1 argument (path)".to_string());
             }
             let path = match &args[0] {
-                Value::String(s) => s.clone(),
+                Value::String(s) => validate_path(s)?.to_string(),
                 _ => return Err("io.read: path must be a string".to_string()),
             };
             match fs::read_to_string(&path) {
@@ -50,7 +57,7 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 return Err("io.write requires 2 arguments (path, content)".to_string());
             }
             let path = match &args[0] {
-                Value::String(s) => s.clone(),
+                Value::String(s) => validate_path(s)?.to_string(),
                 _ => return Err("io.write: path must be a string".to_string()),
             };
             let content = match &args[1] {
@@ -68,7 +75,7 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 return Err("io.append requires 2 arguments (path, content)".to_string());
             }
             let path = match &args[0] {
-                Value::String(s) => s.clone(),
+                Value::String(s) => validate_path(s)?.to_string(),
                 _ => return Err("io.append: path must be a string".to_string()),
             };
             let content = match &args[1] {
@@ -92,7 +99,7 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 return Err("io.exists requires 1 argument (path)".to_string());
             }
             let path = match &args[0] {
-                Value::String(s) => s.clone(),
+                Value::String(s) => validate_path(s)?.to_string(),
                 _ => return Err("io.exists: path must be a string".to_string()),
             };
             Ok(Value::Bool(fs::metadata(&path).is_ok()))
@@ -103,7 +110,7 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 return Err("io.delete requires 1 argument (path)".to_string());
             }
             let path = match &args[0] {
-                Value::String(s) => s.clone(),
+                Value::String(s) => validate_path(s)?.to_string(),
                 _ => return Err("io.delete: path must be a string".to_string()),
             };
             let res = if fs::metadata(&path).map(|m| m.is_dir()).unwrap_or(false) {
@@ -122,7 +129,7 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 return Err("io.list_dir requires 1 argument (path)".to_string());
             }
             let path = match &args[0] {
-                Value::String(s) => s.clone(),
+                Value::String(s) => validate_path(s)?.to_string(),
                 _ => return Err("io.list_dir: path must be a string".to_string()),
             };
             match fs::read_dir(&path) {

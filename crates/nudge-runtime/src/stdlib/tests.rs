@@ -5,6 +5,12 @@ mod tests {
     use crate::value::Value;
 
     #[test]
+    fn test_io_rejects_null_byte_injection() {
+        let err = crate::stdlib::io::execute("io.read", vec![Value::String("test\0bad.txt".to_string())]).unwrap_err();
+        assert!(err.contains("null byte in path"));
+    }
+
+    #[test]
     fn test_io_read_write() {
         let temp_file = "/tmp/nudge_test_io.txt";
 

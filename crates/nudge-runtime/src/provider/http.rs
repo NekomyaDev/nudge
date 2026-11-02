@@ -3,10 +3,17 @@ use std::time::Duration;
 
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Create a configured ureq Agent with the specified timeout.
+/// Create a configured ureq Agent with the specified timeout and bounded redirects.
 #[cfg(all(not(target_arch = "wasm32"), feature = "live-provider"))]
 pub fn build_agent(timeout: Duration) -> ureq::Agent {
-    ureq::AgentBuilder::new().timeout(timeout).build()
+    let max_redirects = std::env::var("NUDGE_HTTP_MAX_REDIRECTS")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(5);
+    ureq::AgentBuilder::new()
+        .timeout(timeout)
+        .redirects(max_redirects)
+        .build()
 }
 
 /// Merge request headers with default headers (`Content-Type: application/json`),

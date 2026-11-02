@@ -154,7 +154,21 @@ pub fn dumps_pretty(v: &Json, indent_size: usize) -> String {
     format_inner(v, indent_size, 0)
 }
 
+pub const DEFAULT_MAX_PAYLOAD_BYTES: usize = 10 * 1024 * 1024; // 10MB
+
 pub fn parse(text: &str) -> Result<Json, String> {
+    let max_bytes = std::env::var("NUDGE_MAX_PAYLOAD_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_MAX_PAYLOAD_BYTES);
+
+    if text.len() > max_bytes {
+        return Err(format!(
+            "json payload exceeds maximum allowed size of {max_bytes} bytes (got {} bytes)",
+            text.len()
+        ));
+    }
+
     const MAX_DEPTH: usize = 256;
     struct P<'a> {
         b: &'a [u8],
@@ -443,5 +457,17 @@ mod tests {
 
         let pretty4 = dumps_pretty(&val, 4);
         assert!(pretty4.contains("    \"title\": \"Nudge\""));
+    }
+
+    #[test]
+    fn test_payload_size_limit_rejection() {
+        std::env::set_var("NUDGE_MAX_PAYLOAD_BYTES", "64");
+        let small_ok = "{\"key\": \"val\"}";
+        assert!(parse(small_ok).is_ok());
+
+        let large_bad = format!("{{\"key\": \"{}\"}}", "a".repeat(100));
+        let err = parse(&large_bad).unwrap_err();
+        assert!(err.contains("payload exceeds maximum allowed size"));
+        std::env::remove_var("NUDGE_MAX_PAYLOAD_BYTES");
     }
 }

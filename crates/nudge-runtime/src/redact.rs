@@ -17,7 +17,7 @@ static BEARER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\bBearer\s+[A-Za-z0-9_\-\.]{16,}").expect("valid bearer regex"));
 
 static KV_SECRET_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)\b(api_key|apikey|secret|token|password|passwd|auth_token|access_token|private_key|client_secret)(["']?\s*[:=]\s*["']?)([^"'\s,;}]+)(["']?)"#)
+    Regex::new(r#"(?i)\b(api_key|apikey|api_token|secret|token|password|passwd|auth_token|access_token|private_key|client_secret)(["']?\s*[:=]\s*["']?)([^"'\s,;}]+)(["']?)"#)
         .expect("valid kv secret regex")
 });
 
@@ -732,5 +732,35 @@ mod tests {
             "1MB log redaction took too long: {:?}",
             elapsed
         );
+    }
+
+    #[test]
+    fn test_secret_redactor_edge_cases() {
+        let redactor = Redactor {
+            env_secrets: vec![("supersecret123".to_string(), "MY_KEY".to_string())],
+            extra_keys: vec!["api_token".to_string()],
+            custom_patterns: Vec::new(),
+        };
+
+        // 1. Secret at start, middle, and end
+        let at_start = redactor.redact_string("supersecret123 is my token");
+        assert!(at_start.contains("[REDACTED:ENV:MY_KEY] is my token"));
+
+        let at_end = redactor.redact_string("token is supersecret123");
+        assert!(at_end.contains("token is [REDACTED:ENV:MY_KEY]"));
+
+        let at_mid = redactor.redact_string("pre supersecret123 post");
+        assert!(at_mid.contains("pre [REDACTED:ENV:MY_KEY] post"));
+
+        // 2. Adjacent secrets
+        let adjacent = redactor.redact_string("supersecret123supersecret123");
+        assert_eq!(adjacent, "[REDACTED:ENV:MY_KEY][REDACTED:ENV:MY_KEY]");
+
+        // 3. Case-insensitive key matching
+        let case_key = redactor.redact_string("API_KEY=abc1234567890def; other=ok");
+        assert!(case_key.contains("API_KEY=[REDACTED]"));
+
+        let mixed_key = redactor.redact_string("Api_Token=\"token_val_45678\";");
+        assert!(mixed_key.contains("Api_Token=\"[REDACTED]\""));
     }
 }

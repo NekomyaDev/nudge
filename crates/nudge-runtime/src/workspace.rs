@@ -59,6 +59,9 @@ pub fn lexical_normalize(path: &Path) -> PathBuf {
 ///
 /// Location: `crates/nudge-runtime/src/workspace.rs`, function `resolve_and_validate_path`.
 pub fn resolve_and_validate_path(user_path: &str) -> Result<PathBuf, String> {
+    if user_path.contains('\0') {
+        return Err("workspace path error: null byte in path".to_string());
+    }
     let unconfined = std::env::var("NUDGE_UNCONFINED_FS")
         .map(|v| v == "1" || v == "true")
         .unwrap_or(false);
@@ -654,6 +657,12 @@ mod tests {
         );
 
         teardown(&dir);
+    }
+
+    #[test]
+    fn test_workspace_rejects_null_byte_injection() {
+        let err = resolve_and_validate_path("foo\0bar.txt").unwrap_err();
+        assert!(err.contains("null byte in path"));
     }
 
     #[test]
