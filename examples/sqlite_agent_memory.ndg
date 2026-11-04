@@ -1,0 +1,34 @@
+// SQLite Memory Store Agent Example
+// Demonstrates typed state persistence across turns with structured schema
+
+type MemoryEntry = {
+    key: string,
+    val: string,
+    created_at: int
+}
+
+type AgentState = {
+    entries: [MemoryEntry],
+    turn_count: int
+}
+
+fn save_memory(mem: MemoryEntry, st: AgentState) -> AgentState {
+    let updated_entries = [mem, st.entries[0]]
+    {
+        entries: updated_entries,
+        turn_count: st.turn_count + 1
+    }
+}
+
+fn main() -> AgentState {
+    let init_state = {
+        entries: [{ key: "session_id", val: "user_turn_001", created_at: 1700000000 }],
+        turn_count: 1
+    }
+    let new_entry = {
+        key: "user_intent",
+        val: "search_historical_weather",
+        created_at: 1700000030
+    }
+    save_memory(new_entry, init_state)
+}
