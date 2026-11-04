@@ -59,6 +59,8 @@ pub fn register() -> HashMap<String, Value> {
         Value::Native("str.from_char_code"),
     );
     functions.insert("str.hash".to_string(), Value::Native("str.hash"));
+    functions.insert("str.regex_match".to_string(), Value::Native("str.regex_match"));
+    functions.insert("str.regex_replace".to_string(), Value::Native("str.regex_replace"));
     functions.insert("str.is_digit".to_string(), Value::Native("str.is_digit"));
     functions.insert("str.is_alpha".to_string(), Value::Native("str.is_alpha"));
     functions.insert("str.is_empty".to_string(), Value::Native("str.is_empty"));
@@ -511,6 +513,40 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 h = h.wrapping_mul(0x100000001b3);
             }
             Ok(Value::Int(h as i64))
+        }
+
+        "str.regex_match" => {
+            if args.len() != 2 {
+                return Err("str.regex_match requires 2 arguments (string, pattern)".to_string());
+            }
+            match (&args[0], &args[1]) {
+                (Value::String(s), Value::String(pattern)) => {
+                    let re = regex::RegexBuilder::new(pattern)
+                        .size_limit(1024 * 1024)
+                        .dfa_size_limit(1024 * 1024)
+                        .build()
+                        .map_err(|e| format!("invalid regex pattern: {e}"))?;
+                    Ok(Value::Bool(re.is_match(s)))
+                }
+                _ => Err("str.regex_match: arguments must be strings".to_string()),
+            }
+        }
+
+        "str.regex_replace" => {
+            if args.len() != 3 {
+                return Err("str.regex_replace requires 3 arguments (string, pattern, replacement)".to_string());
+            }
+            match (&args[0], &args[1], &args[2]) {
+                (Value::String(s), Value::String(pattern), Value::String(rep)) => {
+                    let re = regex::RegexBuilder::new(pattern)
+                        .size_limit(1024 * 1024)
+                        .dfa_size_limit(1024 * 1024)
+                        .build()
+                        .map_err(|e| format!("invalid regex pattern: {e}"))?;
+                    Ok(Value::String(re.replace_all(s, rep.as_str()).into_owned()))
+                }
+                _ => Err("str.regex_replace: arguments must be strings".to_string()),
+            }
         }
 
         "str.is_digit" => {

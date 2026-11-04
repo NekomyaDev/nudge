@@ -436,7 +436,12 @@ impl VisorEngine {
             _ => format!("[PHASE: {}]", self.state.phase.as_str().to_uppercase()),
         };
         let ratio_pct = (self.state.telemetry.replay_ratio * 100.0).clamp(0.0, 100.0);
-        let replay_str = format!("[REPLAY: {ratio_pct:.1}% $0-COST]");
+        let is_replaying = crate::trace::replay_active();
+        let (replay_str, replay_col) = if is_replaying {
+            ("[REPLAYING: ACTIVE]".to_string(), 0xFFF5_9E0B)
+        } else {
+            (format!("[REPLAY: {ratio_pct:.1}% $0-COST]"), 0xFF38_BDF8)
+        };
         let wal_str = "[NVFS: CRC32-OK]";
 
         let auth_str = if self.state.auth_status.starts_with("ANTIGRAVITY:") {
@@ -446,7 +451,7 @@ impl VisorEngine {
         };
 
         draw_ascii_text_u32(buf, width, 320, 17, auth_str, 0xFF10_B981);
-        draw_ascii_text_u32(buf, width, 520, 17, &replay_str, 0xFF38_BDF8);
+        draw_ascii_text_u32(buf, width, 520, 17, &replay_str, replay_col);
         draw_ascii_text_u32(buf, width, 730, 17, wal_str, 0xFF00_E5FF);
         draw_ascii_text_u32(buf, width, 890, 17, &phase_str, phase_col);
 

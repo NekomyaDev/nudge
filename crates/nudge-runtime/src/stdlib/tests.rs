@@ -1344,4 +1344,21 @@ mod computer_tests {
         let dec = crate::stdlib::execute("url.decode", vec![enc]).unwrap();
         assert_eq!(dec, Value::String(raw.to_string()));
     }
+
+    #[test]
+    fn test_regex_bounded_execution_against_redos() {
+        let start = std::time::Instant::now();
+        let pathological_input = "aaaaaaaaaaaaaaaaaaaaaaaaaaaa!";
+        let pattern = "(a+)+$";
+        let res = crate::stdlib::execute(
+            "str.regex_match",
+            vec![
+                Value::String(pathological_input.to_string()),
+                Value::String(pattern.to_string()),
+            ],
+        );
+        let elapsed = start.elapsed();
+        assert!(elapsed.as_millis() < 100, "regex execution took too long: {:?}", elapsed);
+        assert_eq!(res.unwrap(), Value::Bool(false));
+    }
 }

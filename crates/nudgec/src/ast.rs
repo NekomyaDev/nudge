@@ -841,4 +841,52 @@ mod tests {
             .expect("expected Some bundle");
         assert_eq!(decoded, bundle);
     }
+
+    #[test]
+    fn test_property_ast_roundtrip_fuzz() {
+        let dummy_span = Span { start: 0, end: 1 };
+        for seed in 0..100 {
+            let expr = match seed % 7 {
+                0 => Expr { kind: ExprKind::Int(seed as i64 * 42), span: dummy_span },
+                1 => Expr { kind: ExprKind::Float(seed as f64 * 0.5), span: dummy_span },
+                2 => Expr { kind: ExprKind::Str(format!("string_{seed}")), span: dummy_span },
+                3 => Expr { kind: ExprKind::Bool(seed % 2 == 0), span: dummy_span },
+                4 => Expr { kind: ExprKind::None, span: dummy_span },
+                5 => Expr {
+                    kind: ExprKind::Binary {
+                        op: BinOp::Add,
+                        l: Box::new(Expr { kind: ExprKind::Int(seed as i64), span: dummy_span }),
+                        r: Box::new(Expr { kind: ExprKind::Int(100), span: dummy_span }),
+                    },
+                    span: dummy_span,
+                },
+                _ => Expr {
+                    kind: ExprKind::ListLit(vec![
+                        Expr { kind: ExprKind::Int(seed as i64), span: dummy_span },
+                        Expr { kind: ExprKind::Int(seed as i64 + 1), span: dummy_span },
+                    ]),
+                    span: dummy_span,
+                },
+            };
+
+            let stmt = Stmt {
+                kind: StmtKind::Let {
+                    name: format!("var_{seed}"),
+                    ty: Some(TypeExpr::Named("int".to_string())),
+                    value: expr.clone(),
+                    stream: false,
+                    mutable: seed % 2 == 1,
+                },
+                span: dummy_span,
+            };
+
+            let json_expr = serde_json::to_string(&expr).expect("serialize expr");
+            let recovered_expr: Expr = serde_json::from_str(&json_expr).expect("deserialize expr");
+            assert_eq!(expr, recovered_expr);
+
+            let json_stmt = serde_json::to_string(&stmt).expect("serialize stmt");
+            let recovered_stmt: Stmt = serde_json::from_str(&json_stmt).expect("deserialize stmt");
+            assert_eq!(stmt, recovered_stmt);
+        }
+    }
 }

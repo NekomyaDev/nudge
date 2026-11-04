@@ -311,6 +311,19 @@ class ReplayMismatch(Exception):
     replayed trace holds."""
 
 
+class NudgeError(RuntimeError):
+    """Diagnostic error carrying source file, line, and column position."""
+    def __init__(self, message, filename="<nudge>", lineno=1, col=1, source_line=None):
+        self.filename = filename
+        self.lineno = lineno
+        self.col = col
+        self.source_line = source_line
+        formatted = f"{message} at {filename}:{lineno}:{col}"
+        if source_line:
+            formatted += f"\n  {source_line}\n  {' ' * max(0, col - 1)}^"
+        super().__init__(formatted)
+
+
 # ── small helpers ────────────────────────────────────────────────────
 
 def USD(x) -> float:

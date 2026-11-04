@@ -12821,6 +12821,11 @@ impl<D: UiDispatcher> NativeApp<D> {
                 } else {
                     self.command_palette = Some(CommandPaletteState::default());
                 }
+                self.dispatcher.dispatch_key("clear_console", None);
+            } else if chord == "Ctrl+=" || chord == "Ctrl++" {
+                self.set_zoom_target(self.target_zoom_pct + 10.0);
+            } else if chord == "Ctrl+-" {
+                self.set_zoom_target(self.target_zoom_pct - 10.0);
             } else if chord == "Ctrl+l" || chord == "Ctrl+L" {
                 self.toggle_locale();
             } else if chord == "Ctrl+f" || chord == "Ctrl+F" {
