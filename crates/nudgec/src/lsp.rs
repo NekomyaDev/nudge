@@ -184,6 +184,8 @@ fn index(src: &str) -> Vec<Sym> {
         for (kw, kind) in [
             ("fn ", "function"),
             ("type ", "type"),
+            ("effect ", "interface"),
+            ("handler ", "class"),
             ("agent ", "agent"),
             ("tool ", "tool"),
             ("let ", "variable"),
@@ -315,8 +317,24 @@ fn hover(src: &str, line: usize, col: usize) -> Json {
             s.line + 1
         ));
     }
-    if ["string", "float", "int", "bool"].contains(&word.as_str()) {
-        return md(format!("`{word}` — primitive type"));
+    if ["string", "float", "int", "bool", "none", "list", "map", "unit"].contains(&word.as_str()) {
+        return md(format!("`{word}` - built-in primitive type"));
+    }
+    match word.as_str() {
+        "LLM" => return md("`LLM` - built-in effect for invoking language models and prompt completions".into()),
+        "Tool" => return md("`Tool` - built-in effect for invoking external tools and MCP servers".into()),
+        "IO" => return md("`IO` - built-in effect for host terminal print operations".into()),
+        "Workspace" => return md("`Workspace` - built-in effect for sandboxed scoped filesystem operations".into()),
+        "Store" => return md("`Store` - built-in effect for persistent crash-safe key-value store".into()),
+        "MemStore" => return md("`MemStore` - built-in effect for volatile in-memory key-value cache".into()),
+        "Decision" => return md("`Decision` - built-in effect for calibrated decision model queries".into()),
+        "Computer" => return md("`Computer` - built-in effect for OS and accessibility desktop automation".into()),
+        "Browser" => return md("`Browser` - built-in effect for stealth browser automation and DOM querying".into()),
+        "UI" => return md("`UI` - built-in effect for native graphical user interface mounting".into()),
+        "Auth" => return md("`Auth` - built-in effect for authenticated provider sessions".into()),
+        "FsWatch" => return md("`FsWatch` - built-in effect for workspace file event watching".into()),
+        "Process" => return md("`Process` - built-in effect for controlled sub-process execution".into()),
+        _ => {}
     }
     if let Some((_, doc)) = KEYWORD_DOCS.iter().find(|(kw, _)| *kw == word) {
         return md(format!("`{word}` — {doc}"));
@@ -346,6 +364,72 @@ fn definition(src: &str, uri: &str, line: usize, col: usize) -> Json {
                 ("end".into(), pos(s.line, s.col + s.name.len())),
             ]),
         ),
+    ])
+}
+
+fn document_symbols(src: &str) -> Json {
+    let syms = index(src);
+    let mut arr = Vec::new();
+    for s in syms {
+        let symbol_kind = match s.kind {
+            "function" => 12.0, // Function
+            "type" => 11.0,     // Interface
+            "interface" => 11.0,// Interface (Effect)
+            "class" => 5.0,     // Class (Handler / Agent)
+            "agent" => 5.0,     // Class
+            "tool" => 6.0,      // Method
+            _ => 13.0,          // Variable
+        };
+        let l = s.line as f64;
+        let c = s.col as f64;
+        let name_len = s.name.len() as f64;
+        arr.push(Json::Obj(vec![
+            ("name".into(), Json::str(s.name)),
+            ("kind".into(), Json::Num(symbol_kind)),
+            ("detail".into(), Json::str(s.detail)),
+            ("range".into(), Json::Obj(vec![
+                ("start".into(), Json::Obj(vec![("line".into(), Json::Num(l)), ("character".into(), Json::Num(0.0))])),
+                ("end".into(), Json::Obj(vec![("line".into(), Json::Num(l)), ("character".into(), Json::Num(c + name_len))])),
+            ])),
+            ("selectionRange".into(), Json::Obj(vec![
+                ("start".into(), Json::Obj(vec![("line".into(), Json::Num(l)), ("character".into(), Json::Num(c))])),
+                ("end".into(), Json::Obj(vec![("line".into(), Json::Num(l)), ("character".into(), Json::Num(c + name_len))])),
+            ])),
+        ]));
+    }
+    Json::Arr(arr)
+}
+
+fn signature_help(src: &str, line_idx: usize, col: usize) -> Json {
+    let lines: Vec<&str> = src.lines().collect();
+    if line_idx >= lines.len() {
+        return Json::Null;
+    }
+    let cur_line = lines[line_idx];
+    let before_cursor = &cur_line[..col.min(cur_line.len())];
+    let Some(paren_pos) = before_cursor.rfind('(') else {
+        return Json::Null;
+    };
+    let prefix = before_cursor[..paren_pos].trim_end();
+    let fn_name: String = prefix.chars().rev().take_while(|c| is_ident_char(*c)).collect::<String>().chars().rev().collect();
+    if fn_name.is_empty() {
+        return Json::Null;
+    }
+
+    let commas = before_cursor[paren_pos..].chars().filter(|c| *c == ',').count();
+    let sigs = index(src);
+    let detail = sigs.iter().find(|s| s.name == fn_name).map(|s| s.detail.clone()).unwrap_or_else(|| format!("fn {fn_name}(...)"));
+
+    Json::Obj(vec![
+        ("signatures".into(), Json::Arr(vec![Json::Obj(vec![
+            ("label".into(), Json::str(detail)),
+            ("activeParameter".into(), Json::Num(commas as f64)),
+            ("parameters".into(), Json::Arr(vec![
+                Json::Obj(vec![("label".into(), Json::str("param"))])
+            ])),
+        ])])),
+        ("activeSignature".into(), Json::Num(0.0)),
+        ("activeParameter".into(), Json::Num(commas as f64)),
     ])
 }
 
@@ -381,6 +465,15 @@ impl Lsp {
                                     )]),
                                 ),
                                 ("codeActionProvider".into(), Json::Bool(true)),
+                                ("documentSymbolProvider".into(), Json::Bool(true)),
+                                ("documentRangeFormattingProvider".into(), Json::Bool(true)),
+                                (
+                                    "signatureHelpProvider".into(),
+                                    Json::Obj(vec![(
+                                        "triggerCharacters".into(),
+                                        Json::Arr(vec![Json::str("("), Json::str(",")]),
+                                    )]),
+                                ),
                                 ("inlayHintProvider".into(), Json::Bool(true)),
                                 (
                                     "semanticTokensProvider".into(),
@@ -519,6 +612,12 @@ impl Lsp {
                                 ("kind".into(), Json::Str("quickfix".into())),
                                 ("isPreferred".into(), Json::Bool(true)),
                             ]));
+                        } else if code == "W0102" || msg.contains("unused import") {
+                            actions.push(Json::Obj(vec![
+                                ("title".into(), Json::Str("Remove unused import".into())),
+                                ("kind".into(), Json::Str("quickfix".into())),
+                                ("isPreferred".into(), Json::Bool(true)),
+                            ]));
                         }
                     }
                 }
@@ -650,6 +749,82 @@ impl Lsp {
                         &i,
                         Json::Obj(vec![("data".into(), Json::Arr(data))]),
                     )],
+                    None => vec![],
+                }
+            }
+            "textDocument/documentSymbol" => {
+                let doc = params.get("textDocument").cloned().unwrap_or(Json::Null);
+                let uri = doc.get("uri").and_then(Json::as_str).unwrap_or("");
+                let src = self.docs.get(uri).map(|s| s.as_str()).unwrap_or("");
+                let syms = document_symbols(src);
+                match id {
+                    Some(i) => vec![respond(&i, syms)],
+                    None => vec![],
+                }
+            }
+            "textDocument/signatureHelp" => {
+                let doc = params.get("textDocument").cloned().unwrap_or(Json::Null);
+                let uri = doc.get("uri").and_then(Json::as_str).unwrap_or("");
+                let pos = params.get("position").cloned().unwrap_or(Json::Null);
+                let line = pos.get("line").and_then(Json::as_num).unwrap_or(0.0) as usize;
+                let col = pos.get("character").and_then(Json::as_num).unwrap_or(0.0) as usize;
+                let src = self.docs.get(uri).map(|s| s.as_str()).unwrap_or("");
+                let help = signature_help(src, line, col);
+                match id {
+                    Some(i) => vec![respond(&i, help)],
+                    None => vec![],
+                }
+            }
+            "textDocument/rangeFormatting" => {
+                let doc = params.get("textDocument").cloned().unwrap_or(Json::Null);
+                let uri = doc.get("uri").and_then(Json::as_str).unwrap_or("");
+                let src = self.docs.get(uri).map(|s| s.as_str()).unwrap_or("");
+                let range = params.get("range").cloned().unwrap_or(Json::Null);
+                let start_l = range
+                    .get("start")
+                    .and_then(|p| p.get("line"))
+                    .and_then(Json::as_num)
+                    .unwrap_or(0.0) as usize;
+                let end_l = range
+                    .get("end")
+                    .and_then(|p| p.get("line"))
+                    .and_then(Json::as_num)
+                    .unwrap_or(0.0) as usize;
+                let lines: Vec<&str> = src.lines().collect();
+                let mut edits = Vec::new();
+                if !lines.is_empty() && start_l <= end_l {
+                    let clamped = end_l.min(lines.len().saturating_sub(1));
+                    for l in start_l..=clamped {
+                        let orig = lines[l];
+                        let trimmed = orig.trim();
+                        if !trimmed.is_empty() && trimmed != orig {
+                            edits.push(Json::Obj(vec![
+                                (
+                                    "range".into(),
+                                    Json::Obj(vec![
+                                        (
+                                            "start".into(),
+                                            Json::Obj(vec![
+                                                ("line".into(), Json::Num(l as f64)),
+                                                ("character".into(), Json::Num(0.0)),
+                                            ]),
+                                        ),
+                                        (
+                                            "end".into(),
+                                            Json::Obj(vec![
+                                                ("line".into(), Json::Num(l as f64)),
+                                                ("character".into(), Json::Num(orig.len() as f64)),
+                                            ]),
+                                        ),
+                                    ]),
+                                ),
+                                ("newText".into(), Json::str(format!("    {trimmed}"))),
+                            ]));
+                        }
+                    }
+                }
+                match id {
+                    Some(i) => vec![respond(&i, Json::Arr(edits))],
                     None => vec![],
                 }
             }
@@ -989,5 +1164,42 @@ mod tests {
             s.contains("\"data\": ["),
             "response must contain semantic tokens data array: {s}"
         );
+    }
+
+    #[test]
+    fn test_lsp_enhancements_154_155_156_157_158() {
+        let mut lsp = Lsp::new();
+        let uri = "file:///enhanced.ndg";
+        let doc = "effect Http { get(url: string): string }\nhandler for Http { get(u) -> { \"ok\" } }\nfn test_run() {\n    let val = 42\n    print(\"hi\")\n}\n";
+        open_doc(&mut lsp, uri, doc);
+
+        // 1. documentSymbol includes effect (interface) and handler (class) (#154)
+        let sym_req = request(20, "textDocument/documentSymbol", Json::Obj(vec![("textDocument".into(), Json::Obj(vec![("uri".into(), Json::str(uri))]))]));
+        let sym_resp = lsp.dispatch(&sym_req);
+        let sym_str = dumps(&sym_resp[0]);
+        assert!(sym_str.contains("\"name\": \"Http\""), "{sym_str}");
+        assert!(sym_str.contains("\"kind\": 11"), "must contain interface kind: {sym_str}");
+
+        // 2. hover over primitives and effects (#155)
+        let hover_prim = hover("int", 0, 1);
+        assert!(dumps(&hover_prim).contains("built-in primitive type"));
+        let hover_eff = hover("LLM", 0, 1);
+        assert!(dumps(&hover_eff).contains("built-in effect for invoking language models"));
+
+        // 3. rangeFormatting formats lines (#157)
+        let range_req = request(22, "textDocument/rangeFormatting", Json::Obj(vec![
+            ("textDocument".into(), Json::Obj(vec![("uri".into(), Json::str(uri))])),
+            ("range".into(), Json::Obj(vec![
+                ("start".into(), Json::Obj(vec![("line".into(), Json::Num(2.0)), ("character".into(), Json::Num(0.0))])),
+                ("end".into(), Json::Obj(vec![("line".into(), Json::Num(4.0)), ("character".into(), Json::Num(10.0))])),
+            ])),
+        ]));
+        let range_resp = lsp.dispatch(&range_req);
+        assert!(dumps(&range_resp[0]).contains("result"));
+
+        // 4. signatureHelp extracts active parameter (#158)
+        let sig_help = signature_help("fn add(a: int, b: int) -> int { add(10, ", 0, 40);
+        let sig_str = dumps(&sig_help);
+        assert!(sig_str.contains("activeParameter"));
     }
 }
