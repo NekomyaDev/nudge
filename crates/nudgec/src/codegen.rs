@@ -326,6 +326,7 @@ fn emit_body_inner(
             StmtKind::Assert(e) => format!("assert {}", py(e, aliases)),
             // MVP return rule: the fn's final expression is its return value.
             StmtKind::ExprStmt(e) if is_last => format!("return {}", py(e, aliases)),
+            StmtKind::Return(e) => format!("return {}", py(e, aliases)),
             StmtKind::ExprStmt(e) => py(e, aliases),
             StmtKind::ForAll { .. } => {
                 "# error: for_all outside a test block (E0801)\n    pass".to_string()
@@ -451,6 +452,7 @@ fn emit_stmts(
             }
             StmtKind::Assign { name, value } => format!("{name} = {}", py(value, aliases)),
             StmtKind::Assert(e) => format!("assert {}", py(e, aliases)),
+            StmtKind::Return(e) => format!("return {}", py(e, aliases)),
             StmtKind::ExprStmt(e) => py(e, aliases),
             StmtKind::ForAll {
                 var,
@@ -551,6 +553,7 @@ pub fn bind_state(body: &[Stmt], agent: &str) -> Vec<Stmt> {
                     value: bind_state_expr(value, agent),
                 },
                 StmtKind::Assert(e) => StmtKind::Assert(bind_state_expr(e, agent)),
+                StmtKind::Return(e) => StmtKind::Return(bind_state_expr(e, agent)),
                 StmtKind::ExprStmt(e) => StmtKind::ExprStmt(bind_state_expr(e, agent)),
                 StmtKind::ForAll {
                     var,

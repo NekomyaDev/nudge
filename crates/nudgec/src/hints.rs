@@ -47,6 +47,8 @@ pub fn hint(code: &str) -> Option<&'static str> {
         "E-auth-0404" | "E0404" => "provider adapter is disabled because no official public OAuth contract exists",
         "E-auth-0405" | "E0405" => "credential store is corrupted, insecure, or unreadable",
         "E-task-0001" => "task was cancelled — cooperative checkpoints prevent further execution",
+        "W0105" => "variable shadows built-in type - consider renaming to avoid confusion",
+        "W0204" => "unreachable code after unconditional return - remove dead statements",
         "E-task-0002" => "task failed during execution — inspect the inner error for failure details",
         "E-task-0003" => "invalid or corrupt task handle — verify task handle origin and lifecycle",
         "E-native-0100" => "'stream let' is only supported for LLM calls with chunk streaming",

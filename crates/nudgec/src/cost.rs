@@ -37,7 +37,7 @@ fn count_stmt(st: &Stmt, in_par: bool, c: &mut Count) {
             count_expr(value, in_par, c);
         }
         StmtKind::StateWrite { value, .. } => count_expr(value, in_par, c),
-        StmtKind::Assert(e) | StmtKind::ExprStmt(e) => count_expr(e, in_par, c),
+        StmtKind::Assert(e) | StmtKind::ExprStmt(e) | StmtKind::Return(e) => count_expr(e, in_par, c),
         StmtKind::For { coll, body, .. } => {
             count_expr(coll, in_par, c);
             for s in body.iter() {
@@ -78,7 +78,7 @@ fn collect_calls_stmt(st: &Stmt, in_par: bool, edges: &mut Vec<(String, bool)>) 
             collect_calls(value, in_par, edges);
         }
         StmtKind::StateWrite { value, .. } => collect_calls(value, in_par, edges),
-        StmtKind::Assert(e) | StmtKind::ExprStmt(e) => collect_calls(e, in_par, edges),
+        StmtKind::Assert(e) | StmtKind::ExprStmt(e) | StmtKind::Return(e) => collect_calls(e, in_par, edges),
         StmtKind::For { coll, body, .. } => {
             collect_calls(coll, in_par, edges);
             for s in body.iter() {

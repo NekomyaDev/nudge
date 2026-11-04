@@ -187,6 +187,9 @@ fn walk_stmt(stmt: &Stmt, stats: &mut NudgeStats) {
         StmtKind::ExprStmt(expr) => {
             walk_expr(expr, stats);
         }
+        StmtKind::Return(expr) => {
+            walk_expr(expr, stats);
+        }
         StmtKind::ForAll { args, body, .. } => {
             stats.cyclomatic_complexity += 1;
             for arg in args {

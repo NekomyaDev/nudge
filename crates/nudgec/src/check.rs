@@ -813,7 +813,7 @@ fn body_effects(
                 direct_effects(value, g, effects, calls);
             }
             StmtKind::StateWrite { value, .. } => direct_effects(value, g, effects, calls),
-            StmtKind::Assert(e) | StmtKind::ExprStmt(e) => direct_effects(e, g, effects, calls),
+            StmtKind::Assert(e) | StmtKind::ExprStmt(e) | StmtKind::Return(e) => direct_effects(e, g, effects, calls),
             StmtKind::For { coll, body, .. } => {
                 direct_effects(coll, g, effects, calls);
                 body_effects(body, g, effects, calls);
@@ -978,7 +978,7 @@ fn stmts_have_effect_call(
         | StmtKind::Assign { value, .. }
         | StmtKind::IndexAssign { value, .. }
         | StmtKind::StateWrite { value, .. } => expr_has_effect_call(value, g, inferred),
-        StmtKind::Assert(e) | StmtKind::ExprStmt(e) => expr_has_effect_call(e, g, inferred),
+        StmtKind::Assert(e) | StmtKind::ExprStmt(e) | StmtKind::Return(e) => expr_has_effect_call(e, g, inferred),
         StmtKind::For { coll, body, .. } => {
             expr_has_effect_call(coll, g, inferred) || stmts_have_effect_call(body, g, inferred)
         }
@@ -1234,6 +1234,9 @@ fn check_test_body_inner(
                     });
                 }
             }
+            StmtKind::Return(e) => {
+                check_expr_pos(e, &locals, g, errs, true);
+            }
             StmtKind::ExprStmt(e) => {
                 check_expr_pos(e, &locals, g, errs, true);
             }
@@ -1325,9 +1328,21 @@ fn check_fn_stmts(
     errs: &mut Vec<CheckError>,
 ) -> Ty {
     let mut last_ty = Ty::None_;
+    let mut terminated = false;
     for st in body {
+        if terminated {
+            errs.push(CheckError {
+                span: Some(st.span),
+                code: "W0204",
+                msg: "unreachable code after unconditional return".to_string(),
+            });
+        }
         let before = errs.len();
         match &st.kind {
+            StmtKind::Return(e) => {
+                last_ty = check_expr(e, locals, g, errs);
+                terminated = true;
+            }
             StmtKind::Let {
                 name: n,
                 ty,
@@ -1660,6 +1675,12 @@ fn check_reserved_binding(name: &str, errs: &mut Vec<CheckError>) {
             span: None,
             code: "E0103",
             msg: format!("'{name}' collides with a generated/runtime identifier — rename it"),
+        });
+    } else if is_builtin_type_name(name) || name == "list" || name == "map" {
+        errs.push(CheckError {
+            span: None,
+            code: "W0105",
+            msg: format!("variable '{name}' shadows built-in type"),
         });
     }
 }
@@ -2161,6 +2182,18 @@ fn check_expr_pos(
                         }
                     }
                     return resolve(ret, g, &mut Vec::new(), errs);
+                }
+                if let Some(loc_ty) = locals.get(name) {
+                    let registry = g.fns.keys().chain(g.tools.keys());
+                    let did = crate::hints::closest(name, registry)
+                        .map(|c| format!(", did you mean '{c}()'?"))
+                        .unwrap_or_default();
+                    errs.push(CheckError {
+                        span: None,
+                        code: "E0301",
+                        msg: format!("type '{loc_ty}' of variable '{name}' is not callable{did}"),
+                    });
+                    return Ty::Unknown;
                 }
                 // a call to a name that is neither builtin nor declared
                 let registry = g.fns.keys().chain(g.tools.keys());
@@ -3224,10 +3257,13 @@ fn check_expr_pos(
                         if let Some((_, fty)) = fields.iter().find(|(f, _)| f == s) {
                             fty.clone()
                         } else {
+                            let did = crate::hints::closest(s, fields.iter().map(|(f, _)| f))
+                                .map(|c| format!(", did you mean '{c}'?"))
+                                .unwrap_or_default();
                             errs.push(CheckError {
                                 span: None,
                                 code: "E0201",
-                                msg: format!("record has no field '{s}'"),
+                                msg: format!("record has no field '{s}'{did}"),
                             });
                             Ty::Unknown
                         }
@@ -6686,5 +6722,29 @@ fn f() -> int | string {
             }
         "#;
         assert_eq!(check_src(src), vec![]);
+    }
+
+    #[test]
+    fn test_diagnostics_enhancements_159_160_161_162_163() {
+        // 1. Non-callable value call (#159)
+        let errs_call = check_src("fn f() -> int {\nlet x = 42\nx()\n}");
+        assert!(errs_call.iter().any(|e| e.code == "E0301" && e.msg.contains("not callable")));
+
+        // 2. Unreachable code warning (#160)
+        let errs_unreach = check_src("fn f() -> int {\nreturn 10\nlet y = 20\ny\n}");
+        assert!(errs_unreach.iter().any(|e| e.code == "W0204" && e.msg.contains("unreachable code")));
+
+        // 3. Shadowing built-in type warning (#161)
+        let errs_shadow = check_src("fn f() -> string {\nlet string = \"hello\"\nstring\n}");
+        assert!(errs_shadow.iter().any(|e| e.code == "W0105" && e.msg.contains("shadows built-in type")));
+
+        // 4. Fuzzy field name suggestion (#162)
+        let errs_fuzzy = check_src("type User = { first_name: string }\nfn f(u: User) -> string {\nu.firts_name\n}");
+        assert!(errs_fuzzy.iter().any(|e| e.msg.contains("did you mean 'first_name'?")));
+
+        // 5. Missing comma in record literal (#163)
+        let parse_res = crate::compile("fn f() -> int {\nlet u = { a: 1 b: 2 }\n0\n}");
+        assert!(parse_res.is_err());
+        assert!(parse_res.unwrap_err().0.contains("expected ',' between record fields"));
     }
 }

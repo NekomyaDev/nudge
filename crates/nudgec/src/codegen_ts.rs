@@ -457,6 +457,7 @@ fn emit_body(
                 ts(e, aliases, sigs)
             ),
             StmtKind::ExprStmt(e) if i == last => format!("return {};", ts(e, aliases, sigs)),
+            StmtKind::Return(e) => format!("return {};", ts(e, aliases, sigs)),
             StmtKind::ExprStmt(e) => format!("{};", ts(e, aliases, sigs)),
             StmtKind::ForAll {
                 var,
@@ -571,6 +572,7 @@ fn emit_for_all(
                 "if (!({})) throw new Error(\"assertion failed\");",
                 ts(e, aliases, sigs)
             ),
+            StmtKind::Return(e) => format!("return {};", ts(e, aliases, sigs)),
             StmtKind::ExprStmt(e) => format!("{};", ts(e, aliases, sigs)),
             StmtKind::StateWrite { field, .. } => {
                 format!("// error: state write 'state.{field}' outside an agent block (E0701)")

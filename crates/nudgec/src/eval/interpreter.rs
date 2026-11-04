@@ -207,6 +207,9 @@ impl Interpreter {
 
         let last_idx = body.len() - 1;
         for (i, stmt) in body.iter().enumerate() {
+            if let StmtKind::Return(expr) = &stmt.kind {
+                return self.eval_expr(expr, env);
+            }
             if i == last_idx {
                 if let StmtKind::ExprStmt(expr) = &stmt.kind {
                     return self.eval_expr(expr, env);
@@ -1901,6 +1904,10 @@ impl Interpreter {
             StmtKind::Assign { name, value } => {
                 let val = self.eval_expr(value, env)?;
                 env.borrow_mut().assign(name, val)
+            }
+            StmtKind::Return(e) => {
+                let _ = self.eval_expr(e, env)?;
+                Ok(())
             }
             StmtKind::IndexAssign {
                 collection,

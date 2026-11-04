@@ -420,6 +420,8 @@ pub enum StmtKind {
         then_body: Vec<Stmt>,
         else_body: Option<Vec<Stmt>>,
     },
+    /// Explicit early return: `return expr`.
+    Return(Expr),
 }
 
 /// A statement with its source span attached (spanned AST, stage 1).

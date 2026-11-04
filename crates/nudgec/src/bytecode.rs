@@ -239,7 +239,7 @@ impl<'a> Compiler<'a> {
             let last_idx = body.len() - 1;
             for (i, stmt) in body.iter().enumerate() {
                 if i == last_idx {
-                    if let StmtKind::ExprStmt(expr) = &stmt.kind {
+                    if let StmtKind::ExprStmt(expr) | StmtKind::Return(expr) = &stmt.kind {
                         self.compile_expr(expr)?;
                         self.chunk.emit(Op::Return);
                         continue;
@@ -337,6 +337,11 @@ impl<'a> Compiler<'a> {
                     self.compile_expr(value)?;
                     self.chunk.emit(Op::StoreIndex(slot));
                 }
+                Ok(())
+            }
+            StmtKind::Return(expr) => {
+                self.compile_expr(expr)?;
+                self.chunk.emit(Op::Return);
                 Ok(())
             }
             StmtKind::ExprStmt(expr) => {
@@ -992,7 +997,7 @@ fn check_stmt_effects(stmt: &Stmt, tool_names: &[String]) -> Result<(), String> 
             check_expr_effects(value, tool_names)
         }
         StmtKind::Assign { value, .. } => check_expr_effects(value, tool_names),
-        StmtKind::ExprStmt(expr) | StmtKind::Assert(expr) => check_expr_effects(expr, tool_names),
+        StmtKind::ExprStmt(expr) | StmtKind::Assert(expr) | StmtKind::Return(expr) => check_expr_effects(expr, tool_names),
         StmtKind::StateWrite { .. } => {
             Err("not in bytecode subset: state write (agent state)".to_string())
         }
@@ -1192,7 +1197,7 @@ fn check_expr_effects(expr: &Expr, tool_names: &[String]) -> Result<(), String> 
                     | StmtKind::StateWrite { value, .. } => {
                         check_expr_effects(value, tool_names)?;
                     }
-                    StmtKind::Assert(e) | StmtKind::ExprStmt(e) => {
+                    StmtKind::Assert(e) | StmtKind::ExprStmt(e) | StmtKind::Return(e) => {
                         check_expr_effects(e, tool_names)?;
                     }
                     _ => {}

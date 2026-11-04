@@ -826,6 +826,15 @@ impl Parser {
                     self.parse_stmt_if()
                 }
             }
+            Tok::Return => {
+                self.bump();
+                let e = if self.at(&Tok::RBrace) || self.at(&Tok::Eof) {
+                    self.ex_from(start, ExprKind::None)
+                } else {
+                    self.parse_expr()?
+                };
+                Ok(self.spanned(start, StmtKind::Return(e)))
+            }
             _ => {
                 let e = self.parse_expr()?;
                 if self.eat(&Tok::Assign) {
@@ -1378,7 +1387,11 @@ impl Parser {
                     self.expect(&Tok::Colon, "':' after record field name")?;
                     let val = self.parse_expr()?;
                     fields.push((key, val));
-                    self.eat(&Tok::Comma);
+                    if !self.eat(&Tok::Comma) && !self.at(&Tok::RBrace) {
+                        if matches!(self.peek(), Tok::Ident(_)) {
+                            return self.err("expected ',' between record fields");
+                        }
+                    }
                 }
                 self.expect(&Tok::RBrace, "'}' after record literal")?;
                 self.leave(g);

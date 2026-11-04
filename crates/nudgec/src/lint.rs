@@ -483,7 +483,7 @@ fn walk_stmt(ctx: &str, s: &Stmt, records: &[(String, Vec<String>)], out: &mut V
         StmtKind::Let { value, .. }
         | StmtKind::Assign { value, .. }
         | StmtKind::StateWrite { value, .. } => walk_expr(ctx, value, records, out),
-        StmtKind::Assert(e) | StmtKind::ExprStmt(e) => walk_expr(ctx, e, records, out),
+        StmtKind::Assert(e) | StmtKind::ExprStmt(e) | StmtKind::Return(e) => walk_expr(ctx, e, records, out),
         StmtKind::For { coll, body, .. } => {
             walk_expr(ctx, coll, records, out);
             for s in body {
@@ -636,6 +636,7 @@ fn collect_stmt_idents(s: &Stmt, used: &mut HashSet<String>) {
         | StmtKind::Assign { value, .. }
         | StmtKind::StateWrite { value, .. }
         | StmtKind::Assert(value)
+        | StmtKind::Return(value)
         | StmtKind::ExprStmt(value) => {
             collect_expr_idents(value, used);
         }
