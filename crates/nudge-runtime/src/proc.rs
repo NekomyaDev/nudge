@@ -147,6 +147,9 @@ fn resolve_executable(cmd: &str) -> Option<std::path::PathBuf> {
 /// - Unset or empty policy: default DENY with error[E0920].
 /// - Valid JSON object or array: authoritative allowlist.
 pub fn check_process_grants(cmd: &str, args: &[String]) -> Result<(), String> {
+    if cmd.contains('\0') || args.iter().any(|a| a.contains('\0')) {
+        return Err("error[E0920]: process command and arguments cannot contain null bytes".to_string());
+    }
     let raw = match std::env::var("NUDGE_PROCESS_GRANTS") {
         Ok(v) if !v.trim().is_empty() => v,
         _ => {

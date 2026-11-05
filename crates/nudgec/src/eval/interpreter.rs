@@ -4074,6 +4074,9 @@ impl Interpreter {
                         _ => None,
                     })
                     .unwrap_or(0);
+                if width > 16 * 1024 * 1024 {
+                    return Err("'str.pad_left': width exceeds maximum allowed limit (16MB)".into());
+                }
                 let pad = match args.get(2) {
                     Some(NudgeVal::Str(p)) => p.chars().next().unwrap_or(' '),
                     _ => ' ',
@@ -4101,6 +4104,9 @@ impl Interpreter {
                         _ => None,
                     })
                     .unwrap_or(0);
+                if width > 16 * 1024 * 1024 {
+                    return Err("'str.pad_right': width exceeds maximum allowed limit (16MB)".into());
+                }
                 let pad = match args.get(2) {
                     Some(NudgeVal::Str(p)) => p.chars().next().unwrap_or(' '),
                     _ => ' ',

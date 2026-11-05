@@ -416,7 +416,7 @@ where
     let mutex = get_mem_store();
     let mut store = mutex
         .lock()
-        .map_err(|e| format!("error[E0930]: MemStore lock poisoned: {e}"))?;
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     f(&mut store)
 }
 

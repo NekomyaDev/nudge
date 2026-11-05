@@ -1428,4 +1428,55 @@ mod computer_tests {
         );
         assert!(err3.is_err());
     }
+
+    #[test]
+    fn test_proc_grants_rejects_null_bytes() {
+        let err = crate::proc::check_process_grants("ls\0", &[]);
+        assert!(err.is_err());
+        assert!(err.unwrap_err().contains("null bytes"));
+
+        let err2 = crate::proc::check_process_grants("ls", &[String::from("-la\0")]);
+        assert!(err2.is_err());
+        assert!(err2.unwrap_err().contains("null bytes"));
+    }
+
+    #[test]
+    fn test_string_pad_capped_limit() {
+        let err = crate::stdlib::string::execute(
+            "str.pad_start",
+            vec![
+                Value::String("hi".to_string()),
+                Value::Int(100_000_000),
+                Value::String("0".to_string()),
+            ],
+        );
+        assert!(err.is_err());
+        assert!(err.unwrap_err().contains("exceeds maximum allowed limit"));
+    }
+
+    #[test]
+    fn test_url_decode_rejects_null_bytes() {
+        let err = crate::stdlib::url::execute(
+            "url.decode",
+            vec![Value::String("safe%00path".to_string())],
+        );
+        assert!(err.is_err());
+        assert!(err.unwrap_err().contains("forbidden null byte"));
+    }
+
+    #[test]
+    fn test_json_parse_rejects_non_finite_overflow() {
+        let res = crate::json::parse("{\"val\": 1e9999}");
+        assert!(res.is_err());
+        assert!(res.unwrap_err().contains("non-finite"));
+    }
+
+    #[test]
+    fn test_mem_store_poison_recovery() {
+        let res = crate::mem_store::with_mem_store(|store| {
+            store.set("test_key".to_string(), Value::Int(123));
+            Ok(())
+        });
+        assert!(res.is_ok());
+    }
 }

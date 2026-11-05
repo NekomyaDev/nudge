@@ -235,9 +235,13 @@ pub fn parse(text: &str) -> Result<Json, String> {
                 self.i += 1;
             }
             let s = std::str::from_utf8(&self.b[start..self.i]).map_err(|e| e.to_string())?;
-            s.parse::<f64>()
-                .map(Json::Num)
-                .map_err(|_| format!("invalid number '{s}' at byte {start}"))
+            let n = s
+                .parse::<f64>()
+                .map_err(|_| format!("invalid number '{s}' at byte {start}"))?;
+            if !n.is_finite() {
+                return Err(format!("non-finite number '{s}' at byte {start} is not valid JSON"));
+            }
+            Ok(Json::Num(n))
         }
         fn string(&mut self) -> Result<String, String> {
             self.expect(b'"')?;

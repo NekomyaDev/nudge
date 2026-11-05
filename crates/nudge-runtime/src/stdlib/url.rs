@@ -71,6 +71,9 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                     i += 1;
                 }
             }
+            if out.contains(&0) {
+                return Err("url.decode: decoded sequence contains forbidden null byte".to_string());
+            }
             match String::from_utf8(out) {
                 Ok(decoded) => Ok(Value::String(decoded)),
                 Err(e) => Err(format!("url.decode: invalid UTF-8: {e}")),
