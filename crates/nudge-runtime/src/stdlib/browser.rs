@@ -865,13 +865,23 @@ fn execute_fetch(args: Vec<Value>) -> Result<Value, String> {
 }
 
 fn execute_file_fetch(path: &str, url: &str, start: Instant) -> Result<Value, String> {
-    // Confine file: strictly to workspace/current directory (prevent path traversal)
+    // Confine file: strictly to workspace root (prevent path traversal / arbitrary file read)
     let p = std::path::Path::new(path);
-    if p.is_absolute() && !p.exists() {
-        return Err(format!("BrowserError: file not found: {path}"));
+    if path.contains("..") || path.contains('\0') {
+        return Err("BrowserDenied: path traversal escape denied: path contains traversal or null bytes".to_string());
     }
+    let safe_path = if let Ok(sp) = crate::workspace::resolve_and_validate_path(path) {
+        sp
+    } else {
+        let temp = std::env::temp_dir();
+        if p.is_absolute() && p.starts_with(&temp) {
+            p.to_path_buf()
+        } else {
+            return Err("BrowserDenied: path traversal escape denied: access outside workspace".to_string());
+        }
+    };
 
-    let content = std::fs::read_to_string(path)
+    let content = std::fs::read_to_string(&safe_path)
         .map_err(|e| format!("BrowserError: failed to read file fixture '{path}': {e}"))?;
 
     if content.len() > MAX_BODY_BYTES {
@@ -917,6 +927,15 @@ fn execute_network_fetch(
 ) -> Result<Value, String> {
     use std::io::Read;
     use std::time::Duration;
+
+    let lower_url = url.to_ascii_lowercase();
+    if lower_url.contains("169.254.169.254")
+        || lower_url.contains("169.254.170.2")
+        || lower_url.contains("metadata.google.internal")
+        || lower_url.contains("instance-data")
+    {
+        return Err("BrowserDenied: SSRF attempt to cloud metadata endpoint blocked".to_string());
+    }
 
     let agent = ureq::AgentBuilder::new()
         .redirects(max_redirects)

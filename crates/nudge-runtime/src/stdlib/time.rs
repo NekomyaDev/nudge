@@ -171,11 +171,14 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 Value::Float(v) => *v,
                 _ => return Err("time.sleep: argument must be a number (int or float)".to_string()),
             };
-            if !ms.is_finite() || ms < 0.0 || (ms / 1000.0) > (u64::MAX as f64) {
+            if !ms.is_finite() || ms < 0.0 || ms > 60_000.0 {
                 return Err(
-                    "time.sleep: duration must be finite, non-negative, and fit in u64 seconds"
+                    "time.sleep: duration must be finite, non-negative, and at most 60000 ms (60 seconds)"
                         .to_string(),
                 );
+            }
+            if crate::task::is_current_cancelled() {
+                return Err("error[E-task-0001]: TaskCancelled".to_string());
             }
             let duration = Duration::from_secs_f64(ms / 1000.0);
             thread::sleep(duration);

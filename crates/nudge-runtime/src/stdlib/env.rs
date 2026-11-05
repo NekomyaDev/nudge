@@ -43,6 +43,9 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             }
             match (&args[0], &args[1]) {
                 (Value::String(key), Value::String(val)) => {
+                    if key.is_empty() || key.contains('=') || key.contains('\0') || val.contains('\0') {
+                        return Err("env.set: invalid key or value: cannot be empty, contain '=', or contain null bytes".to_string());
+                    }
                     env::set_var(key, val);
                     Ok(Value::None)
                 }
@@ -69,6 +72,9 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             }
             match &args[0] {
                 Value::String(key) => {
+                    if key.is_empty() || key.contains('=') || key.contains('\0') {
+                        return Err("env.delete: invalid key: cannot be empty, contain '=', or contain null bytes".to_string());
+                    }
                     env::remove_var(key);
                     Ok(Value::None)
                 }

@@ -304,7 +304,7 @@ fn fake_call(op: &str, req: &Json) -> Result<Json, String> {
             Some(Json::Num(n)) => *n,
             _ => 0.0,
         };
-        if x < 0.0 || y < 0.0 || x > 1920.0 || y > 1080.0 {
+        if !x.is_finite() || !y.is_finite() || x < 0.0 || y < 0.0 || x > 1920.0 || y > 1080.0 {
             return Err(format!(
                 "out_of_bounds: coordinates ({x}, {y}) are outside screen boundaries (0..1920, 0..1080)"
             ));

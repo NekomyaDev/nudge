@@ -1361,4 +1361,71 @@ mod computer_tests {
         assert!(elapsed.as_millis() < 100, "regex execution took too long: {:?}", elapsed);
         assert_eq!(res.unwrap(), Value::Bool(false));
     }
+
+    #[test]
+    fn test_browser_arbitrary_file_read_denied() {
+        let err = crate::stdlib::browser::execute(
+            "browser.fetch",
+            vec![Value::String("file:///etc/passwd".to_string())],
+        );
+        assert!(err.is_err());
+        assert!(err.unwrap_err().contains("BrowserDenied: path traversal escape denied"));
+    }
+
+    #[test]
+    fn test_browser_metadata_ssrf_denied() {
+        let err = crate::stdlib::browser::execute(
+            "browser.fetch",
+            vec![Value::String("http://169.254.169.254/latest/meta-data/".to_string())],
+        );
+        assert!(err.is_err());
+        assert!(err.unwrap_err().contains("SSRF attempt to cloud metadata endpoint blocked"));
+    }
+
+    #[test]
+    fn test_computer_nan_coordinates_rejected() {
+        let _g = lock();
+        computer::reset_authority_for_tests();
+        let _ = computer::execute("computer.observe", vec![Value::String("FakeApp".into())]);
+        let err = computer::execute(
+            "computer.mouse_move",
+            vec![
+                Value::Float(f64::NAN),
+                Value::Float(100.0),
+            ],
+        );
+        assert!(err.is_err());
+        assert!(err.unwrap_err().contains("out_of_bounds"));
+    }
+
+    #[test]
+    fn test_time_sleep_bounded() {
+        let err = crate::stdlib::time::execute(
+            "time.sleep",
+            vec![Value::Float(100_000.0)],
+        );
+        assert!(err.is_err());
+        assert!(err.unwrap_err().contains("at most 60000 ms"));
+    }
+
+    #[test]
+    fn test_env_set_delete_safety_no_panic() {
+        let err1 = crate::stdlib::env::execute(
+            "env.set",
+            vec![Value::String("KEY=BAD".to_string()), Value::String("val".to_string())],
+        );
+        assert!(err1.is_err());
+
+        let err2 = crate::stdlib::env::execute(
+            "env.set",
+            vec![Value::String("".to_string()), Value::String("val".to_string())],
+        );
+        assert!(err2.is_err());
+
+        let err3 = crate::stdlib::env::execute(
+            "env.delete",
+            vec![Value::String("KEY\0BAD".to_string())],
+        );
+        assert!(err3.is_err());
+    }
 }
