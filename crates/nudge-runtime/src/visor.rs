@@ -630,11 +630,32 @@ impl VisorEngine {
         let line_h = 16usize;
         let max_lines = avail_stream_h / line_h;
 
-        let total_traces = self.state.trace_log.len();
+        let is_filtering = self.state.input_buffer.starts_with('/');
+        let filter_q = if is_filtering {
+            self.state.input_buffer[1..].trim().to_lowercase()
+        } else {
+            String::new()
+        };
+
+        let filtered_entries: Vec<&TraceEntry> = self
+            .state
+            .trace_log
+            .iter()
+            .filter(|e| {
+                if filter_q.is_empty() {
+                    true
+                } else {
+                    e.message.to_lowercase().contains(&filter_q)
+                        || e.category.to_lowercase().contains(&filter_q)
+                }
+            })
+            .collect();
+
+        let total_traces = filtered_entries.len();
         let skip = total_traces.saturating_sub(max_lines);
 
         let mut line_y = stream_top;
-        for entry in self.state.trace_log.iter().skip(skip).take(max_lines) {
+        for entry in filtered_entries.iter().skip(skip).take(max_lines) {
             let cat_str = format!("[{}]", entry.category);
             draw_ascii_text_u32(buf, width, x + 12, line_y, &entry.timestamp, 0xFF64_748B);
             draw_ascii_text_u32(buf, width, x + 84, line_y, &cat_str, entry.color);
