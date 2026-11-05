@@ -86,10 +86,19 @@ class NTFTracer:
     # -- langchain-core callback protocol (methods duck-typed) ------------
     def on_llm_start(self, serialized, prompts, **kwargs):
         run_id = kwargs.get("run_id") or id(prompts)
-        self._pending[run_id] = {"input": "\n".join(prompts)}
+        self._pending[run_id] = {"input": "\n".join(prompts), "chunks": []}
+
+    def on_llm_new_token(self, token, **kwargs):
+        run_id = kwargs.get("run_id") or 0
+        if run_id in self._pending:
+            self._pending[run_id].setdefault("chunks", []).append(str(token))
 
     def on_llm_end(self, response, **kwargs):
-        from langchain_core.messages import AIMessage  # lazy import
+        try:
+            from langchain_core.messages import AIMessage
+            is_aimessage = isinstance(output and output[0] and output[0][0], AIMessage)
+        except Exception:
+            is_aimessage = False
 
         run_id = kwargs.get("run_id") or 0
         pending = self._pending.pop(run_id, {})
@@ -105,7 +114,9 @@ class NTFTracer:
             tokens = {"in": token_usage.get("prompt_tokens", 0),
                       "out": token_usage.get("completion_tokens", 0)}
         model = (usage.get("model_name")
-                 or (serialized or {}).get("id", ["?"])[-1])
+                 or (kwargs.get("serialized") or {}).get("id", ["?"])[-1])
+        if not text and pending.get("chunks"):
+            text = "".join(pending["chunks"])
         record = llm_result_to_ntf(
             prompt=pending.get("input", ""),
             output=text if isinstance(text, str) else _decode(text),
@@ -113,8 +124,10 @@ class NTFTracer:
             provider=self.provider,
             tokens=tokens,
         )
-        if isinstance(output and output[0] and output[0][0], AIMessage):
+        if is_aimessage:
             record["output"] = text
+        if pending.get("chunks"):
+            record["streamed"] = True
         record["seq"] = self._next_seq()
         with open(self.path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")

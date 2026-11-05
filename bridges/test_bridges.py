@@ -2,6 +2,7 @@
 """Unit tests for NTF bridge converters."""
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -199,6 +200,100 @@ class ComputerBridgeContractTests(unittest.TestCase):
                 os.environ.pop("CU_BRIDGE_LOCK", None)
             else:
                 os.environ["CU_BRIDGE_LOCK"] = old
+
+
+    def test_llamaindex_ntf_event_adapter(self):
+        from bridges.llamaindex_ntf import event_to_ntf, LlamaIndexNTFHandler
+        rec1 = event_to_ntf("retrieve", {"query": "how to build agent", "nodes": ["node1", "node2"]}, seq=1)
+        self.assertEqual(rec1["kind"], "tool.call")
+        self.assertEqual(rec1["tool"], "llamaindex:retriever")
+        self.assertEqual(rec1["input"], "how to build agent")
+
+        rec2 = event_to_ntf("query", {"response": "agent answer"}, seq=2)
+        self.assertEqual(rec2["kind"], "fn.return")
+        self.assertEqual(rec2["fn"], "llamaindex:query")
+
+        with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as tf:
+            tf_path = tf.name
+        try:
+            handler = LlamaIndexNTFHandler(tf_path)
+            handler.on_event_end("synthesize", {"response": "final synthesis"})
+            with open(tf_path, "r", encoding="utf-8") as f:
+                lines = [json.loads(line) for line in f if line.strip()]
+            self.assertEqual(len(lines), 1)
+            self.assertEqual(lines[0]["kind"], "llm.call")
+        finally:
+            if os.path.exists(tf_path):
+                os.unlink(tf_path)
+
+    def test_langchain_streaming_tokens(self):
+        from bridges.langchain_ntf import NTFTracer
+        with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as tf:
+            tf_path = tf.name
+        try:
+            tracer = NTFTracer(tf_path)
+            tracer.on_llm_start({}, ["What is 2+2?"], run_id="stream_run_1")
+            tracer.on_llm_new_token("4", run_id="stream_run_1")
+            tracer.on_llm_new_token(" is the answer", run_id="stream_run_1")
+            tracer.on_llm_end(None, run_id="stream_run_1")
+
+            with open(tf_path, "r", encoding="utf-8") as f:
+                lines = [json.loads(line) for line in f if line.strip()]
+            self.assertEqual(len(lines), 1)
+            self.assertEqual(lines[0]["output"], "4 is the answer")
+            self.assertTrue(lines[0].get("streamed"))
+        finally:
+            if os.path.exists(tf_path):
+                os.unlink(tf_path)
+
+    def test_crewai_tool_metadata(self):
+        from bridges.crewai_ntf import tool_use_to_ntf, CrewAINTFTracer
+        rec = tool_use_to_ntf(
+            1, "search_web", "python 3.12", "results",
+            agent_role="researcher", task_description="investigate features"
+        )
+        self.assertEqual(rec["metadata"]["agent_role"], "researcher")
+        self.assertEqual(rec["metadata"]["task_description"], "investigate features")
+
+        with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as tf:
+            tf_path = tf.name
+        try:
+            tracer = CrewAINTFTracer(tf_path)
+            tracer.on_tool_use("calc", "1+1", "2", agent_role="analyst", task_description="do math")
+            with open(tf_path, "r", encoding="utf-8") as f:
+                lines = [json.loads(line) for line in f if line.strip()]
+            self.assertEqual(lines[0]["metadata"]["agent_role"], "analyst")
+        finally:
+            if os.path.exists(tf_path):
+                os.unlink(tf_path)
+
+    def test_langgraph_bidirectional_conversion(self):
+        from bridges.langgraph_ntf import ntf_to_langgraph_events
+        records = [
+            {"kind": "fn.return", "seq": 1, "fn": "plan", "output": {"steps": [1, 2]}},
+            {"kind": "tool.call", "seq": 2, "tool": "search", "input": "query", "output": "answer"},
+            {"kind": "llm.call", "seq": 3, "model": "gpt-4o", "input": "prompt", "output": "reply"},
+        ]
+        events = ntf_to_langgraph_events(records)
+        self.assertEqual(len(events), 3)
+        self.assertEqual(events[0]["event"], "on_chain_end")
+        self.assertEqual(events[0]["name"], "plan")
+        self.assertEqual(events[1]["event"], "on_tool_end")
+        self.assertEqual(events[2]["event"], "on_llm_end")
+
+    def test_stream_events_async_generator(self):
+        import asyncio
+        from nudge_runtime import stream_events
+        async def run_test():
+            items = ['{"kind": "llm.call", "seq": 1}', '{"kind": "tool.call", "seq": 2}']
+            results = []
+            async for ev in stream_events(items):
+                results.append(ev)
+            return results
+        res = asyncio.run(run_test())
+        self.assertEqual(len(res), 2)
+        self.assertEqual(res[0]["kind"], "llm.call")
+        self.assertEqual(res[1]["kind"], "tool.call")
 
 
 if __name__ == "__main__":

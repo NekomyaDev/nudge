@@ -118,6 +118,36 @@ def _jsonable(value):
     return str(value)
 
 
+def ntf_to_langgraph_events(trace_records):
+    """Convert NTF records into LangGraph-compatible state event dictionaries."""
+    events = []
+    for r in trace_records:
+        kind = r.get("kind")
+        seq = r.get("seq", 0)
+        if kind == "fn.return":
+            events.append({
+                "event": "on_chain_end",
+                "name": r.get("fn", "step"),
+                "run_id": f"run_{seq}",
+                "data": {"output": r.get("output")},
+            })
+        elif kind == "tool.call":
+            events.append({
+                "event": "on_tool_end",
+                "name": r.get("tool", "tool"),
+                "run_id": f"tool_{seq}",
+                "data": {"input": r.get("input"), "output": r.get("output")},
+            })
+        elif kind == "llm.call":
+            events.append({
+                "event": "on_llm_end",
+                "name": r.get("model", "llm"),
+                "run_id": f"llm_{seq}",
+                "data": {"input": r.get("input"), "output": r.get("output")},
+            })
+    return events
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", default=f"ntf-langgraph-{int(time.time())}.jsonl")

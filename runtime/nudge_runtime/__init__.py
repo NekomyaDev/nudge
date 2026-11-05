@@ -324,6 +324,45 @@ class NudgeError(RuntimeError):
         super().__init__(formatted)
 
 
+async def stream_events(trace_source):
+    """Async generator yielding parsed NTF records as they appear in a file or stream."""
+    import asyncio
+    if isinstance(trace_source, (str, bytes, os.PathLike)):
+        path = str(trace_source)
+        last_pos = 0
+        try:
+            while True:
+                if os.path.exists(path):
+                    with open(path, "r", encoding="utf-8") as f:
+                        f.seek(last_pos)
+                        line = f.readline()
+                        if line:
+                            last_pos = f.tell()
+                            stripped = line.strip()
+                            if stripped:
+                                try:
+                                    yield json.loads(stripped)
+                                except Exception:
+                                    pass
+                            continue
+                await asyncio.sleep(0.05)
+        except (GeneratorExit, asyncio.CancelledError):
+            return
+    elif hasattr(trace_source, "__iter__"):
+        try:
+            for item in trace_source:
+                if isinstance(item, str):
+                    try:
+                        yield json.loads(item)
+                    except Exception:
+                        yield item
+                else:
+                    yield item
+                await asyncio.sleep(0)
+        except (GeneratorExit, asyncio.CancelledError):
+            return
+
+
 # ── small helpers ────────────────────────────────────────────────────
 
 def USD(x) -> float:

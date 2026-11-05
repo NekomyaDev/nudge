@@ -50,7 +50,7 @@ def task_to_ntf(seq, agent_role, task_description, output, error=None):
     return record
 
 
-def tool_use_to_ntf(seq, tool_name, tool_input, tool_output, error=None):
+def tool_use_to_ntf(seq, tool_name, tool_input, tool_output, error=None, agent_role=None, task_description=None):
     """One tool use → a ``tool.call`` record (CrewAI tool name as the
     tool, serialized usage as input/output)."""
     record = {
@@ -62,6 +62,13 @@ def tool_use_to_ntf(seq, tool_name, tool_input, tool_output, error=None):
         "output": str(tool_output),
         "outcome": "error" if error else "ok",
     }
+    metadata = {}
+    if agent_role is not None:
+        metadata["agent_role"] = str(agent_role)
+    if task_description is not None:
+        metadata["task_description"] = str(task_description)
+    if metadata:
+        record["metadata"] = metadata
     if error is not None:
         record["error"] = str(error)
     return record
@@ -94,9 +101,12 @@ class CrewAINTFTracer:
         self._emit(rec)
         return rec
 
-    def on_tool_use(self, tool_name, tool_input, tool_output, error=None):
+    def on_tool_use(self, tool_name, tool_input, tool_output, error=None, agent_role=None, task_description=None):
         seq = self._next_seq()
-        rec = tool_use_to_ntf(seq, tool_name, tool_input, tool_output, error=error)
+        rec = tool_use_to_ntf(
+            seq, tool_name, tool_input, tool_output,
+            error=error, agent_role=agent_role, task_description=task_description
+        )
         self._emit(rec)
         return rec
 
