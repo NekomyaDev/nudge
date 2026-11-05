@@ -39,7 +39,7 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 }
             } else {
                 std::env::var("NUDGE_DEFAULT_MODEL")
-                    .unwrap_or_else(|_| "gemini-3-flash".to_string())
+                    .unwrap_or_else(|_| "gemini-3.8-flash".to_string())
             };
 
             let req = provider::LlmRequest {

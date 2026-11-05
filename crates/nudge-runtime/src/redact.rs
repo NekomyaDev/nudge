@@ -45,6 +45,12 @@ static VENDOR_SLACK_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\bxox[baprs]-[0-9a-zA-Z\-]{10,}").expect("valid slack token regex")
 });
 
+static VENDOR_AIZA_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\bAIza[0-9A-Za-z\-_]{35}\b").expect("valid aiza regex"));
+
+static VENDOR_HF_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\bhf_[a-zA-Z0-9]{34,}\b").expect("valid hf regex"));
+
 /// Is trace redaction disabled via `NUDGE_TRACE_REDACT=0` or `false`?
 /// Defaults to false (redaction enabled by default, fail-closed).
 pub fn is_redact_disabled() -> bool {
@@ -287,6 +293,12 @@ impl Redactor {
             text = VENDOR_SLACK_RE
                 .replace_all(&text, "[REDACTED]")
                 .into_owned();
+        }
+        if text.contains("AIza") {
+            text = VENDOR_AIZA_RE.replace_all(&text, "[REDACTED]").into_owned();
+        }
+        if text.contains("hf_") {
+            text = VENDOR_HF_RE.replace_all(&text, "[REDACTED]").into_owned();
         }
 
         // 6. Custom patterns from NUDGE_TRACE_REDACT_PATTERNS
@@ -533,6 +545,12 @@ mod tests {
 
         let t7 = "Slack: xoxb-1234567890-1234567890";
         assert_eq!(redactor.redact_string(t7), "Slack: [REDACTED]");
+
+        let t8 = "Gemini: AIzaSyD1234567890abcdef1234567890abcdef";
+        assert_eq!(redactor.redact_string(t8), "Gemini: [REDACTED]");
+
+        let t9 = "HF: hf_1234567890abcdef1234567890abcdef12";
+        assert_eq!(redactor.redact_string(t9), "HF: [REDACTED]");
 
         let pem =
             "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0\n-----END RSA PRIVATE KEY-----";

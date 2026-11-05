@@ -39,7 +39,7 @@ fn with_streams<F, R>(f: F) -> R
 where
     F: FnOnce(&mut HashMap<i64, StreamHandle>) -> R,
 {
-    let mut guard = STREAMS.lock().unwrap();
+    let mut guard = STREAMS.lock().unwrap_or_else(|e| e.into_inner());
     if guard.is_none() {
         *guard = Some(HashMap::new());
     }
@@ -132,6 +132,9 @@ impl CookieJar {
             existing.value = value;
             existing.expires_at = expires_at;
         } else {
+            if self.cookies.len() >= 1000 {
+                self.cookies.remove(0);
+            }
             self.cookies.push(CookieEntry {
                 domain,
                 name,
@@ -205,7 +208,7 @@ fn with_cookie_jar<F, R>(f: F) -> R
 where
     F: FnOnce(&mut CookieJar) -> R,
 {
-    let mut guard = COOKIE_JAR.lock().unwrap();
+    let mut guard = COOKIE_JAR.lock().unwrap_or_else(|e| e.into_inner());
     if guard.is_none() {
         *guard = Some(CookieJar::new());
     }
@@ -233,7 +236,7 @@ fn with_tier_router<F, R>(f: F) -> R
 where
     F: FnOnce(&mut TierRouter) -> R,
 {
-    let mut guard = TIER_ROUTER.lock().unwrap();
+    let mut guard = TIER_ROUTER.lock().unwrap_or_else(|e| e.into_inner());
     if guard.is_none() {
         *guard = Some(TierRouter::default());
     }

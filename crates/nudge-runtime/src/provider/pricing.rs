@@ -139,6 +139,7 @@ pub fn get_official_pricing() -> HashMap<&'static str, ModelPricing> {
     m.insert("gemini-3.6-flash-high", ModelPricing::new(0.15, 0.60));
     m.insert("gemini-3.6-flash-medium", ModelPricing::new(0.15, 0.60));
     m.insert("gemini-3.6-flash-low", ModelPricing::new(0.15, 0.60));
+    m.insert("gemini-3.8-flash", ModelPricing::new(0.15, 0.60));
     m.insert("gemini-3.8-flash-high", ModelPricing::new(0.15, 0.60));
     m.insert("gemini-3.8-flash-tiered", ModelPricing::new(0.15, 0.60));
 

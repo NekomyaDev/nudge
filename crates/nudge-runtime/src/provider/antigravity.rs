@@ -248,7 +248,7 @@ impl Provider for AntigravityProvider {
             self.model
                 .as_deref()
                 .or(default_env.as_deref())
-                .unwrap_or("gemini-3.6-flash-medium")
+                .unwrap_or("gemini-3.8-flash")
         };
         let clean_model = pricing::normalize_model_name(raw_model);
 
@@ -332,7 +332,7 @@ impl Provider for AntigravityProvider {
                 "gemini-3.1-pro-high",
                 "gemini-3.1-pro-low",
                 "gemini-3.6-flash-high",
-                "gemini-3.6-flash-medium",
+                "gemini-3.8-flash",
                 "gemini-3.6-flash-low",
                 "gemini-3.8-flash-tiered",
                 "gemini-2.5-flash",
