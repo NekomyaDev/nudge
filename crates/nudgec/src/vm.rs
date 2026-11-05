@@ -358,6 +358,52 @@ impl<'a> VM<'a> {
                         }
                     }
                 }
+                Op::BitAnd => {
+                    let right = self.stack.pop().ok_or("stack underflow")?;
+                    let left = self.stack.pop().ok_or("stack underflow")?;
+                    match (left, right) {
+                        (NudgeVal::Int(a), NudgeVal::Int(b)) => self.stack.push(NudgeVal::Int(a & b)),
+                        (a, b) => return Err(format!("bitwise AND requires integer operands, got {} and {}", a.type_name(), b.type_name())),
+                    }
+                }
+                Op::BitOr => {
+                    let right = self.stack.pop().ok_or("stack underflow")?;
+                    let left = self.stack.pop().ok_or("stack underflow")?;
+                    match (left, right) {
+                        (NudgeVal::Int(a), NudgeVal::Int(b)) => self.stack.push(NudgeVal::Int(a | b)),
+                        (a, b) => return Err(format!("bitwise OR requires integer operands, got {} and {}", a.type_name(), b.type_name())),
+                    }
+                }
+                Op::BitXor => {
+                    let right = self.stack.pop().ok_or("stack underflow")?;
+                    let left = self.stack.pop().ok_or("stack underflow")?;
+                    match (left, right) {
+                        (NudgeVal::Int(a), NudgeVal::Int(b)) => self.stack.push(NudgeVal::Int(a ^ b)),
+                        (a, b) => return Err(format!("bitwise XOR requires integer operands, got {} and {}", a.type_name(), b.type_name())),
+                    }
+                }
+                Op::Shl => {
+                    let right = self.stack.pop().ok_or("stack underflow")?;
+                    let left = self.stack.pop().ok_or("stack underflow")?;
+                    match (left, right) {
+                        (NudgeVal::Int(a), NudgeVal::Int(b)) => {
+                            let shift = b.clamp(0, 63) as u32;
+                            self.stack.push(NudgeVal::Int(a << shift))
+                        }
+                        (a, b) => return Err(format!("shift left requires integer operands, got {} and {}", a.type_name(), b.type_name())),
+                    }
+                }
+                Op::Shr => {
+                    let right = self.stack.pop().ok_or("stack underflow")?;
+                    let left = self.stack.pop().ok_or("stack underflow")?;
+                    match (left, right) {
+                        (NudgeVal::Int(a), NudgeVal::Int(b)) => {
+                            let shift = b.clamp(0, 63) as u32;
+                            self.stack.push(NudgeVal::Int(a >> shift))
+                        }
+                        (a, b) => return Err(format!("shift right requires integer operands, got {} and {}", a.type_name(), b.type_name())),
+                    }
+                }
                 Op::Eq => {
                     let right = self.stack.pop().ok_or("stack underflow")?;
                     let left = self.stack.pop().ok_or("stack underflow")?;
@@ -3394,5 +3440,20 @@ mod tests {
             NudgeVal::Str(_)
         ));
         assert!(task_val.get_field("non_existent").is_err());
+    }
+
+    #[test]
+    fn test_parity_bitwise_operations() {
+        let src = r#"
+            fn main() -> bool {
+                let a = math.bitwise_and(12, 10)
+                let b = math.bitwise_or(12, 10)
+                let c = math.bitwise_xor(12, 10)
+                let d = math.shift_left(1, 4)
+                let e = math.shift_right(16, 2)
+                a == 8 and b == 14 and c == 6 and d == 16 and e == 4
+            }
+        "#;
+        assert_parity(src, "main", &[]);
     }
 }

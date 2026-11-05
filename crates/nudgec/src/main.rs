@@ -65,6 +65,70 @@ fn read_src(path: &str) -> String {
     }
 }
 
+fn run_repl() {
+    use std::io::{self, BufRead, Write};
+    println!("Nudge Interactive REPL (v{})", env!("CARGO_PKG_VERSION"));
+    println!("Type Nudge expressions or statements. Press Ctrl+C or Ctrl+D to exit.");
+
+    let stdin = io::stdin();
+    let mut stdout = io::stdout();
+    let mut buffer = String::new();
+    let mut depth = 0i32;
+
+    loop {
+        if buffer.is_empty() {
+            print!("nudge> ");
+        } else {
+            print!("... ");
+        }
+        let _ = stdout.flush();
+
+        let mut line = String::new();
+        match stdin.lock().read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {
+                for c in line.chars() {
+                    match c {
+                        '{' | '(' | '[' => depth += 1,
+                        '}' | ')' | ']' => depth = (depth - 1).max(0),
+                        _ => {}
+                    }
+                }
+                buffer.push_str(&line);
+                if depth == 0 {
+                    let trimmed = buffer.trim();
+                    if !trimmed.is_empty() {
+                        let program = if !trimmed.contains("fn main")
+                            && !trimmed.starts_with("type ")
+                            && !trimmed.starts_with("effect ")
+                        {
+                            format!("fn main() -> any {{\n{trimmed}\n}}")
+                        } else {
+                            trimmed.to_string()
+                        };
+                        match compile(&program) {
+                            Ok(items) => {
+                                match eval::run_program(&items, "main", &[]) {
+                                    Ok(val) => println!("{val}"),
+                                    Err(e) => eprintln!("error: {e}"),
+                                }
+                            }
+                            Err((msg, at)) => {
+                                eprintln!("syntax error at byte {at}: {msg}");
+                            }
+                        }
+                    }
+                    buffer.clear();
+                }
+            }
+            Err(e) => {
+                eprintln!("error reading stdin: {e}");
+                break;
+            }
+        }
+    }
+}
+
 fn print_hint(code: &str) {
     if let Some(h) = hints::hint(code) {
         eprintln!("  hint: {h}");
@@ -83,7 +147,45 @@ fn print_lints(items: &[ast::Item]) {
 }
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    let raw_args: Vec<String> = env::args().collect();
+    let mut color_choice = None;
+    let mut filtered_args = Vec::with_capacity(raw_args.len());
+    let mut skip_next = false;
+    for (i, arg) in raw_args.iter().enumerate() {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if arg == "--color" {
+            if let Some(val) = raw_args.get(i + 1) {
+                color_choice = Some(val.clone());
+                skip_next = true;
+                continue;
+            }
+        } else if let Some(val) = arg.strip_prefix("--color=") {
+            color_choice = Some(val.to_string());
+            continue;
+        }
+        filtered_args.push(arg.clone());
+    }
+    if let Some(c) = color_choice {
+        match c.as_str() {
+            "never" => std::env::set_var("NO_COLOR", "1"),
+            "always" => {
+                std::env::set_var("CLICOLOR_FORCE", "1");
+                std::env::remove_var("NO_COLOR");
+            }
+            "auto" => {
+                std::env::remove_var("NO_COLOR");
+                std::env::remove_var("CLICOLOR_FORCE");
+            }
+            other => {
+                eprintln!("error: invalid argument '{other}' for '--color'. Valid values: auto, always, never");
+                process::exit(64);
+            }
+        }
+    }
+    let args = filtered_args;
     // `--version` / `-V`: print and exit 0 (with optional --json for machine consumption #278)
     if args.len() >= 2 && (args[1] == "--version" || args[1] == "-V" || args[1] == "version") {
         let json_mode = args.iter().any(|a| a == "--json");
@@ -210,6 +312,11 @@ complete -c nudgec -n "__fish_seen_subcommand_from completions" -a "bash zsh fis
                 process::exit(1);
             }
         }
+    }
+    // `repl` starts interactive evaluation REPL with multi-line pasting support
+    if args.len() >= 2 && args[1] == "repl" {
+        run_repl();
+        process::exit(0);
     }
     // `auth` manages credentials and OAuth login (e.g. `nudgec auth login antigravity`)
     if args.len() >= 2 && args[1] == "auth" {

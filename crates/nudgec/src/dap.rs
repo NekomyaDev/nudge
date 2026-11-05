@@ -10,16 +10,54 @@
 use crate::json::{dumps, parse as parse_json, Json};
 use std::io::{Read, Write};
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct DapBreakpoint {
+    pub line: f64,
+    pub condition: Option<String>,
+}
+
 pub struct Dap {
     records: Vec<Json>,
     /// index of the record the session is paused on
     pos: usize,
-    /// seq numbers the client broke on
-    breakpoints: Vec<f64>,
+    /// breakpoints set by client (with optional condition)
+    breakpoints: Vec<DapBreakpoint>,
     configured: bool,
     terminated: bool,
     /// outgoing message counter (DAP wants monotonically increasing seq)
     out_seq: i64,
+}
+
+fn matches_breakpoint(bp: &DapBreakpoint, r: &Json) -> bool {
+    if num(r, "seq") != bp.line {
+        return false;
+    }
+    let Some(ref cond) = bp.condition else {
+        return true;
+    };
+    let cond = cond.trim();
+    if cond.is_empty() {
+        return true;
+    }
+    if let Some((k, v)) = cond.split_once("==") {
+        let k = k.trim().trim_start_matches("record.");
+        let v = v.trim().trim_matches('\'').trim_matches('"');
+        if let Some(actual) = r.get(k).and_then(Json::as_str) {
+            return actual == v;
+        }
+        if let Some(actual_num) = r.get(k).and_then(Json::as_num) {
+            if let Ok(v_num) = v.parse::<f64>() {
+                return (actual_num - v_num).abs() < 1e-6;
+            }
+        }
+    } else if let Some((k, v)) = cond.split_once("!=") {
+        let k = k.trim().trim_start_matches("record.");
+        let v = v.trim().trim_matches('\'').trim_matches('"');
+        if let Some(actual) = r.get(k).and_then(Json::as_str) {
+            return actual != v;
+        }
+    }
+    true
 }
 
 fn num(rec: &Json, key: &str) -> f64 {
@@ -105,7 +143,7 @@ impl Dap {
         if let Some(idx) = self
             .records
             .iter()
-            .position(|r| self.breakpoints.contains(&num(r, "seq")))
+            .position(|r| self.breakpoints.iter().any(|bp| matches_breakpoint(bp, r)))
         {
             self.pos = idx;
             return self.stopped("breakpoint");
@@ -140,6 +178,7 @@ impl Dap {
                     req,
                     obj(vec![
                         ("supportsConfigurationDoneRequest", Json::Bool(true)),
+                        ("supportsConditionalBreakpoints", Json::Bool(true)),
                         ("supportsSetVariable", Json::Bool(false)),
                     ]),
                 ),
@@ -150,17 +189,21 @@ impl Dap {
                 self.breakpoints = match args.get("breakpoints") {
                     Some(Json::Arr(bps)) => bps
                         .iter()
-                        .filter_map(|b| b.get("line").and_then(Json::as_num))
+                        .filter_map(|b| {
+                            let line = b.get("line").and_then(Json::as_num)?;
+                            let condition = b.get("condition").and_then(Json::as_str).map(|s| s.to_string());
+                            Some(DapBreakpoint { line, condition })
+                        })
                         .collect(),
                     _ => Vec::new(),
                 };
                 let verified: Vec<Json> = self
                     .breakpoints
                     .iter()
-                    .map(|l| {
+                    .map(|bp| {
                         obj(vec![
                             ("verified", Json::Bool(true)),
-                            ("line", Json::Num(*l)),
+                            ("line", Json::Num(bp.line)),
                         ])
                     })
                     .collect();
@@ -236,7 +279,7 @@ impl Dap {
                     .iter()
                     .enumerate()
                     .skip(self.pos + 1)
-                    .find(|(_, r)| self.breakpoints.contains(&num(r, "seq")))
+                    .find(|(_, r)| self.breakpoints.iter().any(|bp| matches_breakpoint(bp, r)))
                     .map(|(i, _)| i);
                 match hit {
                     Some(idx) => {
@@ -413,6 +456,25 @@ mod tests {
         // continuing past the last breakpoint terminates
         let out = dap.dispatch(&request(5, "continue", Json::Obj(vec![])));
         assert!(dumps(&out[1]).contains("\"event\": \"terminated\""));
+    }
+
+    #[test]
+    fn test_dap_conditional_breakpoint_evaluation() {
+        let mut dap = Dap::new(TRACE);
+        dap.dispatch(&request(1, "initialize", Json::Obj(vec![])));
+
+        let bps = obj(vec![(
+            "breakpoints",
+            Json::Arr(vec![obj(vec![
+                ("line", Json::Num(3.0)),
+                ("condition", Json::str("kind == 'fn.return'")),
+            ])]),
+        )]);
+        let out = dap.dispatch(&request(2, "setBreakpoints", bps));
+        assert!(dumps(&out[0]).contains("\"verified\": true"));
+
+        let out = dap.dispatch(&request(3, "configurationDone", Json::Obj(vec![])));
+        assert!(dumps(&out[1]).contains("\"reason\": \"breakpoint\""));
     }
 
     #[test]

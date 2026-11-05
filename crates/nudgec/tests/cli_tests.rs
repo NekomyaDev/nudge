@@ -2125,3 +2125,49 @@ fn test_cli_completions_generation() {
         .expect("completions unknown");
     assert_ne!(out_err.status.code(), Some(0));
 }
+
+#[test]
+fn test_cli_color_options() {
+    let out_never = Command::new(nudgec_bin())
+        .arg("--color")
+        .arg("never")
+        .arg("--version")
+        .output()
+        .expect("nudgec --color never");
+    assert_eq!(out_never.status.code(), Some(0));
+
+    let out_always = Command::new(nudgec_bin())
+        .arg("--color=always")
+        .arg("--version")
+        .output()
+        .expect("nudgec --color=always");
+    assert_eq!(out_always.status.code(), Some(0));
+
+    let out_invalid = Command::new(nudgec_bin())
+        .arg("--color")
+        .arg("invalid_choice")
+        .output()
+        .expect("nudgec --color invalid");
+    assert_eq!(out_invalid.status.code(), Some(64));
+}
+
+#[test]
+fn test_cli_repl_multiline_paste() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut repl = Command::new(nudgec_bin())
+        .arg("repl")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn repl");
+
+    let multiline_input = b"fn main() -> int {\n    let a = 10\n    let b = 20\n    a + b\n}\n";
+    repl.stdin.as_mut().unwrap().write_all(multiline_input).unwrap();
+    let out = repl.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("30"));
+}

@@ -47,6 +47,16 @@ pub enum Op {
     Gt,
     /// Order comparison: pop right, pop left, push left >= right.
     GtEq,
+    /// Bitwise AND: pop right, pop left, push left & right.
+    BitAnd,
+    /// Bitwise OR: pop right, pop left, push left | right.
+    BitOr,
+    /// Bitwise XOR: pop right, pop left, push left ^ right.
+    BitXor,
+    /// Shift Left: pop right, pop left, push left << right.
+    Shl,
+    /// Shift Right: pop right, pop left, push left >> right.
+    Shr,
     /// Unary negate: pop val, push -val.
     Neg,
     /// Logical not: pop val, push `!val.is_truthy()`.
@@ -710,6 +720,52 @@ impl<'a> Compiler<'a> {
                     }
                     self.chunk
                         .emit(Op::CallBuiltin("len".to_string(), args.len()));
+                    return Ok(());
+                }
+
+                if name == "math.bitwise_and" || name == "int.bitwise_and" {
+                    if args.len() != 2 || !kwargs.is_empty() {
+                        return Err(format!("'{name}' takes 2 arguments"));
+                    }
+                    self.compile_expr(&args[0])?;
+                    self.compile_expr(&args[1])?;
+                    self.chunk.emit(Op::BitAnd);
+                    return Ok(());
+                }
+                if name == "math.bitwise_or" || name == "int.bitwise_or" {
+                    if args.len() != 2 || !kwargs.is_empty() {
+                        return Err(format!("'{name}' takes 2 arguments"));
+                    }
+                    self.compile_expr(&args[0])?;
+                    self.compile_expr(&args[1])?;
+                    self.chunk.emit(Op::BitOr);
+                    return Ok(());
+                }
+                if name == "math.bitwise_xor" || name == "int.bitwise_xor" {
+                    if args.len() != 2 || !kwargs.is_empty() {
+                        return Err(format!("'{name}' takes 2 arguments"));
+                    }
+                    self.compile_expr(&args[0])?;
+                    self.compile_expr(&args[1])?;
+                    self.chunk.emit(Op::BitXor);
+                    return Ok(());
+                }
+                if name == "math.shift_left" || name == "int.shift_left" {
+                    if args.len() != 2 || !kwargs.is_empty() {
+                        return Err(format!("'{name}' takes 2 arguments"));
+                    }
+                    self.compile_expr(&args[0])?;
+                    self.compile_expr(&args[1])?;
+                    self.chunk.emit(Op::Shl);
+                    return Ok(());
+                }
+                if name == "math.shift_right" || name == "int.shift_right" {
+                    if args.len() != 2 || !kwargs.is_empty() {
+                        return Err(format!("'{name}' takes 2 arguments"));
+                    }
+                    self.compile_expr(&args[0])?;
+                    self.compile_expr(&args[1])?;
+                    self.chunk.emit(Op::Shr);
                     return Ok(());
                 }
 

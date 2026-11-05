@@ -6,12 +6,16 @@
 
 use crate::json::{dumps, Json};
 
-fn parse_trace(text: &str) -> Vec<Json> {
+fn parse_trace_iter<'a>(text: &'a str) -> impl Iterator<Item = Json> + 'a {
     text.lines()
         .filter(|l| !l.trim().is_empty())
         .filter_map(|l| crate::json::parse(l).ok())
         .filter(Json::is_obj)
-        .collect()
+}
+
+#[allow(dead_code)]
+fn parse_trace(text: &str) -> Vec<Json> {
+    parse_trace_iter(text).collect()
 }
 
 fn num(rec: &Json, key: &str) -> f64 {
@@ -74,7 +78,6 @@ fn weakest_answer(rec: &Json) -> Option<(String, String, f64)> {
 /// One human-readable report.
 /// Parse recorded trace text and return a structured JSON summary.
 pub fn explain_json(text: &str) -> String {
-    let recs = parse_trace(text);
     let mut llm = 0usize;
     let mut tools = 0usize;
     let mut decisions = 0usize;
@@ -84,10 +87,12 @@ pub fn explain_json(text: &str) -> String {
     let mut repairs = 0usize;
     let mut cache_hits = 0usize;
     let mut lat_total = 0.0;
+    let mut total_records = 0usize;
     let mut review: Vec<String> = Vec::new();
     let mut failures: Vec<String> = Vec::new();
 
-    for (idx, r) in recs.iter().enumerate() {
+    for (idx, ref r) in parse_trace_iter(text).enumerate() {
+        total_records += 1;
         let line_no = idx + 1;
         match s(r, "kind").as_str() {
             "llm.call" => {
@@ -168,7 +173,7 @@ pub fn explain_json(text: &str) -> String {
     }
 
     let payload = serde_json::json!({
-        "total_records": recs.len(),
+        "total_records": total_records,
         "llm_calls": llm,
         "tool_calls": tools,
         "decision_calls": decisions,
@@ -188,7 +193,6 @@ pub fn explain_json(text: &str) -> String {
 }
 
 pub fn explain(text: &str) -> String {
-    let recs = parse_trace(text);
     let mut out = String::new();
     let mut llm = 0usize;
     let mut tools = 0usize;
@@ -199,11 +203,13 @@ pub fn explain(text: &str) -> String {
     let mut repairs = 0usize;
     let mut cache_hits = 0usize;
     let mut lat_total = 0.0;
+    let mut total_records = 0usize;
     let mut slowest: Option<(String, f64)> = None;
     let mut review: Vec<String> = Vec::new();
     let mut failures: Vec<String> = Vec::new();
 
-    for (idx, r) in recs.iter().enumerate() {
+    for (idx, ref r) in parse_trace_iter(text).enumerate() {
+        total_records += 1;
         let line_no = idx + 1;
         match s(r, "kind").as_str() {
             "llm.call" => {
@@ -289,7 +295,7 @@ pub fn explain(text: &str) -> String {
 
     out.push_str(&format!(
         "trace: {} record(s) — {llm} llm, {tools} tool, {decisions} decision\n",
-        recs.len()
+        total_records
     ));
     if llm > 0 {
         out.push_str(&format!(
