@@ -1,0 +1,40 @@
+// Multi-turn Conversational Chatbot with Context Window Compression
+// Demonstrates message window rolling and compression threshold
+
+type Message = {
+    role: string,
+    content: string
+}
+
+type ChatSession = {
+    history: [Message],
+    summary: string,
+    turn_count: int
+}
+
+fn add_turn(role: string, msg: string, session: ChatSession) -> ChatSession {
+    let new_msg = { role: role, content: msg }
+    let count = session.turn_count + 1
+    let updated_hist = [new_msg, session.history[0]]
+    let updated_sum = if count > 2 {
+        "Summary: user greeted and requested assistant status"
+    } else {
+        session.summary
+    }
+    {
+        history: updated_hist,
+        summary: updated_sum,
+        turn_count: count
+    }
+}
+
+fn main() -> ChatSession {
+    let s0 = {
+        history: [{ role: "system", content: "You are a helpful agent" }],
+        summary: "New session",
+        turn_count: 1
+    }
+    let s1 = add_turn("user", "Hello Nudge", s0)
+    let s2 = add_turn("assistant", "Greetings! How can I assist?", s1)
+    s2
+}

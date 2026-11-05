@@ -1,0 +1,30 @@
+// Docker Container Orchestration Agent
+// Demonstrates container inspection and status formatting
+
+type Container = {
+    id: string,
+    image: string,
+    status: string,
+    ports: [int]
+}
+
+type ClusterStatus = {
+    total: int,
+    running: int,
+    containers: [Container]
+}
+
+fn inspect_containers() -> ClusterStatus {
+    let c1 = { id: "c_web_01", image: "nginx:alpine", status: "running", ports: [80, 443] }
+    let c2 = { id: "c_db_01", image: "postgres:16", status: "running", ports: [5432] }
+    let c3 = { id: "c_worker_01", image: "nudge_worker:latest", status: "running", ports: [9000] }
+    {
+        total: 3,
+        running: 3,
+        containers: [c1, c2, c3]
+    }
+}
+
+fn main() -> ClusterStatus {
+    inspect_containers()
+}

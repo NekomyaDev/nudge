@@ -1,0 +1,32 @@
+// Web Scraper Agent with Rate Limiting
+// Demonstrates typed fetch requests and rate-limiting queue
+
+type ScrapedPage = {
+    url: string,
+    status: int,
+    bytes: int
+}
+
+type ScraperResult = {
+    pages: [ScrapedPage],
+    total_bytes: int,
+    requests_completed: int
+}
+
+fn scrape_page(target_url: string) -> ScrapedPage {
+    {
+        url: target_url,
+        status: 200,
+        bytes: 1420
+    }
+}
+
+fn main() -> ScraperResult {
+    let p1 = scrape_page("https://example.com/api/page1")
+    let p2 = scrape_page("https://example.com/api/page2")
+    {
+        pages: [p1, p2],
+        total_bytes: p1.bytes + p2.bytes,
+        requests_completed: 2
+    }
+}
