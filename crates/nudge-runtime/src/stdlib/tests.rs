@@ -1479,4 +1479,33 @@ mod computer_tests {
         });
         assert!(res.is_ok());
     }
+
+    #[test]
+    fn test_io_delete_refuses_root_and_empty() {
+        let err1 = crate::stdlib::io::execute("io.delete", vec![Value::String("/".to_string())]);
+        assert!(err1.is_err());
+        assert!(err1.unwrap_err().contains("refusing to delete"));
+
+        let err2 = crate::stdlib::io::execute("io.delete", vec![Value::String("   ".to_string())]);
+        assert!(err2.is_err());
+        assert!(err2.unwrap_err().contains("refusing to delete"));
+    }
+
+    #[test]
+    fn test_math_gcd_lcm_overflow_safety() {
+        // i64::MIN must not panic with arithmetic overflow
+        let gcd_res = crate::stdlib::math::execute(
+            "math.gcd",
+            vec![Value::Int(i64::MIN), Value::Int(2)],
+        );
+        assert!(gcd_res.is_ok());
+        assert_eq!(gcd_res.unwrap(), Value::Int(2));
+
+        let lcm_overflow = crate::stdlib::math::execute(
+            "math.lcm",
+            vec![Value::Int(i64::MAX), Value::Int(i64::MAX - 1)],
+        );
+        assert!(lcm_overflow.is_err());
+        assert!(lcm_overflow.unwrap_err().contains("integer overflow"));
+    }
 }

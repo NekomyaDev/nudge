@@ -79,7 +79,7 @@ fn take_snapshot(target: &Path) -> BTreeMap<PathBuf, EntrySnapshot> {
 
     if let Ok(meta) = fs::symlink_metadata(target) {
         if meta.is_dir() {
-            collect_dir_snapshot(target, target, &mut map);
+            collect_dir_snapshot(target, target, &mut map, 0);
         } else {
             let rel = target
                 .file_name()
@@ -98,7 +98,10 @@ fn take_snapshot(target: &Path) -> BTreeMap<PathBuf, EntrySnapshot> {
     map
 }
 
-fn collect_dir_snapshot(root: &Path, dir: &Path, map: &mut BTreeMap<PathBuf, EntrySnapshot>) {
+fn collect_dir_snapshot(root: &Path, dir: &Path, map: &mut BTreeMap<PathBuf, EntrySnapshot>, depth: usize) {
+    if depth > 32 || map.len() >= 10_000 {
+        return;
+    }
     let read_dir = match fs::read_dir(dir) {
         Ok(rd) => rd,
         Err(_) => return,
@@ -125,7 +128,7 @@ fn collect_dir_snapshot(root: &Path, dir: &Path, map: &mut BTreeMap<PathBuf, Ent
                 },
             );
             if is_dir {
-                collect_dir_snapshot(root, &path, map);
+                collect_dir_snapshot(root, &path, map, depth + 1);
             }
         }
     }

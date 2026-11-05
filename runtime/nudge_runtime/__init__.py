@@ -5232,10 +5232,17 @@ def browser_fetch(url, **kwargs):
 
     # file:// scheme for fixtures
     if url.startswith("file://"):
-        path = url[len("file://"):]
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"BrowserError: file not found: {path}")
-        with open(path, "r", encoding="utf-8") as f:
+        raw_path = url[len("file://"):]
+        if "\0" in raw_path:
+            raise ValueError("BrowserDenied: null byte in file URL path")
+        resolved = os.path.realpath(os.path.abspath(raw_path))
+        ws = os.path.realpath(os.environ.get("NUDGE_WORKSPACE_ROOT", os.getcwd()))
+        tmp_dir = os.path.realpath("/tmp")
+        if not (resolved.startswith(ws + os.sep) or resolved == ws or resolved.startswith(tmp_dir + os.sep)):
+            raise PermissionError(f"BrowserDenied: file:// URL traversal denied outside workspace or /tmp: {raw_path}")
+        if not os.path.exists(resolved):
+            raise FileNotFoundError(f"BrowserError: file not found: {raw_path}")
+        with open(resolved, "r", encoding="utf-8") as f:
             content = f.read()
         latency_ms = int((time.time() - start_time) * 1000)
         return {
@@ -5248,6 +5255,13 @@ def browser_fetch(url, **kwargs):
 
     if not (url.startswith("http://") or url.startswith("https://")):
         raise ValueError(f"BrowserDenied: unsupported scheme for '{url}' (only http, https, and file: are allowed)")
+
+    # Block SSRF to cloud metadata endpoints
+    import urllib.parse
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if host in ("169.254.169.254", "metadata.google.internal", "100.100.100.200") or host.endswith(".internal"):
+        raise PermissionError(f"BrowserDenied: request to cloud metadata endpoint '{host}' blocked (SSRF protection)")
 
     method = kwargs.get("method", "GET").upper()
     req_headers = kwargs.get("headers", {})

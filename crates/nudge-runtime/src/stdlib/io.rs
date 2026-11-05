@@ -113,6 +113,15 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                 Value::String(s) => validate_path(s)?.to_string(),
                 _ => return Err("io.delete: path must be a string".to_string()),
             };
+            let trimmed = path.trim();
+            if trimmed.is_empty() || trimmed == "/" || trimmed == "\\" {
+                return Err(format!("io.delete: refusing to delete root or empty path '{path}'"));
+            }
+            if let Ok(canon) = std::path::Path::new(&path).canonicalize() {
+                if canon.parent().is_none() {
+                    return Err(format!("io.delete: refusing to delete root directory '{}'", canon.display()));
+                }
+            }
             let res = if fs::metadata(&path).map(|m| m.is_dir()).unwrap_or(false) {
                 fs::remove_dir_all(&path)
             } else {

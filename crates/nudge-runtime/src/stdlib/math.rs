@@ -495,7 +495,7 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             }
             match (&args[0], &args[1]) {
                 (Value::Int(a), Value::Int(b)) => {
-                    fn gcd(mut x: i64, mut y: i64) -> i64 {
+                    fn gcd(mut x: i128, mut y: i128) -> i128 {
                         x = x.abs();
                         y = y.abs();
                         while y != 0 {
@@ -505,7 +505,11 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                         }
                         x
                     }
-                    Ok(Value::Int(gcd(*a, *b)))
+                    let res = gcd(*a as i128, *b as i128);
+                    if res > i64::MAX as i128 {
+                        return Err("math.gcd: result overflows i64".to_string());
+                    }
+                    Ok(Value::Int(res as i64))
                 }
                 _ => Err("math.gcd: arguments must be integers".to_string()),
             }
@@ -517,7 +521,7 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
             }
             match (&args[0], &args[1]) {
                 (Value::Int(a), Value::Int(b)) => {
-                    fn gcd(mut x: i64, mut y: i64) -> i64 {
+                    fn gcd(mut x: i128, mut y: i128) -> i128 {
                         x = x.abs();
                         y = y.abs();
                         while y != 0 {
@@ -530,8 +534,14 @@ pub fn execute(name: &str, args: Vec<Value>) -> Result<Value, String> {
                     if *a == 0 || *b == 0 {
                         Ok(Value::Int(0))
                     } else {
-                        let g = gcd(*a, *b);
-                        Ok(Value::Int((a.abs() / g) * b.abs()))
+                        let a128 = (*a as i128).abs();
+                        let b128 = (*b as i128).abs();
+                        let g = gcd(a128, b128);
+                        let res = (a128 / g).checked_mul(b128);
+                        match res {
+                            Some(val) if val <= i64::MAX as i128 => Ok(Value::Int(val as i64)),
+                            _ => Err("math.lcm: integer overflow".to_string()),
+                        }
                     }
                 }
                 _ => Err("math.lcm: arguments must be integers".to_string()),

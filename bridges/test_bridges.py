@@ -295,6 +295,20 @@ class ComputerBridgeContractTests(unittest.TestCase):
         self.assertEqual(res[0]["kind"], "llm.call")
         self.assertEqual(res[1]["kind"], "tool.call")
 
+    def test_python_browser_fetch_security_hardening(self):
+        from nudge_runtime import browser_fetch
+        # SSRF blocked
+        with self.assertRaises(PermissionError):
+            browser_fetch("http://169.254.169.254/latest/meta-data")
+        with self.assertRaises(PermissionError):
+            browser_fetch("http://metadata.google.internal/computeMetadata/v1")
+
+        # file:// traversal outside workspace or /tmp blocked
+        with self.assertRaises(PermissionError):
+            browser_fetch("file:///etc/shadow")
+        with self.assertRaises(ValueError):
+            browser_fetch("file:///tmp/test\0file")
+
 
 if __name__ == "__main__":
     unittest.main()
