@@ -105,7 +105,11 @@ impl CredentialStore {
         // create_new + O_NOFOLLOW: refuse to reuse a pre-existing or symlinked
         // temp file (a PID-based name is predictable), so an attacker-planted
         // symlink can't redirect the credential write. Fails closed on collision.
-        let tmp_path = path.with_extension(format!("tmp.{}", std::process::id()));
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let tmp_path = path.with_extension(format!("tmp.{}.{}", std::process::id(), nonce));
         let write_res = (|| -> std::io::Result<()> {
             let mut opts = std::fs::OpenOptions::new();
             opts.write(true).create_new(true);
@@ -131,6 +135,7 @@ impl CredentialStore {
         }
 
         std::fs::rename(&tmp_path, path).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp_path);
             format!("error[E-auth-0405]: failed to persist credential store atomically: {e}")
         })?;
 

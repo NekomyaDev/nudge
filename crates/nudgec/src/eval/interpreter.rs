@@ -2282,10 +2282,12 @@ impl Interpreter {
                 // NUDGE_REPLAY serves the recorded answer (never a live
                 // provider), otherwise the call is provider-backed and
                 // recorded as one `llm.call` NTF record
+                let default_model_env = std::env::var("NUDGE_DEFAULT_MODEL").ok();
+                let default_model = default_model_env.as_deref().unwrap_or("fake:default");
                 let resp = nudge_runtime::trace::llm_call(&nudge_runtime::trace::LlmBridgeRequest {
                     prompt: &prompt_str,
                     model: model_str.as_deref(),
-                    default_model: "fake:default",
+                    default_model,
                     schema_text: schema_name.as_deref(),
                     schema_json: schema_json.clone(),
                     temperature,
@@ -4938,7 +4940,7 @@ impl Interpreter {
 
         match op {
             BinOp::Add => match (left, right) {
-                (NudgeVal::Int(a), NudgeVal::Int(b)) => Ok(NudgeVal::Int(a + b)),
+                (NudgeVal::Int(a), NudgeVal::Int(b)) => Ok(NudgeVal::Int(a.wrapping_add(b))),
                 (NudgeVal::Float(a), NudgeVal::Float(b)) => Ok(NudgeVal::Float(a + b)),
                 (NudgeVal::Int(a), NudgeVal::Float(b)) => Ok(NudgeVal::Float(a as f64 + b)),
                 (NudgeVal::Float(a), NudgeVal::Int(b)) => Ok(NudgeVal::Float(a + b as f64)),
@@ -4963,7 +4965,7 @@ impl Interpreter {
                 )),
             },
             BinOp::Sub => match (left, right) {
-                (NudgeVal::Int(a), NudgeVal::Int(b)) => Ok(NudgeVal::Int(a - b)),
+                (NudgeVal::Int(a), NudgeVal::Int(b)) => Ok(NudgeVal::Int(a.wrapping_sub(b))),
                 (NudgeVal::Float(a), NudgeVal::Float(b)) => Ok(NudgeVal::Float(a - b)),
                 (NudgeVal::Int(a), NudgeVal::Float(b)) => Ok(NudgeVal::Float(a as f64 - b)),
                 (NudgeVal::Float(a), NudgeVal::Int(b)) => Ok(NudgeVal::Float(a - b as f64)),
@@ -4974,7 +4976,7 @@ impl Interpreter {
                 )),
             },
             BinOp::Mul => match (left, right) {
-                (NudgeVal::Int(a), NudgeVal::Int(b)) => Ok(NudgeVal::Int(a * b)),
+                (NudgeVal::Int(a), NudgeVal::Int(b)) => Ok(NudgeVal::Int(a.wrapping_mul(b))),
                 (NudgeVal::Float(a), NudgeVal::Float(b)) => Ok(NudgeVal::Float(a * b)),
                 (NudgeVal::Int(a), NudgeVal::Float(b)) => Ok(NudgeVal::Float(a as f64 * b)),
                 (NudgeVal::Float(a), NudgeVal::Int(b)) => Ok(NudgeVal::Float(a * b as f64)),
@@ -5124,7 +5126,8 @@ impl Interpreter {
         let state_val = self.eval_expr(state, env)?;
         let state_text = state_val.to_string();
 
-        let mut model_str = "fake:default".to_string();
+        let mut model_str = std::env::var("NUDGE_DEFAULT_MODEL")
+            .unwrap_or_else(|_| "fake:default".to_string());
         let mut deadline_ms: Option<u64> = None;
         for (k, v_expr) in options {
             if k == "model" {

@@ -69,11 +69,13 @@ impl CopilotProvider {
 impl Provider for CopilotProvider {
     fn call(&self, req: &LlmRequest) -> Result<LlmResponse, String> {
         let mut body_map = serde_json::Map::new();
+        let default_model = std::env::var("NUDGE_DEFAULT_MODEL")
+            .unwrap_or_else(|_| "copilot-chat".to_string());
         body_map.insert(
             "model".to_string(),
             serde_json::Value::String(
                 if req.model.is_empty() || req.model == "default" || req.model == "fake:default" {
-                    "copilot-chat".to_string()
+                    default_model
                 } else {
                     req.model.clone()
                 },

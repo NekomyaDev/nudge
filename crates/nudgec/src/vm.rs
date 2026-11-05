@@ -221,7 +221,7 @@ impl<'a> VM<'a> {
                     let left = self.stack.pop().ok_or("stack underflow")?;
                     match (left, right) {
                         (NudgeVal::Int(a), NudgeVal::Int(b)) => {
-                            self.stack.push(NudgeVal::Int(a + b))
+                            self.stack.push(NudgeVal::Int(a.wrapping_add(b)))
                         }
                         (NudgeVal::Float(a), NudgeVal::Float(b)) => {
                             self.stack.push(NudgeVal::Float(a + b))
@@ -262,7 +262,7 @@ impl<'a> VM<'a> {
                     let left = self.stack.pop().ok_or("stack underflow")?;
                     match (left, right) {
                         (NudgeVal::Int(a), NudgeVal::Int(b)) => {
-                            self.stack.push(NudgeVal::Int(a - b))
+                            self.stack.push(NudgeVal::Int(a.wrapping_sub(b)))
                         }
                         (NudgeVal::Float(a), NudgeVal::Float(b)) => {
                             self.stack.push(NudgeVal::Float(a - b))
@@ -287,7 +287,7 @@ impl<'a> VM<'a> {
                     let left = self.stack.pop().ok_or("stack underflow")?;
                     match (left, right) {
                         (NudgeVal::Int(a), NudgeVal::Int(b)) => {
-                            self.stack.push(NudgeVal::Int(a * b))
+                            self.stack.push(NudgeVal::Int(a.wrapping_mul(b)))
                         }
                         (NudgeVal::Float(a), NudgeVal::Float(b)) => {
                             self.stack.push(NudgeVal::Float(a * b))

@@ -241,10 +241,14 @@ impl Provider for AntigravityProvider {
                     .to_string(),
             );
         }
+        let default_env = std::env::var("NUDGE_DEFAULT_MODEL").ok();
         let raw_model = if !req.model.is_empty() && req.model != "default" && req.model != "auto" {
             req.model.as_str()
         } else {
-            self.model.as_deref().unwrap_or("gemini-3.6-flash-medium")
+            self.model
+                .as_deref()
+                .or(default_env.as_deref())
+                .unwrap_or("gemini-3.6-flash-medium")
         };
         let clean_model = pricing::normalize_model_name(raw_model);
 
