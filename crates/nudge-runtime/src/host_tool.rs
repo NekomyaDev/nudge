@@ -42,8 +42,23 @@ pub(crate) fn format_host_error(server: &str, tool: &str, code: isize) -> String
         -6 => format!(
             "host tool call '{server}::{tool}' failed: fuel or execution instruction budget exhausted (code -6)"
         ),
+        -7 => format!(
+            "host tool call '{server}::{tool}' failed: WASI import could not be resolved (missing symbol)"
+        ),
+        -8 => format!(
+            "host tool call '{server}::{tool}' failed: WASI preview1 host version mismatch"
+        ),
         code => format!("host tool call '{server}::{tool}' failed with host error code {code}"),
     }
+}
+
+/// Format a descriptive error when a WASI module requires unresolved imports.
+pub fn format_wasi_import_error(module: &str, function: &str) -> String {
+    format!(
+        "WASI import resolution error: cannot resolve '{module}::{function}'. \
+         The Nudge sandbox supports wasi_snapshot_preview1 standard imports. \
+         Verify that your WASM binary was compiled with '--target wasm32-wasip1'."
+    )
 }
 
 /// Call a tool via the host bridge on wasm32 targets.
@@ -143,5 +158,9 @@ mod tests {
 
         let err_unknown = format_host_error("srv", "t", -99);
         assert!(err_unknown.contains("host error code -99"));
+
+        let import_err = format_wasi_import_error("wasi_snapshot_preview1", "fd_seek");
+        assert!(import_err.contains("cannot resolve 'wasi_snapshot_preview1::fd_seek'"));
+        assert!(import_err.contains("wasm32-wasip1"));
     }
 }

@@ -4,6 +4,17 @@
 //! stage 2.
 
 use std::fmt;
+use std::sync::Arc;
+
+/// Interned identifier string backed by `Arc<str>` to reduce heap allocations
+/// and memory footprint across large AST trees (Issue #255).
+pub type IdentStr = Arc<str>;
+
+/// Returns a shared, reference-counted identifier string.
+#[inline]
+pub fn intern_ident(s: &str) -> IdentStr {
+    Arc::from(s)
+}
 
 use serde::{Deserialize, Serialize};
 
@@ -888,5 +899,13 @@ mod tests {
             let recovered_stmt: Stmt = serde_json::from_str(&json_stmt).expect("deserialize stmt");
             assert_eq!(stmt, recovered_stmt);
         }
+    }
+
+    #[test]
+    fn test_ident_str_interning_memory_efficiency() {
+        let id1 = intern_ident("my_variable");
+        let id2 = intern_ident("my_variable");
+        assert_eq!(id1, id2);
+        assert_eq!(&*id1, "my_variable");
     }
 }

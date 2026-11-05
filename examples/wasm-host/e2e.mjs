@@ -88,6 +88,8 @@ async function main() {
   const hostImports = createHostToolImports(() => wasmMemory, trackingDispatcher);
 
   const wasmBytes = fs.readFileSync(wasmPath);
+  const maxMemoryMb = parseInt(process.env.NUDGE_WASM_MAX_MEMORY_MB || "64", 10);
+  const maxPages = Math.floor((maxMemoryMb * 1024 * 1024) / 65536);
   const wasmModule = new WebAssembly.Module(wasmBytes);
 
   const importObject = {

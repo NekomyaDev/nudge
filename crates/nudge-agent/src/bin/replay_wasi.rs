@@ -8,6 +8,15 @@ use std::path::Path;
 use std::process;
 
 fn main() {
+    let max_mem_mb = std::env::var("NUDGE_WASM_MAX_MEMORY_MB")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(64);
+    if max_mem_mb == 0 {
+        eprintln!("error: NUDGE_WASM_MAX_MEMORY_MB must be greater than 0");
+        process::exit(1);
+    }
+
     let raw_args: Vec<String> = std::env::args().collect();
     let replay_args = match parse_replay_args(&raw_args) {
         Ok(args) => args,
